@@ -49,3 +49,6 @@ chroma/
 .vibe/
 .windsurf/
 .zencoder/
+
+.gemini/
+gha-creds-*.json
