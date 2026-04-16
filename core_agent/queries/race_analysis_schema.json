@@ -1,0 +1,10 @@
+{
+    "type": "object",
+    "properties": {
+        "track": {"type": "string"},
+        "race_number": {"type": "integer"},
+        "analysis_depth": {"type": "string", "enum": ["shallow", "deep"]},
+        "include_past_history": {"type": "boolean"}
+    },
+    "required": ["track", "race_number"]
+}

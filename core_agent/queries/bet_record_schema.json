@@ -1,0 +1,12 @@
+{
+    "type": "object",
+    "properties": {
+        "horse_name": {"type": "string"},
+        "track": {"type": "string"},
+        "race_number": {"type": "integer"},
+        "odds": {"type": "number"},
+        "suggested_stake": {"type": "number"},
+        "confidence": {"type": "string", "enum": ["VALUE", "STRONG_VALUE", "MARGINAL"]}
+    },
+    "required": ["horse_name", "track", "race_number", "odds"]
+}

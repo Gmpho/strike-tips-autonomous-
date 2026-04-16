@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  strike-bot:
+    build:
+      context: ..
+      dockerfile: strike-tips/Dockerfile
+    container_name: strike-bot-test
+    environment:
+      - PYTHONPATH=/app/core_agent
+      - DATA_DIR=/app/data
+    working_dir: /app/core_agent
+    volumes:
+      - ..:/app
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"

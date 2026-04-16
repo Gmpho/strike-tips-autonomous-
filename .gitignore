@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+venv/
+venv_linux/
+.next/
+dist/
+
+# Environment
+.env
+.env.local
+
+# Logs and Data
+*.log
+data/
+chroma/
+
+# Git
+.git/
+.dockerignore
+
+# Agent Metadata & Skills
+.adal/
+.agents/
+.augment/
+.bob/
+.claude/
+.codebuddy/
+.commandcode/
+.continue/
+.cortex/
+.crush/
+.factory/
+.goose/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/

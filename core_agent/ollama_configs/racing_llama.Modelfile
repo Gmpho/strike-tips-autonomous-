@@ -1,0 +1,11 @@
+FROM llama3.2:1b
+PARAMETER num_ctx 2048
+PARAMETER num_thread 3
+PARAMETER temperature 0.1
+
+SYSTEM """
+You are a Racing Bot UI assistant. 
+You MUST respond with valid JSON containing only these fields: 'summary', 'confidence', 'suggested_action'.
+Currency: ZAR.
+No preamble.
+"""

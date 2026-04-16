@@ -1,0 +1,26 @@
+SYSTEM: You are STRIKE TIPS AI. Goal: SPEED and ACCURACY. Date: 2026-03-13T18:19:27.598927
+### CURRENT BANKROLL STATUS:
+- Balance: R950.00
+- Today P&L: R0.00
+- Open Bets: 1
+
+Use tools for data. MANDATORY: Only name horses/runners if they appear in the tool results or context. If results are empty, admit you don't know the runners.
+
+USER: ### CONTEXT DATA (THE ABSOLUTE TRUTH):
+### CURRENT BANKROLL STATUS:
+- Balance: R950.00
+- Today P&L: R0.00
+- Open Bets: 1
+
+### SA WEB DATA (2026-03-13):
+[{'url': 'https://www.skyracingworld.com/form-guide/thoroughbred/south-africa/fairview/2026-03-13/runners-index', 'title': 'Horse Racing Runner Index, Friday, 13th March 2026 | Sky Racing World', 'snippet': 'Form Guide |HorseRacingRunnerIndex Friday, 13th March2026Meeting Meeting Information Meeting Info R1 Race 1 Race 1 R2 Race 2 Race 2 R3 Race 3 Race 3 R4 Race 4 Race 4 R5 Race 5 Race 5 R6 Race 6 Race 6 R7 Race 7 Race 7 R8 Race 8 Race 8 Meeting Meeting Information Meeting Info Meeting InfoRunners/ Jockeys / Trainers / Sire ComputerTips...', 'source': 'DuckDuckGo'}, {'url': 'https://www.racingandsports.com.au/form-guide/thoroughbred/south-africa', 'title': 'Free Horse Racing Form Guide | South Africa | Racing and Sports', 'snippet': 'FreeHorseRacingForm Guide | Friday,13Mar2026|SouthAfricaOur detailedhorseracingform guides,racecards,and race fields forSouthAfricacontain all the tab information you require for the races today.', 'source': 'DuckDuckGo'}, {'url': 'https://www.timeform.com/horse-racing/racecards/fairview/2026-03-13/1440/417/5/tab-4racing-app-fm-66-handicap', 'title': '12:40 FAIRVIEW (South Africa) (SAF) | Races 13 March 2026 | Racecard ...', 'snippet': "12:40 Fairview (SouthAfrica) (SAF)Racecardon Friday13March2026The 7f 210y 12:40 TAB4RACINGAPP FM 66 HANDICAP (F & M) at Fairview (SouthAfrica) (SAF) will be run on Friday13March2026. It is open to 3yo+ and has a prize fund of R4,705. There are13runners. Timeform's verdict for this race is ROYAL MERMAID (SAF), ridd
+
+
+
+### RULES:
+1. ONLY mention race meetings and horses explicitly listed in the 'CONTEXT DATA' above.
+2. IF NO HORSES ARE LISTED for a track in the context, DO NOT INVENT THEM. Say 'No runners found in data'.
+3. Be extremely concise.
+
+### USER QUESTION:
+Fairview results for today and runners. Check our dashboard data.

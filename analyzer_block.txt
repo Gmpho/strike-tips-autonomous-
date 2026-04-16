@@ -1,0 +1,53 @@
+        probability_estimates: Dict[str, float],
+        reasoning_map: Optional[Dict[str, str]] = None,
+    ) -> List[ValueBet]:
+        """
+        Analyze a full race card and return list of value bets.
+
+        Args:
+            race_card: Full race card with runners and odds
+            probability_estimates: {horse_name: estimated_win_probability}
+            reasoning_map: Optional {horse_name: reasoning_text}
+
+        Returns:
+            List of ValueBet objects, sorted by edge (best first)
+        """
+        value_bets = []
+        reasoning_map = reasoning_map or {}
+
+        for runner in race_card.runners:
+            if runner.horse_name not in probability_estimates:
+                continue
+
+            est_prob = probability_estimates[runner.horse_name]
+            implied_prob = self.calculate_implied_probability(runner.odds_decimal)
+            edge = self.calculate_edge(est_prob, runner.odds_decimal)
+
+            if edge < self.MIN_EDGE_PERCENT:
+                continue
+
+            kelly_pct = self.calculate_kelly_stake(est_prob, runner.odds_decimal)
+            advised_stake = (kelly_pct / 100.0) * self.bankroll
+            confidence = self.get_confidence(edge)
+            reasoning = reasoning_map.get(
+                runner.horse_name, f"Edge: +{edge:.1f}% | Est: {est_prob:.1%} vs Implied: {implied_prob:.1%}"
+            )
+
+            value_bets.append(
+                ValueBet(
+                    horse=runner.horse_name,
+                    track=race_card.track,
+                    race_number=race_card.race_number,
+                    race_time=race_card.race_time,
+                    odds_decimal=runner.odds_decimal,
+                    estimated_probability=est_prob,
+                    implied_probability=implied_prob,
+                    edge_percent=round(edge, 2),
+                    kelly_stake_percent=round(kelly_pct, 2),
+                    advised_stake=round(advised_stake, 2),
+                    confidence=confidence,
+                    reasoning=reasoning,
+                )
+            )
+
+        # Sort by edge descending (best value first)

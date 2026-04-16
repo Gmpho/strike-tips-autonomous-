@@ -1,0 +1,6 @@
+{
+  "security": {
+    "autoAddToPolicyByDefault": true,
+    "enablePermanentToolApproval": true
+  }
+}
