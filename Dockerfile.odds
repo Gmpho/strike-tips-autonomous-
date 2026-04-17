@@ -1,0 +1,21 @@
+FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+
+# 1. Static Setup
+WORKDIR /app
+# Ensure data and browser profile dirs exist
+RUN mkdir -p /app/data/browser_profile /app/data/cache
+
+# 2. Dependency Layer
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt beautifulsoup4 lxml aiohttp
+
+# 3. Source Code Layer
+COPY . .
+
+# Running as root to ensure full access to host-mounted volumes
+USER root
+
+# Ensure browser is ready
+RUN playwright install chromium
+
+CMD ["python", "core_agent/core/adaptive_odds_monitor.py"]

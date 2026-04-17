@@ -4,11 +4,12 @@ import { useState, useEffect, useRef, ViewTransition } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TrendingUp, Activity, DollarSign, ShieldCheck, Zap, MessageSquare, Search, List as ListIcon, Settings, ChevronRight, Menu, Bell, User, Clock, MapPin, ChevronDown, Sparkles, Loader2 } from 'lucide-react';
 import { 
-  getStatus, getTracks, getMonitoringSnapshot, getChatHistory, getModels, analyzeRace,
-  BankrollStatus, Race, ValueBet, Bet, ChatMessage 
+  getStatus, getTracks, getMonitoringSnapshot, getChatHistory, getModels, analyzeRace, getSystemHealth,
+  BankrollStatus, Race, ValueBet, Bet, ChatMessage, L7Health, MarketAlert
 } from '@/lib/api';
 import { Sidebar } from '@/components/Sidebar';
 import { Header } from '@/components/Header';
+import { L7Diagnostics } from '@/components/L7Diagnostics';
 
 
 type Tab = 'dashboard' | 'chat' | 'races' | 'search' | 'bets' | 'settings';
@@ -18,6 +19,7 @@ export default function Home() {
   const [status, setStatus] = useState<BankrollStatus | null>(null);
   const [tracks, setTracks] = useState<{tracks: string[], today_tracks: string[]} | null>(null);
   const [monitoringData, setMonitoringData] = useState<any>(null);
+  const [health, setHealth] = useState<L7Health | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
 
@@ -30,14 +32,17 @@ export default function Home() {
   const loadData = async () => {
     setIsRefreshing(true);
     try {
-      const [s, t, m] = await Promise.all([
+      // Vercel Perf: async-parallel execution
+      const [s, t, m, h] = await Promise.all([
         getStatus(), 
         getTracks(), 
-        getMonitoringSnapshot()
+        getMonitoringSnapshot(),
+        getSystemHealth()
       ]);
       setStatus(s);
       setTracks(t);
       setMonitoringData(m);
+      setHealth(h);
       setError('');
     } catch (e: any) {
       setError(e.message);
@@ -55,12 +60,17 @@ export default function Home() {
 
       <main className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4 lg:p-10 custom-scrollbar">
-          <Header 
-            status={status} 
-            activeTab={activeTab} 
-            isRefreshing={isRefreshing} 
-            onRefresh={loadData} 
-          />
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-8">
+            <div className="flex-1">
+              <Header 
+                status={status} 
+                activeTab={activeTab} 
+                isRefreshing={isRefreshing} 
+                onRefresh={loadData} 
+              />
+            </div>
+            <L7Diagnostics health={health} />
+          </div>
 
           <ViewTransition enter="fade-in" exit="fade-out" default="none">
             <div key={activeTab} className="min-h-full">
@@ -217,24 +227,34 @@ function DashboardContent({ status, monitoringData }: { status: BankrollStatus |
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
-                              {race.runners?.map((runner: any, idx: number) => (
-                                <tr key={idx} className="hover:bg-white/5 transition-colors group">
-                                  <td className="px-4 py-4">
-                                    <span className="font-bold text-white group-hover:text-amber-500 transition-colors uppercase tracking-tight">{runner.name}</span>
-                                  </td>
-                                  <td className="px-4 py-4">
-                                    <div className="space-y-0.5">
-                                      <p className="text-sm font-bold text-slate-300 flex items-center gap-1.5">
-                                        <User className="w-3 h-3 text-slate-500" /> {runner.jockey}
-                                      </p>
-                                      <p className="text-[10px] text-slate-500 font-medium">Trainer: {runner.trainer}</p>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-4 text-right">
-                                    <span className="text-sm font-black text-white tabular-nums">{runner.odds}</span>
-                                  </td>
-                                </tr>
-                              ))}
+                              {race.runners?.map((runner: any, idx: number) => {
+                                const isValue = runner.is_value_bet || (runner.confidence && runner.confidence > 75);
+                                return (
+                                  <tr key={idx} className={`hover:bg-white/5 transition-colors group ${isValue ? 'bg-emerald-500/5' : ''}`}>
+                                    <td className="px-4 py-4">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-white group-hover:text-amber-500 transition-colors uppercase tracking-tight">{runner.name}</span>
+                                        {runner.confidence && (
+                                          <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider border ${isValue ? 'text-emerald-400 border-emerald-400/20 bg-emerald-400/10' : 'text-slate-400 border-white/10 bg-white/5'}`}>
+                                            {runner.confidence}% Edge
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                      <div className="space-y-0.5">
+                                        <p className="text-sm font-bold text-slate-300 flex items-center gap-1.5">
+                                          <User className="w-3 h-3 text-slate-500" /> {runner.jockey}
+                                        </p>
+                                        <p className="text-[10px] text-slate-500 font-medium">Trainer: {runner.trainer}</p>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-4 text-right">
+                                      <span className={`text-sm font-black tabular-nums ${isValue ? 'text-emerald-400' : 'text-white'}`}>{runner.odds}</span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -261,18 +281,36 @@ function DashboardContent({ status, monitoringData }: { status: BankrollStatus |
           </div>
           <div className="glass-card rounded-[2rem] p-6 h-[400px] flex flex-col">
              <div className="flex-1 space-y-4 overflow-y-auto custom-scrollbar pr-2">
-                {[1, 2, 3, 4].map((i) => (
-                   <div key={i} className="flex gap-4 group">
-                      <div className="flex flex-col items-center">
-                         <div className="w-1.5 h-1.5 rounded-full bg-slate-700 group-first:bg-amber-500" />
-                         <div className="flex-1 w-px bg-slate-800" />
-                      </div>
-                      <div className="pb-4">
-                         <p className="text-[10px] font-bold text-slate-500 mb-0.5 uppercase tracking-widest tabular-numbers">14:2{i} PM</p>
-                         <p className="text-xs text-slate-300 leading-relaxed font-medium">Monitoring market inefficiencies for active races.</p>
-                      </div>
-                   </div>
-                ))}
+                {monitoringData?.alerts && monitoringData.alerts.length > 0 ? (
+                  monitoringData.alerts.map((alert: any, i: number) => (
+                    <div key={`alert-${i}`} className="flex gap-4 group">
+                       <div className="flex flex-col items-center">
+                          <div className={`w-2 h-2 rounded-full ${alert.condition_type === 'value_bet' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                          <div className="flex-1 w-px bg-slate-800" />
+                       </div>
+                       <div className="pb-4">
+                          <p className="text-[10px] font-bold text-slate-500 mb-0.5 uppercase tracking-widest tabular-numbers">{alert.triggered_at ? new Date(alert.triggered_at).toLocaleTimeString() : 'LIVE'}</p>
+                          <p className="text-sm font-bold text-white mb-1">{alert.race_course} • {alert.horse_name || 'Market Shift'}</p>
+                          <p className={`text-xs font-semibold px-2 py-1 rounded-md inline-block bg-white/5 border border-white/10 ${alert.condition_type === 'value_bet' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {alert.condition_type === 'value_bet' ? 'Value Bet Detected' : 'Threshold Breached'}
+                          </p>
+                       </div>
+                    </div>
+                  ))
+                ) : (
+                  [1, 2, 3].map((i) => (
+                    <div key={i} className="flex gap-4 group">
+                       <div className="flex flex-col items-center">
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-700 group-first:bg-amber-500" />
+                          <div className="flex-1 w-px bg-slate-800" />
+                       </div>
+                       <div className="pb-4">
+                          <p className="text-[10px] font-bold text-slate-500 mb-0.5 uppercase tracking-widest tabular-numbers">Awaiting Data</p>
+                          <p className="text-xs text-slate-400 leading-relaxed font-medium">Scanning passive intelligence streams...</p>
+                       </div>
+                    </div>
+                  ))
+                )}
              </div>
           </div>
         </section>

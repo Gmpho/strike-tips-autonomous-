@@ -22,7 +22,9 @@ services:
       - ollama
 
   odds-monitor:
-    image: strike-tips-base:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.odds
     container_name: odds-monitor-new
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -35,12 +37,18 @@ services:
       - MAX_CONCURRENT_PAGES=2
     volumes:
       - .:/app
+      - ./data/browser_profile:/app/data/browser_profile
+    ipc: host
+    shm_size: 2gb
+    init: true
+    security_opt:
+      - seccomp:seccomp_profile.json
     command: python3 core_agent/core/adaptive_odds_monitor.py
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '0.8'
+          memory: 1.5G
     restart: unless-stopped
     depends_on:
       - ollama

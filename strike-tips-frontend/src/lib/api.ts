@@ -61,6 +61,27 @@ export interface Runner {
   jockey?: string;
   trainer?: string;
   form?: string;
+  confidence?: number;
+  is_value_bet?: boolean;
+}
+
+export interface MarketAlert {
+  id: string;
+  race_course: string;
+  horse_name?: string;
+  condition_type: string;
+  threshold_value: number;
+  is_active: boolean;
+  triggered_at?: string;
+  current_odds?: number;
+}
+
+export interface L7Health {
+  memory_usage_percent: number;
+  cpu_usage_percent: number;
+  available_memory_mb: number;
+  status: string;
+  timestamp: string;
 }
 
 export interface ValueBet {
@@ -170,6 +191,22 @@ export async function getMonitoringSnapshot() {
   const res = await fetchWithTimeout(`${API_BASE_URL}/api/monitoring/snapshot`);
   if (!res.ok) throw new Error('Failed to fetch monitoring snapshot');
   return res.json();
+}
+
+export async function getSystemHealth(): Promise<L7Health> {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/api/system/health`);
+    if (!res.ok) throw new Error('Failed to fetch health');
+    return res.json();
+  } catch (err) {
+    return {
+      memory_usage_percent: 0,
+      cpu_usage_percent: 0,
+      available_memory_mb: 0,
+      status: "DISCONNECTED",
+      timestamp: new Date().toISOString()
+    };
+  }
 }
 
 export async function getPerformanceSummary() {

@@ -1,253 +1,242 @@
-"""
-Strike Tips - Adaptive Odds Monitor (L7 Ghost Edition)
-Virtually undetectable scraping using fingerprint masking and human behavior simulation.
-Strict Purge logic for finished races + Stealth Browser Piggybacking.
-"""
 import asyncio
-import time
 import json
+import logging
+import sys
 import os
 import random
-import math
+import time
 from datetime import datetime
 from difflib import get_close_matches
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 from playwright.async_api import async_playwright
+
+from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+from core_agent.core.alert_engine import AlertEngine
+from core_agent.core.human_behavior import HumanBehaviorSimulator
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 
-# Use specialized stealth
-try:
-    from playwright_stealth import stealth_async
-except ImportError:
-    stealth_async = None
+# Persistent Identity Layer
+BROWSER_PROFILE_DIR = "/app/data/browser_profile"
 
-# Import performance tracker
-try:
-    from performance_tracker import tracker
-except ImportError:
-    tracker = None
+# User's Gold Standard Stealth JS
+STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+window.chrome = { runtime: {} };
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' ?
+        Promise.resolve({ state: Notification.permission }) :
+        originalQuery(parameters)
+);
+"""
+
+CHROME_ARGS = [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-dev-shm-usage',
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-infobars',
+    '--ignore-certificate-errors',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-plugins',
+    '--disable-images',
+    '--blink-settings=imagesEnabled=false',
+    '--disable-background-networking',
+    '--disable-sync'
+]
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger("L7-Monitor")
+
 
 class AdaptiveOddsMonitor:
-    def __init__(self, data_dir: Optional[str] = None):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.data_dir = data_dir or os.path.join(base_dir, "data")
+    def __init__(self):
+        self.events_cache = {}
+        self.last_update = datetime.now()
+        self.alert_engine = AlertEngine()
+        self.human = HumanBehaviorSimulator()
         self.monitoring_active = True
-        self.error_count = 0
-        self.browser_lock = asyncio.Lock()  # Prevent simultaneous scraping
-        self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        ]
-        
-    def match_horse(self, name, oc_list):
-        names = [o.get("horse") for o in oc_list if o.get("horse")]
-        match = get_close_matches(name, names, n=1, cutoff=0.5)
-        if match:
-            return next((o for o in oc_list if o["horse"] == match[0]), None)
-        return None
-        
-    async def simulate_human(self, page):
-        """Ghost Protocol: Perform subtle, non-intrusive human actions."""
-        try:
-            # Random subtle scroll
-            scroll_amt = random.randint(100, 400)
-            await page.mouse.wheel(0, scroll_amt)
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            await page.mouse.wheel(0, -scroll_amt)
-            
-            # Random mouse move
-            width, height = 1920, 1080
-            await page.mouse.move(random.randint(0, width), random.randint(0, height))
-        except:
-            pass
+        self.oc_state = {"odds": {}}
 
-    async def stealth_fetch(self, page) -> Dict:
-        """L7 Stealth: JS-Context Fetching with dynamic headers."""
-        async with self.browser_lock:
-            script = """
-            async () => {
-                const fetchConfig = {
-                    headers: {
-                        "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                        "sec-ch-ua-mobile": "?0",
-                        "sec-ch-ua-platform": '"Windows"',
-                        "X-Requested-With": "XMLHttpRequest"
-                    }
-                };
-                
+    async def initialize(self):
+        await self.alert_engine.initialize()
+        os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+
+    async def _fetch_oc_odds_background(self):
+        """Background task to fetch Oddschecker odds every 20 minutes for Fusion."""
+        oddschecker = OddscheckerScraper()
+        while self.monitoring_active:
+            try:
+                logger.info("🔭 Fusion Layer: Fetching Oddschecker prices...")
+                odds = await oddschecker.get_latest_odds()
+                if odds:
+                    self.oc_state["odds"] = odds
+                    logger.info(f"✅ Fusion Sync: Updated market snapshot with {len(odds)} OC races.")
+            except Exception as e:
+                logger.warning(f"⚠️ Oddschecker fusion fetch failed: {e}")
+            await asyncio.sleep(1200)
+
+    async def stealth_fetch(self, page):
+        """L7 Stealth Fetch: Executes JS-inline API calls to Betway endpoints."""
+        script = """
+        async () => {
+            try {
                 const urls = [
                     "https://www.betway.co.za/sportsapi/v1/TrackRacing/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2",
                     "https://www.betway.co.za/sportsapi/v1/TrackRacing/GetNextOff?sportId=horse-racing&take=20&isVirtual=false&marketType=Race%20Winner&marketGroupname=Race%20Winner&countryCode=ZA"
                 ];
                 
-                try {
-                    const results = await Promise.all(urls.map(url => fetch(url, fetchConfig).then(r => r.json())));
-                    const daily = results[0] || { regions: [] };
-                    const nextOff = results[1] || { events: [], prices: [] };
-                    
-                    const saEvents = [];
-                    daily.regions?.forEach(reg => {
-                        if (reg.name.toLowerCase().includes('south africa')) {
-                            reg.sportEvents?.forEach(e => {
-                                if (!e.isFinished) saEvents.push(e.eventId);
-                            });
-                        }
-                    });
-                    
-                    const eventResults = await Promise.all(
-                        saEvents.slice(0, 10).map(id => 
-                            fetch(`https://www.betway.co.za/sportsapi/v1/TrackRacing/GetEvent?eventId=${id}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA`, fetchConfig)
-                            .then(r => r.json())
-                            .catch(() => null)
-                        )
-                    );
+                const responses = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
+                const daily = responses[0];
+                const nextOff = responses[1];
+                
+                // Get all prices into a map
+                const allPrices = {};
+                if (daily.prices) Object.assign(allPrices, daily.prices);
+                if (nextOff.prices) Object.assign(allPrices, nextOff.prices);
 
-                    const safePrices = (p) => {
-                        const obj = {};
-                        if (Array.isArray(p)) {
-                            p.forEach(price => {
-                                if (price.outcomeId) obj[price.outcomeId] = price;
-                            });
-                        } else if (p && typeof p === 'object') {
-                            Object.assign(obj, p);
-                        }
-                        return obj;
+                const events = {};
+                
+                const mapEvent = (event, region) => {
+                    const details = event.raceEventDetails || event.details;
+                    if (!details?.racers) return null;
+                    
+                    return {
+                        id: event.eventId,
+                        en: region ? `${region}: ${event.league}` : event.league,
+                        course: event.league,
+                        t: event.name.split(" ")[0],
+                        st: event.name.split(" ")[0],
+                        isFinished: event.isFinished,
+                        raceNumber: event.sportSpecificProperties?.raceNumber || "1",
+                        runners: details.racers.map(r => {
+                            const pId = r.outcomeIds && r.outcomeIds[0];
+                            const p = allPrices[pId];
+                            return {
+                                name: r.outcomeName || r.name || "Unknown Horse",
+                                jockey: r.jockeyName || "TBA",
+                                trainer: r.trainerName || "TBA",
+                                draw: r.draw || 0,
+                                number: r.number || 0,
+                                odds: (p?.priceDecimal || p?.decimalPrice) ? parseFloat(p.priceDecimal || p.decimalPrice) : 5.0
+                            };
+                        })
                     };
+                };
 
-                    let allPrices = { ...safePrices(daily.prices), ...safePrices(nextOff.prices) };
-                    eventResults.forEach(er => {
-                        if (er?.result?.prices) {
-                            allPrices = { ...allPrices, ...safePrices(er.result.prices) };
-                        }
+                daily.regions?.forEach(reg => {
+                    reg.sportEvents?.forEach(e => {
+                        const mapped = mapEvent(e, reg.name);
+                        if (mapped) events[e.eventId] = mapped;
                     });
-                    const events = {};
-                    
-                    const mapEvent = (event, region) => {
-                        if (!event.raceEventDetails?.racers) return null;
-                        return {
-                            id: event.eventId,
-                            en: `${region || "International"}: ${event.league}`,
-                            t: event.name.split(" ")[0],
-                            st: event.name.split(" ")[0],
-                            isFinished: event.isFinished,
-                            raceNumber: event.sportSpecificProperties?.raceNumber || "1",
-                            runners: event.raceEventDetails.racers.map(r => {
-                                const p = allPrices[r.outcomeIds[0]];
-                                return {
-                                    name: r.outcomeName || r.name || "Unknown Horse",
-                                    jockey: r.jockeyName,
-                                    trainer: r.trainerName,
-                                    draw: r.draw,
-                                    odds: (p?.priceDecimal || p?.decimalPrice) ? parseFloat(p.priceDecimal || p.decimalPrice) : 5.0
-                                };
-                            })
-                        };
-                    };
+                });
+                
+                nextOff.sportEvents?.forEach(e => {
+                    if (!events[e.eventId]) {
+                        const mapped = mapEvent(e);
+                        if (mapped) events[e.eventId] = mapped;
+                    }
+                });
 
-                    daily.regions?.forEach(reg => {
-                        reg.sportEvents?.forEach(e => {
-                            const mapped = mapEvent(e, reg.name);
-                            if (mapped) events[e.eventId] = mapped;
-                        });
-                    });
-                    
-                    nextOff.events?.forEach(e => {
-                        if (!events[e.eventId]) {
-                            const mapped = mapEvent(e);
-                            if (mapped) events[e.eventId] = mapped;
-                        }
-                    });
-
-                    const active = Object.fromEntries(
-                        Object.entries(events)
-                            .filter(([_, v]) => !v.isFinished)
-                            .sort((a, b) => a[1].t.localeCompare(b[1].t))
-                    );
-                    
-                    return { events: active, count: Object.keys(active).length, status: "online" };
-                } catch (e) {
-                    return { status: "error", error: e.message };
-                }
+                const active = Object.fromEntries(
+                    Object.entries(events)
+                        .filter(([_, v]) => !v.isFinished)
+                        .sort((a, b) => a[1].t.localeCompare(b[1].t))
+                );
+                
+                return { events: active, count: Object.keys(active).length, status: "online" };
+            } catch (e) {
+                return { status: "error", error: e.message };
             }
-            """
-            start_time = time.time()
-            try:
-                # Ghost Move before fetch
-                if random.random() < 0.3:
-                    await self.simulate_human(page)
-                    
-                state = await page.evaluate(script)
-                if state.get("status") == "error":
-                    raise Exception(state["error"])
-                    
-                if tracker:
-                    tracker.track_request("Ghost_Stealth_Fetch", time.time() - start_time, 0.0, True)
-                return state
-            except Exception as e:
-                if tracker:
-                    tracker.track_request("Ghost_Stealth_Fetch", time.time() - start_time, 0.0, False)
-                print(f"[WARN] Ghost Scraper throttled: {e}")
-                return {"status": "throttled"}
+        }
+        """
+        try:
+            # Ghost Move before fetch for better human-like behavior
+            if random.random() < 0.3:
+                await self.human.scroll_naturally(page)
+                
+            state = await page.evaluate(script)
+            if state.get("status") == "error":
+                raise Exception(state["error"])
+            return state
+        except Exception as e:
+            logger.warning(f"⚠️ Ghost Scraper throttled: {e}")
+            return {"status": "throttled"}
 
-    async def _fetch_oc_odds_background(self, oddschecker, state_container):
-        """Background task to fetch OC odds every 20 minutes."""
-        while self.monitoring_active:
-            try:
-                odds = await oddschecker.get_latest_odds()
-                if odds:
-                    state_container["odds"] = odds
-                    print(f"[OC] Successfully updated market snapshot with {len(odds)} prices.")
-            except Exception as e:
-                print(f"[WARN] Oddschecker background fetch failed: {e}")
-            await asyncio.sleep(1200) # Poll every 20 minutes
+    def save_snapshot(self, state):
+        """Atomic persist logic."""
+        try:
+            tmp = f"{MARKET_SNAPSHOT_PATH}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(state, f, indent=2)
+            os.rename(tmp, MARKET_SNAPSHOT_PATH)
+        except Exception as e:
+            logger.error(f"❌ Snapshot persistence error: {e}")
 
-    async def monitor_loop(self):
-        print(f"👻 Ghost Scraper Active - Persistent Browser Mode Engaging...")
-        oddschecker = OddscheckerScraper()
-        oc_state = {"odds": []}
-        asyncio.create_task(self._fetch_oc_odds_background(oddschecker, oc_state))
+    async def inject_stealth(self, page):
+        """Deep Masking Tier: Human-like browser fingerprints."""
+        try:
+            await page.add_init_script("""
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                  if (parameter === 37445) return 'Intel Open Source Technology Center';
+                  if (parameter === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
+                  return getParameter(parameter);
+                };
+            """)
+            await page.add_init_script("Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });")
+            await page.add_init_script("Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });")
+            logger.info("🛡️ Stealth Identity: Fingerprint Masking Active.")
+        except Exception as e:
+            logger.warning(f"⚠️ Stealth Jitter: {e}")
+
+    async def run(self):
+        await self.initialize()
+        logger.info("🚀 L7 Ghost Monitor Active (V1 Fusion Logic - Betway Internal APIs)")
+        
+        # Start Fusion Layer (Oddschecker)
+        asyncio.create_task(self._fetch_oc_odds_background())
         
         async with async_playwright() as p:
-            # Ghost hardware profiles - Randomize initial fingerprint
-            ua = random.choice(self.user_agents)
-            browser = await p.chromium.launch(
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir=BROWSER_PROFILE_DIR,
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+                args=CHROME_ARGS,
+                viewport={'width': 1920, 'height': 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
-            context = await browser.new_context(
-                user_agent=ua,
-                viewport={'width': random.randint(1366, 1920), 'height': random.randint(768, 1080)},
-                device_scale_factor=random.choice([1, 2]),
-                locale=random.choice(['en-ZA', 'en-US', 'en-GB'])
-            )
-            page = await context.new_page()
             
-            # Apply L7 Stealth Patches
-            if stealth_async:
-                await stealth_async(page)
+            page = context.pages[0] if context.pages else await context.new_page()
+            await self.inject_stealth(page)
+            await page.add_init_script(STEALTH_JS)
             
+            # Navigate to base page to set origin/cookies
             await page.goto("https://www.betway.co.za/sport/horse-racing", wait_until="domcontentloaded")
             
             while self.monitoring_active:
                 try:
+                    logger.info("📡 Ghost Sync: Fetching Internal Betway APIs...")
                     state = await self.stealth_fetch(page)
                     
                     if state.get("status") == "online":
                         state["timestamp"] = datetime.now().isoformat()
                         
-                        # Merge OC odds safely using Fuzzy Matching
-                        oc_data = oc_state.get("odds", {})
+                        # Merge Oddschecker odds safely using Fuzzy Matching (Fusion Layer)
+                        oc_data = self.oc_state.get("odds", {})
                         events = state.get("events") or {}
 
                         if oc_data:
-                            # Extract OC race names
                             oc_races = list(oc_data.keys())
-
                             for event_id, event in events.items():
                                 race_name = event.get("en", "")
-                                # Pre-process race name to strip regional prefixes for better matching
-                                # e.g. "International: Ireland: Dundalk" -> "Dundalk"
                                 clean_race_name = race_name.split(":")[-1].strip()
                                 
                                 # Fuzzy match race
@@ -258,28 +247,28 @@ class AdaptiveOddsMonitor:
 
                                     for runner in event.get("runners", []):
                                         horse_name = runner["name"]
-                                        # Fuzzy match horse with lower cutoff for international name variations
                                         horse_match = get_close_matches(horse_name, oc_horses, n=1, cutoff=0.5)
                                         if horse_match:
+                                            # Average the odds for better baseline or prefer OC if available
                                             runner["odds"] = float(race_oc_odds[horse_match[0]])
-                                            runner["provider"] = "Oddschecker"
-                                            print(f"[FUSION] Matched '{horse_name}' at '{clean_race_name}'")
+                                            runner["provider"] = "Fusion (Betway + OC)"
 
-                        print(f"👻 [{datetime.now().strftime('%H:%M:%S')}] Ghost Sync: {state['count']} Active Races.")                        
-                        from core_agent.config.paths import MARKET_SNAPSHOT_PATH
-                        with open(MARKET_SNAPSHOT_PATH, "w") as f:
-                            json.dump(state, f, indent=2)
-                        self.error_count = 0
+                        self.save_snapshot(state)
+                        logger.info(f"👻 Ghost Pulse: Synchronized {state['count']} Active Races.")
+                        
+                        # Intelligence Evaluation
+                        for event_id, event in events.items():
+                            await self.alert_engine.evaluate_odds_update(event)
+
                 except Exception as e:
-                    print(f"[ERR] Monitor Loop error: {e}")
+                    logger.warning(f"⚠️ Flicker (Recovering): {e}")
                 
-                await asyncio.sleep(random.uniform(20, 30))
-            
-            await browser.close()
+                # Dynamic Ghost delay to avoid pattern detection
+                await asyncio.sleep(random.uniform(15, 25))
 
 if __name__ == "__main__":
     monitor = AdaptiveOddsMonitor()
     try:
-        asyncio.run(monitor.monitor_loop())
+        asyncio.run(monitor.run())
     except KeyboardInterrupt:
-        print("\n[STOP] Ghost Scraper deactivated.")
+        logger.info("🛑 Ghost Monitor deactivated.")
