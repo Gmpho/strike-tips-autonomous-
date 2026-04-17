@@ -71,18 +71,23 @@ class AdaptiveOddsMonitor:
         os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
 
     async def _fetch_oc_odds_background(self):
-        """Background task to fetch Oddschecker odds every 20 minutes for Fusion."""
+        """Background task to fetch Oddschecker odds every 90 seconds (Staggered)."""
         oddschecker = OddscheckerScraper()
+        # Stagger start to avoid initial CPU spike
+        await asyncio.sleep(10)
+        
         while self.monitoring_active:
             try:
                 logger.info("🔭 Fusion Layer: Fetching Oddschecker prices...")
                 odds = await oddschecker.get_latest_odds()
                 if odds:
                     self.oc_state["odds"] = odds
-                    logger.info(f"✅ Fusion Sync: Updated market snapshot with {len(odds)} OC races.")
+                    logger.info(f"✅ Fusion Sync: Updated market snapshot with OC data.")
             except Exception as e:
                 logger.warning(f"⚠️ Oddschecker fusion fetch failed: {e}")
-            await asyncio.sleep(1200)
+            
+            # Heavy pulse: 90 seconds
+            await asyncio.sleep(90)
 
     async def stealth_fetch(self, page):
         """L7 Stealth Fetch: Executes JS-inline API calls to Betway endpoints."""
@@ -98,10 +103,18 @@ class AdaptiveOddsMonitor:
                 const daily = responses[0];
                 const nextOff = responses[1];
                 
-                // Get all prices into a map
+                // Build price lookup map (handles both array and object formats)
                 const allPrices = {};
-                if (daily.prices) Object.assign(allPrices, daily.prices);
-                if (nextOff.prices) Object.assign(allPrices, nextOff.prices);
+                const processPrices = (prices) => {
+                    if (Array.isArray(prices)) {
+                        prices.forEach(p => { if (p.outcomeId) allPrices[p.outcomeId] = p; });
+                    } else if (typeof prices === 'object' && prices !== null) {
+                        Object.assign(allPrices, prices);
+                    }
+                };
+                
+                if (daily.prices) processPrices(daily.prices);
+                if (nextOff.prices) processPrices(nextOff.prices);
 
                 const events = {};
                 
@@ -109,42 +122,102 @@ class AdaptiveOddsMonitor:
                     const details = event.raceEventDetails || event.details;
                     if (!details?.racers) return null;
                     
+                    const raceName = event.name || event.displayName || "Unknown Race";
+                    const raceTime = raceName.split(" ")[0];
+                    
                     return {
                         id: event.eventId,
                         en: region ? `${region}: ${event.league}` : event.league,
                         course: event.league,
-                        t: event.name.split(" ")[0],
-                        st: event.name.split(" ")[0],
+                        t: raceTime,
+                        st: raceTime,
                         isFinished: event.isFinished,
                         raceNumber: event.sportSpecificProperties?.raceNumber || "1",
                         runners: details.racers.map(r => {
-                            const pId = r.outcomeIds && r.outcomeIds[0];
+                            const pId = (r.outcomeIds && r.outcomeIds[0]) || r.outcomeId;
                             const p = allPrices[pId];
+                            
+                            // High-fidelity price extraction
+                            let odds = 5.0;
+                            if (p) {
+                                odds = parseFloat(p.priceDecimal || p.decimalPrice || p.odds || 5.0);
+                            }
+                            
                             return {
+                                outcomeIds: r.outcomeIds || [pId],
                                 name: r.outcomeName || r.name || "Unknown Horse",
-                                jockey: r.jockeyName || "TBA",
-                                trainer: r.trainerName || "TBA",
+                                jockeyName: r.jockeyName || "TBA",
+                                trainerName: r.trainerName || "TBA",
+                                age: r.age || "Unknown",
+                                weight: r.weight || "0",
+                                form: r.form || "",
+                                number: r.number || "0",
+                                starRating: r.starRating || 0,
                                 draw: r.draw || 0,
-                                number: r.number || 0,
-                                odds: (p?.priceDecimal || p?.decimalPrice) ? parseFloat(p.priceDecimal || p.decimalPrice) : 5.0
+                                timeForm: r.timeForm || "",
+                                outcomeName: r.outcomeName || r.name || "",
+                                odds: odds,
+                                outcomeId: pId
                             };
                         })
                     };
                 };
 
-                daily.regions?.forEach(reg => {
-                    reg.sportEvents?.forEach(e => {
-                        const mapped = mapEvent(e, reg.name);
-                        if (mapped) events[e.eventId] = mapped;
+                // Process regional/daily races
+                if (daily.regions) {
+                    daily.regions.forEach(reg => {
+                        if (reg.sportEvents) {
+                            reg.sportEvents.forEach(e => {
+                                const mapped = mapEvent(e, reg.name);
+                                if (mapped) events[e.eventId] = mapped;
+                            });
+                        }
                     });
-                });
+                }
                 
-                nextOff.sportEvents?.forEach(e => {
-                    if (!events[e.eventId]) {
-                        const mapped = mapEvent(e);
-                        if (mapped) events[e.eventId] = mapped;
-                    }
-                });
+                // Process 'Next Off' races
+                if (nextOff.events) {
+                    nextOff.events.forEach(e => {
+                        if (!events[e.eventId]) {
+                            const mapped = mapEvent(e);
+                            if (mapped) events[e.eventId] = mapped;
+                        }
+                    });
+                } else if (nextOff.sportEvents) {
+                    nextOff.sportEvents.forEach(e => {
+                        if (!events[e.eventId]) {
+                            const mapped = mapEvent(e);
+                            if (mapped) events[e.eventId] = mapped;
+                        }
+                    });
+                }
+
+                // EVENT-DEEP-DIVE: If runners have missing prices (odds: 5), fetch specific event details
+                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 5.0)).slice(0, 10);
+                const missing = findMissing(events);
+                
+                if (missing.length > 0) {
+                    const eventResults = await Promise.all(
+                        missing.map(e => 
+                            fetch(`https://www.betway.co.za/sportsapi/v1/TrackRacing/GetEvent?eventId=${e.id}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA`)
+                            .then(r => r.json())
+                            .catch(() => null)
+                        )
+                    );
+                    
+                    eventResults.forEach(res => {
+                        if (res && res.prices) {
+                            processPrices(res.prices);
+                            // Re-map the specific event now that we have its prices
+                            const rawEvent = (daily.regions?.flatMap(r => r.sportEvents) || []).find(e => e.eventId === res.eventId) || 
+                                             (nextOff.events || nextOff.sportEvents || []).find(e => e.eventId === res.eventId);
+                            if (rawEvent) {
+                                const mapped = mapEvent(rawEvent, "DeepDive");
+                                if (mapped) events[res.eventId] = mapped;
+                            }
+                        }
+                    });
+                }
 
                 const active = Object.fromEntries(
                     Object.entries(events)
@@ -159,8 +232,8 @@ class AdaptiveOddsMonitor:
         }
         """
         try:
-            # Ghost Move before fetch for better human-like behavior
-            if random.random() < 0.3:
+            # Ghost Move before fetch
+            if random.random() < 0.2:
                 await self.human.scroll_naturally(page)
                 
             state = await page.evaluate(script)
@@ -253,18 +326,18 @@ class AdaptiveOddsMonitor:
                                             runner["odds"] = float(race_oc_odds[horse_match[0]])
                                             runner["provider"] = "Fusion (Betway + OC)"
 
-                        self.save_snapshot(state)
-                        logger.info(f"👻 Ghost Pulse: Synchronized {state['count']} Active Races.")
-                        
-                        # Intelligence Evaluation
-                        for event_id, event in events.items():
-                            await self.alert_engine.evaluate_odds_update(event)
+                    self.save_snapshot(state)
+                    logger.info(f"👻 Ghost Pulse: Synchronized {state['count']} Active Races.")
+                    
+                    # Intelligence Evaluation
+                    for event_id, event in events.items():
+                        await self.alert_engine.evaluate_odds_update(event)
 
                 except Exception as e:
                     logger.warning(f"⚠️ Flicker (Recovering): {e}")
                 
-                # Dynamic Ghost delay to avoid pattern detection
-                await asyncio.sleep(random.uniform(15, 25))
+                # Fast pulse: 20 seconds (staggered from heavy OC pulse)
+                await asyncio.sleep(20)
 
 if __name__ == "__main__":
     monitor = AdaptiveOddsMonitor()
