@@ -54,13 +54,19 @@ export interface Race {
 
 export interface Runner {
   name: string;
-  number?: number;
+  outcomeName?: string;
+  number?: string | number;
   odds: number;
-  weight?: number;
-  draw?: number;
+  weight?: string;
+  draw?: number | string;
   jockey?: string;
+  jockeyName?: string;
   trainer?: string;
+  trainerName?: string;
   form?: string;
+  age?: string | number;
+  starRating?: number;
+  timeForm?: string;
   confidence?: number;
   is_value_bet?: boolean;
 }

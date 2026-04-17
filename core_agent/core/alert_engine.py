@@ -95,7 +95,7 @@ class AlertEngine:
         with open(self.alerts_file, 'w') as f:
             json.dump([asdict(a) for a in self.alerts_cache.values()], f, indent=4)
 
-    async def evaluate_odds_update(self, race_data: Dict[str, Any]):
+    async def evaluate_odds_update(self, race_data: Dict[str, Any], cache=None):
         """Evaluate a fresh race update against all conditions."""
         self.stats["total_evaluations"] += 1
         
@@ -115,21 +115,34 @@ class AlertEngine:
                 if alert.horse_name and alert.horse_name.lower() != name.lower():
                     continue
 
-                if await self._evaluate_condition(alert, horse, race_data):
+                if await self._evaluate_condition(alert, horse, race_data, cache):
                     await self._trigger_alert(alert, horse, race_data)
 
-    async def _evaluate_condition(self, alert: AlertCondition, horse: Dict, race_data: Dict) -> bool:
+    async def _evaluate_condition(self, alert: AlertCondition, horse: Dict, race_data: Dict, cache=None) -> bool:
         """Core math evaluation logic."""
         try:
             current_odds_str = str(horse.get("odds", "1/1"))
             current_odds = self._parse_odds(current_odds_str)
             val = alert.condition_value
 
+            # GLOBAL GUARD: Ignore default odds (5.0, 1.0, etc.) for ALL alerts to avoid false positives!
+            if current_odds is None or current_odds == 5.0 or current_odds == 1.0:
+                return False
+
             if alert.condition_type == "odds_drop":
                 percentage = float(val.strip('%')) / 100
-                # Comparative logic (requires history, defaulting to True for initial detection)
-                # In full L7 we compare against MARKET_SNAPSHOT_LATEST
-                return True # Placeholder for now, will link to market_watcher 
+                
+                # Retrieve baseline from cache manager (Fusion Layer Persistence)
+                event_id = race_data.get("id")
+                historical_odds = cache.get_historical_odds(event_id) if cache else {}
+                baseline = historical_odds.get(horse.get("name"))
+
+                if baseline and float(baseline) > 0:
+                    # Trigger if current odds are significantly lower than baseline
+                    # Example: Baseline 10.0, Percentage 15% -> Drop to <= 8.5
+                    return current_odds <= (float(baseline) * (1 - percentage))
+                
+                return False # No baseline = No alert
 
             elif alert.condition_type == "value_bet":
                 threshold = float(val)

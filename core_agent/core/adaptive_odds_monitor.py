@@ -10,10 +10,11 @@ from difflib import get_close_matches
 from typing import Dict, Optional, List, Any
 from playwright.async_api import async_playwright
 
-from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
 from core_agent.core.alert_engine import AlertEngine
 from core_agent.core.human_behavior import HumanBehaviorSimulator
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
+from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
 # Persistent Identity Layer
 BROWSER_PROFILE_DIR = "/app/data/browser_profile"
@@ -61,6 +62,7 @@ class AdaptiveOddsMonitor:
     def __init__(self):
         self.events_cache = {}
         self.last_update = datetime.now()
+        self.intel_cache = IntelligenceCacheManager(MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR)
         self.alert_engine = AlertEngine()
         self.human = HumanBehaviorSimulator()
         self.monitoring_active = True
@@ -69,6 +71,8 @@ class AdaptiveOddsMonitor:
     async def initialize(self):
         await self.alert_engine.initialize()
         os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+        # Rehydrate intelligence cache (survival across restarts)
+        self.events_cache = self.intel_cache.rehydrate()
 
     async def _fetch_oc_odds_background(self):
         """Background task to fetch Oddschecker odds every 90 seconds (Staggered)."""
@@ -193,7 +197,7 @@ class AdaptiveOddsMonitor:
                 }
 
                 // EVENT-DEEP-DIVE: If runners have missing prices (odds: 5), fetch specific event details
-                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 5.0)).slice(0, 10);
+                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 5.0)).slice(0, 30);
                 const missing = findMissing(events);
                 
                 if (missing.length > 0) {
@@ -292,7 +296,10 @@ class AdaptiveOddsMonitor:
             await page.add_init_script(STEALTH_JS)
             
             # Navigate to base page to set origin/cookies
-            await page.goto("https://www.betway.co.za/sport/horse-racing", wait_until="domcontentloaded")
+            try:
+                await page.goto("https://www.betway.co.za/sport/horse-racing", wait_until="commit", timeout=60000)
+            except Exception as e:
+                logger.warning(f"⚠️ Initial Betway navigation timeout, continuing anyway: {e}")
             
             while self.monitoring_active:
                 try:
@@ -329,9 +336,17 @@ class AdaptiveOddsMonitor:
                     self.save_snapshot(state)
                     logger.info(f"👻 Ghost Pulse: Synchronized {state['count']} Active Races.")
                     
+                    # Intelligence Baseline Sync (Keep history for AlertEngine)
+                    active_ids = list(events.keys())
+                    for event_id, event in events.items():
+                        self.intel_cache.update_baseline(event_id, event.get("runners", []))
+                    
+                    # Periodic Pruning (Clean up finished races from disk)
+                    self.intel_cache.prune_stale_data(active_ids)
+                    
                     # Intelligence Evaluation
                     for event_id, event in events.items():
-                        await self.alert_engine.evaluate_odds_update(event)
+                        await self.alert_engine.evaluate_odds_update(event, cache=self.intel_cache)
 
                 except Exception as e:
                     logger.warning(f"⚠️ Flicker (Recovering): {e}")

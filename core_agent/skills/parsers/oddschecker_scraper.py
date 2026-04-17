@@ -22,15 +22,14 @@ class OddscheckerScraper:
             viewport_height=720
         )
         
-        # Schema for Oddschecker horse racing
-        # Note: Selectors are based on standard Oddschecker racing grid structure
+        # Schema for Oddschecker horse racing - Using more robust selectors
         self.schema = {
             "name": "OddscheckerRaces",
-            "baseSelector": "div.all-odds-click",
+            "baseSelector": "tr.event-row, .runner-row, div.all-odds-click",
             "fields": [
-                {"name": "horse_name", "selector": "a.runner-name", "type": "text"},
-                {"name": "fractional_odds", "selector": "span.odds", "type": "text"},
-                {"name": "race_name", "selector": "div.race-details h3", "type": "text"}
+                {"name": "horse_name", "selector": "a.runner-name, .horse-name, .name", "type": "text"},
+                {"name": "fractional_odds", "selector": "span.odds, .odds-value, .price", "type": "text"},
+                {"name": "race_name", "selector": "div.race-details h3, .event-name", "type": "text"}
             ]
         }
         self.extraction_strategy = JsonCssExtractionStrategy(self.schema)

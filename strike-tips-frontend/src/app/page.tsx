@@ -25,7 +25,7 @@ export default function Home() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 30000); 
+    const interval = setInterval(loadData, 10000); // Accelerated 10s Fast Refresh
     return () => clearInterval(interval);
   }, []);
 
@@ -221,8 +221,10 @@ function DashboardContent({ status, monitoringData }: { status: BankrollStatus |
                           <table className="w-full text-left border-collapse">
                             <thead className="bg-white/5">
                               <tr>
-                                <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5">Horse Name</th>
+                                <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5"># Horse</th>
+                                <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5">Details</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5">Jockey / Trainer</th>
+                                <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5">Recent Form</th>
                                 <th className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none border-b border-white/5 text-right">Odds</th>
                               </tr>
                             </thead>
@@ -230,29 +232,59 @@ function DashboardContent({ status, monitoringData }: { status: BankrollStatus |
                               {race.runners?.map((runner: any, idx: number) => {
                                 const isValue = runner.is_value_bet || (runner.confidence && runner.confidence > 75);
                                 return (
-                                  <tr key={idx} className={`hover:bg-white/5 transition-colors group ${isValue ? 'bg-emerald-500/5' : ''}`}>
-                                    <td className="px-4 py-4">
-                                      <div className="flex items-center gap-2">
+                                <motion.tr 
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: idx * 0.05 }}
+                                  key={idx} 
+                                  className={`hover:bg-white/5 transition-colors group ${isValue ? 'bg-emerald-500/5' : ''}`}
+                                >
+                                  <td className="px-4 py-4">
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-xs font-black text-slate-500 tabular-nums bg-white/5 w-6 h-6 rounded flex items-center justify-center border border-white/5 group-hover:border-amber-500/30 transition-colors">
+                                        {runner.number || idx + 1}
+                                      </span>
+                                      <div className="flex flex-col">
                                         <span className="font-bold text-white group-hover:text-amber-500 transition-colors uppercase tracking-tight">{runner.name}</span>
-                                        {runner.confidence && (
-                                          <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider border ${isValue ? 'text-emerald-400 border-emerald-400/20 bg-emerald-400/10' : 'text-slate-400 border-white/10 bg-white/5'}`}>
-                                            {runner.confidence}% Edge
-                                          </span>
+                                        {runner.starRating > 0 && (
+                                          <div className="flex gap-0.5 mt-0.5">
+                                            {[...Array(runner.starRating)].map((_, i) => (
+                                              <Zap key={i} className="w-2.5 h-2.5 text-amber-500 fill-amber-500" />
+                                            ))}
+                                          </div>
                                         )}
                                       </div>
-                                    </td>
-                                    <td className="px-4 py-4">
-                                      <div className="space-y-0.5">
-                                        <p className="text-sm font-bold text-slate-300 flex items-center gap-1.5">
-                                          <User className="w-3 h-3 text-slate-500" /> {runner.jockey}
-                                        </p>
-                                        <p className="text-[10px] text-slate-500 font-medium">Trainer: {runner.trainer}</p>
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-4 text-right">
+                                      {runner.confidence && (
+                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider border ${isValue ? 'text-emerald-400 border-emerald-400/20 bg-emerald-400/10' : 'text-slate-400 border-white/10 bg-white/5'}`}>
+                                          {runner.confidence}% Edge
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <div className="flex items-center gap-2">
+                                       <div className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[9px] font-bold text-blue-400 uppercase">Age: {runner.age || '?'}</div>
+                                       <div className="px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-bold text-indigo-400 uppercase">Draw: {runner.draw || '?'}</div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <div className="space-y-0.5">
+                                      <p className="text-sm font-bold text-slate-300 flex items-center gap-1.5">
+                                        <User className="w-3 h-3 text-slate-500" /> {runner.jockey || runner.jockeyName || 'TBD'}
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 font-medium">Trainer: {runner.trainer || runner.trainerName || 'TBD'}</p>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                     <span className="text-xs font-mono font-medium text-slate-400 bg-white/5 px-2 py-1 rounded-lg border border-white/5">{runner.form || '---'}</span>
+                                  </td>
+                                  <td className="px-4 py-4 text-right">
+                                    <div className="flex flex-col items-end">
                                       <span className={`text-sm font-black tabular-nums ${isValue ? 'text-emerald-400' : 'text-white'}`}>{runner.odds}</span>
-                                    </td>
-                                  </tr>
+                                      {runner.timeForm && <span className="text-[9px] font-bold text-amber-500/70 border-b border-amber-500/20">{runner.timeForm}</span>}
+                                    </div>
+                                  </td>
+                                </motion.tr>
                                 );
                               })}
                             </tbody>
