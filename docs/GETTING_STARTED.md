@@ -1,4 +1,4 @@
-# 🚀 Getting Started with Strike Tips
+# 🚀 Getting Started with Strike Tips v2.0
 
 Complete setup guide for South African horse racing enthusiasts.
 
@@ -7,63 +7,49 @@ Complete setup guide for South African horse racing enthusiasts.
 ## 📋 Prerequisites
 
 - Python 3.9 or higher
+- Docker & Docker Compose
 - A Telegram account
 - Basic command line knowledge
 
 ---
 
-## Step 1: Installation
+## 🚀 Quick Start (Docker - Recommended)
 
-### Clone and Setup
+### Step 1: Clone and Start
 
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/strike-tips.git
 cd strike-tips
 
-# Create virtual environment
-python -m venv venv
+# Start all containers
+docker compose up -d
 
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+# Check status
+docker ps
 ```
 
----
-
-## Step 2: Telegram Bot Setup
-
-### Create Your Bot
-
-1. Open Telegram and search for **@BotFather**
-2. Start a chat and type `/newbot`
-3. Follow prompts to name your bot (e.g., "StrikeTipsBot")
-4. **Save the bot token** - you'll need it!
-
-### Get Your Chat ID
-
-1. Search for **@userinfobot** on Telegram
-2. Start the bot
-3. It will reply with your Chat ID
-4. **Save this number**
-
-### Configure Environment
+### Step 2: Verify Services
 
 ```bash
-# Copy the example environment file
-cp .env.example .env
+# API should be available
+curl http://localhost:8000
 
-# Edit the file
-nano .env  # or use your preferred editor
+# Swagger docs at
+# http://localhost:8000/docs
+
+# Ollama health check
+curl http://localhost:11434/api/tags
+```
+
+### Step 3: Configure Telegram
+
+```bash
+# Edit .env file
+nano .env
 ```
 
 Add your credentials:
-
 ```env
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxyz
 TELEGRAM_CHAT_ID=123456789
@@ -71,69 +57,146 @@ TELEGRAM_CHAT_ID=123456789
 
 ---
 
-## Step 3: Test Your Setup
+## 🐳 Docker Architecture
+
+### 3-Container Setup
+
+| Container | Service | Port | Purpose |
+|-----------|---------|------|---------|
+| `strike-bot` | FastAPI | 8000 | Backend API |
+| `ollama` | Local LLM | 11434 | AI models |
+| `odds-monitor` | Playwright | - | Live odds scraper |
+
+### Common Docker Commands
 
 ```bash
-# Test Telegram connection
-python scheduler.py test
-```
+# Start all containers
+docker compose up -d
 
-You should receive a test message in Telegram!
+# View logs
+docker logs -f strike-bot
+
+# Stop all containers
+docker compose down
+
+# Restart a specific container
+docker restart strike-bot
+
+# Run command in container
+docker exec -it strike-bot python core_agent/core/strike_tips.py scan
+```
 
 ---
 
-## Step 4: Run Your First Scan
+## 🔧 Manual Setup (Development)
+
+If you prefer running without Docker:
+
+### Step 1: Install Dependencies
 
 ```bash
-# Run immediate scan
-python scheduler.py scan
+# Navigate to core_agent
+cd core_agent
+
+# Create virtual environment
+python -m venv venv
+
+# Activate
+source venv/bin/activate  # Linux/Mac
+# venv\Scripts\activate   # Windows
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-This will:
-1. Check which tracks are racing today
-2. Scrape racecards from TAB4Racing
-3. Analyze each race for value bets
-4. Send results to Telegram
+### Step 2: Configure Environment
+
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit with your settings
+nano .env
+```
+
+Required variables:
+```env
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
+GROQ_API_KEY=your_groq_key
+```
+
+### Step 3: Start Ollama (for local AI models)
+
+```bash
+# Install and start Ollama
+ollama serve
+
+# Pull required models
+ollama pull llama3.2:1b
+ollama pull racing_llama
+ollama pull racing_qwen
+```
+
+### Step 4: Run the API
+
+```bash
+# In core_agent directory
+python api.py
+
+# API available at http://localhost:8000
+```
 
 ---
 
-## Step 5: Set Up Automation
+## 🧪 Testing Your Setup
 
-### Option A: Run Scheduler (Recommended)
-
-```bash
-# Start automated daily scans at 11:00 AM
-python scheduler.py start
-
-# Or specify a different time
-python scheduler.py start --time 10:30
-```
-
-The scheduler will:
-- Run daily at your specified time
-- Automatically detect racing tracks
-- Send tips to Telegram
-- Track your bankroll
-
-### Option B: Cron Job (Linux/Mac)
+### Test 1: API Health
 
 ```bash
-# Edit crontab
-crontab -e
-
-# Add line for daily scan at 11:00 AM
-0 11 * * * cd /path/to/strike-tips && /path/to/venv/bin/python scheduler.py scan
+curl http://localhost:8000
+# Expected: {"message":"Strike Bot API Online"}
 ```
 
-### Option C: Windows Task Scheduler
+### Test 2: Agent Health
 
-1. Open Task Scheduler
-2. Create Basic Task
-3. Set trigger: Daily at 11:00 AM
-4. Set action: Start a program
-5. Program: `python.exe`
-6. Arguments: `scheduler.py scan`
-7. Start in: `C:\path\to\strike-tips`
+```bash
+curl http://localhost:8000/api/agent/health
+```
+
+### Test 3: Telegram
+
+```bash
+# Inside container
+docker exec -it strike-bot python -c "
+from core_agent.skills.notifications.telegram_bot import TelegramNotifier
+notifier = TelegramNotifier()
+notifier.send_message('Test from Strike Tips!')
+"
+```
+
+---
+
+## 🏇 Running Your First Scan
+
+### Via Docker
+
+```bash
+# Run daily scan
+docker exec -it strike-bot python core_agent/core/strike_tips.py scan
+```
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8000/api/agent/scan
+```
+
+### Via Swagger UI
+
+1. Open http://localhost:8000/docs
+2. Find `/api/agent/chat` endpoint
+3. Send message: "What races are on today?"
 
 ---
 
@@ -149,7 +212,6 @@ crontab -e
 
 📍 Turffontein: 7 races, 3 value bets
 📍 Kenilworth: 8 races, 2 value bets
-📍 Flamingo: 6 races, 1 value bet
 
 ━━━━━━━━━━━━━━━━━━━━━
 📊 Total: 6 value bets identified today
@@ -185,50 +247,22 @@ Recent form: 1-2-1 | Proven at track/distance
 
 ## 💰 Managing Your Bankroll
 
-### Initial Setup
-
-Default starting bankroll is R1,000. To change:
-
-```python
-# In config/settings.py or via environment
-STARTING_BANKROLL=2000
-```
-
-### Tracking Bets
+### Check Status
 
 ```bash
-# Check current status
-python strike_tips.py status
-
-# Output:
-{
-  "current_bankroll": 950.00,
-  "peak_bankroll": 1000.00,
-  "total_profit_loss": -50.00,
-  "drawdown_percent": 5.0,
-  "open_bets": 2
-}
+# Via API
+curl http://localhost:8000/api/agent/chat \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"message": "What is my balance?"}'
 ```
 
-### Recording Bets Manually
+### Record a Bet
 
 ```bash
-# Place a bet
-python strike_tips.py bet \
-    --track turffontein \
-    --race 3 \
-    --horse "Speedy Gonzales" \
-    --odds 6.5 \
-    --edge 15.2
-
-# Settle a bet (when you know the result)
-python strike_tips.py settle --bet-id 20240309120045_SPE --won
-```
-
-### Daily Report
-
-```bash
-python strike_tips.py report
+# Via API
+curl http://localhost:8000/api/agent/chat \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"message": "Record R50 on Speedy Gonzales at 6.5 odds"}'
 ```
 
 ---
@@ -237,7 +271,7 @@ python strike_tips.py report
 
 ### Adjust Risk Tolerance
 
-Edit `config/settings.py`:
+Edit `core_agent/config/settings.py`:
 
 ```python
 @dataclass
@@ -249,65 +283,78 @@ class BankrollConfig:
     kelly_fraction: float = 0.25     # Quarter-Kelly (was 0.5)
 ```
 
-### Add Custom Tracks
+### Model Configuration
 
-```python
-# In config/settings.py
-TRACKS = {
-    "my_track": {
-        "name": "My Track",
-        "location": "City",
-        "url": "https://..."
-    }
-}
+Edit `.env`:
+
+```env
+MODEL_REASONER=ds_racing
+MODEL_SCRAPER=racing_qwen
+MODEL_THINKING=lfm_racing
+MODEL_FUNC_CALL=func_gemma
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
+### Container Won't Start
+
+```bash
+# Check logs
+docker logs strike-bot
+
+# Check if port is in use
+netstat -tuln | grep 8000
+
+# Restart Docker
+systemctl restart docker
+```
+
+### Ollama Not Working
+
+```bash
+# Check Ollama logs
+docker logs ollama
+
+# Test Ollama directly
+curl http://localhost:11434/api/tags
+
+# Restart Ollama container
+docker restart ollama
+```
+
 ### Telegram Not Working
 
 ```bash
-# Test connection
-python scheduler.py test
-
-# Common issues:
-# 1. Wrong bot token format
-# 2. Chat ID is a number, not username
-# 3. Haven't started chat with bot
+# Test inside container
+docker exec -it strike-bot python -c "
+from core_agent.skills.notifications.telegram_bot import TelegramNotifier
+n = TelegramNotifier()
+print('Token:', n.bot_token[:10] + '...')
+"
 ```
 
 ### Scraper Not Finding Data
 
 ```bash
-# Check if TAB4Racing is accessible
-python -c "
-from skills.parsers.tab4racing import TAB4RacingScraper
-scraper = TAB4RacingScraper()
-html = scraper._get('/racecards/turffontein')
+# Test scraper
+docker exec -it strike-bot python -c "
+from core_agent.skills.parsers.tab4racing import TAB4RacingScraper
+s = TAB4RacingScraper()
+html = s._get('/racecards/turffontein')
 print('Success!' if html else 'Failed')
 "
-```
-
-### Reset Everything
-
-```bash
-# WARNING: This deletes all data!
-make reset-data
-
-# Or manually:
-rm data/*.json
 ```
 
 ---
 
 ## 📚 Next Steps
 
-1. **Read the full documentation**: [README.md](README.md)
-2. **Explore examples**: `examples/quick_start.py`
-3. **Run tests**: `make test`
-4. **Join the community**: [Telegram Group](https://t.me/striketips)
+1. **Explore the API**: http://localhost:8000/docs
+2. **Read the Architecture**: [docs/ARCHITECTURE.md](ARCHITECTURE.md)
+3. **Review Agent Guidelines**: [docs/AGENTS.md](AGENTS.md)
+4. **Check the Model Pipeline**: [docs/MAF Framework.md](MAF%20Framework.md)
 
 ---
 
@@ -315,10 +362,14 @@ rm data/*.json
 
 - **GitHub Issues**: Report bugs and feature requests
 - **Telegram**: @StrikeTipsSupport
-- **Email**: support@striketips.co.za
 
 ---
 
 **Happy punting! 🏇**
 
 Remember: Bet smart, bet disciplined, and never bet more than you can afford to lose.
+
+---
+
+*Last Updated: April 2026*
+*Version: 2.0*

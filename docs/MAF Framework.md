@@ -1,5 +1,8 @@
 # MAF Framework.md - Microsoft Agent Framework Integration
 
+> **📅 Last Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** The codebase has been refactored from `strike-tips/` to `core_agent/`. Some code examples may reference the old structure.
+
 > **Latest Documentation from Context7 + Microsoft Learn** - Updated 2026-03-24
 
 ---
@@ -1183,7 +1186,7 @@ async def hybrid_process(message: str):
 
 ## Current Strike Tips Pydantic AI Implementation
 
-Your existing implementation in `strike-tips/ai_pydantic.py` follows these patterns:
+Your existing implementation in `core_agent/agents/ai_pydantic.py` follows these patterns:
 
 ### 1. Agent with Dependencies (Current Implementation)
 
@@ -1192,38 +1195,32 @@ Your existing implementation in `strike-tips/ai_pydantic.py` follows these patte
 @dataclass
 class StrikeDeps:
     strike: StrikeTips
+    user_id: str = "default_user"
 
-# Agent initialization with deps_type
-class L7Orchestrator:
-    def __init__(self, strike_instance: StrikeTips):
-        self.classifier = get_model("CLASSIFIER")
-        
-        self.agent = Agent(
-            self.classifier,
-            deps_type=StrikeDeps,
-            retries=2, 
-            system_prompt="""You are an intent classifier for a racing bot.
-            Classify user messages into EXACTLY one of these labels:
-            GET_BANKROLL, SCAN_RACES, GET_RESULTS, SEARCH_FORM, GET_INTELLIGENCE, OTHER.
-            Output ONLY the label."""
-        )
+# ModelPipeline initialization (v2.0 - no Pydantic AI)
+class ModelPipeline:
+    def __init__(self, strike_tips=None):
+        self.strike = strike_tips
+        self.classifier = IntentClassifier()  # Regex-based, ~0ms
 ```
 
-### 2. Tool Registration (Current Implementation)
+### 2. Tool Registration (Current Implementation - v2.0)
 
 ```python
-# The tools are defined in AgentTools (skills/agent_tools.py)
-# and accessed via brain.tools.execute_tool()
+# In core_agent/tools/maf_tool_registry.py
+# Tools are registered as Python functions, not MAF decorators
+TOOL_REGISTRY = {
+    "get_account_summary": get_account_summary,
+    "evaluate_race": evaluate_race,
+    "run_daily_analysis": run_daily_analysis,
+    # ... 11 total tools
+}
 
-async def chat(self, user_msg: str, model_override: str = None) -> AgentResponse:
-    # Intent classification
-    result_val = await self.agent.run(user_msg, deps=StrikeDeps(strike=self.strike))
-    intent = str(getattr(result_val, 'output', result_val)).strip().upper()
-    
-    # Routing based on intent
-    if "GET_BANKROLL" in intent:
-        data = self.strike.get_bankroll_status()
-        ...
+# Direct tool execution (no Pydantic AI overhead)
+async def _execute_tool(self, intent: str, message: str) -> Optional[AgentResponse]:
+    tool_fn = TOOL_REGISTRY.get(intent)
+    if tool_fn and self.strike:
+        result = await tool_fn(strike=self.strike, ...)
 ```
 
 ### 3. Response Model (Current Implementation)
@@ -1277,51 +1274,27 @@ async def process_request(message: str, deps: StrikeDeps):
 
 ---
 
-## Appendix: Original Strike Tips MAF Integration Strategy
+## Current Strike Tips Implementation (v2.0 - core_agent/)
 
-### MAF Integration Strategy: Mapping the "Truth"
+### Architecture Mapping (Updated April 2026)
 
-This document maps your existing codebase (the "Truth") to the new Microsoft Agent Framework (MAF) + FastMCP ecosystem for full-spectrum autonomy.
+| Existing Component | New Location | Implementation Method |
+|-------------------|--------------|------------------------|
+| scraper.py | `core_agent/skills/parsers/tab4racing.py` | Direct httpx calls |
+| form_analyzer.py | `core_agent/skills/race_analysis/form_analyzer.py` | Called by analyzer |
+| scheduler.py | `core_agent/core/scheduler.py` | APScheduler-based |
+| strike_tips.py | `core_agent/core/strike_tips.py` | Main orchestrator |
+| ai_providers.py | `core_agent/agents/ai_providers.py` | Ollama/Groq/Gemini routing |
+| ai_pydantic.py | `core_agent/agents/ai_pydantic.py` | ModelPipeline (no Pydantic AI) |
+| data/ | `core_agent/data/` | JSON file storage |
+| telegram_agent_loop.py | `core_agent/agents/telegram_agent_loop.py` | Telegram bot |
 
-#### The Architectural Mapping
+### v2.0 Changes Summary
 
-| Existing Component | MAF Role | Implementation Method |
-|-------------------|----------|------------------------|
-| scraper.py | Tool | Wrapped in `@mcp.tool()` via mcp_server.py |
-| form_analyzer.py | Logic Layer | Called by the Gemini Brain during reasoning |
-| scheduler.py | Workflow Trigger | Replaced by MAF's Workflow or Graph orchestration |
-| strike_tips.py | Service Layer | Remains the "Muscles" for placing bets and managing bankroll |
-| ai_providers.py | Model Connector | Integrated as a custom ChatCompletion provider in MAF |
-| data/ | Resources | Exposed via `@mcp.resource()` (e.g., racing://history) |
-| telegram_agent_loop.py | User Interface | Replaced by the MAF ChatLoop which is multi-turn and stateful |
-
-#### Step-by-Step Utilization
-
-1. **The Skills (The "What")**
-
-Your skills/ directory contains the functional code. We don't change this. We simply register them in your mcp_server.py using FastMCP.
-
-```
-skills/race_analysis -> mcp.tool("analyze_race")
-skills/notifications -> mcp.tool("send_telegram")
-```
-
-2. **The Persistence (The "Memory")**
-
-MAF has a native Memory system. Instead of the agent "guessing" if it already analyzed a race, MAF stores the session state. It will use your skills/memory (ChromaDB) as a "Long-term Knowledge Resource."
-
-3. **The Orchestrator (The "Why")**
-
-We create maf_orchestrator.py. This file will:
-
-- Initialize a MAF Agent
-- Connect to the StrikeTips MCP Server
-- Use Gemini SDK for the Model tier
-- Execute the loop currently found in telegram_agent_loop.py but with Graph-based safety checks (e.g., "Always check bankroll before placing a bet")
-
-#### Execution Plan
-
-- **Toolification**: Ensure all files in skills/ have clear entry points for FastMCP
+1. **Removed Pydantic AI** - Now uses direct `httpx` calls to Ollama
+2. **New IntentClassifier** - Regex-based, ~0ms routing
+3. **Fallback Chain** - local → Groq → Gemini
+4. **11 MAF Tools** - Same gambling-free names preserved
 - **Resource Mapping**: Map the contents of data/ to MCP Resources so the LLM can "browse" its own history
 - **Graph Definition**: Define the "Betting Lifecycle" as a MAF Workflow to ensure the Governor rules are never bypassed
 

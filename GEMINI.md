@@ -6,15 +6,17 @@ This repository contains the **Strike Tips** system, an AI-powered betting intel
 
 This is a **Full-Stack Code Project** consisting of:
 
--   **Backend (`strike-tips/`)**: 
+-   **Backend (`core_agent/`)**: 
     -   **Language**: Python 3.9+
     -   **Framework**: FastAPI (Web API), Core CLI orchestration.
+    -   **AI Layer**: Direct httpx calls to Ollama (no Pydantic AI dependency)
     -   **Skills Layer**: Modular components for race analysis, bankroll management, web scraping (TAB4Racing), and Telegram notifications.
     -   **Storage**: JSON files in the `data/` directory for bankroll state, bet history, and scan results.
 -   **Frontend (`strike-tips-frontend/`)**:
     -   **Framework**: Next.js 16+ (App Router), TypeScript.
     -   **Styling**: Tailwind CSS 4.0+, Framer Motion for animations, Lucide React for icons.
     -   **State Management**: React Hooks (useState, useEffect) with direct API integration via `fetch`.
+-   **Docker Setup**: 3-container setup (strike-bot, ollama, odds-monitor)
 
 ## 🚀 Building and Running
 
@@ -27,21 +29,21 @@ This is a **Full-Stack Code Project** consisting of:
 The backend is containerized for stability and uses a "Turbo Build" strategy for speed.
 
 ```bash
-# Navigate to backend
-cd strike-tips
+# Navigate to project root
+cd /home/giftmpho/Kimi_Agent_Strike\ Tips\ Racing\ Bot
 
-# Start the bot in the background
-docker-compose up -d
+# Start all containers (strike-bot, ollama, odds-monitor)
+docker compose up -d
 
 # View real-time intelligence logs
-docker logs -f strike-tips
+docker logs -f strike-bot
 ```
 *The API is available at `http://localhost:8000` with Swagger docs at `/docs`.*
 
 ### 2. Backend Setup (Manual / Fallback)
 ```bash
-# Navigate to backend
-cd strike-tips
+# Navigate to core_agent
+cd core_agent
 
 # Create and activate virtual environment
 python -m venv venv
@@ -74,19 +76,19 @@ npm run dev
 ### 4. CLI Orchestrator (Inside Container)
 ```bash
 # Run a manual scan using the running container
-docker exec -it strike-tips python strike_tips.py scan
+docker exec -it strike-bot python core_agent/core/strike_tips.py scan
 ```
 
 ## 🧪 Testing
 
 ### Backend (Docker)
 ```bash
-docker exec -it strike-tips pytest
+docker exec -it strike-bot pytest
 ```
 
 ### Backend (Local)
 ```bash
-cd strike-tips
+cd core_agent
 pytest
 ```
 
@@ -122,39 +124,50 @@ The system follows a strict "God Mode" betting strategy:
 -   **Kelly Criterion**: Uses Half-Kelly (0.5 fraction) for conservative staking.
 
 ## 📁 Key Files
--   `strike-tips/strike_tips.py`: Main backend entry point.
--   `strike-tips/api.py`: FastAPI server definition.
--   `strike-tips/config/settings.py`: Global configuration and thresholds.
+-   `core_agent/core/strike_tips.py`: Main backend entry point.
+-   `core_agent/api.py`: FastAPI server definition.
+-   `core_agent/config/model_config.py`: Centralized model configuration.
+-   `core_agent/agents/ai_pydantic.py`: ModelPipeline with IntentClassifier.
+-   `core_agent/tools/maf_tool_registry.py`: 11 MAF tools.
 -   `strike-tips-frontend/src/app/page.tsx`: Main dashboard UI.
 -   `strike-tips-frontend/src/lib/api.ts`: Frontend-to-backend communication layer.
--   `AGENTS.md`: Detailed coding guidelines for agents.
+-   `docs/AGENTS.md`: Detailed coding guidelines for agents.
 
 ---
 
-## 🔧 Recent Updates (March 25, 2026)
+## 🔧 Recent Updates (April 2026)
 
-### Model Pipeline Architecture
-- `ai_pydantic.py`: ModelPipeline class with IntentClassifier and SpecialistExecutors
-- Fast tool execution (~1-2s) via Python code, no LLM overhead
-- Telegram bot uses `brain.pipeline.chat()`
+### Refactored to core_agent/
+- Moved all backend code from `strike-tips/` to `core_agent/`
+- Updated paths: `skills/`, `config/`, `routes/`
 
-### Gambling-Free Tool Names (func_gemma compatible)
-All 11 MAF tools renamed:
-- `analyze_race` → `evaluate_race`
-- `place_bet` → `record_selection`
-- `settle_bet` → `update_race_result`
-- `get_bankroll_status` → `get_account_summary`
-- `calculate_max_stake` → `calculate_max_position`
-- `query_memory` → `search_past_races`
-- `search_racing_info` → `search_racing_data`
-- `verify_race_event` → `verify_race_exists`
-- `run_daily_scan` → `run_daily_analysis`
-- `get_market_snapshot` → `get_odds_snapshot`
+### New AI Architecture
+- Removed Pydantic AI dependency - now uses direct `httpx` calls to Ollama
+- New `ModelPipeline` with regex-based `IntentClassifier` (~0ms routing)
+- Fallback chain: local Ollama → Groq (cloud) → Gemini (cloud)
+
+### Docker 3-Container Setup
+- `strike-bot`: FastAPI backend on port 8000
+- `ollama`: Intel GPU with WSL2 on port 11434
+- `odds-monitor`: Playwright scraper for live odds
+
+### Model Pipeline
+- `racing_llama`: Router + fast reads
+- `racing_qwen`: Fast reads (balance, odds)
+- `func_gemma`: Write ops (record, update)
+- `lfm_racing`: Deep analysis (evaluate, scan)
+- `ds_racing`: Reasoning (probability edge)
+
+### Gambling-Free Tool Names (unchanged)
+All 11 MAF tools use gambling-free naming:
+- `evaluate_race`, `run_daily_analysis`, `get_account_summary`
+- `record_selection`, `update_race_result`, `calculate_probability_edge`
+- `calculate_max_position`, `search_racing_data`, `search_past_races`
+- `verify_race_exists`, `get_odds_snapshot`
 
 ### Auto-Result Updates
 - `skills/result_tracker.py`: ResultTracker with DuckDuckGo search + StealthEngine
 - Fuzzy matching for horse names, auto-settle open bets
-- Updated `scheduler.py` with result check job (every 5 min)
 
 ### Learning System
 - `skills/learning/engine.py`: LearningEngine tracks ROI by track, distance, odds range
@@ -165,5 +178,3 @@ All 11 MAF tools renamed:
 - `skills/race_schedule.py`: RaceScheduleService dynamically fetches today's tracks via TAB4Racing API
 - **ALL 7 SA tracks always included** + international tracks grouped by region
 - Regions: UK, Australia, USA, Ireland, France, Hong Kong, Japan
-- `skills/parsers/pdf_harvester.py`: Supports SA/UK/International PDFs
-- Same bankroll for all bets, results via DuckDuckGo

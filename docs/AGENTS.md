@@ -7,18 +7,21 @@ This document provides guidelines for AI agents working in this repository.
 ## Project Overview
 
 **South African Horse Racing Intelligence System**
-- **Python Backend** (`strike-tips/`): Core betting logic, scrapers, analysis engine
+- **Python Backend** (`core_agent/`): Core betting logic, scrapers, analysis engine
 - **Next.js Frontend** (`strike-tips-frontend/`): React UI for the betting system
 
 ---
 
 ## Build / Lint / Test Commands
 
-### Python Backend
+### Python Backend (core_agent/)
 
 ```bash
+# Navigate to core_agent
+cd core_agent
+
 # Install dependencies
-cd strike-tips && pip install -r requirements.txt
+pip install -r requirements.txt
 
 # Run all tests
 pytest
@@ -30,10 +33,23 @@ pytest tests/test_analyzer.py
 pytest tests/test_analyzer.py::TestRaceAnalyzer::test_edge_calculation -v
 
 # Run with coverage
-pytest --cov=strike_tips --cov-report=term-missing
+pytest --cov=core_agent --cov-report=term-missing
 
 # Format code (Black) & Lint
 black . && flake8 .
+```
+
+### Docker (Recommended)
+
+```bash
+# From project root
+docker compose up -d
+
+# View logs
+docker logs -f strike-bot
+
+# Run tests in container
+docker exec -it strike-bot pytest
 ```
 
 ### Next.js Frontend
@@ -67,10 +83,9 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict
 
 import httpx
-import pydantic
 
-from config.settings import BANKROLL
-from skills.race_analysis.analyzer import RaceAnalyzer
+from core_agent.config.model_config import ModelConfig
+from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 ```
 
 #### Formatting
@@ -80,7 +95,7 @@ from skills.race_analysis.analyzer import RaceAnalyzer
 #### Types
 - Use **dataclasses** for data models
 - Use **Enums** for fixed sets
-- Use **pydantic** for API validation
+- Use **pydantic** for API validation (in routes)
 - Always type hint functions
 ```python
 class BetConfidence(Enum):
@@ -100,6 +115,10 @@ class Runner:
 - Functions: `snake_case` (e.g., `calculate_edge()`)
 - Constants: `UPPER_SNAKE_CASE`
 - Files: `snake_case.py`
+
+#### Docker Paths
+- Use `/app/` as base path inside containers
+- Use `PYTHONPATH=/app` for imports to work
 
 #### Error Handling
 - Use custom exceptions for domain errors
@@ -125,29 +144,57 @@ class Runner:
 ## Project Structure
 
 ```
-strike-tips/                          # Python backend
-├── config/
-│   ├── settings.py                 # Configuration
-│   └── model_registry.py           # Model definitions
-├── skills/
-│   ├── race_analysis/              # Value bet engine
-│   ├── bankroll_manager/           # Bankroll governance
-│   ├── parsers/                   # Web scrapers
-│   ├── memory/                     # ChromaDB vector memory
-│   ├── learning/                   # Learning engine
-│   └── notifications/              # Telegram bot
-├── ai_pydantic.py                 # ModelPipeline (AI agents)
-├── maf_tool_registry.py            # 11 MAF tools
-├── result_tracker.py               # Auto-result updates
-├── scheduler.py                    # Automation
-├── telegram_agent_loop.py          # Telegram bot
-├── routes/agent.py                 # API endpoints
-├── ollama_configs/                # Ollama model configs
+core_agent/                          # Python backend (refactored April 2026)
+├── agents/                          # AI orchestration layer
+│   ├── ai_pydantic.py              # ModelPipeline + UnifiedOrchestrator
+│   ├── ai_providers.py            # AI provider routing (Groq/Gemini/Ollama)
+│   ├── intent_classifier.py       # Regex-based intent detection (~0ms)
+│   ├── telegram_agent_loop.py     # Telegram bot loop
+│   └── specialists/               # Specialist agents
+│       ├── analyst_agent.py
+│       ├── scanner_agent.py
+│       └── bankroll_agent.py
+├── config/                         # Configuration
+│   ├── model_config.py            # Centralized model config
+│   ├── settings.py                # Bankroll & system settings
+│   ├── paths.py                   # Path configuration
+│   └── model_factory.py           # Model factory
+├── core/                           # Core business logic
+│   ├── strike_tips.py             # Main orchestrator
+│   ├── strike_brain.py            # Central state manager (singleton)
+│   ├── engine.py                  # Execution engine
+│   ├── adaptive_odds_monitor.py  # Live odds monitoring
+│   └── api.py                     # FastAPI entry point
+├── skills/                        # Domain skills
+│   ├── race_analysis/            # Race analyzer, form analyzer
+│   ├── bankroll_manager/          # Bankroll governor (Kelly criterion)
+│   ├── memory/                   # ChromaDB vector memory
+│   ├── parsers/                  # Tab4, PDF, odds scrapers
+│   ├── learning/                  # Learning engine (ROI tracking)
+│   └── notifications/            # Telegram notifier
+├── tools/                         # MAF Tool Registry
+│   └── maf_tool_registry.py      # 11 gambling-free tools
+├── routes/                        # FastAPI routes
+│   ├── agent.py                  # /api/agent endpoints
+│   ├── betting.py                # /api/betting
+│   ├── racing.py                  # /api/racing
+│   ├── config.py                  # /api/config
+│   └── monitoring.py             # /api/monitoring
+├── ollama_configs/                # 5 racing Modelfiles
+│   ├── racing_llama.Modelfile
+│   ├── racing_qwen.Modelfile
+│   ├── func_gemma.Modelfile
+│   ├── lfm_racing.Modelfile
+│   └── ds_racing.Modelfile
+├── prompts/                       # System prompts
+├── services/                      # Business services
 └── requirements.txt
 
-strike-tips-frontend/                 # Next.js frontend
-├── src/app/                        # App router pages
-├── src/lib/api.ts                  # API utilities
+strike-tips-frontend/              # Next.js frontend
+├── src/
+│   ├── app/                      # App router pages
+│   ├── components/               # React components
+│   └── lib/api.ts               # API utilities
 └── package.json
 ```
 
@@ -156,10 +203,11 @@ strike-tips-frontend/                 # Next.js frontend
 ## Key Conventions
 
 1. **Environment Variables**: Use `.env` files, never commit secrets
-2. **Bankroll Rules**: Never bypass max bet percentage (5%) or loss limits
-3. **API Responses**: Always handle errors gracefully
-4. **Testing**: Write tests for new features
-5. **Type Safety**: Avoid `any` in TypeScript; use type annotations in Python
+2. **Docker Paths**: Use `/app/` prefix inside containers
+3. **Bankroll Rules**: Never bypass max bet percentage (5%) or loss limits
+4. **API Responses**: Always handle errors gracefully
+5. **Testing**: Write tests for new features
+6. **Type Safety**: Avoid `any` in TypeScript; use type annotations in Python
 
 ---
 
@@ -175,39 +223,59 @@ The system uses a delegation chain for fast AI responses:
 | `racing_qwen` | Fast Reads | ~1-2s | get_account_summary, search_racing_data |
 | `func_gemma` | Write Operations | ~1-2s | record_selection, update_race_result |
 | `lfm_racing` | Deep Analysis | ~2-3s | evaluate_race, run_daily_analysis |
+| `ds_racing` | Reasoning | Variable | calculate_probability_edge |
 
-### 11 MAF Tools (Gambling-Free Names)
+### Fallback Chain
+
+```
+Local Ollama Models → Groq Cloud → Gemini Cloud
+     ↓                    ↓            ↓
+(racing_llama)      (llama-3.3-70b)  (gemini-2.0-flash)
+```
+
+### Intent Routing Flow
+
+```
+User Query → IntentClassifier (regex, ~0ms)
+     ↓
+[Direct Tool Execution] OR [LLM Specialist]
+     ↓
+[Grounding Data from memory/snapshot]
+     ↓
+[Response Synthesis]
+     ↓
+Response + History Update
+```
+
+---
+
+## 11 MAF Tools (Gambling-Free Names)
 
 All tools use gambling-free naming to avoid model content filters:
 
-| Tool | Purpose |
-|------|---------|
-| `evaluate_race` | Analyze race for value opportunities |
-| `calculate_probability_edge` | Calculate edge percentage |
-| `get_account_summary` | Check balance and profit/loss |
-| `record_selection` | Record a racing selection |
-| `update_race_result` | Update selection result |
-| `calculate_max_position` | Calculate max safe stake |
-| `search_past_races` | Search historical data |
-| `search_racing_data` | Web search for racing info |
-| `verify_race_exists` | Check if race is scheduled |
-| `run_daily_analysis` | Scan all tracks for races |
-| `get_odds_snapshot` | Get current odds |
+| Tool | Purpose | Specialist |
+|------|---------|------------|
+| `evaluate_race` | Analyze race for value opportunities | lfm_racing |
+| `calculate_probability_edge` | Calculate edge percentage | ds_racing |
+| `get_account_summary` | Check balance and profit/loss | racing_qwen |
+| `record_selection` | Record a racing selection | func_gemma |
+| `update_race_result` | Update selection result | func_gemma |
+| `calculate_max_position` | Calculate max safe stake | racing_qwen |
+| `search_past_races` | Search historical data | racing_qwen |
+| `search_racing_data` | Web search for racing info | racing_llama |
+| `verify_race_exists` | Check if race is scheduled | racing_qwen |
+| `run_daily_analysis` | Scan all tracks for races | lfm_racing |
+| `get_odds_snapshot` | Get current odds | racing_qwen |
 
-### Intent Routing
+---
 
-```
-User Query → IntentClassifier → SpecialistExecutors → Response
-                         ↓
-              banking_llama (Router) - Always involved
-                         ↓
-              Specialist based on intent:
-              - BANKROLL → racing_qwen
-              - SEARCH → racing_qwen
-              - RECORD → func_gemma
-              - ANALYZE → lfm_racing
-              - SCAN → lfm_racing
-```
+## Docker 3-Container Setup
+
+| Container | Image | Purpose | Port |
+|-----------|-------|---------|------|
+| `strike-bot` | `strike-tips-base:latest` | FastAPI backend | 8000 |
+| `ollama` | `uberchuckie/ollama-intel-gpu` | Local LLM (Intel GPU/WSL2) | 11434 |
+| `odds-monitor` | `strike-tips-base:latest` | Playwright scraper | - |
 
 ---
 
@@ -215,8 +283,8 @@ User Query → IntentClassifier → SpecialistExecutors → Response
 
 The system tracks historical performance to improve predictions:
 
-- **LearningEngine** (`skills/learning/engine.py`) - ROI tracking
-- **AdaptiveAnalyzer** (`skills/learning/analyzer.py`) - Probability adjustment
+- **LearningEngine** (`core_agent/skills/learning/engine.py`) - ROI tracking
+- **AdaptiveAnalyzer** (`core_agent/skills/learning/analyzer.py`) - Probability adjustment
 
 ### Tracked Metrics
 
@@ -230,10 +298,80 @@ The system tracks historical performance to improve predictions:
 
 ## Auto-Result Updates
 
-**ResultTracker** (`skills/result_tracker.py`) automatically:
+**ResultTracker** (`core_agent/skills/result_tracker.py`) automatically:
 
 1. Searches for race results via DuckDuckGo
 2. Scans result URLs via StealthEngine
 3. Matches winners to open bets (fuzzy matching)
 4. Auto-settles bets (WON/LOST)
 5. Sends Telegram notifications
+
+---
+
+## Environment Configuration
+
+### Key Environment Variables (.env)
+
+```env
+# Telegram
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_CHAT_ID=xxx
+
+# AI Models
+GROQ_API_KEY=xxx
+GEMINI_API_KEY=xxx
+OLLAMA_HOST=http://ollama:11434
+
+# Model Assignments (optional overrides)
+MODEL_ORCHESTRATOR=local:llama3.2:1b
+MODEL_REASONER=ds_racing
+MODEL_SCRAPER=racing_qwen
+MODEL_FUNC_CALL=func_gemma
+MODEL_THINKING=lfm_racing
+MODEL_FAST_LOCAL=racing_llama
+```
+
+---
+
+## Testing Guidelines
+
+### Writing Tests
+
+```python
+# In core_agent/tests/test_analyzer.py
+import pytest
+from core_agent.skills.race_analysis.analyzer import RaceAnalyzer
+
+def test_edge_calculation():
+    analyzer = RaceAnalyzer()
+    edge = analyzer.calculate_edge(0.30, 0.20)  # 30% vs 20%
+    assert edge == 0.10
+```
+
+### Running Tests
+
+```bash
+# All tests
+pytest
+
+# With coverage
+pytest --cov=core_agent --cov-report=term-missing
+
+# Specific file
+pytest core_agent/tests/test_analyzer.py -v
+```
+
+---
+
+## Important Notes
+
+1. **No Pydantic AI**: The system now uses direct `httpx` calls to Ollama instead of Pydantic AI
+2. **Docker First**: Always test in Docker before deploying
+3. **Centralized Config**: All model config is in `core_agent/config/model_config.py`
+4. **ChromaDB Cloud**: Memory uses hosted ChromaDB (api.trychroma.com)
+5. **Keep Tools Gambling-Free**: Always use tool names like `record_selection` not `place_bet`
+
+---
+
+*Last Updated: April 2026*
+*Architecture Version: 2.0*

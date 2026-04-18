@@ -1,6 +1,9 @@
-# Strike Tips - L7/L8 AI DevOps Architecture Review
+# Strike Tips - L7/L8 AI DevOps Architecture Review (v2.0)
 
-> **Architecture Assessment** - March 2026
+> **📅 Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** The codebase has been refactored. Key changes: `strike-tips/` → `core_agent/`, Pydantic AI removed (direct httpx)
+
+> **Architecture Assessment** - March 2026 (Updated April 2026)
 > **Reviewer:** L7/L8 Full Stack AI DevOps Engineer
 
 ---
@@ -25,25 +28,24 @@ The Strike Tips system represents a **mature, skill-based modular architecture**
 
 ## Core Strengths (The "Autonomous" Foundation)
 
-### 1. Tier-7 AI Resilience Chain
+### 1. AI Resilience Chain (v2.0)
 
-The [`ai_providers.py`](strike-tips/ai_providers.py:29) implements a robust 7-tier fallback:
+The [`core_agent/agents/ai_providers.py`](core_agent/agents/ai_providers.py) implements the fallback chain:
 
 ```mermaid
 graph TD
-    T1[Groq LPU<br/>Tier 1: Primary] --> T2[Gemini 3 Flash<br/>Tier 2]
-    T2 --> T3[Gemini 2.5 Flash<br/>Tier 3]
-    T3 --> T4[Gemini 2.0 Lite<br/>Tier 4]
-    T4 --> T5[Gemini 2.0 Lite<br/>Tier 5: Cloud Fallback]
-    T5 --> T6[Kimi K2<br/>Tier 6: Cloud Reasoner]
-    T6 --> T7[Ollama Local<br/>Tier 7: Hardware Guard]
+    Local[Local Ollama<br/>racing_llama] --> Groq[Groq LPU<br/>llama-3.3-70b]
+    Groq --> Gemini[Gemini 3 Flash<br/>Cloud Fallback]
+```
+
+**v2.0 Change:** Removed Pydantic AI dependency, now uses direct `httpx` calls.
 ```
 
 This ensures the system **never goes blind** during API outages or rate limits.
 
 ### 2. Self-Healing Parsers
 
-The [`SelfHealingParser`](strike-tips/skills/parsers/self_healing.py:30) is a **top-tier feature**:
+The [`core_agent/skills/parsers/self_healing.py`](core_agent/skills/parsers/self_healing.py) is a **top-tier feature**:
 
 - Tracks selector success/fail rates per selector
 - Ranks selectors by success rate dynamically
@@ -52,7 +54,7 @@ The [`SelfHealingParser`](strike-tips/skills/parsers/self_healing.py:30) is a **
 
 ### 3. L7 Grounded Intelligence
 
-Native integration of real-time search ([`DuckDuckGoRacingParser`](strike-tips/skills/parsers/duckduckgo.py)) minimizes hallucinations. The agent loop is **grounded in real-world data**.
+Native integration of real-time search ([`core_agent/skills/parsers/duckduckgo.py`](core_agent/skills/parsers/duckduckgo.py)) minimizes hallucinations.
 
 ### 4. Observability Native
 
@@ -252,22 +254,9 @@ def query_chroma_memory(query: str) -> List[Dict]:
 
 ### 2. Manual Patch Application
 
-**Current State:** [`generate_parser_patch()`](strike-tips/skills/parsers/self_healing.py:294) creates patch files but doesn't apply them
-**Gap:** Autonomy capped at "advisory"
+**Current State:** [`generate_parser_patch()`](core_agent/skills/parsers/self_healing.py) creates patch files but doesn't apply them
 
-**Recommendation:**
-```
-patches/
-├── applied/
-│   ├── 2026-03-24_selector_fix.json
-│   └── 2026-03-25_html_structure.json
-└── pending/
-    └── parser_patch_2026-03-25.py  ← Agent generates here
-```
-
-### 3. JSON-Based Persistence
-
-**Current State:** [`bankroll_state.json`](strike-tips/data/bankroll_state.json), [`bet_history.json`](strike-tips/data/bet_history.json)
+**Current State:** [`bankroll_state.json`](data/bankroll_state.json), [`bet_history.json`](data/bet_history.json)
 **Risk:** No transactional integrity, potential for corruption under high load
 **Recommendation:** Consider SQLite for production
 
@@ -452,7 +441,7 @@ Following OpenCLAW's sandbox principles, the betting agent uses a **restricted s
       {
         "id": "racing_assistant",
         "name": "Strike Tips Racing Assistant",
-        "workspace": "~/.strike-tips/workspace",
+        "workspace": "~/strike-tips-workspace",
         "sandbox": {
           "mode": "all",
           "scope": "session"

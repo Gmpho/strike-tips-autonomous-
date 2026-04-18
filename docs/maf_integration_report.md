@@ -88,45 +88,53 @@ User → API → MAF Agent → Ollama (local) → skills/
 
 ---
 
-## Architecture
+# MAF Integration Report (v2.0)
 
-### System Flow
+> **📅 Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** Project refactored to `core_agent/`. Pydantic AI removed (direct httpx).
+
+## Architecture (v2.0)
+
+### System Flow (Updated)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         FRONTEND                                 │
 │                  (strike-tips-frontend)                         │
+│                         Port: 3000                               │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    FASTAPI BACKEND (api.py)                     │
-│                         port 8000                               │
+│                    FASTAPI BACKEND (core_agent/api.py)           │
+│                         port 8000                                │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                   routes/agent.py                         │   │
-│  │  • /api/agent/chat        → MAF Agent (NEW!)             │   │
-│  │  • /api/agent/maf/health → Ollama status                 │   │
-│  │  • /api/agent/maf/tools  → List tools                    │   │
+│  │  • /api/agent/chat        → ModelPipeline (NEW!)          │   │
+│  │  • /api/agent/health     → Ollama status                  │   │
+│  │  • /api/agent/tools      → List tools                     │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    MAF AGENT (maf_agent.py)                     │
+│              MODEL PIPELINE (core_agent/agents/)                 │
 │  ┌─────────────────────┐    ┌────────────────────────────────┐    │
-│  │  OllamaClient      │    │  ToolExecutor                 │    │
-│  │  (ds_racing, etc) │◄──►│  (maf_tool_registry)           │    │
+│  │  Direct httpx        │    │  ToolExecutor                 │    │
+│  │  (Ollama/Groq)      │◄──►│  (core_agent/tools/maf_*)      │    │
 │  └─────────────────────┘    └───────────────┬────────────────┘    │
 └──────────────────────────────────────────────┼─────────────────────┘
                                                │
                     ┌──────────────────────────┼──────────────────────┐
                     ▼                          ▼                      ▼
             ┌─────────────┐           ┌─────────────┐        ┌─────────────┐
-            │   skills/   │           │    data/    │        │   config/   │
-            │ race_analysis│           │  bankroll   │        │  settings   │
-            │ bankroll_  │           │ bet_history │        │   tracks    │
-            │ manager/   │           │ daily_scan  │        │             │
+            │ core_agent/ │           │    data/    │        │  config/    │
+            │   skills/   │           │  bankroll   │        │  model_     │
+            │ race_analysis│           │ bet_history │        │  config     │
+            │ bankroll_  │           │ daily_scan  │        │             │
+            │ manager/   │           │             │        │             │
             └─────────────┘           └─────────────┘        └─────────────┘
+```
 ```
 
 ---
@@ -270,7 +278,7 @@ ollama pull racing_qwen
 
 ### 3. Start API
 ```bash
-cd strike-tips
+cd core_agent
 .\venv\Scripts\Activate.ps1
 python api.py
 ```
@@ -283,24 +291,24 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/agent/chat' -Method Post -Body
 
 ---
 
-## Files Modified/Created
+## Files Modified/Created (v2.0)
 
 ```
-strike-tips/
-├── maf_tool_registry.py    # NEW - Tool registry
-├── maf_agent.py            # NEW - MAF-style agent
-├── message_gateway.py      # NEW - Security gateway
+core_agent/
+├── tools/maf_tool_registry.py  # UPDATED - 11 tools
+├── agents/ai_pydantic.py       # UPDATED - ModelPipeline (no Pydantic AI)
+├── core/message_gateway.py     # Security gateway
 └── routes/
-    └── agent.py            # MODIFIED - Replaced L7 with MAF
+    └── agent.py                # UPDATED - ModelPipeline integration
 ```
 
 ---
 
-## Known Limitations
+## Known Limitations (v2.0)
 
-1. **Ollama Required**: MAF agent needs Ollama running locally
-2. **Local Models**: Uses local models instead of cloud (Gemini)
-3. **Different Intent Format**: Returns `intent` instead of `action`/`confidence`
+1. **Ollama Required**: ModelPipeline needs Ollama running in Docker
+2. **Cloud Fallbacks**: Uses Groq/Gemini as fallbacks
+3. **Direct httpx**: Removed Pydantic AI dependency
 
 ---
 

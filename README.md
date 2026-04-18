@@ -30,39 +30,44 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      STRIKE TIPS                                │
-│              South African Racing Intelligence                    │
+│              South African Racing Intelligence                   │
+│                        v2.0 (April 2026)                        │
 └─────────────────────────────────────────────────────────────────┘
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        ▼                       ▼                       ▼
-┌───────────────┐      ┌───────────────┐      ┌───────────────┐
-│  Race Analysis│      │   Bankroll    │      │ Notifications │
-│    Skill      │      │    Governor   │      │   (Telegram)  │
-├───────────────┤      ├───────────────┤      ├───────────────┤
-│ • Value Engine│      │ • Max 5% Rule │      │ • Daily Tips  │
-│ • Kelly Stake │      │ • Loss Limits │      │ • Bet Alerts  │
-│ • Form Analysis│     │ • P&L Tracking│      │ • Results     │
-└───────────────┘      └───────────────┘      └───────────────┘
-        │                       │                       │
-        └───────────────────────┼───────────────────────┘
-                                ▼
+                                 │
+        ┌────────────────────────┴────────────────────────┐
+        ▼                                                 ▼
+┌───────────────────────┐                     ┌───────────────────────┐
+│   FRONTEND            │                     │   BACKEND             │
+│   (Next.js/TypeScript)│                     │   (core_agent/)       │
+│   Port: 3000          │                     │   Port: 8000 (FastAPI) │
+└───────────────────────┘                     └───────────────────────┘
+        │                                               │
+        │                                               ▼
+        │                    ┌─────────────────────────────────────┐
+        │                    │         STRIKE BRAIN (Singleton)      │
+        │                    │    (Central State Management)         │
+        │                    └─────────────────────────────────────┘
+        │                                 │
+        ▼                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   MODEL PIPELINE (AI AGENTS)                    │
+│                    MODEL PIPELINE (AI AGENTS)                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │  racing_llama (Router) → Specialist → Synthesizer     │   │
+│  │  User Query → IntentClassifier (regex, ~0ms)            │   │
 │  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐   │
-│  │ racing_qwen   │  │  func_gemma   │  │  lfm_racing   │   │
-│  │  Fast Reads   │  │ Write Ops     │  │ Deep Analysis │   │
-│  └───────────────┘  └───────────────┘  └───────────────┘   │
+│                          │                                      │
+│           ┌──────────────┼──────────────┐                      │
+│           ▼              ▼              ▼                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
+│  │Direct Tools │  │   LLM       │  │  Memory     │            │
+│  │(Python)     │  │  Specialist │  │  (ChromaDB) │            │
+│  │ ~1-2s       │  │  Models     │  │             │            │
+│  └─────────────┘  └─────────────┘  └─────────────┘            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        ▼                       ▼                       ▼
+        │
+        ▼
 ┌───────────────┐      ┌───────────────┐      ┌───────────────┐
 │   Learning    │      │    Result     │      │    Memory     │
 │    Engine     │      │   Tracker     │      │   (ChromaDB)  │
@@ -73,7 +78,34 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 
 ## 🚀 Quick Start
 
-### Option A: Deploy on Modal (Recommended - Free Tier)
+### Option A: Docker (Recommended)
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/yourusername/strike-tips.git
+cd strike-tips
+
+# 2. Start all containers (strike-bot, ollama, odds-monitor)
+docker compose up -d
+
+# 3. Check status
+docker ps
+
+# 4. View logs
+docker logs -f strike-bot
+
+# 5. API available at http://localhost:8000
+#    Swagger docs at http://localhost:8000/docs
+```
+
+**What's started:**
+- `strike-bot`: FastAPI on port 8000
+- `ollama`: Local LLM on port 11434
+- `odds-monitor`: Playwright scraper
+
+---
+
+### Option B: Deploy on Modal (Serverless)
 
 ```bash
 # 1. Install Modal
@@ -92,21 +124,25 @@ See [MODAL_README.md](MODAL_README.md) for details.
 
 ---
 
-### Option B: Self-Hosted
-
-### 1. Installation
+### Option C: Manual Setup (Development)
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/yourusername/strike-tips.git
 cd strike-tips
 
-# Create virtual environment
+# 2. Navigate to core_agent
+cd core_agent
+
+# 3. Create virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
+# 4. Install dependencies
 pip install -r requirements.txt
+
+# 5. Start the FastAPI server
+python api.py
 ```
 
 ### 2. Configuration
@@ -309,71 +345,42 @@ element = parser.find_element(soup, "horse_name")
 
 ---
 
-## 📁 Project Structure
+## 📁 Project Structure (April 2026 - v2.0)
 
 ```
-strike-tips/
-├── config/
-│   ├── __init__.py
-│   ├── settings.py          # Configuration
-│   └── model_registry.py   # Model definitions
-├── skills/
-│   ├── race_analysis/
-│   │   ├── __init__.py
-│   │   ├── analyzer.py      # Value bet engine
-│   │   └── form_analyzer.py # Form rating
-│   ├── bankroll_manager/
-│   │   ├── __init__.py
-│   │   └── governor.py      # Bankroll discipline
-│   ├── parsers/
-│   │   ├── __init__.py
-│   │   ├── tab4racing.py    # SA racing scraper
-│   │   ├── duckduckgo.py    # Web search
-│   │   └── self_healing.py  # Adaptive parser
-│   ├── memory/
-│   │   └── chroma_memory.py # Vector memory
-│   ├── learning/
-│   │   ├── __init__.py
-│   │   ├── engine.py        # Learning engine
-│   │   └── analyzer.py     # Adaptive analyzer
-│   └── notifications/
-│       ├── __init__.py
-│       └── telegram_bot.py   # Telegram integration
-├── ai_pydantic.py          # ModelPipeline (AI agents)
-├── maf_tool_registry.py     # 11 MAF tools
-├── result_tracker.py        # Auto-result updates
-├── scheduler.py             # Automation
-├── telegram_agent_loop.py   # Telegram bot
-├── routes/
-│   └── agent.py            # API endpoints
-├── ollama_configs/         # Ollama model configs
+core_agent/                          # Python backend (refactored)
+├── agents/                         # AI orchestration layer
+│   ├── ai_pydantic.py              # ModelPipeline + UnifiedOrchestrator
+│   ├── ai_providers.py             # AI provider routing
+│   └── intent_classifier.py        # Regex-based intent detection
+├── config/                         # Configuration
+│   ├── model_config.py             # Centralized model config
+│   └── settings.py                 # Bankroll settings
+├── core/                           # Core business logic
+│   ├── strike_tips.py              # Main orchestrator
+│   ├── strike_brain.py             # Central state manager
+│   ├── engine.py                   # Execution engine
+│   └── api.py                      # FastAPI entry point
+├── skills/                         # Domain skills
+│   ├── race_analysis/              # Value bet engine
+│   ├── bankroll_manager/           # Bankroll governor
+│   ├── parsers/                    # Tab4, PDF scrapers
+│   ├── memory/                     # ChromaDB memory
+│   ├── learning/                   # Learning engine
+│   └── notifications/              # Telegram bot
+├── tools/                          # MAF tools
+│   └── maf_tool_registry.py       # 11 gambling-free tools
+├── routes/                         # API endpoints
+│   ├── agent.py, betting.py, racing.py
+├── ollama_configs/                 # 5 racing Modelfiles
 └── requirements.txt
-```
-strike-tips/
-├── config/
-│   ├── __init__.py
-│   └── settings.py          # Configuration
-├── skills/
-│   ├── race_analysis/
-│   │   ├── __init__.py
-│   │   ├── analyzer.py      # Value bet engine
-│   │   └── form_analyzer.py # Form rating
-│   ├── bankroll_manager/
-│   │   ├── __init__.py
-│   │   └── governor.py      # Bankroll discipline
-│   ├── parsers/
-│   │   ├── __init__.py
-│   │   ├── tab4racing.py    # SA racing scraper
-│   │   └── self_healing.py  # Adaptive parser
-│   └── notifications/
-│       ├── __init__.py
-│       └── telegram_bot.py  # Telegram integration
-├── data/                     # Data storage
-├── strike_tips.py           # Main orchestrator
-├── scheduler.py             # Automation
-├── requirements.txt
-├── .env.example
-└── README.md
+
+strike-tips-frontend/               # Next.js frontend (unchanged)
+├── src/
+│   ├── app/                       # App router pages
+│   ├── components/               # React components
+│   └── lib/api.ts                # API utilities
+└── package.json
 ```
 
 ---

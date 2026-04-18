@@ -1,4 +1,4 @@
-# Strike Tips - Architecture Documentation
+# Strike Tips - Architecture Documentation (v2.0 - April 2026)
 
 ## System Overview
 
@@ -6,136 +6,111 @@ Strike Tips is built on a modular skill-based architecture inspired by agent sys
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           STRIKE TIPS SYSTEM                                │
+│                           STRIKE TIPS SYSTEM v2.0                           │
+│                        (Refactored to core_agent/)                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        ORCHESTRATOR                                 │   │
-│  │                      (strike_tips.py)                               │   │
-│  │                                                                     │   │
-│  │  • Coordinates all skills                                          │   │
-│  │  • Manages data flow                                                │   │
-│  │  • Handles CLI interface                                            │   │
+│  │                        FRONTEND (Next.js)                           │   │
+│  │                      strike-tips-frontend/                          │   │
+│  │                      Port: 3000                                     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│         ┌──────────────────────────┼──────────────────────────┐            │
-│         │                          │                          │            │
-│         ▼                          ▼                          ▼            │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐        │
-│  │   RACE      │          │  BANKROLL   │          │ NOTIFICATIONS│        │
-│  │  ANALYSIS   │          │   GOVERNOR  │          │  (Telegram)  │        │
-│  │   SKILL     │          │   SKILL     │          │    SKILL     │        │
-│  ├─────────────┤          ├─────────────┤          ├─────────────┤        │
-│  │ • Value     │          │ • Max 5%   │          │ • Daily     │        │
-│  │   Engine    │          │   Rule     │          │   Tips      │        │
-│  │ • Kelly     │          │ • Loss     │          │ • Bet       │        │
-│  │   Staking   │          │   Limits   │          │   Alerts    │        │
-│  │ • Form      │          │ • P&L      │          │ • Results   │        │
-│  │   Analysis  │          │   Track    │          │ • Bankroll  │        │
-│  │             │          │ • Kelly    │          │   Updates   │        │
-│  │             │          │   Sizing   │          │             │        │
-│  └─────────────┘          └─────────────┘          └─────────────┘        │
-│         │                          │                          │            │
-│         └──────────────────────────┼──────────────────────────┘            │
 │                                    │                                        │
 │                                    ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   MODEL PIPELINE LAYER (AI AGENTS)                 │   │
+│  │                     BACKEND (FastAPI)                                │   │
+│  │                       core_agent/                                    │   │
+│  │                       Port: 8000                                     │   │
 │  ├─────────────────────────────────────────────────────────────────────┤   │
 │  │                                                                     │   │
-│  │  ┌─────────────────────────────────────────────────────────────┐ │   │
-│  │  │  racing_llama (Router) → Specialist → Synthesizer            │ │   │
-│  │  └─────────────────────────────────────────────────────────────┘ │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │              STRIKE BRAIN (Singleton)                      │   │   │
+│  │  │           Central State Management                        │   │   │
+│  │  │  • strike: StrikeTips orchestrator                        │   │   │
+│  │  │  • memory: RacingMemory (ChromaDB)                       │   │   │
+│  │  │  • orchestrator: UnifiedOrchestrator                      │   │   │
+│  │  │  • pipeline: ModelPipeline                               │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                                    │                                  │   │
+│  └────────────────────────────────────┼──────────────────────────────────┘   │
+│                                       ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                   MODEL PIPELINE LAYER (AI AGENTS)                  │   │
+│  ├─────────────────────────────────────────────────────────────────────┤   │
 │  │                                                                     │   │
-│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐      │   │
-│  │  │ racing_qwen   │  │  func_gemma   │  │  lfm_racing   │      │   │
-│  │  │  Fast Reads   │  │ Write Ops    │  │ Deep Analysis │      │   │
-│  │  │  (~1-2s)     │  │  (~1-2s)     │  │  (~2-3s)     │      │   │
-│  │  └───────────────┘  └───────────────┘  └───────────────┘      │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐ │   │
+│  │  │  User Query → IntentClassifier (regex, ~0ms)                 │ │   │
+│  │  └───────────────────────────────────────────────────────────────┘ │   │
+│  │                              │                                       │   │
+│  │         ┌────────────────────┼────────────────────┐                │   │
+│  │         ▼                    ▼                    ▼                │   │
+│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │   │
+│  │  │ Direct Tools│    │   LLM       │    │   Memory    │            │   │
+│  │  │ (Python)    │    │  Specialist │    │  (ChromaDB) │            │   │
+│  │  │ ~1-2s       │    │   Models    │    │   Grounding │            │   │
+│  │  └─────────────┘    └─────────────┘    └─────────────┘            │   │
+│  │                                                                     │   │
+│  │  ┌───────────────────────────────────────────────────────────────┐ │   │
+│  │  │  Fallback: local Ollama → Groq (cloud) → Gemini (cloud)       │ │   │
+│  │  └───────────────────────────────────────────────────────────────┘ │   │
 │  │                                                                     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│         ┌──────────────────────────┼──────────────────────────┐            │
-│         ▼                          ▼                          ▼            │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐        │
-│  │   Learning  │          │    Result   │          │   Memory    │        │
-│  │   Engine   │          │   Tracker   │          │ (ChromaDB) │        │
-│  │  skills/   │          │ skills/     │          │  skills/    │        │
-│  │  learning/ │          │result_track │          │   memory/   │        │
-│  └─────────────┘          └─────────────┘          └─────────────┘        │
-│                                                                             │
+│                                       │                                      │
+│         ┌─────────────────────────────┼─────────────────────────────┐       │
+│         ▼                             ▼                             ▼       │
+│  ┌─────────────┐              ┌─────────────┐              ┌─────────────┐   │
+│  │   RACE      │              │  BANKROLL   │              │ NOTIFICATIONS│  │
+│  │  ANALYSIS   │              │   GOVERNOR   │              │  (Telegram)  │  │
+│  │   SKILL     │              │   SKILL      │              │    SKILL     │  │
+│  ├─────────────┤              ├─────────────┤              ├─────────────┤   │
+│  │ • Value     │              │ • Max 5%   │              │ • Daily     │   │
+│  │   Engine    │              │   Rule     │              │   Tips      │   │
+│  │ • Kelly     │              │ • Loss     │              │ • Bet       │   │
+│  │   Staking   │              │   Limits   │              │   Alerts    │   │
+│  │ • Form      │              │ • P&L      │              │ • Results   │   │
+│  │   Analysis  │              │   Track    │              │ • Bankroll  │   │
+│  └─────────────┘              └─────────────┘              └─────────────┘   │
+│         │                             │                             │        │
+│         └─────────────────────────────┼─────────────────────────────┘        │
+│                                       ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                     DATA INGESTION LAYER                            │   │
 │  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐      │   │
-│  │  │ TAB4Racing    │  │ DuckDuckGo   │  │ StealthEngine │      │   │
-│  │  │ Scraper       │  │ Search       │  │ (Bypass bans) │      │   │
-│  │  └───────────────┘  └───────────────┘  └───────────────┘      │   │
+│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐        │   │
+│  │  │ TAB4Racing    │  │ Adaptive      │  │ Live Odds     │        │   │
+│  │  │ Scraper       │  │ Parser        │  │ Monitor       │        │   │
+│  │  │ (SA Racing)   │  │ (Self-Healing)│  │ (Playwright)  │        │   │
+│  │  └───────────────┘  └───────────────┘  └───────────────┘        │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Docker 3-Container Architecture
+
+```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           STRIKE TIPS SYSTEM                                │
+│                        DOCKER COMPOSE SETUP                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        ORCHESTRATOR                                 │   │
-│  │                      (strike_tips.py)                               │   │
-│  │                                                                     │   │
-│  │  • Coordinates all skills                                          │   │
-│  │  • Manages data flow                                                │   │
-│  │  • Handles CLI interface                                            │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│         ┌──────────────────────────┼──────────────────────────┐            │
-│         │                          │                          │            │
-│         ▼                          ▼                          ▼            │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐        │
-│  │   RACE      │          │  BANKROLL   │          │ NOTIFICATIONS│        │
-│  │  ANALYSIS   │          │   GOVERNOR  │          │  (Telegram)  │        │
-│  │   SKILL     │          │   SKILL     │          │    SKILL     │        │
-│  ├─────────────┤          ├─────────────┤          ├─────────────┤        │
-│  │             │          │             │          │             │        │
-│  │ • Value     │          │ • Max 5%   │          │ • Daily     │        │
-│  │   Engine    │          │   Rule     │          │   Tips      │        │
-│  │ • Kelly     │          │ • Loss     │          │ • Bet       │        │
-│  │   Staking   │          │   Limits   │          │   Alerts    │        │
-│  │ • Form      │          │ • P&L      │          │ • Results   │        │
-│  │   Analysis  │          │   Track    │          │ • Bankroll  │        │
-│  │             │          │ • Kelly    │          │   Updates   │        │
-│  │             │          │   Sizing   │          │             │        │
-│  └─────────────┘          └─────────────┘          └─────────────┘        │
-│         │                          │                          │            │
-│         └──────────────────────────┼──────────────────────────┘            │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                     DATA INGESTION LAYER                            │   │
-│  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │                                                                     │   │
-│  │  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐      │   │
-│  │  │ TAB4Racing    │    │ Self-Healing  │    │ Form Database │      │   │
-│  │  │ Scraper       │    │ Parser        │    │ (Future)      │      │   │
-│  │  ├───────────────┤    ├───────────────┤    ├───────────────┤      │   │
-│  │  │ • Turffontein │    │ • Adaptive    │    │ • Historical  │      │   │
-│  │  │ • Kenilworth  │    │   Selectors   │    │   Results     │      │   │
-│  │  │ • Vaal        │    │ • Fallback    │    │ • Jockey/     │      │   │
-│  │  │ • Greyville   │    │   Strategies  │    │   Trainer     │      │   │
-│  │  │ • Fairview    │    │ • Auto-Patch  │    │   Stats       │      │   │
-│  │  │ • Flamingo    │    │   Generation  │    │               │      │   │
-│  │  └───────────────┘    └───────────────┘    └───────────────┘      │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                      CONFIGURATION LAYER                            │   │
-│  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │  • settings.py - All configuration                                  │   │
-│  │  • .env - Environment variables (credentials)                       │   │
-│  │  • Tracks, bankroll rules, scraper settings                         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
+│   ┌────────────────────┐     ┌────────────────────┐     ┌────────────────┐  │
+│   │    strike-bot     │     │      ollama       │     │  odds-monitor │  │
+│   │    (FastAPI)      │     │   (Local LLM)     │     │  (Scraper)     │  │
+│   │                    │     │                    │     │                │  │
+│   │  Port: 8000        │     │  Port: 11434       │     │  Playwright    │  │
+│   │  /docs (Swagger)   │     │  racing_llama     │     │                │  │
+│   │  /api/agent        │     │  racing_qwen      │     │  CPU-limited   │  │
+│   │  /api/betting      │     │  func_gemma        │     │  0.8 CPU       │  │
+│   │                    │     │  lfm_racing        │     │  1.5GB RAM     │  │
+│   │  PYTHONPATH=/app   │     │  ds_racing        │     │                │  │
+│   └─────────┬──────────┘     └─────────┬──────────┘     └───────┬────────┘  │
+│             │                           │                      │           │
+│             │                           │                      │           │
+│             ▼                           ▼                      │           │
+│        Shared Volume (/app)         WSL2 GPU                  │           │
+│                                                  Bridge Network            │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -146,7 +121,7 @@ Strike Tips is built on a modular skill-based architecture inspired by agent sys
 ### Race Analysis Skill
 
 ```
-skills/race_analysis/
+core_agent/skills/race_analysis/
 ├── __init__.py
 ├── analyzer.py          # Core value bet engine
 └── form_analyzer.py     # Form-based probability estimation
@@ -173,7 +148,7 @@ Key Classes:
 ### Bankroll Governor Skill
 
 ```
-skills/bankroll_manager/
+core_agent/skills/bankroll_manager/
 ├── __init__.py
 └── governor.py          # Bankroll discipline enforcement
 
@@ -194,47 +169,28 @@ HARD_LIMITS = {
 }
 ```
 
-### Notification Skill
+### Model Pipeline (AI Agents)
 
 ```
-skills/notifications/
-├── __init__.py
-└── telegram_bot.py      # Telegram integration
-
-Key Classes:
-- TelegramNotifier: Bot interface
+core_agent/agents/
+├── ai_pydantic.py         # UnifiedOrchestrator + ModelPipeline
+├── ai_providers.py       # AI provider routing
+├── intent_classifier.py  # Regex-based intent detection
+└── specialists/          # Specialist agents
+    ├── analyst_agent.py
+    ├── scanner_agent.py
+    └── bankroll_agent.py
 ```
 
-**Message Types:**
-- Daily Tips Summary
-- Value Bet Alerts
-- Bet Confirmations
-- Race Results
-- Bankroll Updates
-- Error Alerts
+**Model Specialties:**
 
-### Parser Skill
-
-```
-skills/parsers/
-├── __init__.py
-├── tab4racing.py        # Primary SA racing scraper
-└── self_healing.py      # Adaptive parser
-
-Key Classes:
-- TAB4RacingScraper: Main scraper
-- SelfHealingParser: Adaptive selector logic
-```
-
-**Self-Healing Mechanism:**
-
-```python
-1. Try selectors in order of historical success
-2. Track success/fail rates per selector
-3. On failure, try fallback strategies
-4. Suggest new selectors based on HTML analysis
-5. Generate patch code for manual review
-```
+| Model | Role | Specialty | Fallback |
+|-------|------|-----------|----------|
+| `racing_llama` | Router | Fast reads, synthesis | → `racing_qwen` |
+| `racing_qwen` | Fast reads | Balance, odds, status | → `local:llama3.2:1b` |
+| `func_gemma` | Write ops | Record, update bets | → Groq cloud |
+| `lfm_racing` | Deep analysis | Race evaluation, daily scan | → Gemini cloud |
+| `ds_racing` | Reasoning | Probability edge calc | → `kimi-k2.5:cloud` |
 
 ---
 
@@ -271,24 +227,58 @@ Key Classes:
                                   └──────────┘
 ```
 
+### AI Pipeline Flow
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│User Message │───▶│   Intent    │───▶│   Direct    │───▶│  Response   │
+│             │    │Classifier  │    │   Tools     │    │             │
+│"balance?"   │    │  (~0ms)    │    │ (Python)    │    │  Synthesis  │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+                                              │
+                                              ▼
+                   ┌─────────────┐    ┌─────────────┐
+                   │  Fallback   │    │   Memory    │
+                   │   LLM       │    │  Grounding │
+                   │  (Ollama)   │    │  (ChromaDB) │
+                   └─────────────┘    └─────────────┘
+```
+
 ---
 
 ## Configuration System
 
-### Hierarchical Config
+### Centralized Model Config
 
 ```python
-# 1. Default values (config/settings.py)
+# core_agent/config/model_config.py
+class ModelConfig:
+    """All model assignments driven by .env"""
+    
+    # Orchestrator (Groq free tier)
+    ORCHESTRATOR = os.getenv("MODEL_ORCHESTRATOR", "local:llama3.2:1b")
+    
+    # Local models (Ollama)
+    REASONER = os.getenv("MODEL_REASONER", "ds_racing")
+    SCRAPER = os.getenv("MODEL_SCRAPER", "racing_qwen")
+    FUNC_CALL = os.getenv("MODEL_FUNC_CALL", "func_gemma")
+    THINKING = os.getenv("MODEL_THINKING", "lfm_racing")
+    
+    # Cloud fallbacks
+    CLOUD_FALLBACK = os.getenv("MODEL_CLOUD_FALLBACK", "kimi-k2.5:cloud")
+```
+
+### Bankroll Configuration
+
+```python
+# core_agent/config/settings.py
 @dataclass
 class BankrollConfig:
     total_bankroll: float = 1000.0
     max_bet_percent: float = 5.0
-
-# 2. Environment variables (.env)
-STARTING_BANKROLL=2000
-
-# 3. Runtime overrides
-strike = StrikeTips(bankroll_config=custom_config)
+    daily_loss_limit: float = 20.0
+    min_edge_threshold: float = 5.0
+    kelly_fraction: float = 0.5
 ```
 
 ### Track Configuration
@@ -318,6 +308,7 @@ data/
 ├── bankroll_state.json       # Current bankroll, peak, P&L
 ├── bet_history.json          # All bets (open and settled)
 ├── parser_config.json        # Selector success rates
+├── market_snapshot_latest.json # Live odds snapshot
 └── daily_scan_YYYY-MM-DD.json # Historical scan results
 ```
 
@@ -351,8 +342,8 @@ data/
 
 ### Data Protection
 - User data stored locally
-- No cloud storage
-- No external APIs except Telegram
+- ChromaDB cloud for memory (with API key)
+- No external APIs except Telegram/Groq/Gemini
 
 ### Betting Safety
 - Hard-coded limits (5% max, 20% daily loss)
@@ -366,14 +357,14 @@ data/
 ### Adding New Data Sources
 
 ```python
-# skills/parsers/new_source.py
+# core_agent/skills/parsers/new_source.py
 class NewSourceScraper:
     def scrape_racecard(self, track: str) -> List[ScrapedRace]:
         # Implementation
         pass
 
-# In strike_tips.py
-from skills.parsers.new_source import NewSourceScraper
+# In core_agent/core/strike_tips.py
+from core_agent.skills.parsers.new_source import NewSourceScraper
 
 class StrikeTips:
     def __init__(self):
@@ -383,18 +374,18 @@ class StrikeTips:
         ]
 ```
 
-### Adding New Notification Channels
+### Adding New AI Models
 
 ```python
-# skills/notifications/whatsapp.py
-class WhatsAppNotifier:
-    def send_message(self, text: str):
-        # Implementation
-        pass
+# In .env
+MODEL_NEW_MODEL=my-custom-model
 
-# In strike_tips.py
-if enable_whatsapp:
-    self.whatsapp = WhatsAppNotifier()
+# In core_agent/config/model_config.py
+NEW_MODEL = os.getenv("MODEL_NEW_MODEL", "default")
+
+# Usage in code
+from core_agent.config.model_config import ModelConfig
+model = ModelConfig.NEW_MODEL
 ```
 
 ---
@@ -409,7 +400,15 @@ if enable_whatsapp:
 ### Rate Limiting
 - Scraper: 1 request per second
 - Telegram: Respect API limits
-- No parallel scraping (sequential)
+- LLM calls: Timeout at 60s
+
+### Docker Resource Limits
+
+| Container | CPU | Memory |
+|-----------|-----|--------|
+| strike-bot | 1.0 | 2.0G |
+| ollama | 1.5 | 2.5G |
+| odds-monitor | 0.8 | 1.5G |
 
 ---
 
@@ -425,33 +424,17 @@ except Exception as e:
         telegram.send_error_notification(str(e), context="Scraping")
 ```
 
-### Parser Errors
+### LLM Fallback
 ```python
-# Self-healing parser handles this
-result = parser.find_element(soup, "horse_name")
-if not result:
-    # Try fallback strategies
-    result = parser.fallback_strategy(soup)
+# Try local Ollama first
+response = await self._call_ollama(model, prompt)
+if not response:
+    # Fall back to Groq
+    response = await self._call_groq(prompt)
+if not response:
+    # Fall back to Gemini
+    response = await self._call_gemini(prompt)
 ```
-
----
-
-## Future Enhancements
-
-### Planned Features
-1. Machine learning form analysis
-2. Historical odds database
-3. Multiple bookmaker comparison
-4. Live odds tracking
-5. Advanced staking strategies
-6. Web dashboard
-7. Mobile app
-
-### Integration Points
-- Racing Post API
-- Betfair API
-- Oddschecker
-- Weather APIs (track conditions)
 
 ---
 
@@ -459,19 +442,29 @@ if not result:
 
 ### Adding a New Skill
 
-1. Create directory: `skills/new_skill/`
+1. Create directory: `core_agent/skills/new_skill/`
 2. Implement core class
 3. Add `__init__.py` exports
 4. Write tests
 5. Update documentation
 
 ### Code Style
-- Black formatter (100 char line length)
+- Black formatter (88 char line length)
 - Type hints required
 - Docstrings for all public methods
 - Unit tests for core logic
+- Docker paths use `/app/` prefix
 
 ---
 
-*Architecture Version: 1.0*
-*Last Updated: March 2024*
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | March 2024 | Initial release |
+| 2.0 | April 2026 | Refactored to core_agent/, removed Pydantic AI, added Docker 3-container setup |
+
+---
+
+*Architecture Version: 2.0*
+*Last Updated: April 2026*

@@ -1,33 +1,46 @@
-# Healing Cloud Swarm Architecture
+# Healing Cloud Swarm Architecture (v2.0)
+
+> **📅 Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** This document references the old `strike-tips/` structure. For v2.0, use `core_agent/`.
 
 ## Overview
 
 Multi-agent swarm architecture using **Ollama-hosted local models** for autonomous self-healing scrapers. Inspired by OpenAI Agents SDK handoffs pattern and Mastra agent networks.
 
-## Architecture Diagram
+## Architecture Diagram (v2.0)
 
 ```mermaid
 graph TB
-    subgraph "Ollama Local Cluster"
-        subgraph "Router Tier"
-            R[🤖 routing_llama<br/>Intent Classification<br/>Model: racing_llama]
+    subgraph "Docker Containers"
+        subgraph "strike-bot (FastAPI)"
+            R[🤖 routing_llama<br/>Intent Classification]
+            S1[🔍 scanner_agent<br/>Race Scanning]
+            S2[🩺 diagnostic_agent<br/>HTML Diagnosis]
+            S3[🛠️ repair_agent<br/>Patch Generation]
+            S4[✅ verifier_agent<br/>Validation]
+            S5[💰 bankroll_agent<br/>Risk Management]
         end
         
-        subgraph "Specialist Agents"
-            S1[🔍 scanner_agent<br/>Race Scanning<br/>Model: racing_qwen]
-            S2[🩺 diagnostic_agent<br/>HTML Diagnosis<br/>Model: lfm_racing]
-            S3[🛠️ repair_agent<br/>Patch Generation<br/>Model: func_gemma]
-            S4[✅ verifier_agent<br/>Validation<br/>Model: racing_qwen]
-            S5[💰 bankroll_agent<br/>Risk Management<br/>Model: racing_qwen]
-        end
-        
-        subgraph "Memory Layer"
-            M[(🧠 ChromaDB<br/>Session History)]
+        subgraph "ollama (Local LLM)"
+            M[(🧠 Models<br/>racing_llama<br/>racing_qwen<br/>func_gemma)]
         end
     end
     
     subgraph "External Systems"
         TAB[TAB4Racing API]
+        DDG[DuckDuckGo Search]
+    end
+    
+    R --> S1
+    R --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> TAB
+    TAB --> S1
+    S1 --> DDG
+```
+
+> **v2.0 Change:** Models now run in `ollama` container instead of directly on host.
         TG[Telegram Bot]
         PATCH[patches/pending<br/>patches/applied]
     end
@@ -197,18 +210,15 @@ class OllamaAgent:
 | `distance` | Numeric + "m" | `"1200m"`, `"1800m"` |
 | `race_time` | HH:MM format | `"14:30"`, `"16:00"` |
 
-## Directory Structure
+## Directory Structure (v2.0)
 
 ```
-strike-tips/
-├── patches/
-│   ├── pending/           # Awaiting validation
-│   │   └── patch_YYYYMMDD_HHMMSS.json
-│   ├── applied/           # Validated and active
-│   │   └── patch_YYYYMMDD_HHMMSS.json
-│   └── rejected/          # Failed validation
-│       └── patch_YYYYMMDD_HHMMSS.json
-├── ollama_configs/        # Custom model files
+core_agent/
+├── patches/                  # Future: Hot patch storage
+│   ├── pending/              # Awaiting validation
+│   ├── applied/              # Validated and active
+│   └── rejected/             # Failed validation
+├── ollama_configs/           # Custom model files
 │   ├── racing_llama.Modelfile
 │   ├── racing_qwen.Modelfile
 │   ├── func_gemma.Modelfile

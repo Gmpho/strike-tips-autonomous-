@@ -13,14 +13,15 @@ https://www.betway.co.za/sport/horse-racing?eventType=today
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 MULTI-MODEL AI ARCHITECTURE — IMPLEMENTATION PLAN v1.0
-   Strike Tips Racing Bot | Hardware: 16GB RAM / 256GB SSD
-   Date: 2026-03-13 | Author: Antigravity L7 AI DevOps
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🧠 MULTI-MODEL AI ARCHITECTURE — IMPLEMENTATION PLAN v2.0
+    Strike Tips Racing Bot | Hardware: 16GB RAM / 256GB SSD
+    Date: 2026-04-18 | Updated: core_agent/ refactor
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+> **⚠️ Note:** Key changes - `strike-tips/` → `core_agent/`, removed Pydantic AI
 
 ═══════════════════════════════════════════════════════════════
-SECTION 1 — MODEL INVENTORY & ROLE ASSIGNMENT
+SECTION 1 — MODEL INVENTORY & ROLE ASSIGNMENT (v2.0)
 ═══════════════════════════════════════════════════════════════
 
 Current Ollama Models (ollama list — 2026-03-13):
@@ -132,101 +133,15 @@ SECTION 2 — MODEL ROLES (GOD MODE AI ARCHITECTURE)
 SECTION 3 — FILES TO CREATE / MODIFY
 ═══════════════════════════════════════════════════════════════
 
-[NEW] strike-tips/config/model_config.py
-  Purpose: Single source of truth. Swap any model via .env — zero code change.
+[NEW] core_agent/config/model_config.py
 
-  import os
-  class ModelConfig:
-      # ── Cloud Orchestrator Chain (Gemini tiers, all free quota)
-      ORCHESTRATOR      = os.getenv("MODEL_ORCHESTRATOR",    "gemini-3-flash-preview")
-      ORCHESTRATOR_T2   = os.getenv("MODEL_ORCHESTRATOR_T2", "gemini-2.5-flash")
-      ORCHESTRATOR_T3   = os.getenv("MODEL_ORCHESTRATOR_T3", "gemini-2.0-flash-lite")
-      ORCHESTRATOR_T4   = os.getenv("MODEL_ORCHESTRATOR_T4", "gemini-1.5-flash")
-      # ── Tier 5 FREE non-Gemini cloud fallback (Groq LPU — 14400 req/day)
-      ORCHESTRATOR_T5   = os.getenv("MODEL_ORCHESTRATOR_T5", "groq/llama-3.3-70b-versatile")
-      # ── Parallel + Cloud Reasoning
-      PARALLEL          = os.getenv("MODEL_PARALLEL",        "kimi-k2-thinking:cloud")
-      CLOUD_FALLBACK    = os.getenv("MODEL_CLOUD_FALLBACK",  "kimi-k2.5:cloud")
-      # ── Local Models (use local RAM, always available offline)
-      SCRAPER           = os.getenv("MODEL_SCRAPER",         "llama3.2:1b")
-      REASONER          = os.getenv("MODEL_REASONER",        "deepseek-r1:1.5b")
-      EMBEDDER          = os.getenv("MODEL_EMBEDDER",        "embeddinggemma:300m")
-      # ── Hardware Guard (16GB laptop optimized)
-      MAX_LOCAL_CTX     = int(os.getenv("MAX_LOCAL_CTX",     "8192"))
-      MAX_LOCAL_PRED    = int(os.getenv("MAX_LOCAL_PRED",    "1000"))
-      LOCAL_THREADS     = int(os.getenv("LOCAL_THREADS",     "4"))
-      LOCAL_GPU         = int(os.getenv("LOCAL_GPU",         "0"))
-      LOCAL_TEMP        = float(os.getenv("LOCAL_TEMP",      "0.1"))
+[MODIFY] .env — add these model role keys (already present in v2.0):
 
-[MODIFY] strike-tips/.env — add these model role keys:
-  # ── Gemini Orchestrator Chain (Tiers 1-4, all free quota)
-  MODEL_ORCHESTRATOR=gemini-3-flash-preview
-  MODEL_ORCHESTRATOR_T2=gemini-2.5-flash
-  MODEL_ORCHESTRATOR_T3=gemini-2.0-flash-lite
-  MODEL_ORCHESTRATOR_T4=gemini-1.5-flash
-  # ── Tier 5: Groq free fallback (get key at console.groq.com)
-  MODEL_ORCHESTRATOR_T5=groq/llama-3.3-70b-versatile
-  GROQ_API_KEY=your_free_groq_key_here
-  # ── Parallel + Cloud Reasoning
-  MODEL_PARALLEL=kimi-k2-thinking:cloud
-  MODEL_CLOUD_FALLBACK=kimi-k2.5:cloud
-  # ── Local Models
-  MODEL_SCRAPER=llama3.2:1b
-  MODEL_REASONER=deepseek-r1:1.5b
-  MODEL_EMBEDDER=embeddinggemma:300m
-  # ── Ollama Hardware Guard
-  OLLAMA_KEEP_ALIVE=5m
-  MAX_LOCAL_CTX=8192
-  MAX_LOCAL_PRED=1000
-  LOCAL_THREADS=4
-  LOCAL_GPU=0
-  LOCAL_TEMP=0.1
+[MODIFY] core_agent/agents/ai_providers.py
 
-[MODIFY] strike-tips/ai_providers.py
-  Replace 4 hardcoded model strings with ModelConfig imports.
-  Add _call_kimi_parallel() for async multi-race dispatch:
+[MODIFY] core_agent/core/strike_tips.py — add LLM extraction using llama3.2:1b:
 
-    async def _call_kimi_parallel(self, prompts: list) -> list:
-        from ollama import AsyncClient
-        from config.model_config import ModelConfig
-        client = AsyncClient()
-        tasks = [
-            client.chat(model=ModelConfig.PARALLEL,
-                        messages=[{'role': 'user', 'content': p}],
-                        options={"num_ctx": ModelConfig.MAX_LOCAL_CTX})
-            for p in prompts
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [
-            AIResponse(
-                content=r.message.content if not isinstance(r, Exception) else "",
-                provider="kimi-parallel",
-                error=str(r) if isinstance(r, Exception) else None
-            ) for r in results
-        ]
-
-[MODIFY] strike-tips/scraper.py — add LLM extraction using llama3.2:1b:
-
-    def _llm_extract_runners(raw_content: str, track: str) -> list:
-        from ollama import chat
-        from config.model_config import ModelConfig
-        res = chat(
-            model=ModelConfig.SCRAPER,
-            messages=[{'role': 'user', 'content':
-                f"Extract horse racing runners as JSON array.\n"
-                f"Track: {track}\nContent:\n{raw_content[:4000]}\n"
-                f"Return ONLY: [{{name, number, odds, jockey, trainer, form}}]"
-            }],
-            options={"num_ctx": 4096, "num_predict": 500,
-                     "temperature": 0.0, "num_thread": ModelConfig.LOCAL_THREADS}
-        )
-        import re, json
-        match = re.search(r'\[.*\]', res.message.content, re.DOTALL)
-        return json.loads(match.group(0)) if match else []
-
-  Guard: only call LLM if standard parsing returns fewer than 3 runners.
-
-[MODIFY] strike-tips/skills/memory/chroma_memory.py
+[MODIFY] core_agent/skills/memory/chroma_memory.py
   Replace hardcoded "embeddinggemma:300m" with ModelConfig.EMBEDDER.
 
 

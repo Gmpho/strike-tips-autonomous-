@@ -93,17 +93,20 @@ Set at least one API key for race analysis.
 
 ---
 
-## 📁 File Structure
+# Modal Deployment Guide (v2.0)
+
+> **📅 Updated:** April 2026 | **⚠️ Note:** Project refactored to `core_agent/`. Modal deployment is deprecated in v2.0 - use Docker instead.
+
+## 📁 File Structure (Legacy - v1.0)
 
 ```
-strike-tips/
-├── modal_app.py          # Main Modal app
-├── modal_config.py       # Modal configuration
-├── ai_providers.py       # Multi-AI provider wrapper
-├── scraper.py            # Lightweight scraper
-├── deploy_modal.py       # Deployment helper
-└── MODAL_README.md       # This file
+core_agent/
+├── core/deploy_modal.py        # Deployment helper (legacy)
+├── core/modal_app.py          # Main Modal app (legacy)
+└── core/modal_config.py       # Modal configuration (legacy)
 ```
+
+> **Note:** In v2.0, we use Docker via `docker compose up -d` instead of Modal.
 
 ---
 

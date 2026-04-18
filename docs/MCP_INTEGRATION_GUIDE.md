@@ -1,4 +1,6 @@
-# Strike Tips: Architecture & MCP Integration Guide
+# Strike Tips: Architecture & MCP Integration Guide (v2.0)
+
+> **📅 Last Updated:** April 2026 | **Version:** 2.0
 
 ## 🎯 Architecture Overview
 Strike Tips uses a **Specialist Agent** pattern where a central `StrikeBrain` orchestrates specialized skills. These skills are exposed as JSON-RPC 2.0 tools via MCP, allowing for standardized, type-safe interaction.
@@ -12,8 +14,21 @@ graph TD
     D --> E[(ChromaDB Memory)]
     D --> F[TAB4Racing Scraper]
     D --> G[Bankroll Governor]
-    C --> H[7-Tier Model Pipeline]
+    C --> H[Model Pipeline]
+    H --> I[Local Ollama]
+    H --> J[Groq Cloud]
+    H --> K[Gemini Cloud]
 ```
+
+### Updated Components (April 2026)
+
+| Component | Location | Notes |
+|-----------|----------|-------|
+| **API Server** | `core_agent/api.py` | FastAPI on port 8000 |
+| **MCP Server** | `core_agent/core/mcp_server.py` | JSON-RPC 2.0 |
+| **StrikeBrain** | `core_agent/core/strike_brain.py` | Singleton orchestrator |
+| **ModelPipeline** | `core_agent/agents/ai_pydantic.py` | No Pydantic AI (direct httpx) |
+| **Tools** | `core_agent/tools/maf_tool_registry.py` | 11 gambling-free tools |
 
 ## 🛠️ MCP Capability Mapping
 
@@ -70,7 +85,28 @@ Content-Type: application/json
 ## 🔗 Technical Setup
 1. **Host:** `http://localhost:8000`
 2. **Auth:** `X-API-KEY` required (see `docs/deployment_security.md`).
-3. **Environment:** Access via Docker-Compose container `strike-bot-new`.
+3. **Environment:** Access via Docker-Compose container `strike-bot`.
+
+### Updated n8n Integration (v2.0)
+
+```json
+{
+  "mcpServers": {
+    "strike-tips": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-sse",
+        "http://localhost:8000/mcp/sse"
+      ],
+      "env": {
+        "X-API-KEY": "your_strike_tips_api_key"
+      }
+    }
+  }
+}
+```
+
+> **⚠️ Note:** Container name changed from `strike-bot-new` to `strike-bot` in v2.0.
 
 ---
 
@@ -109,5 +145,8 @@ Update your `claude_desktop_config.json` with the following configuration. Ensur
    - *"Search for Turffontein race results."*
 
 ### Troubleshooting
-* If the plug icon does not appear, check your container logs with: `docker logs strike-bot-new`
-* Ensure your bot is running (`docker-compose up -d`) before opening Claude.
+* If the plug icon does not appear, check your container logs with: `docker logs strike-bot`
+* Ensure your bot is running (`docker compose up -d`) before opening Claude.
+
+---
+*Updated for v2.0 - April 2026*

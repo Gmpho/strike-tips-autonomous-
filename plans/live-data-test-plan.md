@@ -1,10 +1,13 @@
-# Test Plan: Live Data Integration & Security Verification
+# Test Plan: Live Data Integration & Security Verification (v2.0)
+
+> **📅 Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** Container name changed from `strike-bot-new` to `strike-bot`
 
 ## Objective
 To verify that the Strike Tips engine can successfully fetch real-time racing data from TAB4Racing, analyze it, and interact with the secure API/MCP interface.
 
 ## 1. Prerequisites
-- [ ] Backend services (`strike-bot`, `odds-monitor`) are running in Docker.
+- [ ] Backend services (`strike-bot`, `ollama`, `odds-monitor`) are running in Docker.
 - [ ] Environment variables (`GEMINI_API_KEY`, `GROQ_API_KEY`) are valid.
 - [ ] `X-API-KEY` is configured in `.env`.
 
@@ -12,7 +15,7 @@ To verify that the Strike Tips engine can successfully fetch real-time racing da
 
 ### Phase A: Live Scrape & Data Extraction
 - **Action**: Trigger a real-time scan for a known active track (e.g., 'turffontein').
-- **Command**: `docker exec strike-bot-new python strike_tips.py track --track turffontein`
+- **Command**: `docker exec -it strike-bot python core_agent/core/strike_tips.py track --track turffontein`
 - **Success Criteria**: 
   - [ ] API returns valid race card JSON.
   - [ ] PDF Harvester correctly pre-warms the cache.

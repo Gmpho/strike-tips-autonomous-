@@ -1,4 +1,7 @@
-# HotPatchManager Architecture Plan
+# HotPatchManager Architecture Plan (v2.0)
+
+> **📅 Updated:** April 2026 | **Version:** 2.0
+> **⚠️ Note:** Project refactored to `core_agent/`. This is a future plan - not yet implemented.
 
 ## Overview
 
@@ -6,37 +9,37 @@ Transform the existing **Advisory Self-Healing** (bot tells you what's wrong) in
 
 ## Current State
 
-The existing [`self_healing.py`](strike-tips/skills/parsers/self_healing.py) provides:
+The existing [`core_agent/skills/parsers/self_healing.py`](core_agent/skills/parsers/self_healing.py) provides:
 - Selector success/failure tracking
 - Fallback strategies
 - `generate_parser_patch()` - generates patch code but doesn't apply it
 
-## Target Architecture
+## Target Architecture (v2.0)
 
 ### 1. Patch Directory Structure
 
 ```
-strike-tips/
+core_agent/
+├── skills/parsers/
+│   ├── self_healing.py         # UPDATED - Existing parser
+│   └── hot_patch_manager.py    # NEW - HotPatchManager
 ├── patches/
-│   ├── pending/           # AI-generated patches awaiting validation
-│   │   └── patch_YYYYMMDD_HHMMSS.json
-│   ├── applied/           # Validated patches ready for hot-loading
-│   │   └── patch_YYYYMMDD_HHMMSS.json
-│   └── rejected/          # Patches that failed validation
-│       └── patch_YYYYMMDD_HHMMSS.json
+│   ├── pending/                # AI-generated patches awaiting validation
+│   ├── applied/                # Validated patches ready for hot-loading
+│   └── rejected/               # Patches that failed validation
 ```
 
 ### 2. Patch JSON Format
 
 ```json
 {
-  "patch_id": "patch_20260325_143000",
+  "patch_id": "patch_20260418_143000",
   "target": "tab4racing.py",
   "element": "horse_odds",
   "old_selector": "span.odds-value",
   "new_selector": "div.price-display",
   "confidence": 0.98,
-  "created_at": "2026-03-25T14:30:00Z",
+  "created_at": "2026-04-18T14:30:00Z",
   "validated": false,
   "applied": false,
   "validation_errors": []
@@ -45,7 +48,7 @@ strike-tips/
 
 ### 3. HotPatchManager Class
 
-**Location**: `strike-tips/skills/parsers/hot_patch_manager.py`
+**Location**: `core_agent/skills/parsers/hot_patch_manager.py`
 
 ```python
 class HotPatchManager:
@@ -98,7 +101,7 @@ class HotPatchManager:
 
 ### 4. Integration with SelfHealingParser
 
-Modify [`self_healing.py`](strike-tips/skills/parsers/self_healing.py) to add:
+Modify [`core_agent/skills/parsers/self_healing.py`](core_agent/skills/parsers/self_healing.py) to add:
 
 ```python
 class SelfHealingParser:
@@ -197,10 +200,10 @@ graph TD
 
 | File | Action |
 |------|--------|
-| `strike-tips/patches/.gitkeep` | Create |
-| `strike-tips/skills/parsers/hot_patch_manager.py` | Create |
-| `strike-tips/skills/parsers/self_healing.py` | Modify |
-| `strike-tips/skills/notifications/telegram_bot.py` | Modify (add patch notifications) |
+| `core_agent/patches/.gitkeep` | Create |
+| `core_agent/skills/parsers/hot_patch_manager.py` | Create |
+| `core_agent/skills/parsers/self_healing.py` | Modify |
+| `core_agent/skills/notifications/telegram_bot.py` | Modify (add patch notifications) |
 
 ## Summary
 
@@ -210,44 +213,15 @@ This implementation transforms the system from **Advisory** (bot tells you what'
 
 ## Implementation Reference
 
-### 1. Where to Add HotPatchManager in [`self_healing.py`](strike-tips/skills/parsers/self_healing.py)
+### 1. Where to Add HotPatchManager in [`core_agent/skills/parsers/self_healing.py`](core_agent/skills/parsers/self_healing.py)
 
-**Lines 30-39** - Add initialization in `__init__`:
-```python
-def __init__(self, config_path: str = "./data/parser_config.json"):
-    self.config_path = config_path
-    self.selectors = self._load_selectors()
-    self.fallback_strategies = self._init_fallbacks()
-    # NEW: Add hot patch manager
-    from skills.parsers.hot_patch_manager import HotPatchManager
-    self.hot_patch_manager = HotPatchManager()
-    self.consecutive_failures = {}
-```
+### 2. Your Scraper: [`core_agent/skills/parsers/tab4racing.py`](core_agent/skills/parsers/tab4racing.py)
 
-**Lines 163-181** - After selector fails, add failure tracking:
-```python
-# After pattern.fail_count += 1
-self._track_failure(element_type)
-```
+### 3. Telegram Notifications: [`core_agent/skills/notifications/telegram_bot.py`](core_agent/skills/notifications/telegram_bot.py)
 
-### 2. Your Scraper: [`tab4racing.py`](strike-tips/skills/parsers/tab4racing.py)
+### 4. Project Root
 
-- Uses `StealthEngine.stealth_fetch()` for API calls (line 77)
-- Parses JSON responses into `ScrapedRace` / `ScrapedRunner` (lines 130-147)
-- Place to add selector override hook for patched selectors
-
-### 3. Telegram Notifications: [`telegram_bot.py`](strike-tips/skills/notifications/telegram_bot.py)
-
-Add new method after `send_error_notification()` (around line 293):
-```python
-def send_patch_notification(self, patch_result: Dict) -> Dict:
-    """Notify about patch application/rejection"""
-    # Use existing pattern from send_error_notification()
-```
-
-### 4. Patch Directory Structure
-```
-strike-tips/patches/
+`core_agent/patches/`
 ├── pending/   # AI-generated patches
 ├── applied/   # Validated patches
 └── rejected/  # Failed validations
