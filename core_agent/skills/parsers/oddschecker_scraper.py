@@ -55,10 +55,12 @@ class OddscheckerScraper:
         run_conf = CrawlerRunConfig(
             extraction_strategy=self.extraction_strategy,
             cache_mode=CacheMode.BYPASS,
-            # wait_until="commit" to capture HTML immediately after server response
-            wait_until="commit",
-            page_timeout=90000,  # 90 seconds to allow for slow anti-bot scripts
-            delay_before_return_html=2.0
+            # Use domcontentloaded for more reliability on heavy JS pages
+            wait_until="domcontentloaded",
+            page_timeout=90000,
+            delay_before_return_html=5.0, # Increased delay for JS rendering
+            # Ensure the table is present before extracting
+            wait_for="css:tr.event-row, .runner-row"
         )
 
         try:
@@ -70,6 +72,7 @@ class OddscheckerScraper:
                     logger.warning(f"⚠️ Crawl4AI failed: {result.error_message}")
                     return {}
 
+                logger.debug(f"🔍 Raw Extracted Content: {result.extracted_content[:500]}")
                 raw_data = json.loads(result.extracted_content or "[]")
                 
                 # Fusion formatting: { race_name: { horse_name: decimal_odds } }

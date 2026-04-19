@@ -51,7 +51,7 @@ CHROME_ARGS = [
 ]
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - [%(levelname)s] - %(message)s',
     stream=sys.stdout
 )
