@@ -117,7 +117,7 @@ class StrikeTips:
         
         # Initialize Memory
         from core_agent.skills.memory.chroma_memory import RacingMemory
-        self.memory = RacingMemory(data_dir=os.path.join(data_dir, "chroma"))
+        self.memory = RacingMemory(data_dir=os.path.join(self.data_dir, "chroma"))
 
         # 🛡️ Loop & Concurrency Protection
         self._processing_tracks = set()
@@ -386,7 +386,8 @@ class StrikeTips:
     async def run_daily_scan(self, tracks: Optional[List[str]] = None) -> Dict:
         """
         Run daily scan for all tracks and SAVE to memory for RAG grounding.
-        Also harvests official TAB PDF tips.
+        Uses MAF Workflow (Scrape→Analyse→Bankroll→Notify) when agents are available,
+        falls back to legacy scrape_and_analyze_track otherwise.
         """
         tracks = tracks or list(TRACKS.keys())
 
@@ -399,15 +400,11 @@ class StrikeTips:
 
         # 1. Harvest Official PDF Tips FIRST
         from core_agent.skills.parsers.pdf_harvester import PDFHarvester
-
         pdf = PDFHarvester()
-        # Daily Tips is a general sheet, not track specific
         pdf_res = await pdf.get_latest_racing_intelligence("Any", "Daily Tips")
         pdf_tips = pdf_res.get("parsed_tips", [])
 
-        # Access memory through brain singleton
         from core_agent.core.strike_brain import brain
-
         memory = brain.memory
 
         if memory and pdf_tips:
@@ -416,79 +413,74 @@ class StrikeTips:
                 memory.add_form_insight(
                     horse=f"Official_Tip_R{tip['race_number']}",
                     insight=f"OFFICIAL TAB TIP: For Race {tip['race_number']}, the official selection is {tip['selections']}.",
-                    metadata={
-                        "date": today_str,
-                        "type": "official_tip",
-                        "race": tip["race_number"],
-                    },
+                    metadata={"date": today_str, "type": "official_tip", "race": tip["race_number"]},
                 )
             print(f"  📜 {len(pdf_tips)} official PDF tips grounded in memory.")
 
+        # 2. Try MAF Workflow if agents are initialized
+        agents = getattr(getattr(brain, "pipeline", None), "_agents", None)
+        if agents:
+            try:
+                from core_agent.agents.workflow import build_race_scan_workflow
+                workflow = build_race_scan_workflow(self, agents)
+                events = await workflow.run(tracks)
+                outputs = events.get_outputs() or []
+                total_value_bets = sum(
+                    1 for item in outputs
+                    if isinstance(item, dict) and "RECORD" in str(item.get("decision", "")).upper()
+                )
+                print(f"\n[OK] MAF Workflow scan complete! {total_value_bets} selections flagged.")
+                return {
+                    "date": date.today().isoformat(),
+                    "tracks_scanned": len(tracks),
+                    "total_value_bets": total_value_bets,
+                    "results": outputs,
+                }
+            except Exception as e:
+                print(f"[WARN] MAF Workflow failed ({e}), falling back to legacy scan.")
+
+        # 3. Legacy fallback
         all_results = {}
         total_value_bets = 0
-
         for track in tracks:
             try:
                 results = await self.scrape_and_analyze_track(track)
                 all_results[track] = results
                 if results:
                     total_value_bets += sum(len(r.get("value_bets", [])) for r in results if isinstance(r, dict))
-
-                # [START] L7 GROUNDING: Save race info to ChromaDB
                 if memory and results:
                     today_str = date.today().isoformat()
                     for race in results:
-                        insight_text = (
-                            f"OFFICIAL RACE CARD: {race['track']} Race {race['race_number']} at {race['race_time']}. "
-                            f"Condition: {race['condition']}. Runners: {race['runners']}. "
-                            f"This is the official data for {today_str}."
-                        )
                         memory.add_form_insight(
                             horse=f"Track_{race['track']}_R{race['race_number']}",
-                            insight=insight_text,
-                            metadata={
-                                "date": today_str,
-                                "track": race["track"],
-                                "type": "official_card",
-                            },
+                            insight=(
+                                f"OFFICIAL RACE CARD: {race['track']} Race {race['race_number']} at {race['race_time']}. "
+                                f"Condition: {race['condition']}. Runners: {race['runners']}."
+                            ),
+                            metadata={"date": today_str, "track": race["track"], "type": "official_card"},
                         )
-                    print(f"  [MAF] Memory grounded for {track}")
-
             except Exception as e:
                 print(f"[ERR] Error processing {track}: {e}")
                 all_results[track] = []
 
-        # Send daily summary
         if self.telegram:
             try:
                 self.telegram.send_daily_tips(all_results)
             except Exception as e:
                 print(f"[ERR] Failed to send daily summary: {e}")
 
-        # Save results to disk
-        output_file = os.path.join(
-            self.data_dir, f"daily_scan_{date.today().isoformat()}.json"
-        )
+        output_file = os.path.join(self.data_dir, f"daily_scan_{date.today().isoformat()}.json")
         with open(output_file, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
 
-        # Push metrics to Pushgateway (optional - silent if unavailable)
         if _prometheus_enabled:
             try:
                 gateway_url = os.getenv("PROMETHEUS_PUSHGATEWAY", "localhost:9091")
-                push_to_gateway(
-                    gateway_url, job="strike_tips_daily_scan", registry=REGISTRY
-                )
+                push_to_gateway(gateway_url, job="strike_tips_daily_scan", registry=REGISTRY)
             except Exception:
-                pass  # Silently skip - metrics are optional
+                pass
 
-        print("\n" + "=" * 60)
-        print(
-            f"[OK] Scan complete! Found {total_value_bets} value bets across all tracks"
-        )
-        print(f"[SAVE] Results saved to: {output_file}")
-        print("=" * 60)
-
+        print(f"\n[OK] Scan complete! Found {total_value_bets} value bets across all tracks")
         return {
             "date": date.today().isoformat(),
             "tracks_scanned": len(tracks),

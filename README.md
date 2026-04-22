@@ -38,8 +38,8 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
         ▼                                                 ▼
 ┌───────────────────────┐                     ┌───────────────────────┐
 │   FRONTEND            │                     │   BACKEND             │
-│   (Next.js/TypeScript)│                     │   (core_agent/)       │
-│   Port: 3000          │                     │   Port: 8000 (FastAPI) │
+│   (Vite/Vanilla TS)   │                     │   (core_agent/)       │
+│   Port: 5173          │                     │   Port: 8000 (FastAPI)│
 └───────────────────────┘                     └───────────────────────┘
         │                                               │
         │                                               ▼
@@ -131,18 +131,17 @@ See [MODAL_README.md](MODAL_README.md) for details.
 git clone https://github.com/yourusername/strike-tips.git
 cd strike-tips
 
-# 2. Navigate to core_agent
+# 2. Start Backend
 cd core_agent
-
-# 3. Create virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# 4. Install dependencies
 pip install -r requirements.txt
-
-# 5. Start the FastAPI server
 python api.py
+
+# 3. Start Frontend (New terminal)
+cd strike-tips-hud
+npm install
+npm run dev
 ```
 
 ### 2. Configuration

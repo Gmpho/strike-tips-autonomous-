@@ -16,8 +16,8 @@ from telegram.ext import (
     CommandHandler,
 )
 
-from strike_brain import brain
-from config.settings import NOTIFICATIONS
+from core_agent.core.strike_brain import brain
+from core_agent.config.settings import NOTIFICATIONS
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO

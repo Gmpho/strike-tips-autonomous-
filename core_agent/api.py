@@ -18,9 +18,9 @@ app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH", "HEAD"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
     
@@ -38,33 +38,33 @@ async def startup_event():
                         app.state.snapshot_cache = json.load(f)
             except Exception:
                 pass
-            await asyncio.sleep(5) # Refresh every 5s
+            await asyncio.sleep(5)
             
     asyncio.create_task(refresh_snapshot())
+
+    # Background keepalive — pings racing_qwen every 4min so it stays loaded
+    async def keepalive_model():
+        import httpx
+        from core_agent.config.model_config import ModelConfig
+        host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
+        await asyncio.sleep(15)  # wait for Ollama to be ready
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(f"{host}/api/chat", json={
+                        "model": "racing_qwen",
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "stream": False,
+                        "options": {"num_predict": 1},
+                    })
+            except Exception:
+                pass
+            await asyncio.sleep(240)  # every 4 minutes
+
+    asyncio.create_task(keepalive_model())
     
     # Initialize the brain
     brain.initialize()
-
-    # Proactively load all local racing models into memory
-    async def warm_up():
-        import httpx
-        # Give the Ollama container time to actually start the API server
-        await asyncio.sleep(15) 
-        
-        # List of models to pre-warm (local only, skip :cloud models)
-        models = [
-            "racing_llama", "ds_racing", "lfm_racing", "racing_qwen", "func_gemma"
-        ]
-        async with httpx.AsyncClient(timeout=600.0) as client:
-            for model in models:
-                try:
-                    print(f"[WARMUP] Pre-loading {model}...")
-                    await client.post("http://ollama:11434/api/generate", json={"model": model, "prompt": "warmup"})
-                    await asyncio.sleep(5)  # Let the CPU recover between loads
-                except Exception as e:
-                    print(f"[WARMUP ERR] Could not pre-load {model}: {e}")
-
-    asyncio.create_task(warm_up())
     
     print("\n" + "="*50)
     print("Strike Tips Bot Initialized")

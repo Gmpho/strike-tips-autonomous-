@@ -62,7 +62,6 @@ class StrikeBrain:
         from core_agent.core.strike_tips import StrikeTips
         from core_agent.skills.memory.chroma_memory import RacingMemory
         from core_agent.tools.maf_tool_registry import TOOL_REGISTRY as AgentTools
-        from core_agent.agents.ai_providers import AIProvider
         from core_agent.agents.ai_pydantic import UnifiedOrchestrator, ModelPipeline
 
         # 1. Initialize Strike Tips (Orchestrator for Bankroll, Scraper, Analyzer)
@@ -74,13 +73,8 @@ class StrikeBrain:
         # 3. Initialize Agent Tools (Functional capability layer)
         self.tools = AgentTools
 
-        # 4. Initialize AI Provider (LLM Orchestrator)
-        self.ai = AIProvider()
-
-        # 5. Initialize Unified Orchestrator (Phase 3: The Agent Brain)
+        # 4. Initialize Unified Orchestrator + MAF Pipeline
         self.orchestrator = UnifiedOrchestrator(self.strike)
-
-        # 6. Initialize Model Pipeline (Delegation Chain Architecture)
         self.pipeline = ModelPipeline(self.strike)
 
         self._is_initialized = True
@@ -92,12 +86,8 @@ class StrikeBrain:
             return
 
         logger.info("[MAF] Strike Brain shutting down...")
-        if self.ai:
-            await self.ai.close()
-
         if self.strike:
             await self.strike.close()
-
         self._is_initialized = False
         logger.info("[OK] Strike Brain offline.")
 

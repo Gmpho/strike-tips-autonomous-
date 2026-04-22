@@ -56,7 +56,7 @@ docker exec -it strike-bot pytest
 
 ```bash
 # Install dependencies
-cd strike-tips-frontend && npm install
+cd strike-tips-hud && npm install
 
 # Development server
 npm run dev
@@ -190,10 +190,9 @@ core_agent/                          # Python backend (refactored April 2026)
 ├── services/                      # Business services
 └── requirements.txt
 
-strike-tips-frontend/              # Next.js frontend
+strike-tips-hud/              # Vite frontend
 ├── src/
-│   ├── app/                      # App router pages
-│   ├── components/               # React components
+│   ├── app/                      # UI Components
 │   └── lib/api.ts               # API utilities
 └── package.json
 ```

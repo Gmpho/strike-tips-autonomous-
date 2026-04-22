@@ -54,30 +54,23 @@ services:
       - ollama
 
   ollama:
-    image: uberchuckie/ollama-intel-gpu:latest
+    image: ollama/ollama:latest
     container_name: ollama
     ports:
       - "11434:11434"
-    devices:
-      - /dev/dxg:/dev/dxg
     environment:
       - OLLAMA_KEEP_ALIVE=-1
-      - OLLAMA_LOAD_TIMEOUT=600s
-      - ZES_ENABLE_SYSMAN=1
-      - OLLAMA_INTEL_GPU=1
-      - DEVICE=Arc
       - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_NUM_THREAD=1
-      - LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/lib
-      - VK_ICD_FILENAMES=/usr/lib/wsl/lib/intel_icd.x86_64.json
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_KV_CACHE_TYPE=q8_0
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 2.5G
+          cpus: '2.0'
+          memory: 3G
     volumes:
       - ollama_data:/root/.ollama
-      - /usr/lib/wsl:/usr/lib/wsl:ro
     restart: always
 
 volumes:

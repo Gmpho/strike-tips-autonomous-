@@ -103,9 +103,12 @@ class StrikeTipsScheduler:
             print(f"[ERR] Daily scan failed: {e}")
 
     async def _daily_scan_async(self):
+        tracks = await self._get_todays_tracks()
         self.strike = StrikeTips(data_dir=self.data_dir)
-        # Placeholder for real scan logic - you already have the robust version
-        return {"total_value_bets": 0}
+        try:
+            return await self.strike.run_daily_scan(tracks=tracks or None)
+        finally:
+            await self.strike.close()
 
     def check_race_results_job(self):
         pass

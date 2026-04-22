@@ -1,4 +1,4 @@
-FROM llama3.2:1b
+FROM llama3.2:1b-text-q4_K_M
 
 PARAMETER num_ctx 2048
 PARAMETER num_thread 4

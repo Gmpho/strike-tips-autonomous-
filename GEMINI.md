@@ -60,10 +60,10 @@ pip install -r requirements.txt
 python api.py
 ```
 
-### 3. Frontend Setup
+### Frontend Setup
 ```bash
 # Navigate to frontend
-cd strike-tips-frontend
+cd strike-tips-hud
 
 # Install dependencies
 npm install
@@ -71,7 +71,7 @@ npm install
 # Start development server
 npm run dev
 ```
-*The UI will be available at `http://localhost:3000`.*
+*The UI will be available at `http://localhost:5173`.*
 
 ### 4. CLI Orchestrator (Inside Container)
 ```bash

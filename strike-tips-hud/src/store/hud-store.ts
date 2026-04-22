@@ -1,0 +1,61 @@
+import { HUDState } from '../types';
+
+type Listener = (state: HUDState) => void;
+
+class HUDStore {
+  private state: HUDState = {
+    events: {},
+    bankroll: {
+      balance: 0,
+      dailyLimit: 0,
+      dailyLoss: 0,
+      maxStake: 0,
+      totalExposure: 0
+    },
+    learning: {
+      totalRoi: 0,
+      samples: 0,
+      topTrack: 'N/A',
+      accuracy: 0
+    },
+    systemHealth: {
+      cpu: 0,
+      memory: 0,
+      latency: 0,
+      status: 'OFFLINE'
+    },
+    lastUpdate: Date.now()
+  };
+
+  private listeners: Set<Listener> = new Set();
+
+  constructor() {
+    this.state = new Proxy(this.state, {
+      set: (target, prop, value) => {
+        (target as any)[prop] = value;
+        this.notify();
+        return true;
+      }
+    });
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  updateState(newState: Partial<HUDState>) {
+    Object.assign(this.state, newState);
+    this.state.lastUpdate = Date.now();
+  }
+
+  subscribe(listener: Listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    this.listeners.forEach(listener => listener(this.state));
+  }
+}
+
+export const hudStore = new HUDStore();

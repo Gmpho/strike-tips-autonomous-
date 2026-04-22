@@ -107,7 +107,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
     # ═══════════════════════════════════════════════════════════
     
     ModelInfo(
-        id="local:llama3.2:1b",
+        id="llama-3.3-70b-versatile",
         name="Groq Llama 70B",
         type="cloud",
         provider="Groq",
@@ -117,7 +117,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=False,
-        rate_limit_risk="medium"  # 14k/day limit
+        rate_limit_risk="medium"
     ),
     ModelInfo(
         id="gemini-3-flash-preview",

@@ -1,26 +1,21 @@
-from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
+from pathlib import Path
+from agent_framework import Agent, SkillsProvider
+from core_agent.config.model_factory import get_client
 
-class AnalystSpecialist:
-    def __init__(self, system_prompt: str):
-        self.system_prompt = system_prompt
-        self.allowed_tools = ["search_past_races", "search_racing_data", "calculate_probability_edge"]
+_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
-    async def process(self, intent: str, message: str, strike) -> str:
-        if intent in self.allowed_tools:
-            tool = TOOL_REGISTRY.get(intent)
-            if tool:
-                # Analyst tools require specific arguments, so we pass query=message
-                import inspect
-                if intent == "search_past_races":
-                    result = tool(query=message, strike=strike)
-                elif intent == "calculate_probability_edge":
-                    # This tool requires odds/prob, simplified for test
-                    result = tool(odds_decimal=6.5, estimated_probability=0.25)
-                else:
-                    if inspect.iscoroutinefunction(tool):
-                        result = await tool(strike=strike, message=message)
-                    else:
-                        result = tool(strike=strike, message=message)
-                return f"Result: {result}"
-        return f"Tool {intent} not allowed or not found."
 
+def build_analyst_agent(strike, skills_provider: SkillsProvider, chroma_provider) -> Agent:
+    from core_agent.agents.tools import build_tools
+    analyst_tools, _, _ = build_tools(strike)
+    client = get_client("SCRAPER")  # racing_qwen — tool-capable
+    return client.as_agent(
+        name="analyst",
+        instructions=(
+            "You are the Strike Tips Race Analyst. "
+            "Use your tools to research form and calculate edge. "
+            "Always return structured JSON matching the RaceAnalysis schema."
+        ),
+        tools=analyst_tools,
+        context_providers=[skills_provider, chroma_provider],
+    )

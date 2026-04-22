@@ -12,7 +12,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import logging
 from core_agent.core.strike_brain import brain
+
+logger = logging.getLogger("agent-routes")
 
 # Unified Orchestrator (Phase 3)
 from core_agent.agents.ai_pydantic import UnifiedOrchestrator, ModelPipeline, ModelFactory
@@ -69,26 +72,12 @@ async def agent_chat(request: AgentRequest):
             }
 
         orchestrator = get_orchestrator()
-        
-        # 1. Immediate Intent Check (Frontend UX optimization)
-        # Allows frontend to avoid calling LLM for simple queries
-        instant = await orchestrator._handle_intents(request.message, is_user_msg=True)
-        if instant:
-            return {
-                "success": True, 
-                "response": instant, 
-                "state": "ready",
-                "model": "intent_bypass"
-            }
-
-        # 2. Main AI Agent Call
         result = await orchestrator.chat(request.message, model_override=request.model)
 
-        # 3. Handle potential Agent failure
         if result.confidence == 0.0:
             return {
-                "success": False, 
-                "response": "Model is busy or loading. Please wait 30 seconds.", 
+                "success": False,
+                "response": "Model is busy or loading. Please wait 30 seconds.",
                 "state": "loading"
             }
 
@@ -97,7 +86,8 @@ async def agent_chat(request: AgentRequest):
             "response": result.summary,
             "state": "ready",
             "model": result.model_used,
-            "confidence": result.confidence
+            "confidence": result.confidence,
+            "token_usage": result.token_usage,
         }
 
     except Exception as e:
@@ -107,6 +97,59 @@ async def agent_chat(request: AgentRequest):
             "response": "An internal error occurred.",
             "state": "error"
         }
+
+
+@router.post("/chat/stream")
+async def agent_chat_stream(request: AgentRequest):
+    """Streaming chat — sends tokens as SSE as soon as they arrive."""
+    from fastapi.responses import StreamingResponse
+    import json as _json
+
+    async def event_stream():
+        try:
+            if hasattr(brain, "emergency_stop") and brain.emergency_stop:
+                yield f"data: {_json.dumps({'token': '🚨 System locked.', 'done': True})}\n\n"
+                return
+
+            orchestrator = get_orchestrator()
+            # Fast instant-intent path — no LLM needed
+            msg = request.message.lower().strip()
+            if any(kw in msg for kw in ("balance", "bankroll", "status", "how much", "my account")):
+                result = await orchestrator.chat(request.message)
+                yield f"data: {_json.dumps({'token': result.summary, 'done': True, 'model': result.model_used})}\n\n"
+                return
+
+            # Stream via Ollama /api/chat stream=true
+            import httpx
+            from core_agent.config.model_config import ModelConfig
+            host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
+            payload = {
+                "model": "racing_qwen",
+                "messages": [{"role": "user", "content": request.message}],
+                "stream": True,
+                "think": False,
+                "options": {"num_predict": 256, "temperature": 0.1},
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", f"{host}/api/chat", json=payload) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = _json.loads(line)
+                            token = chunk.get("message", {}).get("content", "")
+                            done = chunk.get("done", False)
+                            if token:
+                                yield f"data: {_json.dumps({'token': token, 'done': done})}\n\n"
+                            if done:
+                                yield f"data: {_json.dumps({'token': '', 'done': True, 'model': 'racing_qwen'})}\n\n"
+                                break
+                        except Exception:
+                            continue
+        except Exception as e:
+            yield f"data: {_json.dumps({'token': f'Error: {str(e)[:60]}', 'done': True})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/tools")
@@ -123,7 +166,7 @@ async def list_tools():
 async def get_tools_info():
     """Get detailed tool information with descriptions and use cases."""
     try:
-        from tools.maf_tool_registry import list_tools_with_descriptions
+        from core_agent.tools.maf_tool_registry import list_tools_with_descriptions
 
         tools_info = list_tools_with_descriptions()
         return {"success": True, "tools": tools_info, "count": len(tools_info)}
@@ -135,8 +178,7 @@ async def get_tools_info():
 async def list_models():
     """List all available models with fallback chain."""
     try:
-        from config.model_registry import get_all_models
-
+        from core_agent.config.model_registry import get_all_models
         models = get_all_models()
         return {"success": True, "models": models, "count": len(models)}
     except Exception as e:
@@ -154,12 +196,10 @@ async def orchestrator_health():
 
         ollama_status = "unknown"
         try:
+            from core_agent.config.model_config import ModelConfig
+            ollama_host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
             async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": "racing_llama", "prompt": "hi", "stream": False},
-                    timeout=5,
-                )
+                response = await client.get(f"{ollama_host}/api/tags", timeout=5)
                 ollama_status = "connected" if response.status_code == 200 else "error"
         except Exception:
             ollama_status = "not_running"
@@ -204,8 +244,9 @@ async def get_agent_history(limit: int = 20):
 async def generate_embedding(text: str):
     """Generate vector embedding for semantic search."""
     try:
-        # Use our existing AI provider to generate embeddings
-        embedding = await brain.ai.generate_embedding(text)
+        if not brain.memory:
+            raise HTTPException(status_code=503, detail="Memory not initialized")
+        embedding = brain.memory.generate_embedding(text)
         return {"success": True, "embedding": embedding}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

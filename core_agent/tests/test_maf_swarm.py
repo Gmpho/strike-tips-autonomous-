@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from unittest.mock import MagicMock
 from core_agent.maf_agent import get_maf_agent
 
@@ -17,6 +18,7 @@ class MockStrikeTips:
     async def run_daily_scan(self, tracks=None):
         return {"status": "SUCCESS", "found": 3}
 
+@pytest.mark.asyncio
 async def test_agent_swarm():
     # Setup
     mock_strike = MockStrikeTips()

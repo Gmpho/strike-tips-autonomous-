@@ -21,6 +21,7 @@ Extends the existing **MAF system** (StrikeMAFAgent + Tool Registry) with specia
 | `nemotron-3-nano:30b` | 30B (3B active) | Fast agentic pipelines, rapid feedback |
 | `nemotron-3-super` | 120B | Complex multi-agent coordination, deep reasoning |
 
+
 ### Nemotron-3 Architecture
 
 **Nemotron-3-Nano (30B)**

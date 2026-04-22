@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-purple-500: #a855f7;
+  --color-purple-glow: rgba(168, 85, 247, 0.4);
+  --color-void: #000000;
+  
+  --font-hud: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-tabular: 'JetBrains Mono', 'Roboto Mono', monospace;
+}
+
+/* Force dark background everywhere immediately */
+html, body {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--font-hud);
+}
+
+/* Ensure content is invisible until React hydrates */
+body {
+  opacity: 0;
+  transition: opacity 0.2s ease-in;
+}
+
+body.hydrated {
+  opacity: 1;
+}
+
+/* Void-Purple Components */
+.hud-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 1.5rem;
+  backdrop-filter: blur(40px);
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: rotateY(-10deg) rotateX(2deg);
+}
+
+.hud-card:hover {
+  border-color: var(--color-purple-500);
+  background: rgba(168, 85, 247, 0.05);
+  transform: rotateY(0deg) rotateX(0deg) scale(1.02);
+  box-shadow: 0 0 50px rgba(168, 85, 247, 0.15);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #ffffff 0%, #a855f7 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.tabular {
+  font-family: var(--font-tabular);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s infinite ease-in-out;
+}

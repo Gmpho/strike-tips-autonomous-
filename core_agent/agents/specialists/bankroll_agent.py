@@ -1,19 +1,19 @@
-from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
+from agent_framework import Agent, SkillsProvider
+from core_agent.config.model_factory import get_client
 
-class BankrollSpecialist:
-    def __init__(self, system_prompt: str):
-        self.system_prompt = system_prompt
-        self.allowed_tools = ["get_account_summary", "calculate_max_position", "record_selection"]
 
-    async def process(self, intent: str, message: str, strike) -> str:
-        if intent in self.allowed_tools:
-            tool = TOOL_REGISTRY.get(intent)
-            if tool:
-                # Some tools might be async, handle appropriately
-                import inspect
-                if inspect.iscoroutinefunction(tool):
-                    result = await tool(strike=strike, message=message)
-                else:
-                    result = tool(strike=strike, message=message)
-                return f"Result: {result}"
-        return f"Tool {intent} not allowed or not found."
+def build_bankroll_agent(strike, skills_provider: SkillsProvider) -> Agent:
+    from core_agent.agents.tools import build_tools
+    _, bankroll_tools, _ = build_tools(strike)
+    client = get_client("FUNC_CALL")
+    return client.as_agent(
+        name="bankroll",
+        instructions=(
+            "You are the Strike Tips Bankroll Governor. "
+            "Enforce Half-Kelly staking, 5% max stake, 20% daily loss limit. "
+            "Always call get_account_summary before approving any selection. "
+            "Return structured JSON matching the BetDecision schema."
+        ),
+        tools=bankroll_tools,
+        context_providers=[skills_provider],
+    )

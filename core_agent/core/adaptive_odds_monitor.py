@@ -124,7 +124,7 @@ class AdaptiveOddsMonitor:
                 
                 const mapEvent = (event, region) => {
                     const details = event.raceEventDetails || event.details;
-                    if (!details?.racers) return null;
+                    if (!details || !details.racers) return null;
                     
                     const raceName = event.name || event.displayName || "Unknown Race";
                     const raceTime = raceName.split(" ")[0];
@@ -136,15 +136,16 @@ class AdaptiveOddsMonitor:
                         t: raceTime,
                         st: raceTime,
                         isFinished: event.isFinished,
-                        raceNumber: event.sportSpecificProperties?.raceNumber || "1",
+                        raceNumber: (event.sportSpecificProperties && event.sportSpecificProperties.raceNumber) || "1",
                         runners: details.racers.map(r => {
                             const pId = (r.outcomeIds && r.outcomeIds[0]) || r.outcomeId;
                             const p = allPrices[pId];
                             
                             // High-fidelity price extraction
-                            let odds = 5.0;
+                            let odds = 'SP'; // Default to SP
                             if (p) {
-                                odds = parseFloat(p.priceDecimal || p.decimalPrice || p.odds || 5.0);
+                                odds = parseFloat(p.priceDecimal || p.decimalPrice || p.odds);
+                                if (isNaN(odds)) odds = 'SP';
                             }
                             
                             return {
@@ -196,8 +197,8 @@ class AdaptiveOddsMonitor:
                     });
                 }
 
-                // EVENT-DEEP-DIVE: If runners have missing prices (odds: 5), fetch specific event details
-                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 5.0)).slice(0, 30);
+                // EVENT-DEEP-DIVE: If runners have missing prices (odds: 'SP'), fetch specific event details
+                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 'SP')).slice(0, 30);
                 const missing = findMissing(events);
                 
                 if (missing.length > 0) {
@@ -213,8 +214,10 @@ class AdaptiveOddsMonitor:
                         if (res && res.prices) {
                             processPrices(res.prices);
                             // Re-map the specific event now that we have its prices
-                            const rawEvent = (daily.regions?.flatMap(r => r.sportEvents) || []).find(e => e.eventId === res.eventId) || 
-                                             (nextOff.events || nextOff.sportEvents || []).find(e => e.eventId === res.eventId);
+                            const rawEventDaily = daily.regions ? daily.regions.flatMap(r => r.sportEvents || []) : [];
+                            const rawEventNext = nextOff.events || nextOff.sportEvents || [];
+                            const rawEvent = rawEventDaily.find(e => e.eventId === res.eventId) || 
+                                             rawEventNext.find(e => e.eventId === res.eventId);
                             if (rawEvent) {
                                 const mapped = mapEvent(rawEvent, "DeepDive");
                                 if (mapped) events[res.eventId] = mapped;

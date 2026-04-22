@@ -51,16 +51,14 @@ class OddscheckerScraper:
             return 5.0
 
     async def get_latest_odds(self) -> Dict:
-        """Fetch and parse live odds using Crawl4AI with high resilience."""
+        """Fetch and parse live odds using Crawl4AI with permissive configuration."""
         run_conf = CrawlerRunConfig(
             extraction_strategy=self.extraction_strategy,
             cache_mode=CacheMode.BYPASS,
-            # Use domcontentloaded for more reliability on heavy JS pages
+            # Be permissive: don't wait for specific rows, as detection might hide them
             wait_until="domcontentloaded",
-            page_timeout=90000,
-            delay_before_return_html=5.0, # Increased delay for JS rendering
-            # Ensure the table is present before extracting
-            wait_for="css:tr.event-row, .runner-row"
+            page_timeout=60000,
+            delay_before_return_html=2.0 
         )
 
         try:
@@ -71,6 +69,7 @@ class OddscheckerScraper:
                 if not result.success:
                     logger.warning(f"⚠️ Crawl4AI failed: {result.error_message}")
                     return {}
+
 
                 logger.debug(f"🔍 Raw Extracted Content: {result.extracted_content[:500]}")
                 raw_data = json.loads(result.extracted_content or "[]")

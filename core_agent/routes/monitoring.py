@@ -10,16 +10,27 @@ from datetime import datetime
 
 router = APIRouter(prefix="/api", tags=["monitoring"])
 
+import hashlib
+import json
+import os
+from datetime import datetime
+from fastapi import APIRouter, Request
+
+router = APIRouter(prefix="/api", tags=["monitoring"])
+
 @router.get("/monitoring/snapshot")
 async def get_monitoring_snapshot(request: Request):
-    """Get latest zero-hallucination snapshot from in-memory cache"""
+    """Get latest zero-hallucination snapshot from in-memory cache with hash for differential sync"""
     cache = request.app.state.snapshot_cache
     if not cache:
         cache = {"status": "no_snapshot_available"}
-        
+
     # Return a copy so we don't mutate shared app state
     result = dict(cache)
-    
+
+    # Calculate hash for frontend differential sync
+    result["snapshot_hash"] = hashlib.md5(json.dumps(result, sort_keys=True).encode()).hexdigest()
+
     # Inject active intelligent alerts from the L7 Alert Engine
     alerts = []
     try:
@@ -28,17 +39,15 @@ async def get_monitoring_snapshot(request: Request):
         if os.path.exists(alerts_path):
             with open(alerts_path, "r") as f:
                 alerts_data = json.load(f)
-                # Handle both array and dict formats
                 items = alerts_data if isinstance(alerts_data, list) else alerts_data.values()
                 for v in items:
                     if isinstance(v, dict) and (v.get('active', False) or v.get('is_active', False) or v.get('condition_type') == 'value_bet'):
                         alerts.append(v)
     except Exception:
         pass
-        
+
     result["alerts"] = alerts
     return result
-
 @router.get("/system/health")
 async def get_system_health():
     """L7 Diagnostics endpoint for the Next.js Frontend"""
@@ -54,6 +63,32 @@ async def get_system_health():
 @router.get("/monitoring/performance")
 async def get_performance_summary():
     """Get AI performance metrics"""
-    from performance_tracker import tracker
+    from core_agent.core.performance_tracker import tracker
     return tracker.get_summary()
+
+@router.get("/logs")
+async def get_logs(tail: int = 50):
+    """Get last N log lines from monitor.log"""
+    log_lines = []
+    try:
+        # Try multiple log locations
+        log_paths = [
+            os.environ.get("DATA_DIR", "data") + "/strike.log",
+            "monitor.log",
+            "ollama.log"
+        ]
+        
+        for log_path in log_paths:
+            if os.path.exists(log_path):
+                with open(log_path, "r") as f:
+                    lines = f.readlines()
+                    log_lines = [line.strip() for line in lines[-tail:] if line.strip()]
+                break
+        
+        if not log_lines:
+            return {"logs": [], "count": 0, "source": "no_log_file"}
+    except Exception as e:
+        return {"logs": [], "count": 0, "error": str(e)}
+    
+    return {"logs": log_lines, "count": len(log_lines), "source": log_paths[0] if log_lines else "none"}
 
