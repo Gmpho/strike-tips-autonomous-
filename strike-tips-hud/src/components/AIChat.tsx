@@ -10,6 +10,8 @@ export const AIChat: React.FC = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('auto');
+  const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const getActivities = (msg: string): string[] => {
@@ -50,7 +52,10 @@ export const AIChat: React.FC = () => {
       const res = await fetch('/api/agent/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({
+          message: userMsg,
+          model: selectedModel !== 'auto' ? selectedModel : undefined,
+        }),
       });
 
       const reader = res.body!.getReader();
@@ -76,6 +81,17 @@ export const AIChat: React.FC = () => {
                   ? { ...m, content: m.content + chunk.token }
                   : m
               ));
+            }
+            if (chunk.done && (chunk.model || chunk.provider)) {
+              const modelLabel = [chunk.provider, chunk.model].filter(Boolean).join(':');
+              setLastModelUsed(modelLabel || null);
+              console.debug('[AIChat stream done]', {
+                model: chunk.model,
+                provider: chunk.provider,
+                intent: chunk.intent,
+                specialist: chunk.specialist,
+                routeSource: chunk.route_source,
+              });
             }
           } catch { /* skip malformed */ }
         }
@@ -129,6 +145,11 @@ export const AIChat: React.FC = () => {
             <div className="px-2 py-0.5 bg-purple-900/30 border border-purple-500/50 rounded text-[9px] font-bold text-purple-300 uppercase">
               {currentActivity ? 'PROCESSING' : 'SYSTEM_READY'}
             </div>
+            {lastModelUsed && (
+              <div className="px-2 py-0.5 bg-emerald-900/30 border border-emerald-500/40 rounded text-[9px] font-bold text-emerald-300 uppercase">
+                {lastModelUsed}
+              </div>
+            )}
         </div>
         
         <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-xs">
@@ -153,6 +174,18 @@ export const AIChat: React.FC = () => {
         </div>
 
         <div className="p-4 border-t border-white/10 bg-black/40 flex gap-3">
+            <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="bg-transparent border border-white/10 rounded-xl px-3 py-3 text-white text-xs focus:outline-none focus:border-purple-500"
+            >
+            <option value="auto" className="bg-black">Auto Route</option>
+            <option value="racing_llama" className="bg-black">racing_llama</option>
+            <option value="racing_qwen" className="bg-black">racing_qwen</option>
+            <option value="func_gemma" className="bg-black">func_gemma</option>
+            <option value="lfm_racing" className="bg-black">lfm_racing</option>
+            <option value="ds_racing" className="bg-black">ds_racing</option>
+            </select>
             <input 
             value={input}
             onChange={(e) => setInput(e.target.value)}
