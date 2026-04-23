@@ -130,7 +130,6 @@ class ModelPipeline:
         from core_agent.core.performance_tracker import tracker
 
         agent = self._get_agent(specialist) or self._get_agent("analyst")
-        session = agent.create_session()
 
         def _extract_usage(result) -> Optional[dict]:
             ud = getattr(result, "usage_details", None)
@@ -142,17 +141,20 @@ class ModelPipeline:
                 "total": ud.get("total_token_count"),
             }
 
-        # Try local agent first
-        t0 = time.time()
-        try:
-            result = await agent.run(message, session=session)
-            latency = time.time() - t0
-            text = result.text if hasattr(result, "text") else str(result)
-            usage = _extract_usage(result)
-            tracker.track_request(specialist, latency=latency, cost=0.0, success=True)
-            return AgentReply(summary=text, model_used=specialist, token_usage=usage)
-        except Exception as e:
-            logger.warning(f"[MAF] Local {specialist} failed: {e}")
+        # Try local agent first when available
+        if agent is not None:
+            t0 = time.time()
+            try:
+                result = await agent.run(message, session=agent.create_session())
+                latency = time.time() - t0
+                text = result.text if hasattr(result, "text") else str(result)
+                usage = _extract_usage(result)
+                tracker.track_request(specialist, latency=latency, cost=0.0, success=True)
+                return AgentReply(summary=text, model_used=specialist, token_usage=usage)
+            except Exception as e:
+                logger.warning(f"[MAF] Local {specialist} failed: {e}")
+        else:
+            logger.warning(f"[MAF] No local agent available for specialist={specialist}")
 
         # Groq fallback
         if ModelConfig.groq_available():
@@ -160,7 +162,7 @@ class ModelPipeline:
                 groq_client = get_client("ORCHESTRATOR")
                 fallback = groq_client.as_agent(
                     name=f"{specialist}_groq",
-                    instructions=agent._instructions if hasattr(agent, "_instructions") else "",
+                    instructions=agent._instructions if agent and hasattr(agent, "_instructions") else "",
                     tools=getattr(agent, "_tools", []),
                     context_providers=[self._skills],
                 )
@@ -212,14 +214,8 @@ class ModelPipeline:
         if model_override:
             specialist = model_override
 
-        # 2. Dispatch to MAF agent with fallback
-        if self._agents:
-            reply = await self._run_with_fallback(specialist, message)
-        else:
-            reply = AgentReply(
-                summary="Strike Brain not initialized.",
-                model_used="unavailable",
-            )
+        # 2. Dispatch to MAF agent with fallback (supports lazy cold-start)
+        reply = await self._run_with_fallback(specialist, message)
 
         return AgentResponse(
             summary=reply.summary,
