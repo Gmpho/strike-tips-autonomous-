@@ -12,8 +12,8 @@ from dataclasses import asdict
 # Import existing skills
 from core_agent.skills.parsers.tab4racing import TAB4RacingScraper, ScrapedRace
 from core_agent.skills.parsers.pdf_harvester import PDFHarvester
-from core_agent.skills.race_analysis import RaceAnalyzer
-from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer
+from core_agent.skills.race_analysis import RaceAnalyzer, RaceCard, Runner
+from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
 from core_agent.agents.ai_providers import AIProvider
 from core_agent.config.settings import BANKROLL
 
@@ -80,7 +80,6 @@ class RacingService:
         probs = {}
         reasoning = {}
         for sr in scraped_race.runners:
-            from skills.race_analysis.form_analyzer import parse_sa_form
             form = parse_sa_form(sr.form) if sr.form else []
             prob, rating, reason = self.form_analyzer.estimate_win_probability(
                 sr.horse_name, form, target_track=scraped_race.track,
@@ -88,7 +87,6 @@ class RacingService:
                 track_condition=scraped_race.track_condition.lower(),
                 field_size=len(scraped_race.runners)
             )
-            from skills.race_analysis import Runner
             runners.append(Runner(
                 horse_name=sr.horse_name, odds_decimal=sr.odds_decimal,
                 jockey=sr.jockey, trainer=sr.trainer, barrier=sr.barrier,
@@ -97,7 +95,6 @@ class RacingService:
             probs[sr.horse_name] = prob
             reasoning[sr.horse_name] = reason
         
-        from skills.race_analysis import RaceCard
         return RaceCard(
             track=scraped_race.track, race_number=scraped_race.race_number,
             race_time=scraped_race.race_time, distance=scraped_race.distance,
