@@ -11,7 +11,7 @@ import os
 from core_agent.core.strike_brain import brain
 from core_agent.models.betting import BetRecord, DailyStats, BankrollState
 
-router = APIRouter(prefix="/api/bets", tags=["betting"])
+router = APIRouter(tags=["betting"])
 
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
@@ -38,7 +38,7 @@ class BetSettleRequest(BaseModel):
     won: bool
     notes: Optional[str] = ""
 
-@router.post("")
+@router.post("/place")
 async def place_bet(bet: BetRequest):
     """Place a new bet"""
     if not brain.strike:
@@ -64,6 +64,7 @@ async def settle_bet(request: BetSettleRequest):
     result = brain.strike.settle_bet(request.bet_id, request.won, request.notes or "")
     return {"success": True, "result": result}
 
+@router.get("/history")
 @router.get("")
 async def get_bets():
     """Get all bets - reads from bet_history.json"""
@@ -151,6 +152,7 @@ async def get_bet_stats():
     }
 
 @router.get("/bankroll")
+@router.get("/account-summary")
 async def get_bankroll_state():
     """Get current bankroll state - reads from bankroll_state.json"""
     data = _load_json("bankroll_state.json")
@@ -166,12 +168,16 @@ async def get_bankroll_state():
     # Use brain if available for more accurate data
     if brain and brain.strike and brain.strike.bankroll:
         bankroll = brain.strike.bankroll
+        today_stats = bankroll.get_today_stats()
+        open_bets = bankroll.get_open_bets()
+        total_exposure = sum(b.stake for b in open_bets)
+        
         return BankrollState(
-            balance=bankroll.balance,
-            dailyLimit=bankroll.daily_limit,
-            dailyLoss=bankroll.daily_loss,
-            maxStake=bankroll.max_stake,
-            totalExposure=bankroll.total_exposure
+            balance=bankroll.current_bankroll,
+            dailyLimit=bankroll.current_bankroll * (bankroll.DAILY_LOSS_LIMIT_PERCENT / 100.0),
+            dailyLoss=abs(today_stats.profit_loss) if today_stats.profit_loss < 0 else 0.0,
+            maxStake=bankroll.current_bankroll * (bankroll.MAX_BET_PERCENT / 100.0),
+            totalExposure=total_exposure
         ).model_dump(by_alias=True)
     
     # Fallback to JSON file

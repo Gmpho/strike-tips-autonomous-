@@ -34,8 +34,8 @@ export const BankrollView: React.FC = () => {
     const fetchData = async () => {
       try {
         const [statsRes, betsRes] = await Promise.all([
-          fetch('/api/bets/stats'),
-          fetch('/api/bets')
+          fetch('/api/betting/stats'),
+          fetch('/api/betting/history')
         ]);
         
         if (!statsRes.ok || !betsRes.ok) {

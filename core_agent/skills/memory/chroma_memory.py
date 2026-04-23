@@ -178,3 +178,29 @@ class RacingMemory:
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    def generate_embedding(self, text: str) -> List[float]:
+        """
+        Generate a vector embedding for the given text using local Ollama.
+        Uses the model defined in ModelConfig.EMBEDDER.
+        """
+        import httpx
+        from core_agent.config.model_config import ModelConfig
+        
+        host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
+        model = ModelConfig.EMBEDDER or "nomic-embed-text"
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(
+                    f"{host}/api/embeddings",
+                    json={"model": model, "prompt": text}
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("embedding", [])
+                else:
+                    logger.error(f"Embedding failed: {resp.text}")
+                    return []
+        except Exception as e:
+            logger.error(f"Ollama connection error during embedding: {e}")
+            return []

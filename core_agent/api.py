@@ -84,7 +84,8 @@ except Exception as e:
 
 # Register routes
 app.include_router(agent.router)
-app.include_router(betting.router)
+app.include_router(betting.router, prefix="/api/betting")
+app.include_router(betting.router, prefix="/api/bets")
 app.include_router(racing.router)
 app.include_router(config.router)
 # app.include_router(monitoring.router)

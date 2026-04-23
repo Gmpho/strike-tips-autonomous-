@@ -15,15 +15,17 @@ export function useHUD() {
   useEffect(() => {
     const sync = async () => {
       try {
-        const [snapshotRes, healthRes] = await Promise.all([
+        const [snapshotRes, healthRes, bankrollRes] = await Promise.all([
           fetch('/api/monitoring/snapshot'),
-          fetch('/api/system/health')
+          fetch('/api/system/health'),
+          fetch('/api/betting/account-summary')
         ]);
 
         if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
         
         const snapshot = await snapshotRes.json();
         const health = await healthRes.json();
+        const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
         
         // Skip state update if snapshot hasn't changed (Differential Sync)
         if (snapshot.snapshot_hash === lastSnapshotHash.current) {
@@ -42,19 +44,19 @@ export function useHUD() {
 
         lastSnapshotHash.current = snapshot.snapshot_hash;
 
-        const betsRes = await fetch('/api/bets/open');
+        const betsRes = await fetch('/api/betting/open');
         const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
         
         setState(prev => ({
           ...prev,
           events: snapshot.events || {},
-          bankroll: {
-            balance: 2500.50,
-            dailyLimit: 500,
-            dailyLoss: 0,
-            maxStake: 125,
-            totalExposure: openBets.bets.reduce((acc: any, b: any) => acc + (b.stake || 0), 0)
-          },
+          bankroll: bankroll ? {
+            balance: bankroll.balance,
+            dailyLimit: bankroll.daily_limit,
+            dailyLoss: bankroll.daily_loss,
+            maxStake: bankroll.max_stake,
+            totalExposure: bankroll.total_exposure || openBets.bets.reduce((acc: any, b: any) => acc + (b.stake || 0), 0)
+          } : prev.bankroll,
           systemHealth: {
             cpu: health.cpu_usage_percent,
             memory: health.memory_usage_percent,
