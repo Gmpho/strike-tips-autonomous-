@@ -1,6 +1,6 @@
 import { hudStore } from '../store/hud-store';
 import type { VisualEngine } from './visual-engine';
-import { BETTING_API_PREFIX } from '../lib/api-prefixes';
+import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 
 export class DataBridge {
   private interval: number | null = null;
@@ -26,7 +26,7 @@ export class DataBridge {
       // Parallel fetch for speed
       const [snapshotRes, bankrollRes] = await Promise.all([
         fetch('/api/monitoring/snapshot'),
-        fetch(`${BETTING_API_PREFIX}/account-summary`)
+        fetch(BETTING_ENDPOINTS.accountSummary)
       ]);
 
       if (!snapshotRes.ok) throw new Error('Backend link severed');

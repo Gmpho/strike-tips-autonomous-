@@ -38,6 +38,29 @@ class BetSettleRequest(BaseModel):
     won: bool
     notes: Optional[str] = ""
 
+
+class BettingRootResponse(BaseModel):
+    """Lightweight betting route index for endpoint discovery."""
+    service: str
+    endpoints: Dict[str, str]
+
+
+@router.get("/", response_model=BettingRootResponse)
+async def get_betting_root():
+    """Return the canonical betting endpoint map."""
+    return BettingRootResponse(
+        service="betting",
+        endpoints={
+            "history": "/api/betting/history",
+            "open": "/api/betting/open",
+            "stats": "/api/betting/stats",
+            "accountSummary": "/api/betting/account-summary",
+            "place": "/api/betting/place",
+            "settle": "/api/betting/settle",
+        },
+    )
+
+
 @router.post("/place")
 async def place_bet(bet: BetRequest):
     """Place a new bet"""
@@ -65,7 +88,6 @@ async def settle_bet(request: BetSettleRequest):
     return {"success": True, "result": result}
 
 @router.get("/history")
-@router.get("")
 async def get_bets():
     """Get all bets - reads from bet_history.json"""
     bets_data = _load_json("bet_history.json")
