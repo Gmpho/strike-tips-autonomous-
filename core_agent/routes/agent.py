@@ -122,7 +122,7 @@ async def agent_chat_stream(request: AgentRequest):
             # Stream via Ollama /api/chat stream=true
             import httpx
             from core_agent.config.model_config import ModelConfig
-            host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
+            chat_url = ModelConfig.ollama_native_url("/api/chat")
             payload = {
                 "model": "racing_qwen",
                 "messages": [{"role": "user", "content": request.message}],
@@ -131,7 +131,7 @@ async def agent_chat_stream(request: AgentRequest):
                 "options": {"num_predict": 256, "temperature": 0.1},
             }
             async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", f"{host}/api/chat", json=payload) as resp:
+                async with client.stream("POST", chat_url, json=payload) as resp:
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
@@ -197,9 +197,9 @@ async def orchestrator_health():
         ollama_status = "unknown"
         try:
             from core_agent.config.model_config import ModelConfig
-            ollama_host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
+            ollama_tags_url = ModelConfig.ollama_native_url("/api/tags")
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"{ollama_host}/api/tags", timeout=5)
+                response = await client.get(ollama_tags_url, timeout=5)
                 ollama_status = "connected" if response.status_code == 200 else "error"
         except Exception:
             ollama_status = "not_running"
@@ -312,4 +312,3 @@ async def reset_switch():
     """Resume normal system operations."""
     brain.set_emergency_stop(False)
     return {"success": True, "message": "SYSTEM RESET COMPLETE", "status": "active"}
-
