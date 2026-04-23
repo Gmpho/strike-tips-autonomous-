@@ -103,7 +103,7 @@ Strike Tips is built on a modular skill-based architecture inspired by agent sys
 │   │  /docs (Swagger)   │     │  racing_llama     │     │                │  │
 │   │  /api/agent        │     │  racing_qwen      │     │  CPU-limited   │  │
 │   │  /api/betting      │     │  func_gemma        │     │  0.8 CPU       │  │
-│   │                    │     │  lfm_racing        │     │  1.5GB RAM     │  │
+│   │  /api/bets → 307   │     │  lfm_racing        │     │  1.5GB RAM     │  │
 │   │  PYTHONPATH=/app   │     │  ds_racing        │     │                │  │
 │   └─────────┬──────────┘     └─────────┬──────────┘     └───────┬────────┘  │
 │             │                           │                      │           │

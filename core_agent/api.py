@@ -2,6 +2,7 @@
 Strike Bot API Entry Point
 """
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from core_agent.routes import agent, betting, racing, config, monitoring
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import AuthMiddleware
@@ -114,11 +115,26 @@ except Exception as e:
 # Register routes
 app.include_router(agent.router)
 app.include_router(betting.router, prefix="/api/betting")
-app.include_router(betting.router, prefix="/api/bets")
 app.include_router(racing.router)
 app.include_router(config.router)
 # app.include_router(monitoring.router)
 app.include_router(monitoring.router)
+
+
+@app.api_route(
+    "/api/bets",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/api/bets/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+async def redirect_legacy_bets_routes(path: str = ""):
+    """Redirect legacy /api/bets routes to the canonical /api/betting prefix."""
+    suffix = f"/{path}" if path else ""
+    return RedirectResponse(url=f"/api/betting{suffix}", status_code=307)
 
 @app.get("/")
 async def root():

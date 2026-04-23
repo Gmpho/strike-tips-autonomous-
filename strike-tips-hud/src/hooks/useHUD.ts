@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { HUDState } from '../types';
+import { BETTING_API_PREFIX } from '../lib/api-prefixes';
 
 export function useHUD() {
   const [state, setState] = useState<HUDState>({
@@ -18,7 +19,7 @@ export function useHUD() {
         const [snapshotRes, healthRes, bankrollRes] = await Promise.all([
           fetch('/api/monitoring/snapshot'),
           fetch('/api/system/health'),
-          fetch('/api/betting/account-summary')
+          fetch(`${BETTING_API_PREFIX}/account-summary`)
         ]);
 
         if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
@@ -44,7 +45,7 @@ export function useHUD() {
 
         lastSnapshotHash.current = snapshot.snapshot_hash;
 
-        const betsRes = await fetch('/api/betting/open');
+        const betsRes = await fetch(`${BETTING_API_PREFIX}/open`);
         const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
         
         setState(prev => ({
