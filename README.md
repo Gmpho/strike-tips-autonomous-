@@ -103,6 +103,24 @@ docker logs -f strike-bot
 - `ollama`: Local LLM on port 11434
 - `odds-monitor`: Playwright scraper
 
+## 🔌 Betting API Endpoint Map (Canonical)
+
+Use explicit betting endpoints to avoid route drift between backend and frontend.
+
+| Purpose | Method | Endpoint |
+|---------|--------|----------|
+| Betting route index (lightweight discovery) | `GET` | `/api/betting/` |
+| Full bet history | `GET` | `/api/betting/history` |
+| Open bets only | `GET` | `/api/betting/open` |
+| Betting statistics | `GET` | `/api/betting/stats` |
+| Account summary / bankroll state | `GET` | `/api/betting/account-summary` |
+| Place bet | `POST` | `/api/betting/place` |
+| Settle bet | `POST` | `/api/betting/settle` |
+
+Notes:
+- Do **not** depend on implicit root-list behavior for history.
+- Frontend should call explicit endpoints such as `/api/betting/history` and `/api/betting/account-summary`.
+
 ---
 
 ### Option B: Deploy on Modal (Serverless)
