@@ -9,8 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
 import os
+import logging
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 from core_agent.core.strike_brain import brain
+from core_agent.config.model_config import ModelConfig
+
+logger = logging.getLogger("strike-api")
 
 app = FastAPI(title="Strike Bot API")
 
@@ -26,6 +30,9 @@ app.add_middleware(
     
 @app.on_event("startup")
 async def startup_event():
+    ollama_host = ModelConfig.ollama_host()
+    logger.info("Ollama configured host: %s", ollama_host)
+
     # Initialize cache in app state
     app.state.snapshot_cache = {}
     
@@ -45,13 +52,12 @@ async def startup_event():
     # Background keepalive — pings racing_qwen every 4min so it stays loaded
     async def keepalive_model():
         import httpx
-        from core_agent.config.model_config import ModelConfig
-        host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
+        chat_url = ModelConfig.ollama_native_url("/api/chat")
         await asyncio.sleep(15)  # wait for Ollama to be ready
         while True:
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    await client.post(f"{host}/api/chat", json={
+                    await client.post(chat_url, json={
                         "model": "racing_qwen",
                         "messages": [{"role": "user", "content": "ping"}],
                         "stream": False,
@@ -61,6 +67,29 @@ async def startup_event():
                 pass
             await asyncio.sleep(240)  # every 4 minutes
 
+    async def ollama_startup_self_check():
+        import httpx
+        tags_url = ModelConfig.ollama_native_url("/api/tags")
+        try:
+            async with httpx.AsyncClient(timeout=6) as client:
+                response = await client.get(tags_url)
+                model_count = "n/a"
+                if response.status_code == 200:
+                    try:
+                        payload = response.json()
+                        model_count = len(payload.get("models", []))
+                    except Exception:
+                        model_count = "unparseable-json"
+                logger.info(
+                    "Ollama self-check: status=%s tags_url=%s model_count=%s",
+                    response.status_code,
+                    tags_url,
+                    model_count,
+                )
+        except Exception as exc:
+            logger.warning("Ollama self-check failed: tags_url=%s error=%s", tags_url, exc)
+
+    await ollama_startup_self_check()
     asyncio.create_task(keepalive_model())
     
     # Initialize the brain

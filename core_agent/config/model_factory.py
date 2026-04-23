@@ -37,7 +37,7 @@ def get_client(tier: str):
     from core_agent.config.model_config import ModelConfig
 
     provider, model = _resolve(tier)
-    ollama_host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
+    ollama_host = ModelConfig.ollama_host()
 
     if provider == "ollama":
         return OllamaChatClient(model_id=model, host=ollama_host)
@@ -54,7 +54,7 @@ def get_client(tier: str):
             api_key=os.getenv("GEMINI_API_KEY", ""),
         )
     # fallback
-    return OllamaClient(model=model, host=ollama_host)
+    return OllamaChatClient(model_id=model, host=ollama_host)
 
 
 def get_client_chain(tiers: list[str]) -> list:
@@ -73,10 +73,10 @@ def get_client_chain(tiers: list[str]) -> list:
 def get_model(tier: str):
     """Deprecated. Use get_client() for MAF agents."""
     from core_agent.config.model_config import ModelConfig
-    ollama_host = "http://host.docker.internal:11434"
+    ollama_host = ModelConfig.ollama_openai_base_url()
     model_name = os.getenv(f"{tier.upper()}_MODEL", "racing_llama")
     provider_type = os.getenv(f"{tier.upper()}_PROVIDER", "ollama")
     if provider_type == "ollama":
-        provider = OllamaProvider(base_url=f"{ollama_host}/v1")
+        provider = OllamaProvider(base_url=ollama_host)
         return OpenAIChatModel(model_name=model_name, provider=provider)
     return OpenAIChatModel(model_name=model_name)

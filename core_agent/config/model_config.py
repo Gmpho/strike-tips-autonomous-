@@ -7,6 +7,7 @@ Add a new provider by wiring a new _call_X() method in ai_providers.py.
 """
 import os 
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 # Load environment variables at the top level to ensure they are available 
 # to all class-level variables in ModelConfig.
@@ -73,6 +74,38 @@ class ModelConfig:
     OLLAMA_CONTEXT_LENGTH = int(os.getenv("OLLAMA_CONTEXT_LENGTH", "1024"))
 
     @classmethod
+    def ollama_host(cls) -> str:
+        """
+        Return normalized Ollama host root (scheme://host[:port]) without API suffixes.
+        Accepts env values like:
+        - http://ollama:11434
+        - http://ollama:11434/
+        - http://ollama:11434/v1
+        - http://ollama:11434/api
+        """
+        raw = (cls.OLLAMA_HOST or "http://localhost:11434").strip().rstrip("/")
+        parsed = urlparse(raw)
+
+        # If scheme/netloc are missing (e.g. "ollama:11434"), coerce to http://
+        if not parsed.scheme or not parsed.netloc:
+            raw = f"http://{raw.lstrip('/')}"
+            parsed = urlparse(raw)
+
+        base = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return base or "http://localhost:11434"
+
+    @classmethod
+    def ollama_openai_base_url(cls) -> str:
+        """OpenAI-compatible Ollama endpoint (/v1)."""
+        return f"{cls.ollama_host()}/v1"
+
+    @classmethod
+    def ollama_native_url(cls, path: str) -> str:
+        """Native Ollama API endpoint builder (/api/*)."""
+        clean_path = path if path.startswith("/") else f"/{path}"
+        return f"{cls.ollama_host()}{clean_path}"
+
+    @classmethod
     def ollama_options(cls) -> dict:
         """Returns a safe hardware-guarded options dict for all local Ollama calls."""
         return {
@@ -116,6 +149,7 @@ class ModelConfig:
             f"  Local threads/GPU:    {cls.LOCAL_THREADS} threads / GPU={cls.LOCAL_GPU}",
             f"  Ollama keep_alive:     {cls.OLLAMA_KEEP_ALIVE}",
             f"  Ollama KV cache:      {cls.OLLAMA_KV_CACHE_TYPE}",
+            f"  Ollama host:          {cls.ollama_host()}",
             "================================",
         ]
         return "\n".join(lines)
