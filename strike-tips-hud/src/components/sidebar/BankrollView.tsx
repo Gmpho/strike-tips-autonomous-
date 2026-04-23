@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Target, Activity, RotateCcw } from 'lucide-react';
+import { BETTING_API_PREFIX } from '../../lib/api-prefixes';
 
 interface BetStats {
   totalBets: number;
@@ -34,8 +35,8 @@ export const BankrollView: React.FC = () => {
     const fetchData = async () => {
       try {
         const [statsRes, betsRes] = await Promise.all([
-          fetch('/api/betting/stats'),
-          fetch('/api/betting/history')
+          fetch(`${BETTING_API_PREFIX}/stats`),
+          fetch(`${BETTING_API_PREFIX}/history`)
         ]);
         
         if (!statsRes.ok || !betsRes.ok) {
