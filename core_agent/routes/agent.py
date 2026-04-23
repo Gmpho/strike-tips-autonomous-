@@ -57,6 +57,51 @@ class AgentRequest(BaseModel):
     )
 
 
+def _resolve_stream_model(message: str, model_override: Optional[str]) -> Dict[str, str]:
+    """
+    Resolve stream model via:
+      explicit override -> intent -> specialist -> configured model.
+    Returns model + metadata for diagnostics.
+    """
+    from core_agent.config.model_config import ModelConfig
+
+    pipeline = get_pipeline()
+    intent = pipeline.classifier.classify(message)
+    specialist = pipeline.classifier.specialist_for(intent) if intent else "analyst"
+
+    specialist_model_map = {
+        "analyst": ModelConfig.THINKING or ModelConfig.FAST_LOCAL,
+        "scanner": ModelConfig.SCRAPER or ModelConfig.FAST_LOCAL,
+        "bankroll": ModelConfig.FUNC_CALL or ModelConfig.SCRAPER,
+        "search": ModelConfig.FAST_LOCAL or ModelConfig.SCRAPER,
+    }
+    routed_model = specialist_model_map.get(specialist, ModelConfig.FAST_LOCAL)
+
+    override = (model_override or "").strip()
+    # Safe pass-through: only allow simple model-id characters.
+    if override and all(ch.isalnum() or ch in ("-", "_", ".", ":") for ch in override):
+        routed_model = override
+        route_source = "override"
+    else:
+        route_source = "intent"
+
+    provider = "ollama"
+    if routed_model.startswith("groq:"):
+        provider = "groq"
+    elif routed_model.startswith("gemini:"):
+        provider = "gemini"
+    elif routed_model.endswith(":cloud"):
+        provider = "cloud"
+
+    return {
+        "intent": intent or "unknown",
+        "specialist": specialist,
+        "model": routed_model,
+        "provider": provider,
+        "route_source": route_source,
+    }
+
+
 @router.post("/chat", response_model=Dict[str, Any])
 async def agent_chat(request: AgentRequest):
     """
@@ -119,30 +164,44 @@ async def agent_chat_stream(request: AgentRequest):
                 yield f"data: {_json.dumps({'token': result.summary, 'done': True, 'model': result.model_used})}\n\n"
                 return
 
-            # Stream via Ollama /api/chat stream=true
+            # Stream via Ollama /api/chat stream=true with routed model selection.
             import httpx
             from core_agent.config.model_config import ModelConfig
+
+            routing = _resolve_stream_model(request.message, request.model)
+            host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
             chat_url = ModelConfig.ollama_native_url("/api/chat")
             payload = {
-                "model": "racing_qwen",
+                "model": routing["model"],
                 "messages": [{"role": "user", "content": request.message}],
                 "stream": True,
                 "think": False,
                 "options": {"num_predict": 256, "temperature": 0.1},
             }
+            final_model = routing["model"]
+            final_provider = routing["provider"]
+
             async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", f"{host}/api/chat", json=payload) as resp:
+                    if resp.status_code >= 400:
+                        err = await resp.aread()
+                        err_text = err.decode("utf-8", errors="ignore")[:180]
+                        yield f"data: {_json.dumps({'token': f'Ollama error ({resp.status_code}): {err_text}', 'done': True, 'model': final_model, 'provider': final_provider})}\n\n"
+                        return
+
                 async with client.stream("POST", chat_url, json=payload) as resp:
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
                         try:
                             chunk = _json.loads(line)
+                            final_model = chunk.get("model") or final_model
                             token = chunk.get("message", {}).get("content", "")
                             done = chunk.get("done", False)
                             if token:
                                 yield f"data: {_json.dumps({'token': token, 'done': done})}\n\n"
                             if done:
-                                yield f"data: {_json.dumps({'token': '', 'done': True, 'model': 'racing_qwen'})}\n\n"
+                                yield f"data: {_json.dumps({'token': '', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
                                 break
                         except Exception:
                             continue
