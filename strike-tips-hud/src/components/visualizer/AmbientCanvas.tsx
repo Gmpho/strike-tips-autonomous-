@@ -7,26 +7,28 @@ import { useHUD } from '../../hooks/useHUD';
 const AmbientGrid = () => {
   const meshRef = useRef<THREE.Mesh>(null);
   const state = useHUD();
-  const isHighLoad = state.systemHealth.cpu > 75;
 
-  useFrame((state) => {
+  useFrame((root, delta) => {
+    // Dynamic Throttle: Only skip frames if CPU is actually peaking right now
+    const currentCpu = state.systemHealth.cpu;
+    if (currentCpu > 80 && root.clock.elapsedTime % 0.06 < delta) return;
+
     if (meshRef.current) {
       meshRef.current.rotation.x = Math.PI / 2;
-      // Gently drift the grid
-      meshRef.current.position.z = (state.clock.elapsedTime * 0.5) % 1;
+      meshRef.current.position.z = (root.clock.elapsedTime * 0.4) % 1;
     }
   });
 
   return (
     <mesh ref={meshRef} position={[0, -2, 0]}>
-      <planeGeometry args={[100, 100, 40, 40]} />
+      <planeGeometry args={[100, 100, 16, 16]} />
       <meshStandardMaterial 
-        color={isHighLoad ? "#ff0044" : "#6b21a8"} 
+        color={state.systemHealth.cpu > 75 ? "#ff0044" : "#6b21a8"} 
         wireframe 
         transparent 
-        opacity={0.15} 
-        emissive={isHighLoad ? "#550011" : "#110022"}
-        emissiveIntensity={2}
+        opacity={0.3} 
+        emissive={state.systemHealth.cpu > 75 ? "#550011" : "#220044"}
+        emissiveIntensity={3}
       />
     </mesh>
   );
@@ -34,7 +36,7 @@ const AmbientGrid = () => {
 
 const DataParticles = () => {
   const state = useHUD();
-  const particleCount = Object.keys(state.events).length * 10 + 50; // Scale with events
+  const particleCount = Object.keys(state.events).length * 5 + 30; // Reduced particle count
   
   const [positions, speeds] = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
@@ -50,11 +52,14 @@ const DataParticles = () => {
 
   const pointsRef = useRef<THREE.Points>(null);
 
-  useFrame(() => {
+  useFrame((root, delta) => {
+    // Throttle: Cap at 30fps during load
+    if (state.systemHealth.cpu > 50 && root.clock.elapsedTime % 0.06 < delta) return;
+
     if (pointsRef.current) {
       const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
       for (let i = 0; i < particleCount; i++) {
-        positions[i * 3 + 1] += speeds[i] * (state.systemHealth.cpu > 50 ? 2 : 1);
+        positions[i * 3 + 1] += speeds[i] * (state.systemHealth.cpu > 50 ? 1.2 : 1);
         if (positions[i * 3 + 1] > 10) {
           positions[i * 3 + 1] = 0;
         }
@@ -88,15 +93,24 @@ const DataParticles = () => {
 export const AmbientCanvas: React.FC = () => {
   return (
     <div className="absolute inset-0 pointer-events-none z-0">
-      <Canvas camera={{ position: [0, 2, 5], fov: 60 }}>
+      <Canvas 
+        camera={{ position: [0, 2, 5], fov: 60 }} 
+        dpr={[1, 1.5]} 
+        gl={{ 
+          powerPreference: 'low-power', 
+          antialias: false, 
+          stencil: false, 
+          depth: true 
+        }}
+      >
         <fog attach="fog" args={['#000000', 2, 15]} />
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} intensity={1} color="#a855f7" />
-        <Float speed={1.5} rotationIntensity={0.5} floatIntensity={0.5}>
+        <Float speed={1.5} rotationIntensity={0.4} floatIntensity={0.4}>
           <AmbientGrid />
         </Float>
         <DataParticles />
-        <Stars radius={100} depth={50} count={2000} factor={4} saturation={0} fade speed={1} />
+        <Stars radius={100} depth={50} count={1000} factor={4} saturation={0} speed={1} />
       </Canvas>
     </div>
   );

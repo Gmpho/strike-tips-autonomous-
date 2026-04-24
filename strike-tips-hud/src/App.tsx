@@ -18,19 +18,36 @@ export const App: React.FC = () => {
   const [activeView, setActiveView] = useState('dashboard');
   const state = useHUD();
 
-  // Mark DOM as hydrated after first paint
+  // Load-sensing for background effects
   useEffect(() => {
-    document.body.classList.add('hydrated');
-  }, []);
+    if (state.systemHealth.cpu > 60) {
+      document.body.classList.add('low-power');
+    } else {
+      document.body.classList.remove('low-power');
+    }
+  }, [state.systemHealth.cpu]);
 
   const renderView = () => {
+    const hasData = Object.keys(state.events).length > 0;
+
+    if (!hasData && activeView === 'dashboard') {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-12">
+          <div className="w-16 h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
+          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse">Syncing L7 Ghost Data...</p>
+        </div>
+      );
+    }
+
     switch (activeView) {
       case 'dashboard':
         return (
           <motion.main 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            key="dashboard-view"
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
             className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 flex-1 z-10"
           >
             {Object.values(state.events).map(event => (
@@ -39,17 +56,17 @@ export const App: React.FC = () => {
           </motion.main>
         );
       case 'agents':
-        return <AgentDashboard />;
+        return <AgentDashboard key="agents-view" />;
       case 'bankroll':
-        return <BankrollView />;
+        return <BankrollView key="bankroll-view" />;
       case 'analytics':
-        return <AnalyticsView />;
+        return <AnalyticsView key="analytics-view" />;
       case 'logs':
-        return <LogsView />;
+        return <LogsView key="logs-view" />;
       case 'settings':
-        return <SettingsView />;
+        return <SettingsView key="settings-view" />;
       default:
-        return <div className="text-white p-12">Select a module</div>;
+        return <div key="default-view" className="text-white p-12">Select a module</div>;
     }
   };
 
