@@ -6,7 +6,7 @@ plus international tracks grouped by region.
 
 import logging
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 logger = logging.getLogger("race-schedule")
 
@@ -23,7 +23,7 @@ SA_TRACKS_ALWAYS = {
 
 # International tracks by region
 INTERNATIONAL_TRACKS = {
-    "UK": ["cheltenham", "ascot", "newmarket", "goodwood", "epsom", "york"],
+    "UK": ["cheltenham", "ascot", "newmarket", "goodwood", "epsom", "york", "southwell"],
     "Australia": ["flemington", "randwick", "caulfield", "moonee_valley", "rosehill"],
     "USA": ["churchill_downs", "santa_anita", "belmont_park", "saratoga"],
     "Ireland": ["leopardstown", "curragh", "fairyhouse"],
@@ -31,6 +31,93 @@ INTERNATIONAL_TRACKS = {
     "Hong Kong": ["sha_tin", "happy_valley"],
     "Japan": ["tokyo", "nakayama", "kyoto"],
 }
+
+TRACK_ALIASES = {
+    "turffontein": ["turf", "turffontein racecourse"],
+    "vaal": ["the vaal"],
+    "fairview": ["fairview park"],
+    "scottsville": ["scottsville racecourse"],
+    "kenilworth": ["cape town", "kenilworth racecourse"],
+    "greyville": ["greyville racecourse"],
+    "durbanville": ["durbanville racecourse"],
+}
+
+
+class TrackResolution(NamedTuple):
+    requested: str
+    canonical: str
+    supported: bool
+    region: str
+
+
+def _normalize_track_text(value: str) -> str:
+    return "_".join(value.lower().strip().replace("-", " ").split())
+
+
+def _build_track_alias_index() -> Dict[str, Dict[str, str]]:
+    index: Dict[str, Dict[str, str]] = {}
+
+    for track, metadata in SA_TRACKS_ALWAYS.items():
+        region = metadata["region"]
+        index[_normalize_track_text(track)] = {"canonical": track, "region": region}
+        for alias in TRACK_ALIASES.get(track, []):
+            index[_normalize_track_text(alias)] = {"canonical": track, "region": region}
+
+    for region, tracks in INTERNATIONAL_TRACKS.items():
+        for track in tracks:
+            index[_normalize_track_text(track)] = {"canonical": track, "region": region}
+    return index
+
+
+TRACK_ALIAS_INDEX = _build_track_alias_index()
+REGION_ALIASES = {
+    "uk": "UK",
+    "british": "UK",
+    "england": "UK",
+}
+
+
+def resolve_track_request(text: str) -> Optional[TrackResolution]:
+    """Resolve a requested track/region token and whether it is currently supported."""
+    normalized_text = _normalize_track_text(text)
+
+    for alias, region in REGION_ALIASES.items():
+        if alias in normalized_text:
+            return TrackResolution(
+                requested=alias,
+                canonical=region.lower(),
+                supported=False,
+                region=region,
+            )
+
+    for token in normalized_text.split("_"):
+        track_meta = TRACK_ALIAS_INDEX.get(token)
+        if track_meta:
+            canonical = track_meta["canonical"]
+            region = track_meta["region"]
+            return TrackResolution(
+                requested=token,
+                canonical=canonical,
+                supported=canonical in SA_TRACKS_ALWAYS,
+                region=region,
+            )
+
+    for alias, track_meta in TRACK_ALIAS_INDEX.items():
+        if alias in normalized_text:
+            canonical = track_meta["canonical"]
+            region = track_meta["region"]
+            return TrackResolution(
+                requested=alias,
+                canonical=canonical,
+                supported=canonical in SA_TRACKS_ALWAYS,
+                region=region,
+            )
+    return None
+
+
+def list_supported_tracks() -> List[str]:
+    """Return sorted canonical SA tracks currently supported by tooling."""
+    return sorted(SA_TRACKS_ALWAYS.keys())
 
 
 class RaceScheduleService:

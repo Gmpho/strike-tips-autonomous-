@@ -4,7 +4,6 @@ Replaces hand-rolled httpx pipeline with proper MAF Agent dispatch.
 UnifiedOrchestrator.chat() signature is unchanged for backward compat.
 """
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,21 +14,25 @@ from core_agent.agents.chroma_context import ChromaContextProvider
 from core_agent.agents.schemas import AgentReply, IntentResponse
 from core_agent.config.model_config import ModelConfig
 from core_agent.config.model_factory import get_client, get_client_chain
+from core_agent.skills.race_schedule import list_supported_tracks, resolve_track_request
 
 logger = logging.getLogger("ai-pydantic")
 
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
-UNSUPPORTED_GEOGRAPHY_TERMS = (
-    "uk",
-    "british",
-    "england",
-    "southwell",
-    "cheltenham",
-)
-UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE = (
-    "I currently support South African racing tracks/tools only. "
-    "Try this instead: Vaal/Turffontein/Kenilworth scan now."
-)
+
+
+def build_unsupported_track_response(message: str) -> Optional[str]:
+    """Return deterministic capability response when unsupported geography is requested."""
+    resolution = resolve_track_request(message)
+    if not resolution or resolution.supported:
+        return None
+    supported = ", ".join(track.title() for track in list_supported_tracks())
+    nearest = "Vaal, Turffontein, Kenilworth"
+    return (
+        f"I can't scan {resolution.canonical.replace('_', ' ').title()} right now "
+        f"(region: {resolution.region}). I currently support South African tracks only: "
+        f"{supported}. Nearest supported options to try: {nearest}."
+    )
 
 # ── Backward-compat response dataclass ───────────────────────────────────────
 
@@ -218,6 +221,14 @@ class ModelPipeline:
         )
 
     async def chat(self, message: str, model_override: Optional[str] = None) -> AgentResponse:
+        unsupported_response = build_unsupported_track_response(message)
+        if unsupported_response:
+            return AgentResponse(
+                summary=unsupported_response,
+                model_used="intent_handler",
+                confidence=1.0,
+            )
+
         # 1. Fast keyword classification
         intent = self.classifier.classify(message)
         specialist = self.classifier.specialist_for(intent) if intent else "analyst"
@@ -262,14 +273,6 @@ class UnifiedOrchestrator:
                 )
             except Exception:
                 pass
-
-        # Deterministic geography guardrail for unsupported tracks
-        if any(re.search(rf"\b{re.escape(term)}\b", msg_lower) for term in UNSUPPORTED_GEOGRAPHY_TERMS):
-            return AgentResponse(
-                summary=UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE,
-                model_used="intent_handler",
-                confidence=1.0,
-            )
 
         response = await self.pipeline.chat(message, model_override=model_override)
         self._history.append({"role": "user", "content": message})

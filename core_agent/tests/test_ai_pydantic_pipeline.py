@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core_agent.agents.ai_pydantic import (
-    UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE,
     ModelPipeline,
     UnifiedOrchestrator,
+    build_unsupported_track_response,
 )
 from core_agent.agents.schemas import AgentReply
 
@@ -30,12 +30,11 @@ async def test_chat_cold_start_attempts_lazy_agent_creation():
 @pytest.mark.asyncio
 async def test_unified_orchestrator_returns_deterministic_scope_message_for_uk_query():
     orchestrator = UnifiedOrchestrator(strike_tips=None)
-    orchestrator.pipeline.chat = AsyncMock()  # type: ignore[method-assign]
 
     response = await orchestrator.chat("Can you analyze Cheltenham and Southwell in the UK?")
 
-    orchestrator.pipeline.chat.assert_not_called()
-    assert response.summary == UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE
+    assert "can't scan" in response.summary
+    assert "South African tracks only" in response.summary
     assert response.model_used == "intent_handler"
     assert response.confidence == 1.0
 
@@ -54,3 +53,16 @@ async def test_unified_orchestrator_sa_query_routes_to_pipeline():
     )
     assert response.summary == "SA scan complete"
     assert response.model_used == "scanner"
+
+
+def test_build_unsupported_track_response_from_alias_is_deterministic():
+    response = build_unsupported_track_response("Please scan SOUTHWELL race 2")
+
+    assert response is not None
+    assert "can't scan Southwell" in response
+    assert "Vaal, Turffontein, Kenilworth" in response
+
+
+def test_build_unsupported_track_response_supported_track_returns_none():
+    response = build_unsupported_track_response("Please scan vaal race 1")
+    assert response is None
