@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react-oxc';
+import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
@@ -8,25 +8,15 @@ export default defineConfig({
     tailwindcss()
   ],
   resolve: {
-    alias: {
-      '@': '/src'
-    },
+    // Vite 8 built-in support for tsconfig paths
     tsconfigPaths: true
   },
   build: {
-    target: 'esnext',
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          three: ['three'],
-          react: ['react', 'react-dom']
-        }
-      }
-    }
+    // Only use 'esnext' if you don't need to support browsers older than ~2024
+    target: 'esnext' 
   },
   server: {
     port: 5173,
-    devtools: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

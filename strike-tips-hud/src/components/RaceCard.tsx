@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { RaceEvent } from '../types';
 import { Zap, Activity, Timer, ChevronDown, ChevronUp } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface RaceCardProps {
   event: RaceEvent;
@@ -9,12 +10,16 @@ interface RaceCardProps {
 export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
   const [isOpen, setIsOpen] = useState(false);
   const topHorse = event.runners?.[0];
-  const hasMarketData = topHorse && topHorse.odds > 0;
+  const hasMarketData = topHorse && typeof topHorse.odds === 'number' && topHorse.odds > 0;
   
   return (
-    <div className={`hud-card group p-6 relative overflow-hidden border border-purple-500/20 bg-white/2 backdrop-blur-3xl transition-all duration-500 ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}>
+    <motion.div 
+      layout
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className={`hud-card group p-6 relative overflow-hidden border border-white/10 bg-white/5 backdrop-blur-2xl transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
+    >
       <div className="absolute inset-0 bg-linear-to-br from-purple-500/10 to-transparent pointer-events-none" />
-      
       <div className="flex justify-between items-start mb-6 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -23,7 +28,7 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
               {event.course} | RACE {event.raceNumber || '---'}
             </span>
           </div>
-          <h3 className="text-2xl font-black text-white tracking-tighter uppercase">{event.en}</h3>
+          <h3 className="text-2xl font-black text-white tracking-tighter uppercase">{event.course} R{event.raceNumber}</h3>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
@@ -50,7 +55,7 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
                   <div className="text-[10px] text-slate-500 font-bold">FORM: <span className="text-purple-400">{topHorse.form || 'N/A'}</span></div>
                 </div>
                 <div className="text-right">
-                  <div className="tabular text-3xl font-black text-white leading-none">{topHorse.odds.toFixed(2)}</div>
+                  <div className="tabular text-3xl font-black text-white leading-none">{Number(topHorse.odds).toFixed(2)}</div>
                 </div>
               </>
             ) : (
@@ -65,7 +70,6 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
               <tr className="text-slate-500 border-b border-white/10 uppercase font-black">
                 <th className="py-3 px-2">Horse</th>
                 <th className="py-3 px-2">Jockey/Trainer</th>
-                <th className="py-3 px-2">Age/Wgt</th>
                 <th className="py-3 px-2">Form</th>
                 <th className="py-3 px-2 text-right">Odds</th>
               </tr>
@@ -74,11 +78,10 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
             {event.runners.map((r, i) => (
               <tr key={i} className="border-b border-white/5 hover:bg-purple-500/10">
                 <td className="py-3 px-2 font-bold">{r.name}</td>
-                <td className="py-3 px-2">{r.jockeyName} / {r.trainerName}</td>
-                <td className="py-3 px-2">{r.age} / {r.weight}</td>
-                <td className="py-3 px-2">{r.form}</td>
+                <td className="py-3 px-2">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
+                <td className="py-3 px-2">{r.form || '-'}</td>
                 <td className="py-3 px-2 text-right font-black text-purple-400">
-                  {r.odds > 0 ? (typeof r.odds === 'number' ? r.odds.toFixed(2) : r.odds) : 'SP'}
+                  {(typeof r.odds === 'number' && r.odds > 0) ? r.odds.toFixed(2) : (r.odds || 'SP')}
                 </td>
               </tr>
             ))}
@@ -97,6 +100,6 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
             Execute Position
             </button>
             </div>
-            </div>
+            </motion.div>
             );
             };

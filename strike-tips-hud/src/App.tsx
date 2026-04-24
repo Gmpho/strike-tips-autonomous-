@@ -1,60 +1,53 @@
 import * as React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { AgentDashboard } from './components/AgentDashboard';
 import { RaceCard } from './components/RaceCard.tsx';
-import { VisualEngine } from './engine/visual-engine';
-import { dataBridge } from './engine/data-bridge';
 import { Shield, Cpu, Zap } from 'lucide-react';
 import type { RaceEvent } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
 import { BankrollView } from './components/sidebar/BankrollView';
 import { LogsView } from './components/sidebar/LogsView';
+import { SettingsView } from './components/sidebar/SettingsView';
+import { AnalyticsView } from './components/sidebar/AnalyticsView';
 import { ThemeToggle } from './components/ThemeToggle';
+import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState('dashboard');
   const state = useHUD();
-  const visualEngineRef = useRef<VisualEngine | null>(null);
 
   // Mark DOM as hydrated after first paint
   useEffect(() => {
     document.body.classList.add('hydrated');
   }, []);
 
-  // Init engine once, wire to bridge
-  useEffect(() => {
-    if (visualEngineRef.current) return;
-    try {
-      visualEngineRef.current = new VisualEngine('ambient-canvas-container');
-      visualEngineRef.current.start();
-      dataBridge.setEngine(visualEngineRef.current);
-    } catch (e) {
-      console.warn('HUD: WebGL fallback active');
-    }
-  }, []);
-
-  // Push state changes into engine
-  useEffect(() => {
-    visualEngineRef.current?.updateData(state.events);
-  }, [state.events]);
-
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <main className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 flex-1 animate-in fade-in zoom-in-95 duration-1000">
+          <motion.main 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 flex-1 z-10"
+          >
             {Object.values(state.events).map(event => (
               <RaceCard key={event.id} event={event as RaceEvent} />
             ))}
-          </main>
+          </motion.main>
         );
       case 'agents':
         return <AgentDashboard />;
       case 'bankroll':
         return <BankrollView />;
+      case 'analytics':
+        return <AnalyticsView />;
       case 'logs':
         return <LogsView />;
+      case 'settings':
+        return <SettingsView />;
       default:
         return <div className="text-white p-12">Select a module</div>;
     }
@@ -65,13 +58,14 @@ export const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-black text-white selection:bg-purple-500/30 overflow-hidden">
       <Sidebar activeView={activeView} setActiveView={setActiveView} />
+      
       <div className="flex-1 relative overflow-auto p-8 lg:p-12">
-        {/* Ambient Background Layer */}
-        <div id="ambient-canvas-container" className="absolute inset-0 pointer-events-none z-0 opacity-30" />
+        {/* Ambient Background Layer (React Three Fiber) */}
+        <AmbientCanvas />
 
         {/* UI Overlay */}
-        <div className="relative z-10 flex flex-col h-full">
-          <header className="flex justify-between items-center mb-12 animate-in fade-in slide-in-from-top duration-700">
+        <div className="relative z-10 flex flex-col h-full pointer-events-none">
+          <header className="flex justify-between items-center mb-10 pointer-events-auto">
             <div className="flex flex-col">
               <h1 className="text-gradient text-4xl font-black tracking-tighter mb-1">STRIKE TIPS</h1>
               <div className="flex items-center gap-2.5">
@@ -112,10 +106,13 @@ export const App: React.FC = () => {
             </div>
           </header>
 
-          {renderView()}
+          <AnimatePresence mode="wait">
+            <div className="flex-1 pointer-events-auto">
+              {renderView()}
+            </div>
+          </AnimatePresence>
 
-          <footer className="mt-12 flex justify-between items-end border-t border-white/5 pt-8 animate-in fade-in slide-in-from-bottom duration-700">
-
+          <footer className="mt-8 flex justify-between items-end border-t border-white/5 pt-6 pointer-events-auto">
             <div className="flex items-center gap-16">
               <div>
                 <div className="text-[9px] font-black text-slate-600 uppercase mb-1.5 tracking-widest text-glow-sm">Total Exposure</div>

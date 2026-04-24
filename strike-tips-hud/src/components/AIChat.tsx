@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { Bot, User, Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 export const AIChat: React.FC = () => {
   const [messages, setMessages] = useState<{role: 'user' | 'ai', content: string, timestamp: string, activity?: string}[]>([]);
@@ -138,7 +139,11 @@ export const AIChat: React.FC = () => {
   }, [messages, currentActivity]);
 
   return (
-    <div className="flex h-[75vh] bg-black/40 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-xl shadow-2xl">
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="flex h-full min-h-[400px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
+    >
       {/* Session Sidebar */}
       <div className="w-48 border-r border-white/10 p-4 bg-black/20 flex flex-col gap-2">
         <div className="text-[9px] font-black uppercase text-purple-500 mb-2 tracking-widest">Sessions</div>
@@ -175,23 +180,28 @@ export const AIChat: React.FC = () => {
             )}
         </div>
         
-        <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-xs">
+        <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-xs custom-scrollbar">
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic">
                     Awaiting mission parameters...
                 </div>
             )}
             {messages.map((m, i) => (
-            <div key={i} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : ''}`}>
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              key={i} 
+              className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : ''}`}
+            >
                 <div className="text-[8px] text-slate-600 uppercase px-1">{m.timestamp}</div>
                 <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''}`}>
                     {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0" />}
-                    <div className={`p-4 rounded-2xl max-w-[85%] ${m.role === 'user' ? 'bg-purple-600/90 text-white shadow-lg' : 'bg-white/5 text-slate-300 border border-white/5'}`}>
+                    <div className={`p-4 rounded-2xl max-w-[85%] ${m.role === 'user' ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.2)]'}`}>
                     {m.content}
                     </div>
                     {m.role === 'user' && <User className="w-5 h-5 text-slate-500 shrink-0" />}
                 </div>
-            </div>
+            </motion.div>
             ))}
             {loading && <div className="flex gap-3"><Bot className="w-5 h-5 text-purple-500 animate-pulse" /><Loader2 className="w-5 h-5 animate-spin text-purple-500" /></div>}
         </div>
@@ -214,13 +224,13 @@ export const AIChat: React.FC = () => {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
             placeholder="Execute tactical commands..."
-            className="flex-1 bg-transparent border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-purple-500 focus:bg-white/5"
+            className="flex-1 bg-transparent border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-purple-500 focus:bg-white/5 transition-colors"
             />
-            <button onClick={sendMessage} className="bg-purple-600 px-6 rounded-xl hover:bg-purple-500 transition-all font-black uppercase text-[10px]">
+            <button onClick={sendMessage} className="bg-purple-600 px-6 rounded-xl hover:bg-purple-500 transition-all font-black uppercase text-[10px] shadow-[0_0_15px_rgba(168,85,247,0.4)]">
             Send
             </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
