@@ -19,6 +19,17 @@ from core_agent.config.model_factory import get_client, get_client_chain
 logger = logging.getLogger("ai-pydantic")
 
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
+UNSUPPORTED_GEOGRAPHY_TERMS = (
+    "uk",
+    "british",
+    "england",
+    "southwell",
+    "cheltenham",
+)
+UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE = (
+    "I currently support South African racing tracks/tools only. "
+    "Try this instead: Vaal/Turffontein/Kenilworth scan now."
+)
 
 # ── Backward-compat response dataclass ───────────────────────────────────────
 
@@ -251,6 +262,14 @@ class UnifiedOrchestrator:
                 )
             except Exception:
                 pass
+
+        # Deterministic geography guardrail for unsupported tracks
+        if any(re.search(rf"\b{re.escape(term)}\b", msg_lower) for term in UNSUPPORTED_GEOGRAPHY_TERMS):
+            return AgentResponse(
+                summary=UNSUPPORTED_GEOGRAPHY_SCOPE_MESSAGE,
+                model_used="intent_handler",
+                confidence=1.0,
+            )
 
         response = await self.pipeline.chat(message, model_override=model_override)
         self._history.append({"role": "user", "content": message})
