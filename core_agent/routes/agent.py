@@ -169,7 +169,6 @@ async def agent_chat_stream(request: AgentRequest):
             from core_agent.config.model_config import ModelConfig
 
             routing = _resolve_stream_model(request.message, request.model)
-            host = ModelConfig.OLLAMA_HOST or "http://ollama:11434"
             chat_url = ModelConfig.ollama_native_url("/api/chat")
             payload = {
                 "model": routing["model"],
@@ -182,14 +181,25 @@ async def agent_chat_stream(request: AgentRequest):
             final_provider = routing["provider"]
 
             async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", f"{host}/api/chat", json=payload) as resp:
-                    if resp.status_code >= 400:
-                        err = await resp.aread()
-                        err_text = err.decode("utf-8", errors="ignore")[:180]
-                        yield f"data: {_json.dumps({'token': f'Ollama error ({resp.status_code}): {err_text}', 'done': True, 'model': final_model, 'provider': final_provider})}\n\n"
+                async with client.stream("POST", chat_url, json=payload) as resp:
+                    logger.debug(
+                        "[stream] opened ollama stream url=%s status=%s model=%s intent=%s specialist=%s",
+                        chat_url,
+                        resp.status_code,
+                        routing["model"],
+                        routing["intent"],
+                        routing["specialist"],
+                    )
+                    if resp.status_code < 200 or resp.status_code >= 300:
+                        err_text = (await resp.aread()).decode("utf-8", errors="ignore")[:180]
+                        logger.debug(
+                            "[stream] ollama non-2xx status=%s body=%s",
+                            resp.status_code,
+                            err_text,
+                        )
+                        yield f"data: {_json.dumps({'token': f'Ollama error ({resp.status_code}): {err_text}', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
                         return
 
-                async with client.stream("POST", chat_url, json=payload) as resp:
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
@@ -205,6 +215,12 @@ async def agent_chat_stream(request: AgentRequest):
                                 break
                         except Exception:
                             continue
+                    logger.debug(
+                        "[stream] closed ollama stream url=%s model=%s provider=%s",
+                        chat_url,
+                        final_model,
+                        final_provider,
+                    )
         except Exception as e:
             yield f"data: {_json.dumps({'token': f'Error: {str(e)[:60]}', 'done': True})}\n\n"
 
