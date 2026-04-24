@@ -8,17 +8,27 @@ NOW USING: Unified Orchestrator with Pydantic AI
 - ChromaDB stateful memory
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import asyncio
 import logging
+import os
+import time
+import uuid
+
+import httpx
 from core_agent.core.strike_brain import brain
 
 logger = logging.getLogger("agent-routes")
 
 # Unified Orchestrator (Phase 3)
-from core_agent.agents.ai_pydantic import UnifiedOrchestrator, ModelPipeline, ModelFactory
+from core_agent.agents.ai_pydantic import (
+    UnifiedOrchestrator,
+    ModelPipeline,
+    ModelFactory,
+)
 from core_agent.tools.maf_tool_registry import get_tool_names
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -26,6 +36,25 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 # Unified Orchestrator singleton (lazy initialization)
 _orchestrator: Optional[UnifiedOrchestrator] = None
 _pipeline: Optional[ModelPipeline] = None
+AGENT_STREAM_TIMEOUT_SEC = float(os.getenv("AGENT_STREAM_TIMEOUT_SEC", "45"))
+
+
+def _request_id(request: Request) -> str:
+    return request.headers.get("x-request-id") or str(uuid.uuid4())
+
+
+def _loading_response(model_name: str, timeout_sec: float) -> Dict[str, Any]:
+    return {
+        "success": False,
+        "response": (
+            f"Local model '{model_name}' is warming up. " "Please retry shortly."
+        ),
+        "state": "loading",
+        "error_type": "model_warmup_timeout",
+        "model": model_name,
+        "retry_after_sec": 15,
+        "timeout_sec": timeout_sec,
+    }
 
 
 def get_orchestrator() -> UnifiedOrchestrator:
@@ -57,7 +86,9 @@ class AgentRequest(BaseModel):
     )
 
 
-def _resolve_stream_model(message: str, model_override: Optional[str]) -> Dict[str, str]:
+def _resolve_stream_model(
+    message: str, model_override: Optional[str]
+) -> Dict[str, str]:
     """
     Resolve stream model via:
       explicit override -> intent -> specialist -> configured model.
@@ -103,7 +134,7 @@ def _resolve_stream_model(message: str, model_override: Optional[str]) -> Dict[s
 
 
 @router.post("/chat", response_model=Dict[str, Any])
-async def agent_chat(request: AgentRequest):
+async def agent_chat(request: AgentRequest, fastapi_request: Request):
     """
     Strict API Contract: Always returns a consistent JSON structure.
     """
@@ -113,18 +144,43 @@ async def agent_chat(request: AgentRequest):
             return {
                 "success": False,
                 "response": "🚨 SYSTEM LOCK ACTIVE: Kill Switch has been triggered. All AI operations are halted for safety. Click 'Reset System' to resume.",
-                "state": "locked"
+                "state": "locked",
             }
 
         orchestrator = get_orchestrator()
-        result = await orchestrator.chat(request.message, model_override=request.model)
+        routing = _resolve_stream_model(request.message, request.model)
+        started = time.monotonic()
+        req_id = _request_id(fastapi_request)
+        try:
+            result = await asyncio.wait_for(
+                orchestrator.chat(request.message, model_override=request.model),
+                timeout=AGENT_STREAM_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            elapsed = round(time.monotonic() - started, 2)
+            logger.warning(
+                "[chat-timeout] request_id=%s model=%s elapsed_sec=%.2f timeout_sec=%.2f",
+                req_id,
+                routing["model"],
+                elapsed,
+                AGENT_STREAM_TIMEOUT_SEC,
+            )
+            return _loading_response(routing["model"], AGENT_STREAM_TIMEOUT_SEC)
+        except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError):
+            elapsed = round(time.monotonic() - started, 2)
+            logger.warning(
+                "[chat-timeout] request_id=%s model=%s elapsed_sec=%.2f timeout_sec=%.2f",
+                req_id,
+                routing["model"],
+                elapsed,
+                AGENT_STREAM_TIMEOUT_SEC,
+            )
+            return _loading_response(routing["model"], AGENT_STREAM_TIMEOUT_SEC)
 
         if result.confidence == 0.0:
-            return {
-                "success": False,
-                "response": "Model is busy or loading. Please wait 30 seconds.",
-                "state": "loading"
-            }
+            return _loading_response(
+                result.model_used or routing["model"], AGENT_STREAM_TIMEOUT_SEC
+            )
 
         return {
             "success": True,
@@ -140,12 +196,12 @@ async def agent_chat(request: AgentRequest):
         return {
             "success": False,
             "response": "An internal error occurred.",
-            "state": "error"
+            "state": "error",
         }
 
 
 @router.post("/chat/stream")
-async def agent_chat_stream(request: AgentRequest):
+async def agent_chat_stream(request: AgentRequest, fastapi_request: Request):
     """Streaming chat — sends tokens as SSE as soon as they arrive."""
     from fastapi.responses import StreamingResponse
     import json as _json
@@ -159,13 +215,15 @@ async def agent_chat_stream(request: AgentRequest):
             orchestrator = get_orchestrator()
             # Fast instant-intent path — no LLM needed
             msg = request.message.lower().strip()
-            if any(kw in msg for kw in ("balance", "bankroll", "status", "how much", "my account")):
+            if any(
+                kw in msg
+                for kw in ("balance", "bankroll", "status", "how much", "my account")
+            ):
                 result = await orchestrator.chat(request.message)
                 yield f"data: {_json.dumps({'token': result.summary, 'done': True, 'model': result.model_used})}\n\n"
                 return
 
             # Stream via Ollama /api/chat stream=true with routed model selection.
-            import httpx
             from core_agent.config.model_config import ModelConfig
 
             routing = _resolve_stream_model(request.message, request.model)
@@ -179,48 +237,81 @@ async def agent_chat_stream(request: AgentRequest):
             }
             final_model = routing["model"]
             final_provider = routing["provider"]
+            started = time.monotonic()
+            req_id = _request_id(fastapi_request)
 
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", chat_url, json=payload) as resp:
-                    logger.debug(
-                        "[stream] opened ollama stream url=%s status=%s model=%s intent=%s specialist=%s",
-                        chat_url,
-                        resp.status_code,
-                        routing["model"],
-                        routing["intent"],
-                        routing["specialist"],
-                    )
-                    if resp.status_code < 200 or resp.status_code >= 300:
-                        err_text = (await resp.aread()).decode("utf-8", errors="ignore")[:180]
+            try:
+                async with httpx.AsyncClient(
+                    timeout=AGENT_STREAM_TIMEOUT_SEC
+                ) as client:
+                    async with client.stream("POST", chat_url, json=payload) as resp:
                         logger.debug(
-                            "[stream] ollama non-2xx status=%s body=%s",
+                            "[stream] opened ollama stream url=%s status=%s model=%s intent=%s specialist=%s",
+                            chat_url,
                             resp.status_code,
-                            err_text,
+                            routing["model"],
+                            routing["intent"],
+                            routing["specialist"],
                         )
-                        yield f"data: {_json.dumps({'token': f'Ollama error ({resp.status_code}): {err_text}', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
-                        return
+                        if resp.status_code < 200 or resp.status_code >= 300:
+                            err_text = (await resp.aread()).decode(
+                                "utf-8", errors="ignore"
+                            )[:180]
+                            logger.debug(
+                                "[stream] ollama non-2xx status=%s body=%s",
+                                resp.status_code,
+                                err_text,
+                            )
+                            yield f"data: {_json.dumps({'token': f'Ollama error ({resp.status_code}): {err_text}', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
+                            return
 
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            chunk = _json.loads(line)
-                            final_model = chunk.get("model") or final_model
-                            token = chunk.get("message", {}).get("content", "")
-                            done = chunk.get("done", False)
-                            if token:
-                                yield f"data: {_json.dumps({'token': token, 'done': done})}\n\n"
-                            if done:
-                                yield f"data: {_json.dumps({'token': '', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
-                                break
-                        except Exception:
-                            continue
-                    logger.debug(
-                        "[stream] closed ollama stream url=%s model=%s provider=%s",
-                        chat_url,
-                        final_model,
-                        final_provider,
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = _json.loads(line)
+                                final_model = chunk.get("model") or final_model
+                                token = chunk.get("message", {}).get("content", "")
+                                done = chunk.get("done", False)
+                                if token:
+                                    yield f"data: {_json.dumps({'token': token, 'done': done})}\n\n"
+                                if done:
+                                    yield f"data: {_json.dumps({'token': '', 'done': True, 'model': final_model, 'provider': final_provider, 'intent': routing['intent'], 'specialist': routing['specialist'], 'route_source': routing['route_source']})}\n\n"
+                                    break
+                            except Exception:
+                                continue
+                        logger.debug(
+                            "[stream] closed ollama stream url=%s model=%s provider=%s",
+                            chat_url,
+                            final_model,
+                            final_provider,
+                        )
+            except (httpx.ReadTimeout, httpx.TimeoutException, httpx.TransportError):
+                elapsed = round(time.monotonic() - started, 2)
+                logger.warning(
+                    "[stream-timeout] request_id=%s model=%s elapsed_sec=%.2f timeout_sec=%.2f",
+                    req_id,
+                    final_model,
+                    elapsed,
+                    AGENT_STREAM_TIMEOUT_SEC,
+                )
+                yield (
+                    "data: "
+                    + _json.dumps(
+                        {
+                            "token": "",
+                            "done": True,
+                            "state": "loading",
+                            "error_type": "model_warmup_timeout",
+                            "model": final_model,
+                            "provider": final_provider,
+                            "retry_after_sec": 15,
+                            "timeout_sec": AGENT_STREAM_TIMEOUT_SEC,
+                        }
                     )
+                    + "\n\n"
+                )
+                return
         except Exception as e:
             yield f"data: {_json.dumps({'token': f'Error: {str(e)[:60]}', 'done': True})}\n\n"
 
@@ -254,6 +345,7 @@ async def list_models():
     """List all available models with fallback chain."""
     try:
         from core_agent.config.model_registry import get_all_models
+
         models = get_all_models()
         return {"success": True, "models": models, "count": len(models)}
     except Exception as e:
@@ -272,6 +364,7 @@ async def orchestrator_health():
         ollama_status = "unknown"
         try:
             from core_agent.config.model_config import ModelConfig
+
             ollama_tags_url = ModelConfig.ollama_native_url("/api/tags")
             async with httpx.AsyncClient() as client:
                 response = await client.get(ollama_tags_url, timeout=5)
@@ -314,6 +407,7 @@ async def get_agent_history(limit: int = 20):
         return {"success": True, "history": history, "count": len(history)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/embedding")
 async def generate_embedding(text: str):
@@ -374,6 +468,7 @@ async def legacy_maf_health():
 
 
 # ─── Emergency Kill Switch ───────────────────────────────────────────────────
+
 
 @router.post("/kill")
 async def kill_switch():
