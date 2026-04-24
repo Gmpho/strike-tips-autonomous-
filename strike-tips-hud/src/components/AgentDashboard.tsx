@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, RotateCcw, Activity } from 'lucide-react';
 import { AIChat } from './AIChat';
+import { useAgentHealth } from '../hooks/useAgentHealth';
 
 interface Agent {
   name: string;
@@ -10,19 +11,16 @@ interface Agent {
 
 export const AgentDashboard: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const { health, refreshHealth } = useAgentHealth();
 
   const fetchAgents = async () => {
     try {
-      const [modelsRes, healthRes] = await Promise.all([
-        fetch('/api/agent/models'),
-        fetch('/api/agent/health'),
-      ]);
+      const modelsRes = await fetch('/api/agent/models');
       const modelsData = await modelsRes.json();
-      const healthData = healthRes.ok ? await healthRes.json() : {};
-      const ollamaOnline = healthData.ollama === 'connected';
+      const ollamaOnline = health.ollama === 'connected';
 
       if (modelsData.models) {
-        setAgents(modelsData.models.map((m: any) => ({
+        setAgents(modelsData.models.map((m: { name?: string; id?: string; type?: string }) => ({
           name: m.name || m.id || 'Unknown',
           status: m.type === 'local' ? (ollamaOnline ? 'online' : 'offline') : 'cloud',
           model: m.id || 'N/A',
@@ -34,17 +32,17 @@ export const AgentDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAgents();
-    const interval = setInterval(fetchAgents, 5000);
+    void fetchAgents();
+    const interval = setInterval(fetchAgents, 25000);
     return () => clearInterval(interval);
-  }, []);
+  }, [health.ollama]);
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 animate-in fade-in duration-500 h-full">
       <div className="xl:col-span-1 space-y-6">
         <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-black text-white uppercase tracking-tighter">AI Agent Pipeline</h2>
-            <button onClick={fetchAgents} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <button onClick={() => { void refreshHealth(); void fetchAgents(); }} className="p-2 hover:bg-white/10 rounded-full transition-colors">
             <RotateCcw className="w-4 h-4 text-purple-400" />
             </button>
         </div>
