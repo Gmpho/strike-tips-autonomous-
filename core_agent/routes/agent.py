@@ -37,6 +37,13 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 _orchestrator: Optional[UnifiedOrchestrator] = None
 _pipeline: Optional[ModelPipeline] = None
 AGENT_STREAM_TIMEOUT_SEC = float(os.getenv("AGENT_STREAM_TIMEOUT_SEC", "45"))
+OLLAMA_HEALTH_TIMEOUT_SEC = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SEC", "20"))
+OLLAMA_HEALTH_CACHE_TTL_SEC = float(os.getenv("OLLAMA_HEALTH_CACHE_TTL_SEC", "25"))
+_OLLAMA_HEALTH_CACHE: Dict[str, Any] = {
+    "status": "unknown",
+    "expires_at": 0.0,
+}
+_OLLAMA_HEALTH_LOCK = asyncio.Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -75,6 +82,37 @@ def get_pipeline() -> ModelPipeline:
             raise RuntimeError("StrikeTips not initialized")
         _pipeline = ModelPipeline(brain.strike)
     return _pipeline
+
+
+async def _get_cached_ollama_status() -> str:
+    """Fetch Ollama health with a lightweight in-memory TTL cache."""
+    now = time.monotonic()
+    if now < float(_OLLAMA_HEALTH_CACHE.get("expires_at", 0.0)):
+        return str(_OLLAMA_HEALTH_CACHE.get("status", "unknown"))
+
+    async with _OLLAMA_HEALTH_LOCK:
+        now = time.monotonic()
+        if now < float(_OLLAMA_HEALTH_CACHE.get("expires_at", 0.0)):
+            return str(_OLLAMA_HEALTH_CACHE.get("status", "unknown"))
+
+        from core_agent.config.model_config import ModelConfig
+
+        ollama_status = "unknown"
+        try:
+            ollama_tags_url = ModelConfig.ollama_native_url("/api/tags")
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    ollama_tags_url, timeout=OLLAMA_HEALTH_TIMEOUT_SEC
+                )
+            ollama_status = "connected" if response.status_code == 200 else "error"
+        except Exception:
+            ollama_status = "not_running"
+
+        _OLLAMA_HEALTH_CACHE["status"] = ollama_status
+        _OLLAMA_HEALTH_CACHE["expires_at"] = (
+            time.monotonic() + OLLAMA_HEALTH_CACHE_TTL_SEC
+        )
+        return ollama_status
 
 
 class AgentRequest(BaseModel):
@@ -356,21 +394,8 @@ async def list_models():
 async def orchestrator_health():
     """Check orchestrator and model health."""
     try:
-        orchestrator = get_orchestrator()
-
-        # Test Ollama connection
-        import httpx
-
-        ollama_status = "unknown"
-        try:
-            from core_agent.config.model_config import ModelConfig
-
-            ollama_tags_url = ModelConfig.ollama_native_url("/api/tags")
-            async with httpx.AsyncClient() as client:
-                response = await client.get(ollama_tags_url, timeout=5)
-                ollama_status = "connected" if response.status_code == 200 else "error"
-        except Exception:
-            ollama_status = "not_running"
+        get_orchestrator()
+        ollama_status = await _get_cached_ollama_status()
 
         return {
             "success": True,
