@@ -13,6 +13,8 @@ export const AIChat: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const getWarmupStatus = (model?: string) =>
+    `⏳ Model warming up${model ? ` (${model})` : ''}. Retry in a few seconds.`;
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -79,6 +81,27 @@ export const AIChat: React.FC = () => {
               setMessages(prev => prev.map((m, i) =>
                 i === prev.length - 1 && m.role === 'ai'
                   ? { ...m, content: m.content + chunk.token }
+                  : m
+              ));
+            }
+            if (
+              chunk.done &&
+              (chunk.state === 'loading' || chunk.error_type === 'model_warmup_timeout')
+            ) {
+              clearInterval(actInterval);
+              setCurrentActivity(null);
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 && m.role === 'ai'
+                  ? { ...m, content: getWarmupStatus(chunk.model) }
+                  : m
+              ));
+            }
+            if (chunk.done && chunk.error_type && chunk.state !== 'loading') {
+              clearInterval(actInterval);
+              setCurrentActivity(null);
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 && m.role === 'ai'
+                  ? { ...m, content: `⚠️ ${chunk.token || 'Agent request failed. Please retry.'}` }
                   : m
               ));
             }
