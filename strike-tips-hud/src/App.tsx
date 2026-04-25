@@ -12,6 +12,7 @@ import { SettingsView } from './components/sidebar/SettingsView';
 import { AnalyticsView } from './components/sidebar/AnalyticsView';
 import { HealingView } from './components/sidebar/HealingView';
 import { SystemVitalsView } from './components/sidebar/SystemVitalsView';
+import { DreamingView } from './components/sidebar/DreamingView';
 import { ThemeToggle } from './components/ThemeToggle';
 import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -66,6 +67,8 @@ export const App: React.FC = () => {
         return <HealingView key="healing-view" />;
       case 'vitals':
         return <SystemVitalsView key="vitals-view" />;
+      case 'dreaming':
+        return <DreamingView key="dreaming-view" />;
       default:
         return <div key="default-view" className="text-white p-12">Select a module</div>;
     }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, BarChart3, ShieldCheck, Activity } from 'lucide-react';
+import { LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, BarChart3, ShieldCheck, Activity, Sparkles } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 
 interface SidebarProps {
@@ -11,6 +11,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView }) =
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
     { icon: BrainCircuit, label: 'AI Agents', id: 'agents' },
+    { icon: Sparkles, label: 'Dreaming', id: 'dreaming' },
     { icon: Wallet, label: 'Bankroll', id: 'bankroll' },
     { icon: BarChart3, label: 'Analytics', id: 'analytics' },
     { icon: Terminal, label: 'Logs', id: 'logs' },
