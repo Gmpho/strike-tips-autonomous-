@@ -13,6 +13,7 @@ Shifted from infrastructure-centric monitoring (Docker stats) to **Intelligence-
 
 ### 2. The Healing Swarm (Self-Healing Pipeline)
 An automated "Immune System" that detects and repairs broken data parsers.
+*   **L7 Diagnostics**: Real-time diagnostics endpoint for the Vite Frontend.
 *   **Adaptive Selectors**: Real-time success/failure reporting for Betway and TAB4Racing HTML selectors.
 *   **Manual Neural Pulse**: A "Command Center" trigger that allows an admin to force a system-wide intelligence scan.
 *   **Agent Activity Feed**: A unified log of internal events and external GitHub Action "Healing" runs.
@@ -32,7 +33,9 @@ Modern, high-fidelity interface designed for "Zero-Delay" oversight.
 ---
 
 ## 🛠️ Tech Stack & Integration
-*   **Frontend**: Next.js 16+, TypeScript, Tailwind CSS 4.0, Framer Motion.
+*   **Frontend (`strike-tips-hud/`)**:
+    -   **Framework**: Vite 8+, React 19+, TypeScript.
+    -   **Styling**: Tailwind CSS 4.0, Framer Motion.
 *   **Backend**: FastAPI (L7 Diagnostics), `psutil` (Bare Metal Telemetry).
 *   **AI Orchestration**: Performance Tracker (JSON Persistence).
 *   **CI/CD Integration**: GitHub Actions REST API.

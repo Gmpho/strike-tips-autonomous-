@@ -12,8 +12,8 @@ This is a **Full-Stack Code Project** consisting of:
     -   **AI Layer**: Direct httpx calls to Ollama (no Pydantic AI dependency)
     -   **Skills Layer**: Modular components for race analysis, bankroll management, web scraping (TAB4Racing), and Telegram notifications.
     -   **Storage**: JSON files in the `data/` directory for bankroll state, bet history, and scan results.
--   **Frontend (`strike-tips-frontend/`)**:
-    -   **Framework**: Next.js 16+ (App Router), TypeScript.
+-   **Frontend (`strike-tips-hud/`)**:
+    -   **Framework**: Vite 8+, React 19+, TypeScript.
     -   **Styling**: Tailwind CSS 4.0+, Framer Motion for animations, Lucide React for icons.
     -   **State Management**: React Hooks (useState, useEffect) with direct API integration via `fetch`.
 -   **Docker Setup**: 3-container setup (strike-bot, ollama, odds-monitor)
