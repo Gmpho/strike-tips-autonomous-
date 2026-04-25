@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Target, RotateCcw } from 'lucide-react';
+import { TrendingUp, DollarSign, Target, RotateCcw, Wallet } from 'lucide-react';
 import { BETTING_ENDPOINTS } from '../../lib/api-prefixes';
 import { motion } from 'framer-motion';
+
 interface BetStats {
   totalBets: number;
   wins: number;
@@ -63,15 +64,17 @@ export const BankrollView: React.FC = () => {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-pulse text-purple-500">Loading bankroll data...</div>
+        <div className="animate-pulse text-emerald-500 font-black uppercase tracking-widest text-xs">
+          Syncing Bankroll...
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-8 text-red-400">
-        Error: {error}
+      <div className="p-8 text-red-500 font-black text-center bg-red-500/10 rounded-2xl border border-red-500/20">
+        NETWORK ERROR: {error}
       </div>
     );
   }
@@ -83,126 +86,77 @@ export const BankrollView: React.FC = () => {
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="p-8"
+      className="p-6 space-y-8"
     >
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-black text-white tracking-tight">Bankroll & ROI</h2>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold bg-linear-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+            Bankroll & ROI
+          </h2>
+          <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
+            Financial Performance & Exposure
+          </p>
+        </div>
         <button 
           onClick={() => window.location.reload()}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-colors backdrop-blur-md border border-white/10"
+          className="p-3 rounded-xl bg-theme-panel border border-theme text-theme-secondary hover:text-theme-primary hover:bg-theme-secondary transition-all"
         >
-          <RotateCcw className="w-4 h-4" />
-          <span className="text-sm">Refresh</span>
+          <RotateCcw className="w-5 h-5" />
         </button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-        <motion.div 
-          whileHover={{ y: -5, scale: 1.02 }}
-          className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
-        >
-          <div className="flex items-center gap-2 text-slate-500 mb-2">
-            <Target className="w-4 h-4" />
-            <span className="text-xs font-black uppercase tracking-wider">Total Bets</span>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'TOTAL BETS', value: stats?.totalBets || 0, icon: Target, color: 'text-blue-500' },
+          { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
+          { label: 'EXPOSURE', value: `R ${stats?.stakeTotal?.toFixed(2) || '0.00'}`, icon: Wallet, color: 'text-indigo-500' },
+          { label: 'TOTAL ROI', value: `${(stats?.roi || 0) >= 0 ? '+' : ''}${stats?.roi?.toFixed(1) || '0.0'}%`, icon: TrendingUp, color: (stats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' },
+        ].map((stat, i) => (
+          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+            <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
+            <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label === 'TOTAL ROI' ? (stats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' : ''}`}>
+              {stat.value}
+            </div>
+            <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
           </div>
-          <motion.div 
-            key={stats?.totalBets}
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="text-4xl font-black text-white"
-          >
-            {stats?.totalBets || 0}
-          </motion.div>
-        </motion.div>
-
-        <motion.div 
-          whileHover={{ y: -5, scale: 1.02 }}
-          className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
-        >
-          <div className="flex items-center gap-2 text-slate-500 mb-2">
-            <TrendingUp className="w-4 h-4" />
-            <span className="text-xs font-black uppercase tracking-wider">Win Rate</span>
-          </div>
-          <motion.div 
-            key={winRate}
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="text-4xl font-black text-emerald-400"
-          >
-            {winRate}%
-          </motion.div>
-        </motion.div>
-
-        <motion.div 
-          whileHover={{ y: -5, scale: 1.02 }}
-          className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
-        >
-          <div className="flex items-center gap-2 text-slate-500 mb-2">
-            <DollarSign className="w-4 h-4" />
-            <span className="text-xs font-black uppercase tracking-wider">Total Stake</span>
-          </div>
-          <motion.div 
-            key={stats?.stakeTotal}
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="text-4xl font-black text-white"
-          >
-            R {stats?.stakeTotal?.toFixed(2) || '0.00'}
-          </motion.div>
-        </motion.div>
-
-        <motion.div 
-          whileHover={{ y: -5, scale: 1.02 }}
-          className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
-        >
-          <div className="flex items-center gap-2 text-slate-500 mb-2">
-            {((stats?.roi ?? 0) >= 0) ? (
-              <TrendingUp className="w-4 h-4" />
-            ) : (
-              <TrendingDown className="w-4 h-4" />
-            )}
-            <span className="text-xs font-black uppercase tracking-wider">ROI</span>
-          </div>
-          <motion.div 
-            key={stats?.roi}
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className={`text-4xl font-black ${(stats?.roi || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
-          >
-            {(stats?.roi || 0) >= 0 ? '+' : ''}{stats?.roi?.toFixed(1) || '0.0'}%
-          </motion.div>
-        </motion.div>
+        ))}
       </div>
 
       {/* Recent Bets */}
-      <div className="bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-        <div className="px-6 py-4 border-b border-white/10">
-          <h3 className="text-sm font-black text-white uppercase tracking-wider">Recent Executions</h3>
+      <div className="rounded-3xl bg-theme-panel border border-theme overflow-hidden backdrop-blur-2xl">
+        <div className="px-6 py-4 border-b border-theme bg-theme-secondary/30 flex items-center gap-3">
+          <DollarSign className="w-4 h-4 text-emerald-500" />
+          <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">Recent Executions</h3>
         </div>
-        <div className="divide-y divide-white/5 max-h-96 overflow-y-auto custom-scrollbar">
+        
+        <div className="divide-y divide-theme overflow-y-auto max-h-[400px]">
           {bets.length === 0 ? (
-            <div className="px-6 py-8 text-center text-slate-500 font-bold uppercase tracking-widest">
-              Awaiting Market Entry
+            <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
+              Awaiting Market Entry...
             </div>
           ) : (
             bets.slice(0, 20).map((bet) => (
               <motion.div 
                 key={bet.id} 
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="px-6 py-4 flex items-center justify-between hover:bg-theme-secondary/50 transition-colors group"
               >
                 <div className="flex items-center gap-4">
                   <div className={`w-2 h-2 rounded-full shadow-[0_0_10px] ${bet.settled ? (bet.won ? 'bg-emerald-500 shadow-emerald-500' : 'bg-red-500 shadow-red-500') : 'bg-amber-500 shadow-amber-500 animate-pulse'}`} />
                   <div>
-                    <div className="text-sm font-black text-white uppercase tracking-tighter">{bet.horse}</div>
-                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{bet.track} - RACE {bet.raceNumber}</div>
+                    <div className="text-sm font-black text-theme-primary uppercase tracking-tighter group-hover:text-emerald-500 transition-colors">
+                      {bet.horse}
+                    </div>
+                    <div className="text-[10px] text-theme-secondary font-bold uppercase tracking-widest">
+                      {bet.track} • RACE {bet.raceNumber}
+                    </div>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm font-mono font-black text-white">R {bet.stake.toFixed(2)}</div>
-                  <div className="text-[10px] text-purple-400 font-bold">@{bet.odds}</div>
+                  <div className="text-sm font-black text-theme-primary tabular">R {bet.stake.toFixed(2)}</div>
+                  <div className="text-[10px] text-theme-secondary font-black tabular">@{bet.odds}</div>
                 </div>
               </motion.div>
             ))

@@ -32,7 +32,7 @@ export const ThemeToggle: React.FC = () => {
   return (
     <button
       onClick={toggle}
-      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all"
+      className="p-2.5 rounded-xl bg-theme-panel hover:bg-theme-secondary border border-theme transition-all shadow-sm"
       title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
     >
       {theme === 'dark' ? (

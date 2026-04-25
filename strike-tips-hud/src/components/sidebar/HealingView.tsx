@@ -18,7 +18,7 @@ export const HealingView: React.FC = () => {
           <h2 className="text-2xl font-bold bg-linear-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
             Healing Swarm
           </h2>
-          <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-medium">
+          <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             Autonomous Agent Pipeline Monitoring
           </p>
         </div>
@@ -35,12 +35,12 @@ export const HealingView: React.FC = () => {
       {/* Grid: Agent Stats & Selector Health */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Selector Health Card */}
-        <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800/50 backdrop-blur-xl group hover:border-emerald-500/30 transition-all duration-500">
+        <div className="p-5 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-emerald-500/30 transition-all duration-500">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold text-slate-200">Adaptive Selectors</h3>
+            <h3 className="font-black text-theme-primary uppercase tracking-tight">Adaptive Selectors</h3>
           </div>
           
           <div className="space-y-4">
@@ -49,13 +49,13 @@ export const HealingView: React.FC = () => {
               const successRate = parseFloat(bestSelector[1].success_rate);
               return (
                 <div key={field} className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400 capitalize">{field.replace('_', ' ')}</span>
-                    <span className={successRate > 90 ? 'text-emerald-400' : 'text-amber-400'}>
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-theme-secondary capitalize font-black tracking-tight">{field.replace('_', ' ')}</span>
+                    <span className={successRate > 90 ? 'text-emerald-400 font-black' : 'text-amber-400 font-black'}>
                       {bestSelector[1].success_rate}
                     </span>
                   </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-2 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${successRate}%` }}
@@ -72,23 +72,23 @@ export const HealingView: React.FC = () => {
         </div>
 
         {/* AI Active Workers Card */}
-        <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800/50 backdrop-blur-xl group hover:border-cyan-500/30 transition-all duration-500">
+        <div className="p-5 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-cyan-500/30 transition-all duration-500">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
               <Activity className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold text-slate-200">Agent Telemetry</h3>
+            <h3 className="font-black text-theme-primary uppercase tracking-tight">Agent Telemetry</h3>
           </div>
           
           <div className="flex items-end gap-2 mb-2">
-            <span className="text-4xl font-bold text-white tracking-tight">
+            <span className="text-4xl font-black text-theme-primary tracking-tighter">
               {healing.githubRuns.filter(r => r.status === 'in_progress').length + (healing.events.length > 0 ? 1 : 0)}
             </span>
             <span className="text-cyan-400 text-xs font-bold uppercase mb-1.5 animate-pulse">
               Active Workers
             </span>
           </div>
-          <p className="text-xs text-slate-400 leading-relaxed">
+          <p className="text-[11px] text-theme-secondary leading-relaxed font-bold">
             AI instances monitoring TAB4Racing and executing plan transformations.
           </p>
         </div>
@@ -98,12 +98,12 @@ export const HealingView: React.FC = () => {
       <div className="space-y-4">
         <div className="flex items-center gap-3 px-1">
           <Terminal className="w-4 h-4 text-emerald-400" />
-          <h3 className="text-sm font-bold text-slate-200 uppercase tracking-widest">Healing Log</h3>
+          <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">Healing Log</h3>
         </div>
         
         <div className="space-y-3">
           {healing.events.length === 0 && (
-            <div className="p-8 text-center rounded-2xl border border-dashed border-slate-800 text-slate-500 text-sm">
+            <div className="p-8 text-center rounded-2xl border border-dashed border-theme text-theme-secondary text-sm font-bold">
               Waiting for agent activity...
             </div>
           )}
@@ -113,7 +113,7 @@ export const HealingView: React.FC = () => {
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               transition={{ delay: idx * 0.1 }}
-              className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/50 flex gap-4 items-start group hover:bg-slate-800/30 transition-all"
+              className="p-4 rounded-xl bg-theme-panel border border-theme flex gap-4 items-start group hover:bg-theme-secondary transition-all"
             >
               <div className={`mt-1 p-1.5 rounded-lg ${
                 event.action === 'SELECTOR_HEALED' ? 'bg-emerald-500/10 text-emerald-400' : 
@@ -123,21 +123,21 @@ export const HealingView: React.FC = () => {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors uppercase tracking-wider">
+                  <span className="text-xs font-black text-theme-primary group-hover:text-emerald-400 transition-colors uppercase tracking-wider">
                     {event.action.replace('_', ' ')}
                   </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
+                  <span className="text-[10px] text-theme-secondary font-black tabular">
                     {new Date(event.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
-                <p className="text-sm text-slate-400 leading-relaxed truncate group-hover:text-slate-300">
+                <p className="text-sm text-theme-secondary font-medium leading-relaxed truncate group-hover:text-theme-primary">
                   {event.details}
                 </p>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400 font-medium">
+                  <span className="text-[10px] bg-theme-secondary px-2 py-0.5 rounded text-theme-secondary font-black border border-theme">
                     {event.agent}
                   </span>
-                  <span className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-tighter">
+                  <span className="text-[10px] text-emerald-500 font-black uppercase tracking-tighter">
                     {event.status}
                   </span>
                 </div>

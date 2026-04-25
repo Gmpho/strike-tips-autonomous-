@@ -5,21 +5,23 @@ import { motion } from 'framer-motion';
 
 interface RaceCardProps {
   event: RaceEvent;
+  idx?: number;
 }
 
-export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
+export const RaceCard: React.FC<RaceCardProps> = ({ event, idx = 0 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const topHorse = event.runners?.[0];
   const hasMarketData = topHorse && typeof topHorse.odds === 'number' && topHorse.odds > 0;
   
   return (
     <motion.div 
-      layout
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className={`hud-card group p-6 relative overflow-hidden border border-white/10 bg-white/5 backdrop-blur-2xl transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
+      key={event.id}
+      initial={{ x: -20, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      transition={{ delay: idx * 0.1 }}
+      className={`hud-card group p-6 relative overflow-hidden border border-theme bg-theme-secondary backdrop-blur-2xl transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
     >
-      <div className="absolute inset-0 bg-linear-to-br from-purple-500/10 to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-theme-panel opacity-40 pointer-events-none" />
       <div className="flex justify-between items-start mb-6 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -28,12 +30,12 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
               {event.course} | RACE {event.raceNumber || '---'}
             </span>
           </div>
-          <h3 className="text-2xl font-black text-white tracking-tighter uppercase">{event.course} R{event.raceNumber}</h3>
+          <h3 className="text-2xl font-black text-theme-primary tracking-tighter uppercase">{event.course} R{event.raceNumber}</h3>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <div className="text-[9px] font-bold text-slate-500 mb-1">STATUS</div>
-            <div className={`border ${hasMarketData ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/20' : 'border-purple-500/40 text-purple-400 bg-purple-500/20'} text-[10px] font-black px-2 py-0.5 rounded uppercase`}>
+            <div className="text-[9px] font-bold text-theme-secondary mb-1">STATUS</div>
+            <div className={`border ${hasMarketData ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' : 'border-purple-500/40 text-purple-400 bg-purple-500/10'} text-[10px] font-black px-2 py-0.5 rounded uppercase`}>
               {hasMarketData ? 'LIVE MARKET' : 'EVALUATING'}
             </div>
           </div>
@@ -42,7 +44,7 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
       </div>
 
       {!isOpen ? (
-        <div className="bg-void/50 rounded-2xl p-5 border border-white/5 group-hover:border-purple-500/20 transition-colors">
+        <div className="bg-theme-panel rounded-2xl p-5 border border-theme group-hover:border-purple-500/20 transition-colors">
           <div className="flex justify-between items-center">
             {hasMarketData ? (
               <>
@@ -51,36 +53,36 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
                     <Zap className="w-3 h-3 text-purple-500 fill-purple-500" />
                     <div className="text-[9px] font-extrabold text-purple-500 uppercase tracking-widest">AI TOP SELECTION</div>
                   </div>
-                  <div className="text-xl font-black text-white tracking-tight leading-none mb-1">{topHorse.name}</div>
-                  <div className="text-[10px] text-slate-500 font-bold">FORM: <span className="text-purple-400">{topHorse.form || 'N/A'}</span></div>
+                  <div className="text-xl font-black text-theme-primary tracking-tight leading-none mb-1">{topHorse.name}</div>
+                  <div className="text-[10px] text-theme-secondary font-bold">FORM: <span className="text-purple-400">{topHorse.form || 'N/A'}</span></div>
                 </div>
                 <div className="text-right">
-                  <div className="tabular text-3xl font-black text-white leading-none">{Number(topHorse.odds).toFixed(2)}</div>
+                  <div className="tabular text-3xl font-black text-theme-primary leading-none">{Number(topHorse.odds).toFixed(2)}</div>
                 </div>
               </>
             ) : (
-              <div className="text-slate-500 text-sm font-bold uppercase tracking-widest">Awaiting Live Feed...</div>
+              <div className="text-theme-secondary text-sm font-bold uppercase tracking-widest">Awaiting Live Feed...</div>
             )}
           </div>
         </div>
       ) : (
         <div className="mt-4 overflow-x-auto animate-in fade-in slide-in-from-top-4 duration-500">
           <table className="w-full text-[11px] text-left border-collapse">
-            <thead>
-              <tr className="text-slate-500 border-b border-white/10 uppercase font-black">
+            <thead className="sticky top-0 bg-theme-secondary">
+              <tr className="text-theme-secondary border-b border-theme uppercase font-black">
                 <th className="py-3 px-2">Horse</th>
                 <th className="py-3 px-2">Jockey/Trainer</th>
                 <th className="py-3 px-2">Form</th>
                 <th className="py-3 px-2 text-right">Odds</th>
               </tr>
             </thead>
-            <tbody className="text-white font-mono">
+            <tbody className="text-theme-primary font-mono">
             {event.runners.map((r, i) => (
-              <tr key={i} className="border-b border-white/5 hover:bg-purple-500/10">
-                <td className="py-3 px-2 font-bold">{r.name}</td>
-                <td className="py-3 px-2">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
-                <td className="py-3 px-2">{r.form || '-'}</td>
-                <td className="py-3 px-2 text-right font-black text-purple-400">
+              <tr key={i} className="border-b border-theme hover:bg-purple-500/10 transition-colors">
+                <td className="py-3 px-2 font-black text-sm">{r.name}</td>
+                <td className="py-3 px-2 text-[10px] opacity-80">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
+                <td className="py-3 px-2 font-bold">{r.form || '-'}</td>
+                <td className="py-3 px-2 text-right font-black text-purple-500 text-sm">
                   {(typeof r.odds === 'number' && r.odds > 0) ? r.odds.toFixed(2) : (r.odds || 'SP')}
                 </td>
               </tr>
@@ -92,11 +94,11 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event }) => {
 
             <div className="mt-6 flex justify-between items-center">
             <div className="flex items-center gap-2">
-            <Timer className="w-3 h-3 text-slate-500" />
-            <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">OFF_TIME: {event.t}</span>
+            <Timer className="w-3 h-3 text-theme-secondary" />
+            <span className="text-[10px] text-theme-secondary font-black uppercase tracking-widest">OFF_TIME: {event.t}</span>
             </div>
-            <button className="bg-white text-black text-[11px] font-black px-5 py-2.5 rounded-xl cursor-pointer uppercase tracking-tighter 
-            hover:bg-purple-500 hover:text-black hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] transition-all active:scale-95">
+            <button className="bg-theme-primary text-theme-panel text-[11px] font-black px-5 py-2.5 rounded-xl cursor-pointer uppercase tracking-tighter 
+            hover:bg-purple-500 hover:text-white hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] transition-all active:scale-95">
             Execute Position
             </button>
             </div>

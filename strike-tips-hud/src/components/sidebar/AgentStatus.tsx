@@ -17,35 +17,35 @@ export const AgentStatus: React.FC = () => {
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="p-6 bg-white/5 rounded-3xl border border-white/10 backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] mx-2 mb-6 hover:shadow-[0_0_30px_rgba(168,85,247,0.1)] transition-shadow"
+      className="p-6 bg-theme-panel rounded-3xl border border-theme backdrop-blur-2xl mx-2 mb-6 hover:shadow-[0_0_30px_rgba(168,85,247,0.1)] transition-shadow"
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-purple-500" />
-          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Agent Pipeline</span>
+          <span className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">Agent Pipeline</span>
         </div>
-        <button onClick={toggleLock} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors border border-transparent hover:border-white/10">
+        <button onClick={toggleLock} className="p-1.5 hover:bg-theme-secondary rounded-lg transition-colors border border-theme">
           {isLocked ? <AlertTriangle className="w-4 h-4 text-red-500" /> : <Power className="w-4 h-4 text-emerald-500" />}
         </button>
       </div>
       
       <div className="space-y-4">
-        <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+        <div className="flex items-center justify-between p-3 bg-theme-secondary rounded-xl border border-theme">
           <div className="flex items-center gap-3">
-            <Activity className="w-4 h-4 text-slate-400" />
-            <span className="text-xs font-bold text-slate-300">Orchestrator</span>
+            <Activity className="w-4 h-4 text-theme-secondary" />
+            <span className="text-xs font-bold text-theme-primary">Orchestrator</span>
           </div>
-          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.orchestrator === 'ready' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.orchestrator === 'ready' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
             {health.orchestrator}
           </span>
         </div>
 
-        <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+        <div className="flex items-center justify-between p-3 bg-theme-secondary rounded-xl border border-theme">
           <div className="flex items-center gap-3">
-            <Database className="w-4 h-4 text-slate-400" />
-            <span className="text-xs font-bold text-slate-300">Local Model (Ollama)</span>
+            <Database className="w-4 h-4 text-theme-secondary" />
+            <span className="text-xs font-bold text-theme-primary">Local Model (Ollama)</span>
           </div>
-          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.ollama === 'connected' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.ollama === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
             {health.ollama}
           </span>
         </div>

@@ -13,23 +13,23 @@
 :root {
   --bg-primary: #000000;
   --bg-secondary: rgba(255, 255, 255, 0.03);
-  --bg-panel: rgba(0, 0, 0, 0.4);
+  --bg-panel: rgba(0, 0, 0, 0.6);
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-secondary: rgba(255, 255, 255, 0.7);
   --text-muted: rgba(255, 255, 255, 0.4);
   --border-color: rgba(255, 255, 255, 0.1);
   --accent-glow: rgba(168, 85, 247, 0.2);
 }
 
 html.light {
-  --bg-primary: #f1f5f9;
+  --bg-primary: #f8fafc;
   --bg-secondary: #ffffff;
-  --bg-panel: rgba(255, 255, 255, 0.7);
-  --text-primary: #0f172a;
+  --bg-panel: rgba(255, 255, 255, 0.95);
+  --text-primary: #0f172a; /* Maximum contrast for dashboard legibility */
   --text-secondary: #334155;
   --text-muted: #64748b;
-  --border-color: rgba(0, 0, 0, 0.08);
-  --accent-glow: rgba(168, 85, 247, 0.15);
+  --border-color: rgba(15, 23, 42, 0.1);
+  --accent-glow: rgba(168, 85, 247, 0.05);
 }
 
 /* Global Styles */
@@ -40,6 +40,7 @@ html, body {
   padding: 0;
   font-family: var(--font-hud);
   transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
@@ -47,6 +48,7 @@ body {
 }
 
 /* Theme-aware Utility overrides */
+.bg-theme-primary { background-color: var(--bg-primary); }
 .bg-theme-panel { background-color: var(--bg-panel); }
 .bg-theme-secondary { background-color: var(--bg-secondary); }
 .text-theme-primary { color: var(--text-primary); }
@@ -57,7 +59,7 @@ body {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 1.5rem;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   transform: perspective(1000px) rotateX(1deg);
   transform-style: preserve-3d;

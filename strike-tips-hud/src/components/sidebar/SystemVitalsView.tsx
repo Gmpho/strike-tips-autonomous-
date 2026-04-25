@@ -17,7 +17,7 @@ export const SystemVitalsView: React.FC = () => {
         <h2 className="text-2xl font-bold bg-linear-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
           Intelligence Vitals
         </h2>
-        <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-medium">
+        <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
           Agent Performance & Reasoning Efficiency
         </p>
       </div>
@@ -25,14 +25,14 @@ export const SystemVitalsView: React.FC = () => {
       {/* Bare Metal Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'CPU LOAD', value: `${systemHealth.cpu}%`, icon: Cpu, color: 'text-blue-400' },
-          { label: 'MEMORY', value: `${systemHealth.memory}%`, icon: HardDrive, color: 'text-indigo-400' },
-          { label: 'LATENCY', value: `${systemHealth.latency}ms`, icon: Network, color: 'text-cyan-400' },
+          { label: 'CPU LOAD', value: `${systemHealth.cpu}%`, icon: Cpu, color: 'text-blue-500' },
+          { label: 'MEMORY', value: `${systemHealth.memory}%`, icon: HardDrive, color: 'text-indigo-500' },
+          { label: 'LATENCY', value: `${systemHealth.latency}ms`, icon: Network, color: 'text-cyan-500' },
         ].map((stat, i) => (
-          <div key={i} className="p-4 rounded-2xl bg-slate-900/50 border border-slate-800/50 backdrop-blur-xl">
+          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
-            <div className="text-xl font-bold text-white mb-0.5">{stat.value}</div>
-            <div className="text-[10px] text-slate-500 font-bold tracking-tighter uppercase">{stat.label}</div>
+            <div className="text-xl font-black text-theme-primary mb-0.5 tabular">{stat.value}</div>
+            <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
           </div>
         ))}
       </div>
@@ -40,13 +40,13 @@ export const SystemVitalsView: React.FC = () => {
       {/* Docker Containers Section */}
       <div className="space-y-4">
         <div className="flex items-center gap-3 px-1">
-          <Server className="w-4 h-4 text-blue-400" />
-          <h3 className="text-sm font-bold text-slate-200 uppercase tracking-widest text-shadow-sm">Intelligence Engine</h3>
+          <Server className="w-4 h-4 text-blue-500" />
+          <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">Intelligence Engine</h3>
         </div>
 
         <div className="space-y-4">
           {vitals.docker.length === 0 && (
-            <div className="p-8 text-center rounded-2xl border border-dashed border-slate-800 text-slate-500 text-sm">
+            <div className="p-8 text-center rounded-2xl border border-dashed border-theme text-theme-secondary text-sm font-bold">
               Waiting for docker telemetry...
             </div>
           )}
@@ -56,7 +56,7 @@ export const SystemVitalsView: React.FC = () => {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
-              className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800/50 group hover:border-blue-500/30 transition-all duration-500"
+              className="p-5 rounded-2xl bg-theme-panel border border-theme group hover:border-blue-500/30 transition-all duration-500"
             >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -64,8 +64,8 @@ export const SystemVitalsView: React.FC = () => {
                     <Server className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-white tracking-wide uppercase">{container.name}</div>
-                    <div className="text-[10px] text-slate-500 font-mono">ID: {container.id.slice(0, 12)}</div>
+                    <div className="text-sm font-black text-theme-primary tracking-wide uppercase">{container.name}</div>
+                    <div className="text-[10px] text-theme-secondary font-black tabular">ID: {container.id.slice(0, 12)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -76,11 +76,11 @@ export const SystemVitalsView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <div className="flex justify-between text-[10px] font-bold tracking-wider text-slate-500 uppercase">
+                  <div className="flex justify-between text-[10px] font-black tracking-wider text-theme-secondary uppercase">
                     <span>{container.id.startsWith('ai-') ? 'Success Rate' : 'CPU Usage'}</span>
-                    <span className="text-blue-400">{container.cpu || '0%'}</span>
+                    <span className="text-blue-500 font-black">{container.cpu || '0%'}</span>
                   </div>
-                  <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: container.cpu || '0%' }}
@@ -89,18 +89,18 @@ export const SystemVitalsView: React.FC = () => {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex justify-between text-[10px] font-bold tracking-wider text-slate-500 uppercase">
+                  <div className="flex justify-between text-[10px] font-black tracking-wider text-theme-secondary uppercase">
                     <span>{container.id.startsWith('ai-') ? 'Latency' : 'Memory'}</span>
-                    <span className="text-indigo-400">{container.mem || '0%'}</span>
+                    <span className="text-indigo-500 font-black">{container.mem || '0%'}</span>
                   </div>
-                  <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: container.mem || '0%' }}
                       className="h-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.4)]"
                     />
                   </div>
-                  <div className="text-[9px] text-slate-500 font-mono truncate">
+                  <div className="text-[9px] text-theme-secondary font-black tabular truncate">
                     {container.mem_usage}
                   </div>
                 </div>
