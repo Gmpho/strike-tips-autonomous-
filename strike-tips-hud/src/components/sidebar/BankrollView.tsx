@@ -1,67 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { TrendingUp, DollarSign, Target, RotateCcw, Wallet } from 'lucide-react';
-import { BETTING_ENDPOINTS } from '../../lib/api-prefixes';
+import React from 'react';
+import { TrendingUp, DollarSign, Target, RotateCcw, Wallet, Landmark } from 'lucide-react';
 import { motion } from 'framer-motion';
-
-interface BetStats {
-  totalBets: number;
-  wins: number;
-  losses: number;
-  stakeTotal: number;
-  payoutTotal: number;
-  roi: number;
-}
-
-interface Bet {
-  id: string;
-  track: string;
-  raceNumber: number;
-  horse: string;
-  odds: number;
-  edgePercent: number;
-  stake: number;
-  confidence: string;
-  settled: boolean;
-  won?: boolean;
-  payout?: number;
-}
+import { useHUD } from '../../hooks/useHUD';
 
 export const BankrollView: React.FC = () => {
-  const [stats, setStats] = useState<BetStats | null>(null);
-  const [bets, setBets] = useState<Bet[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { bankroll, betStats, betHistory, systemHealth } = useHUD();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [statsRes, betsRes] = await Promise.all([
-          fetch(BETTING_ENDPOINTS.stats),
-          fetch(BETTING_ENDPOINTS.history)
-        ]);
-        
-        if (!statsRes.ok || !betsRes.ok) {
-          throw new Error('Failed to fetch data');
-        }
-        
-        const statsData = await statsRes.json();
-        const betsData = await betsRes.json();
-        
-        setStats(statsData);
-        setBets(betsData.bets || []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (loading) {
+  if (systemHealth.status === 'OFFLINE' && !bankroll?.balance) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-pulse text-emerald-500 font-black uppercase tracking-widest text-xs">
@@ -71,15 +16,7 @@ export const BankrollView: React.FC = () => {
     );
   }
 
-  if (error) {
-    return (
-      <div className="p-8 text-red-500 font-black text-center bg-red-500/10 rounded-2xl border border-red-500/20">
-        NETWORK ERROR: {error}
-      </div>
-    );
-  }
-
-  const winRate = stats && stats.totalBets > 0 ? (stats.wins / stats.totalBets * 100).toFixed(1) : '0.0';
+  const winRate = betStats && betStats.totalBets > 0 ? (betStats.wins / betStats.totalBets * 100).toFixed(1) : '0.0';
 
   return (
     <motion.div 
@@ -105,17 +42,40 @@ export const BankrollView: React.FC = () => {
         </button>
       </div>
 
+      {/* Main Bankroll Display */}
+      <div className="p-8 rounded-4xl bg-linear-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 backdrop-blur-3xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform duration-700">
+          <Landmark className="w-24 h-24 text-indigo-400" />
+        </div>
+        <div className="relative z-10">
+          <div className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Current Bankroll</div>
+          <div className="flex items-baseline gap-3">
+            <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">R {bankroll?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
+          </div>
+          <div className="mt-4 flex gap-6">
+            <div>
+              <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Daily Limit</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.dailyLimit.toFixed(2) || '0.00'}</div>
+            </div>
+            <div>
+              <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Max Stake</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.maxStake.toFixed(2) || '0.00'}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'TOTAL BETS', value: stats?.totalBets || 0, icon: Target, color: 'text-blue-500' },
+          { label: 'TOTAL BETS', value: betStats?.totalBets || 0, icon: Target, color: 'text-blue-500' },
           { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
-          { label: 'EXPOSURE', value: `R ${stats?.stakeTotal?.toFixed(2) || '0.00'}`, icon: Wallet, color: 'text-indigo-500' },
-          { label: 'TOTAL ROI', value: `${(stats?.roi || 0) >= 0 ? '+' : ''}${stats?.roi?.toFixed(1) || '0.0'}%`, icon: TrendingUp, color: (stats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' },
+          { label: 'EXPOSURE', value: `R ${bankroll?.totalExposure?.toFixed(2) || '0.00'}`, icon: Wallet, color: 'text-indigo-500' },
+          { label: 'TOTAL ROI', value: `${(betStats?.roi || 0) >= 0 ? '+' : ''}${betStats?.roi?.toFixed(1) || '0.0'}%`, icon: TrendingUp, color: (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' },
         ].map((stat, i) => (
           <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
-            <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label === 'TOTAL ROI' ? (stats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' : ''}`}>
+            <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label === 'TOTAL ROI' ? (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' : ''}`}>
               {stat.value}
             </div>
             <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
@@ -131,12 +91,12 @@ export const BankrollView: React.FC = () => {
         </div>
         
         <div className="divide-y divide-theme overflow-y-auto max-h-[400px]">
-          {bets.length === 0 ? (
+          {betHistory.length === 0 ? (
             <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
               Awaiting Market Entry...
             </div>
           ) : (
-            bets.slice(0, 20).map((bet) => (
+            betHistory.slice(0, 20).map((bet) => (
               <motion.div 
                 key={bet.id} 
                 initial={{ opacity: 0 }}

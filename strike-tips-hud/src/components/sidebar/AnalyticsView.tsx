@@ -4,18 +4,25 @@ import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 
 export const AnalyticsView: React.FC = () => {
-  const state = useHUD();
+  const { learning, betStats } = useHUD();
+  
   const analytics = {
-    winRate: 64.2,
-    roi: state.learning?.totalRoi || 12.4,
-    efficiency: 94,
-    tracks: [
-      { name: 'Turffontein', roi: 18.2 },
-      { name: 'Greyville', roi: -2.4 },
-      { name: 'Kenilworth', roi: 15.8 },
-      { name: 'Fairview', roi: 8.1 },
-    ]
+    winRate: betStats && betStats.totalBets > 0 ? (betStats.wins / betStats.totalBets * 100).toFixed(1) : '0.0',
+    roi: betStats?.roi || learning?.totalRoi || 0,
+    efficiency: 94, // Placeholder for now
+    tracks: Object.entries(learning?.roiByTrack || {}).map(([name, roi]) => ({
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      roi: roi
+    }))
   };
+
+  // Fallback for visual completeness if no data yet
+  const displayTracks = analytics.tracks.length > 0 ? analytics.tracks : [
+    { name: 'Turffontein', roi: 0.0 },
+    { name: 'Greyville', roi: 0.0 },
+    { name: 'Kenilworth', roi: 0.0 },
+    { name: 'Fairview', roi: 0.0 },
+  ];
   
   return (
     <motion.div 
@@ -38,7 +45,7 @@ export const AnalyticsView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
           { label: 'WIN RATE', value: `${analytics.winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
-          { label: 'TOTAL ROI', value: `${analytics.roi.toFixed(1)}%`, icon: Target, color: 'text-blue-500' },
+          { label: 'TOTAL ROI', value: `${Number(analytics.roi).toFixed(1)}%`, icon: Target, color: 'text-blue-500' },
           { label: 'EFFICIENCY', value: `${analytics.efficiency}%`, icon: BarChart2, color: 'text-purple-500' },
         ].map((stat, i) => (
           <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-theme-primary transition-colors">
@@ -59,7 +66,7 @@ export const AnalyticsView: React.FC = () => {
         </div>
         
         <div className="space-y-6">
-          {analytics.tracks.map((track) => (
+          {displayTracks.map((track) => (
             <div key={track.name} className="space-y-2">
               <div className="flex justify-between text-xs">
                 <span className="text-theme-primary font-black uppercase tracking-tight">{track.name}</span>
@@ -70,7 +77,7 @@ export const AnalyticsView: React.FC = () => {
               <div className="h-1.5 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: `${Math.max(5, Math.min(100, 50 + track.roi))}%` }}
+                  animate={{ width: `${Math.max(5, Math.min(100, 50 + (track.roi * 2)))}%` }}
                   transition={{ duration: 1, ease: "easeOut" }}
                   className={`h-full rounded-full ${track.roi >= 0 ? 'bg-emerald-500' : 'bg-red-500'} shadow-[0_0_8px_rgba(16,185,129,0.2)]`}
                 />
@@ -89,7 +96,7 @@ export const AnalyticsView: React.FC = () => {
           </h3>
         </div>
         <p className="text-sm text-theme-secondary leading-relaxed font-bold group-hover:text-theme-primary transition-colors">
-          Neural engine is prioritizing <span className="text-emerald-500">Turffontein Inner</span> (+4% edge) based on recent volume variance. <span className="text-amber-500">Greyville</span> adjustments pending more samples.
+          Neural engine is prioritizing <span className="text-emerald-500">{learning?.topTrack || 'N/A'}</span> (+{learning?.accuracy || 0}% edge) based on recent volume variance. 
         </p>
       </div>
     </motion.div>

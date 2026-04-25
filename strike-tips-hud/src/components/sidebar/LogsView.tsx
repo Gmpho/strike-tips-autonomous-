@@ -1,63 +1,21 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Terminal, Cpu, HardDrive, Activity, RefreshCw, Search } from 'lucide-react';
-import { motion } from 'framer-motion';
-
-interface LogEntry {
-  logs: string[];
-  count: number;
-  source: string;
-  error?: string;
-}
-
-interface SystemHealth {
-  cpu_usage_percent: number;
-  memory_usage_percent: number;
-  available_memory_mb: number;
-  status: string;
-  timestamp: string;
-}
+import React, { useState, useRef, useEffect } from 'react';
+import { Search, Terminal, RefreshCw, Cpu, HardDrive, Activity } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useHUD } from '../../hooks/useHUD';
 
 export const LogsView: React.FC = () => {
-  const [logs, setLogs] = useState<string[]>([]);
-  const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { logs, systemHealth } = useHUD();
   const [filter, setFilter] = useState('');
   const logsRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll to bottom
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [logsRes, healthRes] = await Promise.all([
-          fetch('/api/logs?tail=100'),
-          fetch('/api/system/health')
-        ]);
-        
-        if (logsRes.ok) {
-          const logsData: LogEntry = await logsRes.json();
-          setLogs(logsData.logs || []);
-        }
-        
-        if (healthRes.ok) {
-          const healthData: SystemHealth = await healthRes.json();
-          setHealth(healthData);
-        }
-      } catch (err) {
-        console.error('Failed to fetch logs:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    if (logsRef.current) {
+      logsRef.current.scrollTop = logsRef.current.scrollHeight;
+    }
+  }, [logs]);
 
-  const filteredLogs = logs.filter(log => 
-    filter === '' || log.toLowerCase().includes(filter.toLowerCase())
-  );
-
-  if (loading) {
+  if (systemHealth.status === 'OFFLINE' && logs.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-pulse text-purple-500 font-black uppercase tracking-widest text-xs">
@@ -67,8 +25,12 @@ export const LogsView: React.FC = () => {
     );
   }
 
+  const filteredLogs = logs.filter(log =>
+    filter === '' || log.toLowerCase().includes(filter.toLowerCase())
+  );
+
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
@@ -83,7 +45,7 @@ export const LogsView: React.FC = () => {
             Real-time Agent Telemetry
           </p>
         </div>
-        <button 
+        <button
           onClick={() => window.location.reload()}
           className="p-3 rounded-xl bg-theme-panel border border-theme text-theme-secondary hover:text-theme-primary hover:bg-theme-secondary transition-all"
         >
@@ -94,9 +56,9 @@ export const LogsView: React.FC = () => {
       {/* System Health Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
-          { label: 'CPU', value: `${health?.cpu_usage_percent?.toFixed(1) || '0.0'}%`, icon: Cpu, color: 'text-blue-500' },
-          { label: 'MEMORY', value: `${health?.memory_usage_percent?.toFixed(1) || '0.0'}%`, icon: HardDrive, color: 'text-indigo-500' },
-          { label: 'STATUS', value: health?.status || 'UNKNOWN', icon: Activity, color: health?.status === 'HEALTHY' ? 'text-emerald-500' : 'text-amber-500' },
+          { label: 'CPU', value: `${systemHealth.cpu.toFixed(1)}%`, icon: Cpu, color: 'text-blue-500' },
+          { label: 'MEMORY', value: `${systemHealth.memory.toFixed(1)}%`, icon: HardDrive, color: 'text-indigo-500' },
+          { label: 'STATUS', value: systemHealth.status, icon: Activity, color: systemHealth.status === 'ONLINE' ? 'text-emerald-500' : 'text-amber-500' },
         ].map((stat, i) => (
           <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
@@ -113,42 +75,49 @@ export const LogsView: React.FC = () => {
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-secondary" />
         <input
           type="text"
-          placeholder="Filter logs..."
+          placeholder="FILTER TELEMETRY..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full bg-theme-panel border border-theme rounded-xl pl-12 pr-4 py-3 text-sm text-theme-primary placeholder-theme-secondary focus:outline-none focus:border-purple-500/50 backdrop-blur-xl transition-all"
+          className="w-full bg-theme-panel border border-theme rounded-2xl py-4 pl-12 pr-4 text-xs font-black text-theme-primary focus:outline-hidden focus:border-purple-500/50 transition-colors placeholder:text-theme-secondary/30"
         />
       </div>
 
-      {/* Log Output */}
-      <div className="flex-1 bg-theme-panel border border-theme rounded-2xl overflow-hidden backdrop-blur-2xl flex flex-col min-h-0">
-        <div className="px-4 py-2 border-b border-theme bg-theme-secondary/30 flex items-center justify-between">
-          <span className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">
-            {filteredLogs.length} entries detected
-          </span>
-          <Terminal className="w-3 h-3 text-theme-secondary" />
-        </div>
+      {/* Logs Console */}
+      <div className="flex-1 min-h-0 relative">
         <div 
           ref={logsRef}
-          className="flex-1 p-4 font-mono text-[10px] overflow-y-auto custom-scrollbar"
+          className="absolute inset-0 bg-theme-panel border border-theme rounded-3xl overflow-y-auto p-6 font-mono text-[11px] selection:bg-purple-500/30 custom-scrollbar"
         >
-          {filteredLogs.length === 0 ? (
-            <div className="text-theme-secondary font-bold text-center py-8">NO LOG ENTRIES MATCH FILTER</div>
-          ) : (
-            filteredLogs.map((log, i) => (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                key={i} 
-                className="py-1 border-b border-theme/30 last:border-0 hover:bg-theme-secondary/20 px-2 -mx-2 rounded transition-colors flex gap-3"
-              >
-                <span className="text-theme-secondary font-black whitespace-nowrap">
-                  [{new Date().toLocaleTimeString([], { hour12: false })}]
-                </span>
-                <span className="text-theme-primary font-medium break-all">{log}</span>
-              </motion.div>
-            ))
-          )}
+          <div className="space-y-2">
+            <AnimatePresence initial={false}>
+              {filteredLogs.map((log, i) => (
+                <motion.div
+                  key={`${i}-${log.substring(0, 20)}`}
+                  initial={{ opacity: 0, x: -5 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="flex gap-4 group"
+                >
+                  <span className="text-theme-secondary shrink-0 select-none opacity-30 group-hover:opacity-100 transition-opacity">
+                    {(i + 1).toString().padStart(3, '0')}
+                  </span>
+                  <span className={`break-all leading-relaxed ${
+                    log.includes('ERROR') ? 'text-red-400 font-bold' :
+                    log.includes('WARN') ? 'text-amber-400' :
+                    log.includes('INFO') ? 'text-blue-400' :
+                    'text-theme-primary opacity-80'
+                  }`}>
+                    {log}
+                  </span>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            {filteredLogs.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-theme-secondary space-y-4 opacity-30 py-12">
+                <Terminal className="w-12 h-12" />
+                <div className="text-[10px] font-black uppercase tracking-[0.3em]">No Telemetry Found</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>

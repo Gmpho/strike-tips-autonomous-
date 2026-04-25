@@ -78,6 +78,7 @@ from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.skills.parsers.self_healing import SelfHealingParser
 from core_agent.skills.notifications.telegram_bot import TelegramNotifier
 from core_agent.agents.ai_providers import AIProvider
+from core_agent.skills.learning.analyzer import AdaptiveAnalyzer
 
 import sys
 if '/app' not in sys.path:
@@ -120,7 +121,7 @@ class StrikeTips:
         self.oddschecker = OddscheckerScraper()
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
-        self._processing_tracks = set() # 🛡️ Fixed: Ensure initialization
+        self.learning = AdaptiveAnalyzer(data_dir=self.data_dir)
         
         # Initialize Memory
         from core_agent.skills.memory.chroma_memory import RacingMemory

@@ -12,6 +12,16 @@ class HUDStore {
       maxStake: 0,
       totalExposure: 0
     },
+    betHistory: [],
+    betStats: {
+      totalBets: 0,
+      wins: 0,
+      losses: 0,
+      stakeTotal: 0,
+      payoutTotal: 0,
+      roi: 0
+    },
+    logs: [],
     learning: {
       totalRoi: 0,
       samples: 0,

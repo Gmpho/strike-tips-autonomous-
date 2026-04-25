@@ -32,6 +32,7 @@ export interface LearningState {
   samples: number;
   topTrack: string;
   accuracy: number;
+  roiByTrack?: Record<string, number>;
 }
 
 export interface HealingEvent {
@@ -57,9 +58,37 @@ export interface DockerVital {
   mem_usage: string;
 }
 
+export interface BetRecord {
+  id: string;
+  track: string;
+  raceNumber: number;
+  horse: string;
+  odds: number;
+  edgePercent: number;
+  stake: number;
+  confidence: string;
+  placedAt: string;
+  settled: boolean;
+  won?: boolean;
+  payout?: number;
+  notes?: string;
+}
+
+export interface BetStats {
+  totalBets: number;
+  wins: number;
+  losses: number;
+  stakeTotal: number;
+  payoutTotal: number;
+  roi: number;
+}
+
 export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
+  betHistory: BetRecord[];
+  betStats: BetStats | null;
+  logs: string[];
   learning: LearningState | null;
   systemHealth: {
     cpu: number;

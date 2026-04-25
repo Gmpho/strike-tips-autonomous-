@@ -173,6 +173,13 @@ async def get_bet_stats():
         "roi": round(roi, 2)
     }
 
+@router.get("/learning/roi-by-track")
+async def get_roi_by_track():
+    """Get ROI grouped by track from learning engine"""
+    if not brain or not brain.strike or not brain.strike.learning:
+        return {}
+    return brain.strike.learning.get_roi_summary()
+
 @router.get("/bankroll")
 @router.get("/account-summary")
 async def get_bankroll_state():

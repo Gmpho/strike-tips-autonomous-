@@ -18,11 +18,15 @@ export class DataBridge {
     const start = performance.now();
     try {
       // Parallel fetch for speed
-      const [snapshotRes, healthRes, bankrollRes, betsRes, healingRes, selectorsRes, vitalsRes] = await Promise.all([
+      const [snapshotRes, healthRes, bankrollRes, betsRes, historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes] = await Promise.all([
         fetch('/api/monitoring/snapshot'),
         fetch('/api/system/health'),
         fetch(BETTING_ENDPOINTS.accountSummary),
         fetch(BETTING_ENDPOINTS.open),
+        fetch(BETTING_ENDPOINTS.history),
+        fetch(BETTING_ENDPOINTS.stats),
+        fetch('/api/betting/learning/roi-by-track'),
+        fetch('/api/logs?tail=100'),
         fetch('/api/healing/activity'),
         fetch('/api/healing/selectors'),
         fetch('/api/system/vitals')
@@ -34,6 +38,10 @@ export class DataBridge {
       const health = await healthRes.json();
       const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
       const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
+      const history = historyRes.ok ? await historyRes.json() : { bets: [] };
+      const stats = statsRes.ok ? await statsRes.json() : null;
+      const roiByTrack = roiRes.ok ? await roiRes.json() : {};
+      const logs = logsRes.ok ? await logsRes.json() : { logs: [] };
       const healing = healingRes.ok ? await healingRes.json() : { internal_events: [], github_runs: [] };
       const selectors = selectorsRes.ok ? await selectorsRes.json() : { report: {} };
       const vitals = vitalsRes.ok ? await vitalsRes.json() : { vitals: [] };
@@ -42,6 +50,16 @@ export class DataBridge {
 
       hudStore.updateState({
         events: snapshot.events || {},
+        betHistory: history.bets || [],
+        betStats: stats,
+        logs: logs.logs || [],
+        learning: {
+          totalRoi: stats?.roi || 0,
+          samples: stats?.totalBets || 0,
+          topTrack: Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
+          accuracy: 0,
+          roiByTrack: roiByTrack
+        },
         bankroll: bankroll ? {
           balance: bankroll.balance,
           dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,
