@@ -34,6 +34,29 @@ export interface LearningState {
   accuracy: number;
 }
 
+export interface HealingEvent {
+  id: string;
+  timestamp: string;
+  agent: string;
+  action: string;
+  status: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  details: string;
+}
+
+export interface SelectorHealth {
+  success_rate: string;
+  hits: number;
+  misses: number;
+}
+
+export interface DockerVital {
+  id: string;
+  name: string;
+  cpu: string;
+  mem: string;
+  mem_usage: string;
+}
+
 export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
@@ -43,6 +66,14 @@ export interface HUDState {
     memory: number;
     latency: number;
     status: 'ONLINE' | 'OFFLINE' | 'DEGRADED';
+  };
+  healing: {
+    events: HealingEvent[];
+    selectors: Record<string, Record<string, SelectorHealth>>;
+    githubRuns: any[];
+  };
+  vitals: {
+    docker: DockerVital[];
   };
   lastUpdate: number;
 }

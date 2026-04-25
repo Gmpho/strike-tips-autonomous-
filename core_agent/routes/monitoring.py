@@ -6,10 +6,14 @@ Endpoints for system health, performance, and monitoring.
 import hashlib
 import json
 import os
+import subprocess
 from datetime import datetime
 
+import logging
 import psutil
 from fastapi import APIRouter, Request
+
+logger = logging.getLogger("monitoring-routes")
 
 router = APIRouter(prefix="/api", tags=["monitoring"])
 
@@ -107,4 +111,38 @@ async def get_logs(tail: int = 50):
         "logs": log_lines,
         "count": len(log_lines),
         "source": log_paths[0] if log_lines else "none",
+    }
+
+@router.get("/system/vitals")
+async def get_intelligence_vitals():
+    """Get real-time AI performance and host statistics (Intelligence Pulse)"""
+    from core_agent.core.performance_tracker import tracker
+    
+    ai_metrics = tracker.get_summary()
+    mem = psutil.virtual_memory()
+    
+    vitals = []
+    # Convert AI metrics to the 'vitals' format for the frontend
+    for model_name, metrics in ai_metrics.items():
+        vitals.append({
+            "id": f"ai-{model_name}",
+            "name": model_name.upper(),
+            "cpu": metrics["success_rate"], # Success rate as progress
+            "mem": "100%", # Active status
+            "mem_usage": f"Latency: {metrics['avg_latency']} | {metrics['requests']} reqs"
+        })
+        
+    # Always include the host bot process
+    vitals.append({
+        "id": "host-bot",
+        "name": "STRIKE-BOT (ORCHESTRATOR)",
+        "cpu": f"{psutil.cpu_percent()}%",
+        "mem": f"{mem.percent}%",
+        "mem_usage": f"{round(mem.used/(1024**3), 1)}GB / {round(mem.total/(1024**3), 1)}GB"
+    })
+
+    return {
+        "success": True,
+        "vitals": vitals,
+        "timestamp": datetime.now().isoformat()
     }

@@ -43,7 +43,7 @@ if os.getenv("ENABLE_LOKI", "true").lower() == "true":
         with httpx.Client(timeout=2) as client:
             health_url = loki_url.replace("/push", "/ready")
             response = client.get(health_url)
-            if response.status_code == 200:
+            if logging_loki and response.status_code == 200:
                 loki_handler = logging_loki.LokiHandler(
                     url=loki_url,
                     tags={"application": "strike-tips-cli"},
@@ -54,7 +54,10 @@ if os.getenv("ENABLE_LOKI", "true").lower() == "true":
                 _loki_enabled = True
                 print("[OK] Loki logging enabled")
             else:
-                print("[INFO] Loki not ready, skipping log shipping")
+                if not logging_loki:
+                    print("[INFO] logging_loki module missing, skipping log shipping")
+                else:
+                    print("[INFO] Loki not ready, skipping log shipping")
     except Exception:
         print("[INFO] Alloy/Loki not available, Loki logging disabled")
 else:
@@ -70,6 +73,8 @@ from core_agent.skills.race_analysis import RaceAnalyzer, RaceCard, Runner
 from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
 from core_agent.skills.bankroll_manager import BankrollGovernor
 from core_agent.skills.parsers.tab4racing import TAB4RacingScraper, ScrapedRunner, ScrapedRace
+from core_agent.skills.parsers.betway_api import BetwayAPI
+from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.skills.parsers.self_healing import SelfHealingParser
 from core_agent.skills.notifications.telegram_bot import TelegramNotifier
 from core_agent.agents.ai_providers import AIProvider
@@ -111,6 +116,8 @@ class StrikeTips:
         self.form_analyzer = FormAnalyzer()
         self.bankroll = BankrollGovernor(data_dir=self.data_dir)
         self.scraper = TAB4RacingScraper()
+        self.betway = BetwayAPI()
+        self.oddschecker = OddscheckerScraper()
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
         self._processing_tracks = set() # 🛡️ Fixed: Ensure initialization
@@ -145,16 +152,25 @@ class StrikeTips:
             
         self._processing_tracks.add(track_key)
         try:
-            # 1. Fetch Raw Data (with local lock to avoid duplicate scrapes)
+            # 1. Fetch Raw Data (Primary: Betway + Oddschecker)
             async with self._scraping_lock:
                 if track_key not in self._track_data_cache:
-                    print(f"[CACHE] Pre-warming intelligence for {track}...")
-                    races = await self.scraper.scrape_racecard(track, date_str)
+                    print(f"[BETWAY] Harvesting races for {track}...")
+                    all_betway_races = await self.betway.get_races()
+                    
+                    # Filter for specific track
+                    races = [r for r in all_betway_races if track.lower() in r.track.lower()]
+                    
+                    if not races:
+                        print(f"[FALLBACK] No Betway data for {track}, trying TAB4Racing...")
+                        races = await self.scraper.scrape_racecard(track, date_str)
+                    
                     self._track_data_cache[track_key] = races
                 else:
                     races = self._track_data_cache[track_key]
             
             if not races:
+                print(f"[WARN] No race data found for {track} after all attempts.")
                 return []
             
             # 2. Dispatch Parallel AI Analysis

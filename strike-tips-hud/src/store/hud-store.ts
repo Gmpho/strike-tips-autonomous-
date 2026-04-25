@@ -24,12 +24,32 @@ class HUDStore {
       latency: 0,
       status: 'OFFLINE'
     },
+    healing: {
+      events: [],
+      selectors: {},
+      githubRuns: []
+    },
+    vitals: {
+      docker: []
+    },
     lastUpdate: Date.now()
   };
 
   private listeners: Set<Listener> = new Set();
 
   constructor() {
+    // Load from localStorage if available
+    const saved = localStorage.getItem('strike_hud_state');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Ensure we merge with defaults in case schema changed
+        this.state = { ...this.state, ...parsed };
+      } catch (e) {
+        console.error('Failed to load HUD state:', e);
+      }
+    }
+
     this.state = new Proxy(this.state, {
       set: (target, prop, value) => {
         (target as any)[prop] = value;
@@ -46,6 +66,13 @@ class HUDStore {
   updateState(newState: Partial<HUDState>) {
     Object.assign(this.state, newState);
     this.state.lastUpdate = Date.now();
+    
+    // Persist to localStorage
+    try {
+      localStorage.setItem('strike_hud_state', JSON.stringify(this.state));
+    } catch (e) {
+      // Silently fail if storage full
+    }
   }
 
   subscribe(listener: Listener) {

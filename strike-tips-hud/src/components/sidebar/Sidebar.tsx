@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, BarChart3, ShieldCheck, Activity } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 
 interface SidebarProps {
@@ -15,6 +15,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView }) =
     { icon: BarChart3, label: 'Analytics', id: 'analytics' },
     { icon: Terminal, label: 'Logs', id: 'logs' },
     { icon: Settings, label: 'Settings', id: 'settings' },
+  ];
+
+  const adminItems = [
+    { icon: ShieldCheck, label: 'Healing Cloud', id: 'healing' },
+    { icon: Activity, label: 'System Vitals', id: 'vitals' },
   ];
 
   return (
@@ -35,6 +40,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView }) =
             }`}
           >
             <item.icon className={`w-5 h-5 transition-colors ${activeView === item.id ? 'text-purple-400' : 'group-hover:text-purple-500'}`} />
+            <span className="text-sm font-bold tracking-wide">{item.label}</span>
+          </button>
+        ))}
+
+        <div className="mt-4 mb-2 px-4">
+          <h2 className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Admin Control</h2>
+        </div>
+
+        {adminItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setActiveView(item.id)}
+            className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all group ${
+              activeView === item.id 
+                ? 'text-white bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)] border border-emerald-500/30' 
+                : 'text-slate-500 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <item.icon className={`w-5 h-5 transition-colors ${activeView === item.id ? 'text-emerald-400' : 'group-hover:text-emerald-500'}`} />
             <span className="text-sm font-bold tracking-wide">{item.label}</span>
           </button>
         ))}

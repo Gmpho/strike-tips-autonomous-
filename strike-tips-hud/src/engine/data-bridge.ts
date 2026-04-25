@@ -18,11 +18,14 @@ export class DataBridge {
     const start = performance.now();
     try {
       // Parallel fetch for speed
-      const [snapshotRes, healthRes, bankrollRes, betsRes] = await Promise.all([
+      const [snapshotRes, healthRes, bankrollRes, betsRes, healingRes, selectorsRes, vitalsRes] = await Promise.all([
         fetch('/api/monitoring/snapshot'),
         fetch('/api/system/health'),
         fetch(BETTING_ENDPOINTS.accountSummary),
-        fetch(BETTING_ENDPOINTS.open)
+        fetch(BETTING_ENDPOINTS.open),
+        fetch('/api/healing/activity'),
+        fetch('/api/healing/selectors'),
+        fetch('/api/system/vitals')
       ]);
 
       if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
@@ -31,6 +34,9 @@ export class DataBridge {
       const health = await healthRes.json();
       const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
       const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
+      const healing = healingRes.ok ? await healingRes.json() : { internal_events: [], github_runs: [] };
+      const selectors = selectorsRes.ok ? await selectorsRes.json() : { report: {} };
+      const vitals = vitalsRes.ok ? await vitalsRes.json() : { vitals: [] };
       
       const latency = performance.now() - start;
 
@@ -48,6 +54,14 @@ export class DataBridge {
           memory: health.memory_usage_percent || 0,
           latency: Math.round(latency),
           status: 'ONLINE'
+        },
+        healing: {
+          events: healing.internal_events || [],
+          selectors: selectors.report || {},
+          githubRuns: healing.github_runs || []
+        },
+        vitals: {
+          docker: vitals.vitals || []
         }
       });
     } catch (e) {

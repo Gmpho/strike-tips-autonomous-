@@ -10,9 +10,12 @@ import { BankrollView } from './components/sidebar/BankrollView';
 import { LogsView } from './components/sidebar/LogsView';
 import { SettingsView } from './components/sidebar/SettingsView';
 import { AnalyticsView } from './components/sidebar/AnalyticsView';
+import { HealingView } from './components/sidebar/HealingView';
+import { SystemVitalsView } from './components/sidebar/SystemVitalsView';
 import { ThemeToggle } from './components/ThemeToggle';
 import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { motion, AnimatePresence } from 'framer-motion';
+
 
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState('dashboard');
@@ -28,13 +31,14 @@ export const App: React.FC = () => {
   }, [state.systemHealth.cpu]);
 
   const renderView = () => {
-    const hasData = Object.keys(state.events).length > 0;
+    // Instant Load Logic: Only show spinner if we have NO data AND no cached events from localStorage
+    const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll && state.bankroll.balance > 0);
 
-    if (!hasData && activeView === 'dashboard') {
+    if (!hasCachedData && activeView === 'dashboard') {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center p-12">
+        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-12 h-full">
           <div className="w-16 h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
-          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse">Syncing L7 Ghost Data...</p>
+          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse">Initializing Neural Link...</p>
         </div>
       );
     }
@@ -42,18 +46,11 @@ export const App: React.FC = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <motion.main 
-            key="dashboard-view"
-            initial={{ opacity: 0, scale: 0.95, y: 15 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 1.05 }}
-            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 flex-1 z-10"
-          >
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 flex-1 z-10">
             {Object.values(state.events).map(event => (
               <RaceCard key={event.id} event={event as RaceEvent} />
             ))}
-          </motion.main>
+          </div>
         );
       case 'agents':
         return <AgentDashboard key="agents-view" />;
@@ -65,6 +62,10 @@ export const App: React.FC = () => {
         return <LogsView key="logs-view" />;
       case 'settings':
         return <SettingsView key="settings-view" />;
+      case 'healing':
+        return <HealingView key="healing-view" />;
+      case 'vitals':
+        return <SystemVitalsView key="vitals-view" />;
       default:
         return <div key="default-view" className="text-white p-12">Select a module</div>;
     }
@@ -123,10 +124,17 @@ export const App: React.FC = () => {
             </div>
           </header>
 
-          <AnimatePresence mode="wait">
-            <div className="flex-1 pointer-events-auto">
+          <AnimatePresence mode="popLayout">
+            <motion.div 
+              key={activeView}
+              initial={{ opacity: 0, x: 10, filter: 'blur(10px)' }}
+              animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, x: -10, filter: 'blur(10px)' }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className="flex-1 pointer-events-auto min-h-0"
+            >
               {renderView()}
-            </div>
+            </motion.div>
           </AnimatePresence>
 
           <footer className="mt-8 flex justify-between items-end border-t border-white/5 pt-6 pointer-events-auto">
