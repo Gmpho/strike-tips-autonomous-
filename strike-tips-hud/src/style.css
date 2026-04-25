@@ -9,40 +9,69 @@
   --font-tabular: 'JetBrains Mono', 'Roboto Mono', monospace;
 }
 
-/* Force dark background everywhere immediately */
-html, body {
-  background-color: #000000 !important;
-  color: #ffffff !important;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  font-family: var(--font-hud);
+/* Theme Variables */
+:root {
+  --bg-primary: #000000;
+  --bg-secondary: rgba(255, 255, 255, 0.03);
+  --bg-panel: rgba(0, 0, 0, 0.4);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-muted: rgba(255, 255, 255, 0.4);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --accent-glow: rgba(168, 85, 247, 0.2);
 }
 
-/* Content is visible immediately for faster perceived load */
+html.light {
+  --bg-primary: #f1f5f9;
+  --bg-secondary: #ffffff;
+  --bg-panel: rgba(255, 255, 255, 0.7);
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --accent-glow: rgba(168, 85, 247, 0.15);
+}
+
+/* Global Styles */
+html, body {
+  background-color: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-hud);
+  transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 body {
   opacity: 1;
 }
 
+/* Theme-aware Utility overrides */
+.bg-theme-panel { background-color: var(--bg-panel); }
+.bg-theme-secondary { background-color: var(--bg-secondary); }
+.text-theme-primary { color: var(--text-primary); }
+.text-theme-secondary { color: var(--text-secondary); }
+.border-theme { border-color: var(--border-color); }
+
 .hud-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 1.5rem;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  transform: perspective(1000px) rotateX(2deg); /* Initial 3D tilt */
+  transform: perspective(1000px) rotateX(1deg);
   transform-style: preserve-3d;
 }
 
 .hud-card:hover {
   border-color: var(--color-purple-500);
-  background: rgba(168, 85, 247, 0.05);
-  transform: perspective(1000px) rotateX(0deg) scale(1.03) translateZ(20px);
-  box-shadow: 0 10px 40px rgba(168, 85, 247, 0.2);
+  background: var(--accent-glow);
+  transform: perspective(1000px) rotateX(0deg) scale(1.02) translateZ(10px);
+  box-shadow: 0 20px 50px var(--accent-glow);
 }
 
 .text-gradient {
-  background: linear-gradient(135deg, #ffffff 0%, #a855f7 100%);
+  background: linear-gradient(135deg, var(--text-primary) 0%, #a855f7 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -61,3 +90,5 @@ body {
 .animate-pulse-slow {
   animation: pulse-slow 3s infinite ease-in-out;
 }
+
+

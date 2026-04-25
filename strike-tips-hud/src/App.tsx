@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState('dashboard');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const state = useHUD();
 
   // Load-sensing for background effects
@@ -35,7 +36,7 @@ export const App: React.FC = () => {
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (
-        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-12 h-full">
+        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-12">
           <div className="w-16 h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
           <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse">Initializing Neural Link...</p>
         </div>
@@ -45,7 +46,7 @@ export const App: React.FC = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 flex-1 z-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {Object.values(state.events).map(event => (
               <RaceCard key={event.id} event={event as RaceEvent} />
             ))}
@@ -73,32 +74,49 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-black text-white selection:bg-purple-500/30 overflow-hidden">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} />
-      
-      <div className="flex-1 relative overflow-auto p-8 lg:p-12">
-        {/* Ambient Background Layer (React Three Fiber) */}
+    <div className="min-h-screen bg-theme-primary text-theme-primary selection:bg-purple-500/30">
+      {/* Ambient Background Layer (Fixed) */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
         <AmbientCanvas />
+      </div>
 
-        {/* UI Overlay */}
-        <div className="relative z-10 flex flex-col h-full pointer-events-none">
-          <Header />
+      <div className="flex">
+        {/* Sidebar - Sticky to allow independent scroll if needed but usually fits */}
+        <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel backdrop-blur-2xl transition-all duration-300 ease-in-out z-30`}>
+          <Sidebar 
+            activeView={activeView} 
+            setActiveView={setActiveView} 
+            isCollapsed={isSidebarCollapsed}
+            onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          />
+        </aside>
 
-          <AnimatePresence mode="popLayout">
-            <motion.div 
-              key={activeView}
-              initial={{ opacity: 0, x: 10, filter: 'blur(10px)' }}
-              animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, x: -10, filter: 'blur(10px)' }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
-              className="flex-1 pointer-events-auto min-h-0"
-            >
-              {renderView()}
-            </motion.div>
-          </AnimatePresence>
+        <main className="flex-1 min-w-0 relative z-10 flex flex-col">
+          {/* Header - Sticky Top */}
+          <div className="sticky top-0 z-20 px-8 lg:px-12 pt-6 lg:pt-8 pb-4 backdrop-blur-md bg-theme-panel border-b border-theme">
+            <Header />
+          </div>
 
-          <Footer />
-        </div>
+          {/* Main Content Area - Natural Scroll */}
+          <div className="px-8 lg:px-12 py-8 flex-1">
+            <div className="w-full">
+              <AnimatePresence mode="wait">
+                <motion.div 
+                  key={activeView}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {renderView()}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+
+            {/* Footer follows content naturally */}
+            <Footer />
+          </div>
+        </main>
       </div>
     </div>
   );
