@@ -36,25 +36,32 @@ class ModelConfig:
     # List for easy iteration in fallback loop
     GEMINI_CHAIN: list = [ORCHESTRATOR_T2, ORCHESTRATOR_T3, ORCHESTRATOR_T4]
 
+    # ── HEALING SWARM (Cloud Ollama Models)
+    # Optimized for autonomous repair, selector healing, and deep log analysis.
+    HEALING_POOL = [
+        "nemotron-3-nano:30b-cloud",
+        "glm-4.7:cloud",
+        "kimi-k2-thinking:cloud",
+        "kimi-k2.5:cloud",
+        "qwen3.5:397b-cloud",
+        "gemini-3-flash-preview:cloud",
+        "gemma4:31b-cloud"
+    ]
+
     # ── PARALLEL TASKS (Kimi K2 Thinking - multi-race simultaneous dispatch)
     PARALLEL        = os.getenv("MODEL_PARALLEL",        "kimi-k2-thinking:cloud")
 
     # ── CLOUD REASONING FALLBACK (Tier 6 - when all above are exhausted)
     CLOUD_FALLBACK  = os.getenv("MODEL_CLOUD_FALLBACK",  "kimi-k2.5:cloud")
 
-    # ── LOCAL MODELS (use local RAM, always available offline)
+    # ── LOCAL MODELS (CHAT / FAST LOCAL - Always available)
     # Using OPTIMIZED Modelfiles (racing_llama, ds_racing, racing_qwen, func_gemma, lfm_racing)
-    # Tier 7: Deep reasoning / value edge analysis (optimized)
     REASONER        = os.getenv("MODEL_REASONER",        "ds_racing")
-    # Tier 8: Fast extraction / ultimate offline orchestrator fallback (optimized)
     SCRAPER         = os.getenv("MODEL_SCRAPER",         "racing_qwen")
-    # Embeddings only - stays loaded permanently (621MB)
-    EMBEDDER        = os.getenv("MODEL_EMBEDDER",        "embeddinggemma:300m")
-    
-    # Additional optimized models
     FUNC_CALL       = os.getenv("MODEL_FUNC_CALL",       "func_gemma")
     THINKING        = os.getenv("MODEL_THINKING",         "lfm_racing")
     FAST_LOCAL      = os.getenv("MODEL_FAST_LOCAL",       "racing_llama")
+    EMBEDDER        = os.getenv("MODEL_EMBEDDER",        "embeddinggemma:300m")
 
     # ── HARDWARE GUARD (optimized for 16GB RAM / 4-core laptop)
     # These cap memory and CPU usage for all local Ollama calls.
@@ -150,6 +157,7 @@ class ModelConfig:
             f"  Ollama keep_alive:     {cls.OLLAMA_KEEP_ALIVE}",
             f"  Ollama KV cache:      {cls.OLLAMA_KV_CACHE_TYPE}",
             f"  Ollama host:          {cls.ollama_host()}",
+            f"  Healing Swarm Pool:   {len(cls.HEALING_POOL)} models available",
             "================================",
         ]
         return "\n".join(lines)

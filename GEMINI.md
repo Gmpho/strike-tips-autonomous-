@@ -152,11 +152,13 @@ The system follows a strict "God Mode" betting strategy:
 - `odds-monitor`: Playwright scraper for live odds
 
 ### Model Pipeline
-- `racing_llama`: Router + fast reads
-- `racing_qwen`: Fast reads (balance, odds)
-- `func_gemma`: Write ops (record, update)
-- `lfm_racing`: Deep analysis (evaluate, scan)
-- `ds_racing`: Reasoning (probability edge)
+- `racing_llama`: Router + fast reads (Local)
+- `racing_qwen`: Fast reads (balance, odds) (Local)
+- `func_gemma`: Write ops (record, update) (Local)
+- `lfm_racing`: Deep analysis (evaluate, scan) (Local)
+- `ds_racing`: Reasoning (probability edge) (Local)
+- **Healing Swarm (Cloud Ollama)**: 7-model pool for autonomous repair (`nemotron`, `glm`, `qwen3.5`, `gemma4`, `kimi`, `gemini-flash`).
+- **Parallel Tasks**: `kimi-k2-thinking:cloud` for multi-race simultaneous dispatch.
 
 ### Gambling-Free Tool Names (unchanged)
 All 11 MAF tools use gambling-free naming:
