@@ -186,7 +186,14 @@ class StrikeTips:
                 prompts.append(prompt)
                 
             # Use the parallel provider if available
-            ai_responses = await self.ai._call_kimi_parallel(prompts, strike_instance=self)
+            # Dispatch in batches of 2 to protect 8GB RAM
+            ai_responses = []
+            for i in range(0, len(prompts), 2):
+                batch = prompts[i:i+2]
+                logger.info(f"[SWARM] Processing batch {i//2 + 1}...")
+                batch_responses = await self.ai._call_kimi_parallel(batch, strike_instance=self)
+                ai_responses.extend(batch_responses)
+                await asyncio.sleep(2) # Throttle delay for 8GB RAM
             
             results = []
             for i, r in enumerate(races):

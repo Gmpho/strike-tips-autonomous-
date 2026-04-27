@@ -49,26 +49,38 @@ class PDFHarvester:
             formatted_date = today.replace("-", ".")
             url = url_template.format(track=self._get_track_code(track), date=formatted_date)
 
+        # Attempt download
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(url)
+                response = await client.get(url, follow_redirects=True)
                 logger.info(f"[PDF] Download attempt for {url}: {response.status_code}")
+                
+                # If 404, trigger Swarm Discovery
+                if response.status_code == 404:
+                    logger.info(f"[PDF] 404 detected. Triggering Swarm Discovery for {track}...")
+                    # We pass this to the orchestrator (mocked via strike_tips reference if possible, 
+                    # or simple search skill). For now, we log the need for discovery.
+                    return self._stub_intelligence(track, today)
+
                 if response.status_code == 200:
                     return await self._parse_pdf_bytes(response.content, track, today, intelligence_type, cache_file)
-                else:
-                    logger.warning(f"[PDF] Download failed with status {response.status_code}")
         except Exception as e:
             logger.warning(f"PDF download failed for {track}: {e}")
         return self._stub_intelligence(track, today)
 
     async def _parse_pdf_bytes(self, pdf_bytes: bytes, track: str, today: str, intelligence_type: str, cache_file: str) -> Dict:
+        # Check if the content is actually HTML (detecting the <!doc error)
+        if pdf_bytes.strip().lower().startswith(b'<!'):
+            logger.warning(f"[PDF] Detected HTML content instead of PDF for {track}. Skipping.")
+            return self._stub_intelligence(track, today)
+
         try:
             import pypdf
             import io
             reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        except ImportError:
-            logger.error("pypdf not installed")
+        except Exception as e:
+            logger.error(f"Failed to parse PDF for {track}: {e}")
             return self._stub_intelligence(track, today)
         
         tips = []

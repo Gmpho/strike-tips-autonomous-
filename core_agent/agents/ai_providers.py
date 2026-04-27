@@ -66,9 +66,42 @@ class AIProvider:
         
         async def _safe_run(p):
             try:
-                res = await client.run(p, session=client.create_session())
-                return AIResponse(content=res.text, provider="kimi")
+                from agent_framework import Message, Content
+                # Try the primary model
+                messages = [Message(role="user", contents=[Content.from_text(text=p)])]
+                res = await client.get_response(messages=messages)
+                
+                text = res.text if hasattr(res, "text") else "".join([c.text for c in res.messages[0].contents if hasattr(c, 'text')])
+                return AIResponse(content=text, provider="kimi")
             except Exception as e:
+                # Fallback: Groq first (High speed, generous quota)
+                if ModelConfig.groq_available():
+                    logger.warning(f"[SWARM] Cloud proxy {client.model_id} failed, falling back to Groq...")
+                    from agent_framework.openai import OpenAIChatClient
+                    
+                    groq_client = OpenAIChatClient(
+                        model_id="llama-3.3-70b-versatile",
+                        base_url="https://api.groq.com/openai/v1/",
+                        api_key=os.getenv("GROQ_API_KEY", ""),
+                    )
+                    res = await groq_client.get_response(messages=messages)
+                    text = res.text if hasattr(res, "text") else "".join([c.text for c in res.messages[0].contents if hasattr(c, 'text')])
+                    return AIResponse(content=text, provider="groq-fallback")
+
+                # Last resort: Gemini
+                if "404" in str(e) or "429" in str(e):
+                    logger.warning(f"[SWARM] Groq/Proxy failed, falling back to Gemini...")
+                    from agent_framework.openai import OpenAIChatClient
+                    
+                    gem_client = OpenAIChatClient(
+                        model_id="gemini-3-flash-preview",
+                        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                        api_key=os.getenv("GEMINI_API_KEY", ""),
+                    )
+                    res = await gem_client.get_response(messages=messages)
+                    text = res.text if hasattr(res, "text") else "".join([c.text for c in res.messages[0].contents if hasattr(c, 'text')])
+                    return AIResponse(content=text, provider="gemini-fallback")
+                
                 logger.error(f"Kimi Parallel Error: {e}")
                 return AIResponse(content="", provider="kimi", error=str(e))
 

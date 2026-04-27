@@ -3,24 +3,24 @@
   "files.insertFinalNewline": true,
   "files.trimFinalNewlines": true,
   
-  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.defaultFormatter": "vscode.typescript-language-features",
   "[javascript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "[typescript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "[json]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "vscode.json-language-features"
   },
   
   "typescript.preferences.importModuleSpecifierEnding": "js",
   "typescript.reportStyleChecksAsWarnings": false,
   "typescript.updateImportsOnFileMove.enabled": "always",
-  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.tsdk": "strike-tips-hud/node_modules/typescript/lib",
   "typescript.experimental.useTsgo": true,
 
   "files.associations": {

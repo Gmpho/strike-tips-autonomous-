@@ -6366,3 +6366,18 @@
   "count": 124,
   "timestamp": "2026-04-16T14:21:56.079974"
 }
+
+
+
+
+ python3 sync_data_to_modal.py
+
+
+
+
+ docker model pull ai/qwen2.5:0.5B-F16
+ docker model pull ai/qwen2.5:3B-Q4_K_M
+ docker model pull ai/functiongemma
+docker model pull ai/llama3.2
+
+docker pull docker/docker-model-backend-llamacpp

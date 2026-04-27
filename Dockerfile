@@ -11,8 +11,9 @@ WORKDIR /app
 
 # Install Python requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir  -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt pypdf
+
 
 # Pre-install browsers (included in base, but ensuring for current version)
 RUN playwright install chromium

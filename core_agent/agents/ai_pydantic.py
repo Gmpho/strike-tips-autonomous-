@@ -160,8 +160,17 @@ class ModelPipeline:
             t0 = time.time()
             try:
                 result = await agent.run(message, session=agent.create_session())
+                logger.info(f"[DIAGNOSTIC] Agent result type: {type(result)}")
                 latency = time.time() - t0
-                text = result.text if hasattr(result, "text") else str(result)
+                
+                # Correct extraction for agent_framework
+                text = ""
+                if result.messages and result.messages[0].contents:
+                    # Collect all text content from the first message
+                    text = "".join([c.text for c in result.messages[0].contents if hasattr(c, 'text') and c.text])
+                else:
+                    text = str(result)
+                    
                 usage = _extract_usage(result)
                 tracker.track_request(specialist, latency=latency, cost=0.0, success=True)
                 return AgentReply(summary=text, model_used=specialist, token_usage=usage)
@@ -231,7 +240,7 @@ class ModelPipeline:
 
         # 1. Fast keyword classification
         intent = self.classifier.classify(message)
-        specialist = self.classifier.specialist_for(intent) if intent else "analyst"
+        specialist = self.classifier.specialist_for(intent) if intent else "search"
 
         if model_override:
             specialist = model_override

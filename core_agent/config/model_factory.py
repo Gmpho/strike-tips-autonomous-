@@ -22,7 +22,7 @@ def _resolve(tier_or_model: str) -> tuple[str, str]:
 
     # Cloud Ollama suffix
     if model_name.endswith(":cloud"):
-        return "ollama_cloud", model_name.split(":", 1)[0]
+        return "ollama_cloud", model_name
 
     # Gemini models
     if any(g in model_name for g in ("gemini", "flash", "pro")):
