@@ -54,23 +54,25 @@ class ScrapedRace:
     prize_money: Optional[float] = None
 
 
-def get_live_odds(track: str, horse_name: str) -> float:
-    """Lookup live odds from market_snapshot_latest.json."""
+def get_live_odds(track: str, horse_name: str, snapshot: Optional[Dict] = None) -> float:
+    """Lookup live odds from market_snapshot_latest.json or provided snapshot."""
     try:
-        if not os.path.exists(MARKET_SNAPSHOT_PATH):
-            return 5.0
-        with open(MARKET_SNAPSHOT_PATH, 'r') as f:
-            snapshot = json.load(f)
-            # Flatten events to find the horse
-            for event_id, event in snapshot.get('events', {}).items():
-                # Fuzzy match track name (e.g. "Fairview" in "Fairview South Africa")
-                if track.lower() in event.get('en', '').lower():
-                    for runner in event.get('runners', []):
-                        if runner['name'].lower() == horse_name.lower():
-                            try:
-                                return float(runner['odds'])
-                            except (ValueError, KeyError):
-                                return 5.0
+        if snapshot is None:
+            if not os.path.exists(MARKET_SNAPSHOT_PATH):
+                return 5.0
+            with open(MARKET_SNAPSHOT_PATH, 'r') as f:
+                snapshot = json.load(f)
+
+        # Flatten events to find the horse
+        for event_id, event in snapshot.get('events', {}).items():
+            # Fuzzy match track name (e.g. "Fairview" in "Fairview South Africa")
+            if track.lower() in event.get('en', '').lower():
+                for runner in event.get('runners', []):
+                    if runner['name'].lower() == horse_name.lower():
+                        try:
+                            return float(runner['odds'])
+                        except (ValueError, KeyError):
+                            return 5.0
     except Exception as e:
         logger.debug(f"Odds lookup failed for {horse_name}: {e}")
         return 5.0
@@ -182,6 +184,15 @@ class TAB4RacingScraper:
             data = response.json()
             programs = data.get('data', {}).get('option_list', {})
             
+            # Pre-load snapshot once for all runners
+            snapshot = None
+            if os.path.exists(MARKET_SNAPSHOT_PATH):
+                try:
+                    with open(MARKET_SNAPSHOT_PATH, 'r') as f:
+                        snapshot = json.load(f)
+                except Exception:
+                    pass
+
             for k, v in programs.items():
                 if v.get('ProgramCode') == program_code:
                     race_list = v.get('RaceList', [])
@@ -196,7 +207,7 @@ class TAB4RacingScraper:
                             name = name.strip()
                             runners.append(ScrapedRunner(
                                 horse_name=name,
-                                odds_decimal=get_live_odds(track_name, name)
+                                odds_decimal=get_live_odds(track_name, name, snapshot=snapshot)
                             ))
                         
                         if not runners: continue
@@ -219,6 +230,15 @@ class TAB4RacingScraper:
         from bs4 import BeautifulSoup
         races = []
         try:
+            # Pre-load snapshot once for all runners
+            snapshot = None
+            if os.path.exists(MARKET_SNAPSHOT_PATH):
+                try:
+                    with open(MARKET_SNAPSHOT_PATH, 'r') as f:
+                        snapshot = json.load(f)
+                except Exception:
+                    pass
+
             soup = BeautifulSoup(html, "html.parser")
             race_containers = soup.select(".race-card, [class*='race'], [data-race]")
 
@@ -238,7 +258,7 @@ class TAB4RacingScraper:
 
                     runners.append(ScrapedRunner(
                         horse_name=horse_name,
-                        odds_decimal=get_live_odds(track, horse_name)
+                        odds_decimal=get_live_odds(track, horse_name, snapshot=snapshot)
                     ))
 
                 if runners:
