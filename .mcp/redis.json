@@ -1,1 +1,8 @@
-
+{
+  "mcpServers": {
+    "redis": {
+      "command": "/home/giftmpho/.local/bin/uvx",
+      "args": ["redis-mcp-server@latest", "--url", "redis://localhost:6379/0"]
+    }
+  }
+}
