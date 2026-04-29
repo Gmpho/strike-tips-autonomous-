@@ -140,10 +140,15 @@ class BetwayAPI:
     def _parse_snapshot(self, snapshot: Dict) -> List[ScrapedRace]:
         """Convert AdaptiveMonitor snapshot format to ScrapedRace objects."""
         scraped_races = []
+        # Handle cases where events is a list or dict
         events = snapshot.get("events", {})
+        event_items = events.items() if isinstance(events, dict) else enumerate(events)
         
-        for eid, e in events.items():
+        for eid, e in event_items:
             try:
+                # Handle cases where e might be a list item if events was a list
+                if isinstance(e, list): e = e[1]
+                
                 # 'en' format is often 'Region: Course'
                 track = e.get("course", "Unknown")
                 runners = []

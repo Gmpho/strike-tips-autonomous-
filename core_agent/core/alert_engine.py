@@ -125,9 +125,11 @@ class AlertEngine:
             current_odds = self._parse_odds(current_odds_str)
             val = alert.condition_value
 
-            # GLOBAL GUARD: Ignore default odds (5.0, 1.0, etc.) for ALL alerts to avoid false positives!
-            if current_odds is None or current_odds == 5.0 or current_odds == 1.0:
-                return False
+            # GLOBAL GUARD: Check if race has placeholder odds (all odds equal)
+            runners = race_data.get("runners", [])
+            all_odds = [float(r.get("odds", 0)) for r in runners if r.get("odds") != "SP"]
+            if all_odds and len(set(all_odds)) == 1 and all_odds[0] == 5.0:
+                return False # Placeholder race, do not alert
 
             if alert.condition_type == "odds_drop":
                 percentage = float(val.strip('%')) / 100
@@ -201,12 +203,12 @@ class AlertEngine:
         await self._log_history(msg)
 
     async def _log_history(self, msg: Dict):
-        """Write to rolling history log."""
+        """Write to rolling JSONL history log."""
         try:
             with open(self.history_file, 'a') as f:
                 f.write(json.dumps(msg) + "\n")
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to log alert history: {e}")
 
     def get_stats(self) -> Dict:
         return self.stats

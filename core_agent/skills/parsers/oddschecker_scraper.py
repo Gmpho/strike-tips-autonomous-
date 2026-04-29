@@ -51,44 +51,58 @@ class OddscheckerScraper:
             return 5.0
 
     async def get_latest_odds(self) -> Dict:
+        """
+        Smart-Failover Scraper:
+        1. Attempts Oddschecker crawl.
+        2. Automatically fails over to Betway Internal API if blocked or failed.
+        """
+        try:
+            # 1. Primary Attempt: Oddschecker (Crawl4AI)
+            return await self._scrape_oddschecker()
+        except Exception as e:
+            logger.warning(f"[OddsMonitor] Oddschecker scrape failed ({e}). Failing over to Betway API...")
+            
+            # 2. Failover: Betway API (The proven reliable path)
+            try:
+                from core_agent.skills.parsers.betway_api import BetwayAPI
+                betway = BetwayAPI()
+                return await betway.get_races()
+            except Exception as e2:
+                logger.error(f"[OddsMonitor] Failover to Betway also failed: {e2}")
+                return {}
+
+
+    async def _scrape_oddschecker(self) -> Dict:
         """Fetch and parse live odds using Crawl4AI with permissive configuration."""
         run_conf = CrawlerRunConfig(
             extraction_strategy=self.extraction_strategy,
             cache_mode=CacheMode.BYPASS,
-            # Be permissive: don't wait for specific rows, as detection might hide them
             wait_until="domcontentloaded",
             page_timeout=60000,
             delay_before_return_html=2.0 
         )
 
-        try:
-            async with AsyncWebCrawler(config=self.browser_conf) as crawler:
-                logger.info(f"🕸️ Crawl4AI: Pulse fired at {self.URL}")
-                result = await crawler.arun(url=self.URL, config=run_conf)
+        async with AsyncWebCrawler(config=self.browser_conf) as crawler:
+            logger.info(f"🕸️ Crawl4AI: Pulse fired at {self.URL}")
+            result = await crawler.arun(url=self.URL, config=run_conf)
+            
+            if not result.success:
+                logger.warning(f"⚠️ Crawl4AI failed: {result.error_message}")
+                raise Exception(result.error_message)
+
+            logger.debug(f"🔍 Raw Extracted Content: {result.extracted_content[:500]}")
+            raw_data = json.loads(result.extracted_content or "[]")
+            
+            fusion_map = {}
+            for item in raw_data:
+                race = item.get("race_name", "Unknown Race")
+                horse = item.get("horse_name")
+                odds_raw = item.get("fractional_odds")
                 
-                if not result.success:
-                    logger.warning(f"⚠️ Crawl4AI failed: {result.error_message}")
-                    return {}
+                if horse and odds_raw:
+                    if race not in fusion_map:
+                        fusion_map[race] = {}
+                    fusion_map[race][horse] = self.fractional_to_decimal(odds_raw)
 
-
-                logger.debug(f"🔍 Raw Extracted Content: {result.extracted_content[:500]}")
-                raw_data = json.loads(result.extracted_content or "[]")
-                
-                # Fusion formatting: { race_name: { horse_name: decimal_odds } }
-                fusion_map = {}
-                for item in raw_data:
-                    race = item.get("race_name", "Unknown Race")
-                    horse = item.get("horse_name")
-                    odds_raw = item.get("fractional_odds")
-                    
-                    if horse and odds_raw:
-                        if race not in fusion_map:
-                            fusion_map[race] = {}
-                        fusion_map[race][horse] = self.fractional_to_decimal(odds_raw)
-
-                logger.info(f"✅ Crawl4AI Success: Found {len(fusion_map)} races on Oddschecker.")
-                return fusion_map
-
-        except Exception as e:
-            logger.error(f"❌ Crawl4AI Execution Error: {e}")
-            return {}
+            logger.info(f"✅ Crawl4AI Success: Found {len(fusion_map)} races on Oddschecker.")
+            return fusion_map

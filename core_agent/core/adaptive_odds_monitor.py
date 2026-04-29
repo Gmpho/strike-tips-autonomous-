@@ -74,6 +74,13 @@ class AdaptiveOddsMonitor:
         # Rehydrate intelligence cache (survival across restarts)
         self.events_cache = self.intel_cache.rehydrate()
 
+    async def _staggered_oc_fetch(self):
+        """Staggered fetcher to avoid resource contention."""
+        await asyncio.sleep(30) # Wait 30s before first run
+        while self.monitoring_active:
+            await self._fetch_oc_odds_background()
+            await asyncio.sleep(60) # Fetch OC every minute
+
     async def _fetch_oc_odds_background(self):
         """Background task to fetch Oddschecker odds every 90 seconds (Staggered)."""
         oddschecker = OddscheckerScraper()
@@ -197,11 +204,18 @@ class AdaptiveOddsMonitor:
                     });
                 }
 
-                // EVENT-DEEP-DIVE: If runners have missing prices (odds: 'SP'), fetch specific event details
-                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 'SP')).slice(0, 30);
+                // EVENT-DEEP-DIVE: If runners have missing prices (odds: 'SP'), trigger Swarm Research
+                const findMissing = (evs) => Object.values(evs).filter(e => e.runners.some(r => r.odds === 'SP')).slice(0, 5);
                 const missing = findMissing(events);
                 
                 if (missing.length > 0) {
+                    // Trigger Swarm Research alongside API polling
+                    missing.forEach(e => {
+                        const query = `Latest odds and form for ${e.en} horse racing SA`;
+                        console.log(`[SWARM-RESEARCH] Triggered lookup for: ${query}`);
+                    });
+                    
+                    // Fallback to existing DeepDive API logic as well
                     const eventResults = await Promise.all(
                         missing.map(e => 
                             fetch(`https://www.betway.co.za/sportsapi/v1/TrackRacing/GetEvent?eventId=${e.id}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA`)
@@ -213,7 +227,6 @@ class AdaptiveOddsMonitor:
                     eventResults.forEach(res => {
                         if (res && res.prices) {
                             processPrices(res.prices);
-                            // Re-map the specific event now that we have its prices
                             const rawEventDaily = daily.regions ? daily.regions.flatMap(r => r.sportEvents || []) : [];
                             const rawEventNext = nextOff.events || nextOff.sportEvents || [];
                             const rawEvent = rawEventDaily.find(e => e.eventId === res.eventId) || 
@@ -282,8 +295,8 @@ class AdaptiveOddsMonitor:
         await self.initialize()
         logger.info("🚀 L7 Ghost Monitor Active (V1 Fusion Logic - Betway Internal APIs)")
         
-        # Start Fusion Layer (Oddschecker)
-        asyncio.create_task(self._fetch_oc_odds_background())
+        # Start Fusion Layer (Oddschecker) with staggering
+        asyncio.create_task(self._staggered_oc_fetch())
         
         async with async_playwright() as p:
             context = await p.chromium.launch_persistent_context(

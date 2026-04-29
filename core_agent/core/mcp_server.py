@@ -8,8 +8,23 @@ from typing import List, Optional, Dict
 from core_agent.core.strike_brain import brain
 from starlette.responses import JSONResponse
 
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
 # Create the MCP Server instance
 mcp = FastMCP("StrikeTips")
+
+@mcp.tool(name="bridge_to_redis", description="Execute Redis MCP operations via bridge.")
+async def bridge_to_redis(tool_name: str, arguments: dict) -> dict:
+    server_params = StdioServerParameters(
+        command="uvx",
+        args=["redis-mcp-server@latest", "--url", "redis://localhost:6379/0"]
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool_name, arguments=arguments)
+            return {"result": result.content}
 
 @mcp.custom_route("/mcp", methods=["GET"])
 async def mcp_root(request):

@@ -1,10 +1,14 @@
 import logging
 import os
 import re
-from datetime import date, datetime
-from typing import Dict, List, Optional
 import json
 import httpx
+import io
+import pypdf
+from datetime import date
+from typing import Dict, List, Optional
+from bs4 import BeautifulSoup
+from core_agent.skills.parsers.pdf_discovery import PDFDiscoveryService
 
 logger = logging.getLogger("pdf-harvester")
 
@@ -20,13 +24,8 @@ class PDFHarvester:
 
     def _get_track_code(self, track: str) -> str:
         code_map = {
-            'fairview': 'XFA', 
-            'turffontein': 'XTD', 
-            'greyville': 'XGR', 
-            'vaal': 'XVA',
-            'scottsville': 'XED',
-            'kenilworth': 'XCP',
-            'durbanville': 'XDU'
+            'fairview': 'XFA', 'turffontein': 'XTD', 'greyville': 'XGR', 
+            'vaal': 'XVA', 'scottsville': 'XED', 'kenilworth': 'XCP', 'durbanville': 'XDU'
         }
         return code_map.get(track.lower(), track.upper())
 
@@ -34,49 +33,39 @@ class PDFHarvester:
         today = specific_date or date.today().isoformat()
         cache_key = f"{track}_{intelligence_type}_{today}".replace(" ", "_").lower()
         cache_file = os.path.join(self.cache_dir, f"{cache_key}.json")
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file) as f:
-                    data = json.load(f)
-                return {**data, "cached": True}
-            except Exception:
-                pass
         
-        if precomputed_url:
-            url = precomputed_url
-        else:
-            url_template = self.INTELLIGENCE_URLS.get(intelligence_type, "")
-            formatted_date = today.replace("-", ".")
-            url = url_template.format(track=self._get_track_code(track), date=formatted_date)
+        if os.path.exists(cache_file):
+            with open(cache_file) as f:
+                return {**json.load(f), "cached": True}
 
-        # Attempt download
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
+        url_template = self.INTELLIGENCE_URLS.get(intelligence_type, "")
+        formatted_date = today.replace("-", ".")
+        url = url_template.format(track=self._get_track_code(track), date=formatted_date)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            try:
                 response = await client.get(url, follow_redirects=True)
-                logger.info(f"[PDF] Download attempt for {url}: {response.status_code}")
                 
-                # If 404, trigger Swarm Discovery
+                # Try Smart Discovery if 404
                 if response.status_code == 404:
-                    logger.info(f"[PDF] 404 detected. Triggering Swarm Discovery for {track}...")
-                    # We pass this to the orchestrator (mocked via strike_tips reference if possible, 
-                    # or simple search skill). For now, we log the need for discovery.
-                    return self._stub_intelligence(track, today)
+                    logger.info(f"[PDF] 404 detected. Discovering dynamic URL for {track}...")
+                    discovered_url = await PDFDiscoveryService.get_live_pdf_url(track)
+                    if discovered_url:
+                        logger.info(f"[PDF] Discovery successful: {discovered_url}")
+                        response = await client.get(discovered_url, follow_redirects=True)
 
                 if response.status_code == 200:
                     return await self._parse_pdf_bytes(response.content, track, today, intelligence_type, cache_file)
-        except Exception as e:
-            logger.warning(f"PDF download failed for {track}: {e}")
+            except Exception as e:
+                logger.error(f"Download failed for {track}: {e}")
+        
         return self._stub_intelligence(track, today)
 
     async def _parse_pdf_bytes(self, pdf_bytes: bytes, track: str, today: str, intelligence_type: str, cache_file: str) -> Dict:
-        # Check if the content is actually HTML (detecting the <!doc error)
         if pdf_bytes.strip().lower().startswith(b'<!'):
-            logger.warning(f"[PDF] Detected HTML content instead of PDF for {track}. Skipping.")
             return self._stub_intelligence(track, today)
 
         try:
-            import pypdf
-            import io
             reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
             raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as e:
@@ -97,14 +86,12 @@ class PDFHarvester:
             if "NO- DR" in line and "HORSE" in line:
                 in_runner_block = True
                 continue
-            if any(x in line for x in ["COMPUTAFORM", "SPEED RATINGS", "COMMENT"]):
-                in_runner_block = False
-                continue
             if in_runner_block and current_race:
                 runner_match = re.search(r'^\d+\s*[-]?\s*\d+\s+([A-Z\s\'’]+?)(?=\s+\d+|$)', line)
                 if runner_match:
                     name = runner_match.group(1).strip()
                     tips.append({"race_number": current_race, "selections": name, "source": intelligence_type})
+                    
         result = {"source": intelligence_type, "track": track, "date": today, "parsed_tips": tips, "raw_text": raw_text[:2000], "cached": False}
         with open(cache_file, "w") as f:
             json.dump(result, f, indent=2)

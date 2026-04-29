@@ -17,6 +17,9 @@ services:
       - .:/app
     ports:
       - "8000:8000"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     restart: unless-stopped
     depends_on:
       - ollama
@@ -41,6 +44,9 @@ services:
     ipc: host
     shm_size: 2gb
     init: true
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     security_opt:
       - seccomp:seccomp_profile.json
     command: python3 core_agent/core/adaptive_odds_monitor.py
@@ -52,6 +58,28 @@ services:
     restart: unless-stopped
     depends_on:
       - ollama
+
+  telegram-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram-agent-new
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    restart: always
+    volumes:
+      - .:/app
+    depends_on:
+      - ollama
+
+  redis:
+    image: redis:alpine
+    container_name: strike-tips-redis
+    ports:
+      - "6379:6379"
+    restart: always
 
   ollama:
     image: ollama/ollama:latest
@@ -73,5 +101,15 @@ services:
       - ollama_data:/root/.ollama
     restart: always
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    restart: always
+
 volumes:
   ollama_data:
+  redisinsight_data:

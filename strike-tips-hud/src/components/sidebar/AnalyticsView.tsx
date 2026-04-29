@@ -17,12 +17,7 @@ export const AnalyticsView: React.FC = () => {
   };
 
   // Fallback for visual completeness if no data yet
-  const displayTracks = analytics.tracks.length > 0 ? analytics.tracks : [
-    { name: 'Turffontein', roi: 0.0 },
-    { name: 'Greyville', roi: 0.0 },
-    { name: 'Kenilworth', roi: 0.0 },
-    { name: 'Fairview', roi: 0.0 },
-  ];
+  const displayTracks = analytics.tracks.length > 0 ? analytics.tracks : [];
   
   return (
     <motion.div 

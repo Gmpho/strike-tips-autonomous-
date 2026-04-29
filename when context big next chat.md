@@ -6370,14 +6370,15 @@
 
 
 
- python3 sync_data_to_modal.py
+python3: can't open file '/app/core_agent/core/adaptive_odds_monitor.py': [Errno 2] No such file or directory
+
+NFO:betway-api:🔄 Using fresh market snapshot from 2026-04-28T23:09:50.155461
+
+INFO:L7-Monitor:✅ Fusion Sync: Updated market snapshot with OC data.
+
+WARNING:L7-Monitor:⚠️ Flicker (Recovering): 'list' object has no attribute 'keys'
 
 
-
-
- docker model pull ai/qwen2.5:0.5B-F16
- docker model pull ai/qwen2.5:3B-Q4_K_M
- docker model pull ai/functiongemma
-docker model pull ai/llama3.2
-
-docker pull docker/docker-model-backend-llamacpp
+docker exec -it strike-bot-new python3 -c "from core_agent.tools.maf_tool_registry import search_racing_data; query =
+'Latest odds for Turffontein racecard'; print(f'Triggering research for: {query}'); result =
+search_racing_data(query=query); [print(f'- {r}') for r in result['results'][:3]]" 

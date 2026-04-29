@@ -52,12 +52,13 @@ export const AIChat: React.FC = () => {
     setMessages(prev => [...prev, { role: 'ai', content: '', timestamp: now }]);
 
     try {
-      const res = await fetch('/api/agent/chat/stream', {
+      const res = await fetch('/ollama/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMsg,
-          model: selectedModel !== 'auto' ? selectedModel : undefined,
+          model: selectedModel !== 'auto' ? selectedModel : 'racing_llama',
+          messages: [{ role: 'user', content: userMsg }],
+          stream: true,
         }),
       });
 
@@ -73,51 +74,19 @@ export const AIChat: React.FC = () => {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
+          if (!line.trim()) continue;
           try {
-            const chunk = JSON.parse(line.slice(6));
-            if (chunk.token) {
+            const chunk = JSON.parse(line);
+            if (chunk.message && chunk.message.content) {
               clearInterval(actInterval);
               setCurrentActivity(null);
               setMessages(prev => prev.map((m, i) =>
                 i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: m.content + chunk.token }
+                  ? { ...m, content: m.content + chunk.message.content }
                   : m
               ));
             }
-            if (
-              chunk.done &&
-              (chunk.state === 'loading' || chunk.error_type === 'model_warmup_timeout')
-            ) {
-              clearInterval(actInterval);
-              setCurrentActivity(null);
-              setMessages(prev => prev.map((m, i) =>
-                i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: getWarmupStatus(chunk.model) }
-                  : m
-              ));
-            }
-            if (chunk.done && chunk.error_type && chunk.state !== 'loading') {
-              clearInterval(actInterval);
-              setCurrentActivity(null);
-              setMessages(prev => prev.map((m, i) =>
-                i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: `⚠️ ${chunk.token || 'Agent request failed. Please retry.'}` }
-                  : m
-              ));
-            }
-            if (chunk.done && (chunk.model || chunk.provider)) {
-              const modelLabel = [chunk.provider, chunk.model].filter(Boolean).join(':');
-              setLastModelUsed(modelLabel || null);
-              console.debug('[AIChat stream done]', {
-                model: chunk.model,
-                provider: chunk.provider,
-                intent: chunk.intent,
-                specialist: chunk.specialist,
-                routeSource: chunk.route_source,
-              });
-            }
-          } catch { /* skip malformed */ }
+          } catch (e) { console.error('Stream parse error', e); }
         }
       }
     } catch {

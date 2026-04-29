@@ -62,11 +62,23 @@ class StrikeTipsScheduler:
 
     def setup_schedule(self):
         schedule.every().day.at(self.scan_time).do(self.daily_scan_job)
+        schedule.every().day.at("06:00").do(self.run_daily_grounding_job)
         schedule.every().day.at("20:00").do(self.pre_warm_tomorrow_job)
         schedule.every(15).minutes.do(self.continuous_scan_job)
         schedule.every(5).minutes.do(self.check_race_results_job)
         schedule.every().day.at("20:00").do(self._end_of_day_report)
         schedule.every().day.at("21:00").do(self.update_learning_job)
+
+    def run_daily_grounding_job(self):
+        """Syncs all track PDFs into memory via strike_tips.py."""
+        print(f"\n[TIME] Starting daily PDF memory grounding at {datetime.now().strftime('%H:%M')}")
+        try:
+            # We use a subprocess call to trigger the sync logic defined in strike_tips.py
+            import subprocess
+            subprocess.run(["python3", "core_agent/core/strike_tips.py", "sync_pdfs"], check=True)
+            print("[OK] Daily grounding complete.")
+        except Exception as e:
+            print(f"[ERR] PDF grounding failed: {e}")
 
     def pre_warm_tomorrow_job(self):
         print(f"\n[TIME] Pre-warming tomorrow's data at {datetime.now().strftime('%H:%M')}")
