@@ -33,11 +33,17 @@ class BetwayAPI:
                             if not e.get('isFinished', True):
                                 event_ids.append(e['eventId'])
                     
-                    events_details = []
+                    # Use asyncio.gather for parallel fetching of event details
                     # Limit to 30 events for performance
-                    for eid in event_ids[:30]: 
-                        det_resp = await client.get(f"{self.BASE_URL}/GetEvent?eventId={eid}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA")
-                        events_details.append(det_resp.json())
+                    tasks = []
+                    for eid in event_ids[:30]:
+                        tasks.append(client.get(f"{self.BASE_URL}/GetEvent?eventId={eid}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA"))
+
+                    responses = await asyncio.gather(*tasks, return_exceptions=True)
+                    events_details = []
+                    for resp in responses:
+                        if isinstance(resp, httpx.Response) and resp.status_code == 200:
+                            events_details.append(resp.json())
                     
                     return {"daily": data, "details": events_details}
                 except Exception as e:

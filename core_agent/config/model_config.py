@@ -42,6 +42,7 @@ class ModelConfig:
     # Fallback chains
     PARALLEL = "gemini-3-flash-preview:cloud"
     CLOUD_FALLBACK = "gemini-3-flash-preview:cloud"
+    GEMINI_CHAIN = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-3-flash-preview"]
 
     @classmethod
     def get_provider_config(cls) -> Dict:

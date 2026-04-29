@@ -201,7 +201,7 @@ class ModelPipeline:
                 logger.warning(f"[MAF] Groq fallback failed: {e}")
 
         # Gemini chain fallback
-        for gemini_model in ModelConfig.GEMINI_CHAIN:
+        for gemini_model in getattr(ModelConfig, "GEMINI_CHAIN", ["gemini-1.5-flash", "gemini-1.5-pro"]):
             try:
                 from agent_framework.openai import OpenAIChatClient
                 import os
