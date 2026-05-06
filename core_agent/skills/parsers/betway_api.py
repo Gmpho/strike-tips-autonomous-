@@ -7,6 +7,7 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from .tab4racing import ScrapedRace, ScrapedRunner
+from .race_metadata_manager import RaceMetadataManager
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 
 logger = logging.getLogger("betway-api")
@@ -79,29 +80,17 @@ class BetwayAPI:
         events = {}
         for det in raw.get("details", []):
             try:
-                # Initialize variables early for scope safety
+                # Basic info
                 eid = det.get('eventId')
                 reg_name = det.get('regionName', 'Unknown')
                 league = det.get('leagueName', 'Unknown')
-                name_text = det.get("name") or det.get("displayName") or ""
-                race_time = "00:00"
-                start_time_str = det.get('advertisedStartTime')
-                if start_time_str:
-                    try:
-                        race_time = start_time_str.split('T')[1][:5]
-                    except:
-                        pass
-                race_num = det.get('sportSpecificProperties', {}).get('raceNumber', 0)
                 
-                # Metadata extraction
+                # Metadata extraction from result or root
                 res = det.get("result", det)
-                price_map = {str(p.get("outcomeId")): p.get("priceDecimal", 5.0) for p in res.get("prices", [])}
+                
+                # Pre-map prices for efficiency
+                price_map = {str(p.get("outcomeId")): p.get("priceDecimal", 5.0) for p in res.get("prices", []) if isinstance(p, dict)}
 
-                runners = []
-                seen_outcome_ids = set()
-                for outcome in res.get("outcomes", []):
-                    outcome_id = str(outcome.get("outcomeId") or outcome.get("id"))
-                    if outcome_id in seen_outcome_ids:
                 runners = []
                 seen_horse_names = set()
                 for outcome in res.get("outcomes", []):
@@ -109,9 +98,11 @@ class BetwayAPI:
                     if horse_name in seen_horse_names:
                         continue
                     seen_horse_names.add(horse_name)
+                    
                     outcome_id = str(outcome.get("outcomeId") or outcome.get("id"))
                     info = outcome.get("additionalInfo", {})
                     odds = float(price_map.get(outcome_id, 5.0))
+                    
                     runner_obj = {
                         "outcomeId": outcome_id,
                         "name": horse_name,
@@ -130,6 +121,37 @@ class BetwayAPI:
                     if "StarRating" in info:
                         runner_obj["starRating"] = info.get("StarRating")
                     runners.append(runner_obj)
+
+                # Determine race time and number
+                # Prefer epoch for accuracy, then advertised string
+                race_time = "00:00"
+                start_epoch = det.get('expectedStartEpoch')
+                if start_epoch:
+                    try:
+                        race_time = datetime.fromtimestamp(start_epoch).strftime('%H:%M')
+                    except:
+                        pass
+                else:
+                    start_time_str = det.get('advertisedStartTime')
+                    if start_time_str and 'T' in start_time_str:
+                        race_time = start_time_str.split('T')[1][:5]
+                
+                # Extract race number from sportSpecificProperties or regex match from name
+                race_num_prop = det.get('sportSpecificProperties', {}).get('raceNumber')
+                race_num = int(race_num_prop) if race_num_prop else 0
+                if race_num == 0:
+                    num_match = re.search(r'Race\s+(\d+)', det.get('name', ''), re.IGNORECASE)
+                    if num_match:
+                        race_num = int(num_match.group(1))
+
+                name_text = det.get("name") or det.get("displayName") or ""
+
+                events[str(eid)] = {
+                    "id": eid,
+                    "en": f"{race_time} {league}",
+                    "course": league,
+                    "name": name_text,
+                    "t": race_time,
                     "st": race_time,
                     "raceNumber": int(race_num),
                     "isFinished": False,
@@ -188,4 +210,3 @@ class BetwayAPI:
                 continue
                 
         return scraped_races
-    
