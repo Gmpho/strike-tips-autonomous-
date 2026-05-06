@@ -1,9 +1,14 @@
 import React from 'react';
-import { Cpu, Zap, Shield, Search } from 'lucide-react';
+import { Cpu, Zap, Shield, Search, Menu } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
 import { useHUD } from '../../hooks/useHUD';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onToggleSidebar?: () => void;
+  isSidebarCollapsed?: boolean;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, isSidebarCollapsed }) => {
   const state = useHUD();
   const isOnline = state.systemHealth.status === 'ONLINE';
 
@@ -11,6 +16,14 @@ export const Header: React.FC = () => {
     <header className="flex justify-between items-center mb-10 pointer-events-auto">
       {/* Branding */}
       <div className="flex items-center gap-6">
+        {isSidebarCollapsed && (
+          <button 
+            onClick={onToggleSidebar}
+            className="p-2.5 rounded-xl bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-500 transition-all border border-theme"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+        )}
         <div className="relative group">
           <div className="absolute -inset-2 bg-linear-to-r from-purple-600 to-emerald-600 rounded-2xl opacity-20 blur group-hover:opacity-40 transition-all duration-500" />
           <div className="relative bg-theme-panel border border-theme rounded-2xl p-2.5 backdrop-blur-xl">

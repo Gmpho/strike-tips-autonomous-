@@ -12,10 +12,8 @@ export const AIChat: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
-  const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
+  const [lastModelUsed] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const getWarmupStatus = (model?: string) =>
-    `⏳ Model warming up${model ? ` (${model})` : ''}. Retry in a few seconds.`;
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();

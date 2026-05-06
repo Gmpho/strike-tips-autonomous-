@@ -32,13 +32,22 @@ class IntelligenceCacheManager:
         return {}
 
     def update_baseline(self, event_id: str, runners: list):
-        """Merge fresh odds into the historical record, preserving the earliest price as baseline."""
+        """Merge fresh odds into the historical record, preserving the earliest valid price as baseline."""
         cache_file = self.cache_dir / f"event_{event_id}.json"
         current_baseline = self.get_historical_odds(event_id)
         
         try:
-            new_odds = {r["name"]: r["odds"] for r in runners if r.get("odds")}
-            # Merge: Keep existing baseline if already present (earliest price wins)
+            # Only consider valid numeric odds, ignore 'SP' or invalid floats
+            new_odds = {}
+            for r in runners:
+                odds_val = r.get("odds")
+                if odds_val and str(odds_val).upper() != "SP":
+                    try:
+                        new_odds[r["name"]] = float(odds_val)
+                    except ValueError:
+                        pass
+            
+            # Merge: Keep existing baseline if already present (earliest valid price wins)
             merged_baseline = {**new_odds, **current_baseline}
             
             state = {

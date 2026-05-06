@@ -104,5 +104,9 @@ class OddscheckerScraper:
                         fusion_map[race] = {}
                     fusion_map[race][horse] = self.fractional_to_decimal(odds_raw)
 
+            if not fusion_map:
+                logger.warning("⚠️ Crawl4AI found 0 races. Page structure may have changed.")
+                raise Exception("Found 0 races on Oddschecker")
+                
             logger.info(f"✅ Crawl4AI Success: Found {len(fusion_map)} races on Oddschecker.")
             return fusion_map

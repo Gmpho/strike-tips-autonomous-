@@ -91,6 +91,9 @@ const DataParticles = () => {
 };
 
 export const AmbientCanvas: React.FC = () => {
+  // Read if light theme is active by checking document class
+  const isLight = document.documentElement.classList.contains('light');
+  
   return (
     <div className="absolute inset-0 pointer-events-none z-0">
       <Canvas 
@@ -100,17 +103,18 @@ export const AmbientCanvas: React.FC = () => {
           powerPreference: 'low-power', 
           antialias: false, 
           stencil: false, 
-          depth: true 
+          depth: true,
+          alpha: true
         }}
       >
-        <fog attach="fog" args={['#000000', 2, 15]} />
-        <ambientLight intensity={0.5} />
-        <pointLight position={[10, 10, 10]} intensity={1} color="#a855f7" />
+        <fog attach="fog" args={[isLight ? '#f8fafc' : '#000000', 2, 15]} />
+        <ambientLight intensity={isLight ? 0.8 : 0.5} />
+        <pointLight position={[10, 10, 10]} intensity={1} color={isLight ? "#a855f7" : "#a855f7"} />
         <Float speed={1.5} rotationIntensity={0.4} floatIntensity={0.4}>
           <AmbientGrid />
         </Float>
         <DataParticles />
-        <Stars radius={100} depth={50} count={1000} factor={4} saturation={0} speed={1} />
+        <Stars radius={100} depth={50} count={isLight ? 200 : 1000} factor={4} saturation={0} speed={1} />
       </Canvas>
     </div>
   );

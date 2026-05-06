@@ -30,6 +30,16 @@ html.light {
   --text-muted: #64748b;
   --border-color: rgba(15, 23, 42, 0.1);
   --accent-glow: rgba(168, 85, 247, 0.05);
+
+  /* Override dark mode specific accent colors to be readable in light mode */
+  --color-emerald-400: #059669; /* emerald-600 */
+  --color-cyan-400: #0891b2; /* cyan-600 */
+  --color-amber-400: #d97706; /* amber-600 */
+  --color-slate-400: #475569; /* slate-600 */
+  --color-purple-400: #9333ea; /* purple-600 */
+  --color-emerald-500: #047857; /* emerald-700 */
+  --color-cyan-500: #0e7490; /* cyan-700 */
+  --color-amber-500: #b45309; /* amber-700 */
 }
 
 /* Global Styles */

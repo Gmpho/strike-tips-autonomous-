@@ -77,9 +77,9 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event, idx = 0 }) => {
               </tr>
             </thead>
             <tbody className="text-theme-primary font-mono">
-            {event.runners.map((r, i) => (
-              <tr key={i} className="border-b border-theme hover:bg-purple-500/10 transition-colors">
-                <td className="py-3 px-2 font-black text-sm">{r.name}</td>
+            {event.runners.map((r) => (
+              <tr key={r.outcomeId || r.name} className="border-b border-theme hover:bg-purple-500/10 transition-colors">
+                <td className="py-3 px-2 font-black text-sm">{r.outcomeName || r.name}</td>
                 <td className="py-3 px-2 text-[10px] opacity-80">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
                 <td className="py-3 px-2 font-bold">{r.form || '-'}</td>
                 <td className="py-3 px-2 text-right font-black text-purple-500 text-sm">

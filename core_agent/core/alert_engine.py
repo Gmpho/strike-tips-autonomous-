@@ -122,6 +122,9 @@ class AlertEngine:
         """Core math evaluation logic."""
         try:
             current_odds_str = str(horse.get("odds", "1/1"))
+            # Skip SP — no real price yet
+            if current_odds_str.upper() == "SP":
+                return False
             current_odds = self._parse_odds(current_odds_str)
             val = alert.condition_value
 
@@ -133,18 +136,17 @@ class AlertEngine:
 
             if alert.condition_type == "odds_drop":
                 percentage = float(val.strip('%')) / 100
-                
-                # Retrieve baseline from cache manager (Fusion Layer Persistence)
                 event_id = race_data.get("id")
                 historical_odds = cache.get_historical_odds(event_id) if cache else {}
                 baseline = historical_odds.get(horse.get("name"))
 
                 if baseline and float(baseline) > 0:
-                    # Trigger if current odds are significantly lower than baseline
-                    # Example: Baseline 10.0, Percentage 15% -> Drop to <= 8.5
                     return current_odds <= (float(baseline) * (1 - percentage))
-                
-                return False # No baseline = No alert
+
+                # No baseline yet — store current as baseline and skip alert this cycle
+                if cache and event_id:
+                    cache.update_baseline(event_id, [{"name": horse.get("name"), "odds": current_odds}])
+                return False
 
             elif alert.condition_type == "value_bet":
                 threshold = float(val)

@@ -16,28 +16,24 @@ class PDFDiscoveryService:
     async def get_live_pdf_url(cls, track: str) -> Optional[str]:
         """Dynamically finds the PDF URL by simulating a user click."""
         logger.info(f"[PDFDiscovery] Simulating user click for track: {track}")
+        browser = None
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 page = await browser.new_page()
                 await page.goto(cls.PORTAL_URL, wait_until="networkidle", timeout=60000)
-                
-                # Wait for page elements
-                await page.wait_for_timeout(5000) 
-                
+                await page.wait_for_timeout(5000)
                 content = await page.content()
                 soup = BeautifulSoup(content, 'html.parser')
-                
                 for link in soup.find_all('a', href=True):
                     href = link['href']
                     if track.lower() in href.lower() and href.endswith('.pdf'):
-                        result = urljoin("https://www.tab.co.za", href)
-                        await browser.close()
-                        return result
-                
+                        return urljoin("https://www.tab.co.za", href)
                 logger.warning(f"[PDFDiscovery] No PDF found for track: {track}")
-                await browser.close()
                 return None
         except Exception as e:
             logger.error(f"[PDFDiscovery] Error rendering portal: {e}")
             return None
+        finally:
+            if browser:
+                await browser.close()

@@ -7,7 +7,6 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from .tab4racing import ScrapedRace, ScrapedRunner
-from .oddschecker_scraper import OddscheckerScraper
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 
 logger = logging.getLogger("betway-api")
@@ -21,151 +20,158 @@ class BetwayAPI:
     }
 
     async def fetch_racing_data(self) -> Dict[str, Any]:
+        """Fetch raw racing data from Betway's TrackRacing (TAB) API."""
         async with httpx.AsyncClient(headers=self.HEADERS, timeout=30.0) as client:
             for attempt in range(3):
                 try:
-                    daily_resp = await client.get(f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2")
+                    daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
+                    daily_resp = await client.get(daily_url)
+                    daily_resp.raise_for_status()
                     data = daily_resp.json()
                     
                     event_ids = []
+                    # Allowed regions to filter noise
+                    ALLOWED = ["South Africa", "UK and Ireland", "Australia", "New Zealand", "USA", "Hong Kong", "Japan", "France"]
+                    
                     for reg in data.get('regions', []):
+                        if not any(a in reg.get('name', '') for a in ALLOWED):
+                            continue
                         for e in reg.get('sportEvents', []):
                             if not e.get('isFinished', True):
-                                event_ids.append(e['eventId'])
+                                event_ids.append((e['eventId'], reg.get('name'), e.get('league')))
                     
-                    # Use asyncio.gather for parallel fetching of event details
-                    # Limit to 30 events for performance
+                    # Fetch all unfinished event details in parallel
                     tasks = []
-                    for eid in event_ids[:30]:
-                        tasks.append(client.get(f"{self.BASE_URL}/GetEvent?eventId={eid}&marketType=Race%20Winner&marketGroupname=Race%20Winner&isVirtual=false&countryCode=ZA"))
+                    for eid, reg_name, league in event_ids:
+                        tasks.append(self._fetch_event_safe(client, eid, reg_name, league))
 
-                    responses = await asyncio.gather(*tasks, return_exceptions=True)
-                    events_details = []
-                    for resp in responses:
-                        if isinstance(resp, httpx.Response) and resp.status_code == 200:
-                            events_details.append(resp.json())
+                    events_details = await asyncio.gather(*tasks)
+                    # Filter out None values from failed fetches
+                    events_details = [e for e in events_details if e]
                     
-                    return {"daily": data, "details": events_details}
+                    return {"status": "success", "details": events_details}
                 except Exception as e:
-                    logger.warning(f"Attempt {attempt+1} failed: {e}")
+                    logger.warning(f"Betway fetch attempt {attempt+1} failed: {e}")
                     await asyncio.sleep(2 ** attempt)
             return {"status": "error", "error": "Max retries reached"}
 
-    async def get_races(self) -> List[ScrapedRace]:
-        """Fetch races. Primary: Market Snapshot (from Playwright), Fallback: Direct API."""
-        
-        # 1. Try Market Snapshot First (Most robust, includes OC fusion)
-        if os.path.exists(MARKET_SNAPSHOT_PATH):
+    async def _fetch_event_safe(self, client, eid, reg_name, league) -> Optional[Dict]:
+        try:
+            # Browser network trace shows plural 'eventIds' and no 'isVirtual' parameter
+            url = f"{self.BASE_URL}/GetEvent?eventIds={eid}&marketGroupName=&countryCode=ZA"
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                data['eventId'] = eid
+                data['regionName'] = reg_name
+                data['leagueName'] = league
+                return data
+        except Exception as e:
+            logger.debug(f"Failed to fetch event {eid}: {e}")
+        return None
+
+    async def get_snapshot_format(self) -> Dict[str, Any]:
+        """Returns racing data in the flat 'market_snapshot' format used by the HUD and AlertEngine."""
+        raw = await self.fetch_racing_data()
+        if raw.get("status") == "error":
+            return {"events": {}, "count": 0}
+
+        events = {}
+        for det in raw.get("details", []):
             try:
-                with open(MARKET_SNAPSHOT_PATH, 'r') as f:
-                    snapshot = json.load(f)
-                    
-                timestamp_str = snapshot.get("timestamp")
-                if timestamp_str:
-                    ts = datetime.fromisoformat(timestamp_str)
-                    # If snapshot is fresh (last 10 mins), use it
-                    if datetime.now() - ts < timedelta(minutes=10):
-                        logger.info(f"🔄 Using fresh market snapshot from {timestamp_str}")
-                        return self._parse_snapshot(snapshot)
-            except Exception as e:
-                logger.warning(f"Failed to read market snapshot: {e}")
-
-        # 2. Fallback to direct API fetch if snapshot is missing or stale
-        logger.info("🌐 Snapshot stale or missing, falling back to direct Betway API fetch")
-        raw_data = await self.fetch_racing_data()
-        if raw_data.get("status") == "error":
-            return []
-
-        # Get live odds from Oddschecker
-        oc_scraper = OddscheckerScraper()
-        oc_odds = await oc_scraper.get_latest_odds()
-
-        scraped_races = []
-        for det in raw_data.get("details", []):
-            try:
-                event = det.get("event", {})
-                if not event: continue
-
-                track = event.get("regionName", "Unknown")
-                race_num_match = re.search(r"Race (\d+)", event.get("eventName", ""))
-                race_number = int(race_num_match.group(1)) if race_num_match else 1
+                # Initialize variables early for scope safety
+                eid = det.get('eventId')
+                reg_name = det.get('regionName', 'Unknown')
+                league = det.get('leagueName', 'Unknown')
+                name_text = det.get("name") or det.get("displayName") or ""
+                race_time = "00:00"
+                start_time_str = det.get('advertisedStartTime')
+                if start_time_str:
+                    try:
+                        race_time = start_time_str.split('T')[1][:5]
+                    except:
+                        pass
+                race_num = det.get('sportSpecificProperties', {}).get('raceNumber', 0)
                 
-                # Parse time
-                start_time_raw = event.get("eventStartDate", "")
-                race_time = "12:00"
-                if start_time_raw:
-                    dt = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
-                    race_time = dt.strftime("%H:%M")
+                # Metadata extraction
+                res = det.get("result", det)
+                price_map = {str(p.get("outcomeId")): p.get("priceDecimal", 5.0) for p in res.get("prices", [])}
 
                 runners = []
-                # Find the 'Race Winner' market
-                markets = det.get("markets", [])
-                winner_market = next((m for m in markets if m.get("name") == "Race Winner"), None)
-                
-                if winner_market:
-                    for outcome in winner_market.get("outcomes", []):
-                        horse_name = outcome.get("name", "Unknown")
-                        # Try to get odds from Oddschecker first
-                        odds = 5.0 # Default
-                        
-                        # Fuzzy match odds from Oddschecker
-                        matched_odds = False
-                        for oc_race, oc_horses in oc_odds.items():
-                            if horse_name in oc_horses:
-                                odds = oc_horses[horse_name]
-                                matched_odds = True
-                                break
-                        
-                        # Fallback to Betway's own odds if OC failed
-                        if not matched_odds:
-                            odds = float(outcome.get("price", 5.0))
-
-                        runners.append(ScrapedRunner(
-                            horse_name=horse_name,
-                            odds_decimal=odds,
-                            jockey=outcome.get("jockeyName"),
-                            trainer=outcome.get("trainerName"),
-                            barrier=outcome.get("draw")
-                        ))
-
-                if runners:
-                    scraped_races.append(ScrapedRace(
-                        track=track,
-                        race_number=race_number,
-                        race_time=race_time,
-                        distance=event.get("distance", 1600),
-                        track_condition=event.get("going", "Good"),
-                        runners=runners
-                    ))
+                seen_outcome_ids = set()
+                for outcome in res.get("outcomes", []):
+                    outcome_id = str(outcome.get("outcomeId") or outcome.get("id"))
+                    if outcome_id in seen_outcome_ids:
+                runners = []
+                seen_horse_names = set()
+                for outcome in res.get("outcomes", []):
+                    horse_name = outcome.get("outcomeName") or outcome.get("name") or "Unknown"
+                    if horse_name in seen_horse_names:
+                        continue
+                    seen_horse_names.add(horse_name)
+                    outcome_id = str(outcome.get("outcomeId") or outcome.get("id"))
+                    info = outcome.get("additionalInfo", {})
+                    odds = float(price_map.get(outcome_id, 5.0))
+                    runner_obj = {
+                        "outcomeId": outcome_id,
+                        "name": horse_name,
+                        "outcomeName": horse_name,
+                        "jockeyName": info.get("JockeyName") or "TBA",
+                        "trainerName": info.get("TrainerName") or "TBA",
+                        "age": info.get("Age") or "U",
+                        "weight": info.get("Weight") or "0",
+                        "form": info.get("Form") or "",
+                        "number": info.get("Number") or "0",
+                        "draw": info.get("Draw") or 0,
+                        "timeForm": info.get("TimeForm") or "",
+                        "imageLocation": info.get("ImageLocation") or "",
+                        "odds": odds
+                    }
+                    if "StarRating" in info:
+                        runner_obj["starRating"] = info.get("StarRating")
+                    runners.append(runner_obj)
+                    "st": race_time,
+                    "raceNumber": int(race_num),
+                    "isFinished": False,
+                    "runners": runners
+                }
             except Exception as e:
-                logger.error(f"Error parsing Betway event: {e}")
-                continue
+                logger.error(f"Error parsing event detail for {det.get('eventId', 'Unknown')}: {e}")
 
-        return scraped_races
+        return {"events": events, "count": len(events)}
+
+    async def get_races(self) -> List[ScrapedRace]:
+        """Legacy compatibility wrapper for ScrapedRace objects."""
+        snapshot = await self.get_snapshot_format()
+        return self._parse_snapshot(snapshot)
 
     def _parse_snapshot(self, snapshot: Dict) -> List[ScrapedRace]:
-        """Convert AdaptiveMonitor snapshot format to ScrapedRace objects."""
+        """Convert AdaptiveMonitor snapshot format (flat schema) to ScrapedRace objects."""
         scraped_races = []
-        # Handle cases where events is a list or dict
         events = snapshot.get("events", {})
-        event_items = events.items() if isinstance(events, dict) else enumerate(events)
         
-        for eid, e in event_items:
+        for eid, e in events.items():
             try:
-                # Handle cases where e might be a list item if events was a list
-                if isinstance(e, list): e = e[1]
-                
-                # 'en' format is often 'Region: Course'
-                track = e.get("course", "Unknown")
+                track_raw = e.get("en", "Unknown")
+                # Strip region prefix e.g. "South Africa: Turffontein" → "Turffontein"
+                track = track_raw.split(":")[-1].strip() if ":" in track_raw else track_raw
                 runners = []
                 for r in e.get("runners", []):
+                    odds_val = r.get("odds", "SP")
+                    try:
+                        odds_decimal = float(odds_val) if odds_val != "SP" else 5.0
+                    except (ValueError, TypeError):
+                        odds_decimal = 5.0
                     runners.append(ScrapedRunner(
-                        horse_name=r.get("name", "Unknown"),
-                        odds_decimal=float(r.get("odds", 5.0)),
-                        jockey=r.get("jockeyName"),
-                        trainer=r.get("trainerName"),
-                        barrier=r.get("draw"),
-                        form=r.get("form")
+                        horse_name=r.get("outcomeName") or r.get("name") or "Unknown",
+                        odds_decimal=odds_decimal,
+                        jockey=r.get("jockeyName") or "TBA",
+                        trainer=r.get("trainerName") or "TBA",
+                        barrier=int(r.get("draw", 0)),
+                        form=r.get("form") or "",
+                        age=r.get("age") or "U",
+                        weight=r.get("weight") or "0",
+                        number=r.get("number") or "0"
                     ))
                 
                 if runners:
@@ -173,7 +179,7 @@ class BetwayAPI:
                         track=track,
                         race_number=int(e.get("raceNumber", 1)),
                         race_time=e.get("t", "12:00"),
-                        distance=1600, # Default if not in snapshot
+                        distance=1600,
                         track_condition="Good",
                         runners=runners
                     ))
@@ -182,3 +188,4 @@ class BetwayAPI:
                 continue
                 
         return scraped_races
+    
