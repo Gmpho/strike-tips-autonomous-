@@ -68,9 +68,11 @@ async def get_system_health():
         "cpu_usage_percent": psutil.cpu_percent(interval=0.1),
         "memory_usage_percent": mem.percent,
         "available_memory_mb": round(mem.available / (1024 * 1024), 1),
-        "status": "HEALTHY"
-        if mem.percent < 90 and psutil.cpu_percent(interval=0.1) < 95
-        else "DEGRADED",
+        "status": (
+            "HEALTHY"
+            if mem.percent < 90 and psutil.cpu_percent(interval=0.1) < 95
+            else "DEGRADED"
+        ),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -113,36 +115,37 @@ async def get_logs(tail: int = 50):
         "source": log_paths[0] if log_lines else "none",
     }
 
+
 @router.get("/system/vitals")
 async def get_intelligence_vitals():
     """Get real-time AI performance and host statistics (Intelligence Pulse)"""
     from core_agent.core.performance_tracker import tracker
-    
+
     ai_metrics = tracker.get_summary()
     mem = psutil.virtual_memory()
-    
+
     vitals = []
     # Convert AI metrics to the 'vitals' format for the frontend
     for model_name, metrics in ai_metrics.items():
-        vitals.append({
-            "id": f"ai-{model_name}",
-            "name": model_name.upper(),
-            "cpu": metrics["success_rate"], # Success rate as progress
-            "mem": "100%", # Active status
-            "mem_usage": f"Latency: {metrics['avg_latency']} | {metrics['requests']} reqs"
-        })
-        
-    # Always include the host bot process
-    vitals.append({
-        "id": "host-bot",
-        "name": "STRIKE-BOT (ORCHESTRATOR)",
-        "cpu": f"{psutil.cpu_percent()}%",
-        "mem": f"{mem.percent}%",
-        "mem_usage": f"{round(mem.used/(1024**3), 1)}GB / {round(mem.total/(1024**3), 1)}GB"
-    })
+        vitals.append(
+            {
+                "id": f"ai-{model_name}",
+                "name": model_name.upper(),
+                "cpu": metrics["success_rate"],  # Success rate as progress
+                "mem": "100%",  # Active status
+                "mem_usage": f"Latency: {metrics['avg_latency']} | {metrics['requests']} reqs",
+            }
+        )
 
-    return {
-        "success": True,
-        "vitals": vitals,
-        "timestamp": datetime.now().isoformat()
-    }
+    # Always include the host bot process
+    vitals.append(
+        {
+            "id": "host-bot",
+            "name": "STRIKE-BOT (ORCHESTRATOR)",
+            "cpu": f"{psutil.cpu_percent()}%",
+            "mem": f"{mem.percent}%",
+            "mem_usage": f"{round(mem.used/(1024**3), 1)}GB / {round(mem.total/(1024**3), 1)}GB",
+        }
+    )
+
+    return {"success": True, "vitals": vitals, "timestamp": datetime.now().isoformat()}

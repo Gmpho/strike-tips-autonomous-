@@ -4,6 +4,7 @@ from core_agent.config.model_factory import get_client
 
 def build_search_agent(strike, skills_provider: SkillsProvider) -> Agent:
     from core_agent.agents.tools import build_tools
+
     analyst_tools, _, _ = build_tools(strike)
     # analyst_tools = [calculate_probability_edge, search_past_races, search_racing_data, evaluate_race]
     # indices 1 and 2 are the search tools

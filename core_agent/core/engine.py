@@ -22,6 +22,7 @@ from config.settings import BANKROLL, TRACKS
 
 logger = logging.getLogger("strike-tips-engine")
 
+
 class StrikeTips:
     """
     Main Strike Tips orchestrator.
@@ -39,9 +40,10 @@ class StrikeTips:
         self.scraper = TAB4RacingScraper()
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
-        
+
         # Initialize Memory
         from skills.memory.chroma_memory import RacingMemory
+
         self.memory = RacingMemory(data_dir=os.path.join(self.data_dir, "chroma"))
 
         self._processing_tracks = set()
@@ -53,18 +55,20 @@ class StrikeTips:
             except ValueError as e:
                 logger.warning(f"Telegram not configured: {e}")
 
-    async def scrape_and_analyze_track(self, track: str, date_str: Optional[str] = None) -> List[Dict]:
+    async def scrape_and_analyze_track(
+        self, track: str, date_str: Optional[str] = None
+    ) -> List[Dict]:
         """Scrape and analyze all races at a track."""
         track_key = f"{track}_{date_str or 'today'}"
         if track_key in self._processing_tracks:
             return []
-            
+
         self._processing_tracks.add(track_key)
         try:
             races = await self.scraper.scrape_racecard(track, date_str)
             if not races:
                 return []
-            
+
             # (Analysis logic follows...)
             return []
         finally:

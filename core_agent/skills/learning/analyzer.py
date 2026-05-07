@@ -58,8 +58,15 @@ class AdaptiveAnalyzer:
 
         return adjusted
 
-    def record_result(self, track: str, distance: Optional[int], odds: float,
-                      stake: float, won: bool, actual_return: float):
+    def record_result(
+        self,
+        track: str,
+        distance: Optional[int],
+        odds: float,
+        stake: float,
+        won: bool,
+        actual_return: float,
+    ):
         """Proxy to learning engine - record a settled bet result"""
         self.engine.record_result(track, distance, odds, stake, won, actual_return)
 

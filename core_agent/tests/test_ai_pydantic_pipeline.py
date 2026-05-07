@@ -31,7 +31,9 @@ async def test_chat_cold_start_attempts_lazy_agent_creation():
 async def test_unified_orchestrator_returns_deterministic_scope_message_for_uk_query():
     orchestrator = UnifiedOrchestrator(strike_tips=None)
 
-    response = await orchestrator.chat("Can you analyze Cheltenham and Southwell in the UK?")
+    response = await orchestrator.chat(
+        "Can you analyze Cheltenham and Southwell in the UK?"
+    )
 
     assert "can't scan" in response.summary
     assert "South African tracks only" in response.summary

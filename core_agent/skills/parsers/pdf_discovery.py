@@ -7,9 +7,10 @@ from playwright.async_api import async_playwright
 
 logger = logging.getLogger("pdf-discovery")
 
+
 class PDFDiscoveryService:
     """Discovers live PDF URLs by rendering the SPA portal via Playwright."""
-    
+
     PORTAL_URL = "https://www.tab.co.za/tabs/content/horseracing_cards"
 
     @classmethod
@@ -24,10 +25,10 @@ class PDFDiscoveryService:
                 await page.goto(cls.PORTAL_URL, wait_until="networkidle", timeout=60000)
                 await page.wait_for_timeout(5000)
                 content = await page.content()
-                soup = BeautifulSoup(content, 'html.parser')
-                for link in soup.find_all('a', href=True):
-                    href = link['href']
-                    if track.lower() in href.lower() and href.endswith('.pdf'):
+                soup = BeautifulSoup(content, "html.parser")
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+                    if track.lower() in href.lower() and href.endswith(".pdf"):
                         return urljoin("https://www.tab.co.za", href)
                 logger.warning(f"[PDFDiscovery] No PDF found for track: {track}")
                 return None

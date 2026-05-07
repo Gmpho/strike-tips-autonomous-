@@ -12,21 +12,23 @@ from core_agent.skills.parsers.betway_api import BetwayAPI
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
-
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - [%(levelname)s] - %(message)s',
-    stream=sys.stdout
+    format="%(asctime)s - [%(levelname)s] - %(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger("L7-Monitor")
 
+
 class AdaptiveOddsMonitor:
     def __init__(self):
-        self.intel_cache = IntelligenceCacheManager(MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR)
+        self.intel_cache = IntelligenceCacheManager(
+            MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
+        )
         self.alert_engine = AlertEngine()
         self.betway = BetwayAPI()
         self.oc_scraper = OddscheckerScraper()
-        
+
         self.monitoring_active = True
         self.oc_state = {"odds": {}}
 
@@ -49,14 +51,14 @@ class AdaptiveOddsMonitor:
         await self.initialize()
         # Start Oddschecker in background
         asyncio.create_task(self._fetch_oc_odds_loop())
-        
+
         logger.info("🚀 L7 Monitor Active (Refactored: Pure Python Mode)")
-        
+
         while self.monitoring_active:
             try:
                 # 1. Fetch Betway Snapshot (using TrackRacing/TAB API)
                 state = await self.betway.get_snapshot_format()
-                
+
                 # 2. Merge Oddschecker odds for value analysis
                 oc_odds = self.oc_state.get("odds", {})
                 if oc_odds:
@@ -74,19 +76,27 @@ class AdaptiveOddsMonitor:
                             else:
                                 # Try fuzzy match
                                 matches = difflib.get_close_matches(
-                                    horse_name.lower(), 
-                                    [h.lower() for h in flat_oc_odds.keys()], 
-                                    n=1, cutoff=0.8
+                                    horse_name.lower(),
+                                    [h.lower() for h in flat_oc_odds.keys()],
+                                    n=1,
+                                    cutoff=0.8,
                                 )
                                 if matches:
-                                    matched_key = next((k for k in flat_oc_odds.keys() if k.lower() == matches[0]), None)
+                                    matched_key = next(
+                                        (
+                                            k
+                                            for k in flat_oc_odds.keys()
+                                            if k.lower() == matches[0]
+                                        ),
+                                        None,
+                                    )
                                     if matched_key:
                                         r["odds"] = flat_oc_odds[matched_key]
 
                 # 3. Persistence & Pruning
                 # Remove finished races and normalize names
                 state["events"] = {
-                    eid: {**e, "en": " ".join(e.get("en","").split())}
+                    eid: {**e, "en": " ".join(e.get("en", "").split())}
                     for eid, e in state.get("events", {}).items()
                     if not e.get("isFinished")
                 }
@@ -97,26 +107,34 @@ class AdaptiveOddsMonitor:
                     json.dump(state, f, indent=2)
 
                 active_ids = list(state["events"].keys())
-                
+
                 # Update Intelligence Cache for AlertEngine baselines
                 for event_id in active_ids:
-                    self.intel_cache.update_baseline(event_id, state["events"][event_id].get("runners", []))
+                    self.intel_cache.update_baseline(
+                        event_id, state["events"][event_id].get("runners", [])
+                    )
 
                 # Prune old data
                 self.intel_cache.prune_stale_data(active_ids)
 
-                logger.info(f"👻 Synchronized {state.get('count')} races ({len(active_ids)} active).")
+                logger.info(
+                    f"👻 Synchronized {state.get('count')} races ({len(active_ids)} active)."
+                )
 
                 # 4. Alert Evaluation
                 for event in state.get("events", {}).values():
-                    await self.alert_engine.evaluate_odds_update(event, cache=self.intel_cache)
+                    await self.alert_engine.evaluate_odds_update(
+                        event, cache=self.intel_cache
+                    )
 
             except Exception as e:
                 logger.warning(f"⚠️ Sync error: {e}")
                 import traceback
+
                 logger.debug(traceback.format_exc())
-            
+
             await asyncio.sleep(20)
+
 
 if __name__ == "__main__":
     monitor = AdaptiveOddsMonitor()

@@ -63,7 +63,9 @@ class SelfHealingParser:
 
     def __init__(self, config_file: Optional[str] = None):
         self._config_file = config_file or os.path.join("data", "parser_config.json")
-        self._selector_stats: Dict[str, Dict[str, Dict]] = {}  # field → selector → {hits, misses}
+        self._selector_stats: Dict[str, Dict[str, Dict]] = (
+            {}
+        )  # field → selector → {hits, misses}
         self._load_config()
 
     def _load_config(self):
@@ -85,9 +87,13 @@ class SelfHealingParser:
             logger.debug(f"Could not save parser config: {e}")
 
     def _get_success_rate(self, field: str, selector: str) -> float:
-        stats = self._selector_stats.get(field, {}).get(selector, {"hits": 0, "misses": 0})
+        stats = self._selector_stats.get(field, {}).get(
+            selector, {"hits": 0, "misses": 0}
+        )
         total = stats["hits"] + stats["misses"]
-        return stats["hits"] / total if total > 0 else 0.5  # default 50% for new selectors
+        return (
+            stats["hits"] / total if total > 0 else 0.5
+        )  # default 50% for new selectors
 
     def _record_result(self, field: str, selector: str, success: bool):
         if field not in self._selector_stats:
@@ -153,7 +159,9 @@ class SelfHealingParser:
             for selector, stats in selectors.items():
                 total = stats["hits"] + stats["misses"]
                 report[field][selector] = {
-                    "success_rate": f"{(stats['hits'] / total * 100):.1f}%" if total > 0 else "N/A",
+                    "success_rate": (
+                        f"{(stats['hits'] / total * 100):.1f}%" if total > 0 else "N/A"
+                    ),
                     "hits": stats["hits"],
                     "misses": stats["misses"],
                 }

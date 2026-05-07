@@ -7,10 +7,11 @@ load_dotenv()
 
 # ── Tier → (provider_type, model_name) resolution ────────────────────────────
 
+
 def _resolve(tier_or_model: str) -> tuple[str, str]:
     """Return (provider_type, model_name) for a ModelConfig tier key OR direct model name."""
     from core_agent.config.model_config import ModelConfig
-    
+
     # Check if it's a tier key or a direct model name
     model_name = getattr(ModelConfig, tier_or_model, None)
     if not model_name:
@@ -50,14 +51,14 @@ def get_client(tier_or_model: str):
 
     if provider == "ollama":
         return OllamaChatClient(model_id=model, host=ollama_host)
-    
+
     if provider == "ollama_cloud":
         # Cloud-hosted Ollama might require an API Key
         api_key = os.getenv("OLLAMA_API_KEY", "")
         # Assuming OllamaChatClient can handle headers or specific cloud auth
         # If not, we fallback to native Ollama logic
         return OllamaChatClient(
-            model_id=model, 
+            model_id=model,
             host=ollama_host,
             # headers={"X-API-Key": api_key} if api_key else None
         )
@@ -68,14 +69,14 @@ def get_client(tier_or_model: str):
             base_url="https://api.groq.com/openai/v1",
             api_key=os.getenv("GROQ_API_KEY", ""),
         )
-    
+
     if provider == "gemini":
         return OpenAIChatClient(
             model_id=model,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             api_key=os.getenv("GEMINI_API_KEY", ""),
         )
-    
+
     # fallback
     return OllamaChatClient(model_id=model, host=ollama_host)
 
@@ -93,9 +94,11 @@ def get_client_chain(tiers: list[str]) -> list:
 
 # ── Deprecated: pydantic-ai model factory (kept for backward compat) ─────────
 
+
 def get_model(tier: str):
     """Deprecated. Use get_client() for MAF agents."""
     from core_agent.config.model_config import ModelConfig
+
     ollama_host = ModelConfig.ollama_openai_base_url()
     model_name = os.getenv(f"{tier.upper()}_MODEL", "racing_llama")
     provider_type = os.getenv(f"{tier.upper()}_PROVIDER", "ollama")

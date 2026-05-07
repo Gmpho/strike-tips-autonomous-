@@ -18,6 +18,7 @@ logger = logging.getLogger("bankroll-governor")
 @dataclass
 class BetRecord:
     """Individual bet record"""
+
     bet_id: str
     timestamp: str
     date: str
@@ -38,6 +39,7 @@ class BetRecord:
 @dataclass
 class DailyStats:
     """Daily aggregation statistics"""
+
     date: str
     bets_placed: int = 0
     total_staked: float = 0.0
@@ -53,7 +55,11 @@ class DailyStats:
 
     @property
     def roi(self) -> float:
-        return (self.profit_loss / self.total_staked * 100.0) if self.total_staked > 0 else 0.0
+        return (
+            (self.profit_loss / self.total_staked * 100.0)
+            if self.total_staked > 0
+            else 0.0
+        )
 
 
 class BankrollGovernor:
@@ -117,12 +123,16 @@ class BankrollGovernor:
         """Persist bankroll state and bet history"""
         try:
             with open(self._state_file, "w") as f:
-                json.dump({
-                    "current_bankroll": self.current_bankroll,
-                    "peak_bankroll": self.peak_bankroll,
-                    "total_profit_loss": self.total_profit_loss,
-                    "last_updated": datetime.now().isoformat(),
-                }, f, indent=2)
+                json.dump(
+                    {
+                        "current_bankroll": self.current_bankroll,
+                        "peak_bankroll": self.peak_bankroll,
+                        "total_profit_loss": self.total_profit_loss,
+                        "last_updated": datetime.now().isoformat(),
+                    },
+                    f,
+                    indent=2,
+                )
 
             with open(self._bets_file, "w") as f:
                 json.dump([asdict(b) for b in self._bets], f, indent=2, default=str)
@@ -135,7 +145,9 @@ class BankrollGovernor:
     def drawdown_percent(self) -> float:
         if self.peak_bankroll <= 0:
             return 0.0
-        return ((self.peak_bankroll - self.current_bankroll) / self.peak_bankroll) * 100.0
+        return (
+            (self.peak_bankroll - self.current_bankroll) / self.peak_bankroll
+        ) * 100.0
 
     # ─── Limit Checks ───────────────────────────────────────────────────────
 
@@ -144,7 +156,9 @@ class BankrollGovernor:
         today_stats = self.get_today_stats()
         daily_loss = -today_stats.profit_loss
 
-        if daily_loss >= self.current_bankroll * (self.DAILY_LOSS_LIMIT_PERCENT / 100.0):
+        if daily_loss >= self.current_bankroll * (
+            self.DAILY_LOSS_LIMIT_PERCENT / 100.0
+        ):
             return False, f"Daily loss limit reached ({self.DAILY_LOSS_LIMIT_PERCENT}%)"
 
         if self.drawdown_percent >= self.MAX_DRAWDOWN_PERCENT:
@@ -180,12 +194,16 @@ class BankrollGovernor:
             return None
 
         if edge_percent < self.MIN_EDGE_PERCENT:
-            logger.warning(f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)")
+            logger.warning(
+                f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)"
+            )
             return None
 
         max_stake = self.calculate_max_stake(edge_percent)
         if stake > max_stake:
-            logger.warning(f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)")
+            logger.warning(
+                f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"
+            )
             stake = max_stake
 
         now = datetime.now()
@@ -208,7 +226,9 @@ class BankrollGovernor:
 
         self._bets.append(bet)
         self._save_state()
-        logger.info(f"Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)")
+        logger.info(
+            f"Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
+        )
         return bet
 
     def settle_bet(self, bet_id: str, won: bool, notes: str = "") -> bool:
@@ -240,7 +260,9 @@ class BankrollGovernor:
             self.peak_bankroll = self.current_bankroll
 
         self._save_state()
-        logger.info(f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}")
+        logger.info(
+            f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}"
+        )
         return True
 
     # ─── Reporting ───────────────────────────────────────────────────────────

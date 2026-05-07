@@ -2,6 +2,7 @@
 Strike Tips - Model Registry
 Complete model registry with capabilities for business logic.
 """
+
 import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -15,12 +16,13 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 @dataclass
 class ModelInfo:
     """Model metadata with full capabilities"""
+
     id: str
     name: str
     type: str  # "cloud" or "local"
     provider: str  # Groq, Google, Ollama
     description: str  # Business description
-    
+
     # Capabilities
     supports_tools: bool  # Can use get_bankroll, search_racecard, etc.
     is_orchestrator: bool  # Primary orchestration model
@@ -35,7 +37,6 @@ MODEL_REGISTRY: List[ModelInfo] = [
     # ═══════════════════════════════════════════════════════════
     # LOCAL MODELS - Free, Always Available
     # ═══════════════════════════════════════════════════════════
-    
     ModelInfo(
         id="racing_llama",
         name="Racing Llama",
@@ -47,7 +48,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=True,
-        rate_limit_risk="none"
+        rate_limit_risk="none",
     ),
     ModelInfo(
         id="racing_qwen",
@@ -60,7 +61,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=True,
-        rate_limit_risk="none"
+        rate_limit_risk="none",
     ),
     ModelInfo(
         id="func_gemma",
@@ -73,7 +74,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=True,
-        rate_limit_risk="none"
+        rate_limit_risk="none",
     ),
     ModelInfo(
         id="lfm_racing",
@@ -86,7 +87,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=True,
         is_fast=False,
         is_free=True,
-        rate_limit_risk="none"
+        rate_limit_risk="none",
     ),
     ModelInfo(
         id="ds_racing",
@@ -99,13 +100,11 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=True,
         is_fast=True,
         is_free=True,
-        rate_limit_risk="none"
+        rate_limit_risk="none",
     ),
-    
     # ═══════════════════════════════════════════════════════════
     # CLOUD MODELS - May Have Limits
     # ═══════════════════════════════════════════════════════════
-    
     ModelInfo(
         id="llama-3.3-70b-versatile",
         name="Groq Llama 70B",
@@ -117,7 +116,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=False,
-        rate_limit_risk="medium"
+        rate_limit_risk="medium",
     ),
     ModelInfo(
         id="gemini-3-flash-preview",
@@ -130,7 +129,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=False,
-        rate_limit_risk="medium"  # quota based
+        rate_limit_risk="medium",  # quota based
     ),
     ModelInfo(
         id="gemini-2.0-flash-lite",
@@ -143,7 +142,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=True,
         is_free=False,
-        rate_limit_risk="low"
+        rate_limit_risk="low",
     ),
     ModelInfo(
         id="gemini-3-flash-preview:cloud",
@@ -156,7 +155,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=False,
         is_fast=False,
         is_free=False,
-        rate_limit_risk="high"
+        rate_limit_risk="high",
     ),
     ModelInfo(
         id="kimi-k2-thinking:cloud",
@@ -169,7 +168,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         is_reasoning=True,
         is_fast=False,
         is_free=False,
-        rate_limit_risk="high"
+        rate_limit_risk="high",
     ),
 ]
 
@@ -180,7 +179,7 @@ def get_all_models() -> List[Dict[str, Any]]:
         {
             **asdict(model),
             "is_available": True,  # Assume available, let user try
-            "status_reason": "Ready to try"
+            "status_reason": "Ready to try",
         }
         for model in MODEL_REGISTRY
     ]
@@ -195,25 +194,24 @@ def get_model_by_id(model_id: str) -> Optional[ModelInfo]:
 
 
 def get_fallback_order(
-    preferred: Optional[str] = None,
-    prefer_local: bool = True
+    preferred: Optional[str] = None, prefer_local: bool = True
 ) -> List[str]:
     """
     Get model fallback order.
-    
+
     Args:
         preferred: User's preferred model ID (try first)
         prefer_local: Put local models first (free, reliable)
-    
+
     Returns:
         List of model IDs in fallback order
     """
     order = []
-    
+
     # Add preferred first
     if preferred:
         order.append(preferred)
-    
+
     if prefer_local:
         # Local models first (free, always work)
         for model in MODEL_REGISTRY:
@@ -231,7 +229,7 @@ def get_fallback_order(
         for model in MODEL_REGISTRY:
             if model.type == "local" and model.id not in order:
                 order.append(model.id)
-    
+
     return order
 
 
@@ -239,7 +237,7 @@ def get_models_by_capability(
     has_tools: Optional[bool] = None,
     is_orchestrator: Optional[bool] = None,
     is_reasoning: Optional[bool] = None,
-    is_free: Optional[bool] = None
+    is_free: Optional[bool] = None,
 ) -> List[ModelInfo]:
     """Filter models by capability"""
     results = []

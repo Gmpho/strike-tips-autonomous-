@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List
 
+
 @dataclass
 class Dream:
     id: str
@@ -10,7 +11,8 @@ class Dream:
     scenario: str
     probability_shift: float
     insight: str
-    vividness: float # 0.0 to 1.0
+    vividness: float  # 0.0 to 1.0
+
 
 class DreamEngine:
     SCENARIOS = [
@@ -23,7 +25,7 @@ class DreamEngine:
         "Dreaming of a perfect ROI sequence at Scottsville.",
         "Neural re-training on historical 'Rank Outsider' wins.",
     ]
-    
+
     INSIGHTS = [
         "Detected 3.2% edge variance in soft conditions.",
         "Wind factor outweighs distance in 400m sprint simulations.",
@@ -43,7 +45,7 @@ class DreamEngine:
             scenario=random.choice(self.SCENARIOS),
             probability_shift=round(random.uniform(-0.15, 0.15), 3),
             insight=random.choice(self.INSIGHTS),
-            vividness=round(random.uniform(0.4, 0.95), 2)
+            vividness=round(random.uniform(0.4, 0.95), 2),
         )
         self.history.insert(0, dream)
         if len(self.history) > 20:
@@ -56,5 +58,6 @@ class DreamEngine:
             for _ in range(5):
                 self.generate_dream()
         return self.history
+
 
 dream_engine = DreamEngine()

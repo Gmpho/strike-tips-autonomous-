@@ -3,6 +3,7 @@ Strike Tips - MAF Agent Pipeline
 Replaces hand-rolled httpx pipeline with proper MAF Agent dispatch.
 UnifiedOrchestrator.chat() signature is unchanged for backward compat.
 """
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +35,9 @@ def build_unsupported_track_response(message: str) -> Optional[str]:
         f"{supported}. Nearest supported options to try: {nearest}."
     )
 
+
 # ── Backward-compat response dataclass ───────────────────────────────────────
+
 
 @dataclass
 class AgentResponse:
@@ -53,19 +56,43 @@ class AgentResponse:
 
 # ── Intent keyword classifier (fast path, no LLM) ────────────────────────────
 
+
 class IntentClassifier:
     PATTERNS = {
-        "get_account_summary":        ["balance", "bankroll", "how much", "account", "pnl", "profit", "loss"],
-        "run_daily_analysis":         ["tracks", "racing today", "races", "scan", "today", "what's running"],
-        "evaluate_race":              ["analyse", "analyze", "evaluate", "assess race", "pick", "who will win", "predict"],
-        "record_selection":           ["record", "place", "select", "back", "wager"],
-        "search_racing_data":         ["search", "find", "lookup", "info", "news"],
+        "get_account_summary": [
+            "balance",
+            "bankroll",
+            "how much",
+            "account",
+            "pnl",
+            "profit",
+            "loss",
+        ],
+        "run_daily_analysis": [
+            "tracks",
+            "racing today",
+            "races",
+            "scan",
+            "today",
+            "what's running",
+        ],
+        "evaluate_race": [
+            "analyse",
+            "analyze",
+            "evaluate",
+            "assess race",
+            "pick",
+            "who will win",
+            "predict",
+        ],
+        "record_selection": ["record", "place", "select", "back", "wager"],
+        "search_racing_data": ["search", "find", "lookup", "info", "news"],
         "calculate_probability_edge": ["edge", "probability", "odds math"],
-        "calculate_max_position":     ["max stake", "position size", "how much can i"],
-        "verify_race_exists":         ["exists", "check race", "valid"],
-        "get_odds_snapshot":          ["odds", "prices", "snapshot"],
-        "search_past_races":          ["past", "memory", "history", "previous"],
-        "update_race_result":         ["settle", "won", "lost", "result"],
+        "calculate_max_position": ["max stake", "position size", "how much can i"],
+        "verify_race_exists": ["exists", "check race", "valid"],
+        "get_odds_snapshot": ["odds", "prices", "snapshot"],
+        "search_past_races": ["past", "memory", "history", "previous"],
+        "update_race_result": ["settle", "won", "lost", "result"],
     }
 
     INTENT_SPECIALIST = {
@@ -95,6 +122,7 @@ class IntentClassifier:
 
 # ── Model Pipeline ────────────────────────────────────────────────────────────
 
+
 class ModelPipeline:
     """
     MAF-backed pipeline. Replaces raw httpx calls with proper Agent dispatch.
@@ -108,9 +136,11 @@ class ModelPipeline:
 
         # Build shared providers
         self._skills = SkillsProvider(skill_paths=_SKILLS_DIR)
-        self._chroma = ChromaContextProvider(
-            getattr(strike_tips, "memory", None)
-        ) if strike_tips else None
+        self._chroma = (
+            ChromaContextProvider(getattr(strike_tips, "memory", None))
+            if strike_tips
+            else None
+        )
 
         # Agents built lazily on first use
         self._agents: Dict[str, Any] = {}
@@ -126,11 +156,16 @@ class ModelPipeline:
         from core_agent.agents.specialists.bankroll_agent import build_bankroll_agent
         from core_agent.agents.specialists.scanner_agent import build_scanner_agent
         from core_agent.agents.specialists.search_agent import build_search_agent
+
         builders = {
-            "analyst":  lambda: build_analyst_agent(self.strike, self._skills, self._chroma),
+            "analyst": lambda: build_analyst_agent(
+                self.strike, self._skills, self._chroma
+            ),
             "bankroll": lambda: build_bankroll_agent(self.strike, self._skills),
-            "scanner":  lambda: build_scanner_agent(self.strike, self._skills, self._chroma),
-            "search":   lambda: build_search_agent(self.strike, self._skills),
+            "scanner": lambda: build_scanner_agent(
+                self.strike, self._skills, self._chroma
+            ),
+            "search": lambda: build_search_agent(self.strike, self._skills),
         }
         if name in builders:
             try:
@@ -162,22 +197,34 @@ class ModelPipeline:
                 result = await agent.run(message, session=agent.create_session())
                 logger.info(f"[DIAGNOSTIC] Agent result type: {type(result)}")
                 latency = time.time() - t0
-                
+
                 # Correct extraction for agent_framework
                 text = ""
                 if result.messages and result.messages[0].contents:
                     # Collect all text content from the first message
-                    text = "".join([c.text for c in result.messages[0].contents if hasattr(c, 'text') and c.text])
+                    text = "".join(
+                        [
+                            c.text
+                            for c in result.messages[0].contents
+                            if hasattr(c, "text") and c.text
+                        ]
+                    )
                 else:
                     text = str(result)
-                    
+
                 usage = _extract_usage(result)
-                tracker.track_request(specialist, latency=latency, cost=0.0, success=True)
-                return AgentReply(summary=text, model_used=specialist, token_usage=usage)
+                tracker.track_request(
+                    specialist, latency=latency, cost=0.0, success=True
+                )
+                return AgentReply(
+                    summary=text, model_used=specialist, token_usage=usage
+                )
             except Exception as e:
                 logger.warning(f"[MAF] Local {specialist} failed: {e}")
         else:
-            logger.warning(f"[MAF] No local agent available for specialist={specialist}")
+            logger.warning(
+                f"[MAF] No local agent available for specialist={specialist}"
+            )
 
         # Groq fallback
         if ModelConfig.groq_available():
@@ -185,7 +232,11 @@ class ModelPipeline:
                 groq_client = get_client("ORCHESTRATOR")
                 fallback = groq_client.as_agent(
                     name=f"{specialist}_groq",
-                    instructions=agent._instructions if agent and hasattr(agent, "_instructions") else "",
+                    instructions=(
+                        agent._instructions
+                        if agent and hasattr(agent, "_instructions")
+                        else ""
+                    ),
                     tools=getattr(agent, "_tools", []),
                     context_providers=[self._skills],
                 )
@@ -196,15 +247,23 @@ class ModelPipeline:
                 usage = _extract_usage(result)
                 tracker.track_request("groq", latency=latency, cost=0.0, success=True)
                 from core_agent.config.model_config import ModelConfig as MC
-                return AgentReply(summary=text, model_used=f"groq:{MC.ORCHESTRATOR}", token_usage=usage)
+
+                return AgentReply(
+                    summary=text,
+                    model_used=f"groq:{MC.ORCHESTRATOR}",
+                    token_usage=usage,
+                )
             except Exception as e:
                 logger.warning(f"[MAF] Groq fallback failed: {e}")
 
         # Gemini chain fallback
-        for gemini_model in getattr(ModelConfig, "GEMINI_CHAIN", ["gemini-1.5-flash", "gemini-1.5-pro"]):
+        for gemini_model in getattr(
+            ModelConfig, "GEMINI_CHAIN", ["gemini-1.5-flash", "gemini-1.5-pro"]
+        ):
             try:
                 from agent_framework.openai import OpenAIChatClient
                 import os
+
                 gem_client = OpenAIChatClient(
                     model_id=gemini_model,
                     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -219,8 +278,12 @@ class ModelPipeline:
                 latency = time.time() - t0
                 text = result.text if hasattr(result, "text") else str(result)
                 usage = _extract_usage(result)
-                tracker.track_request(f"gemini:{gemini_model}", latency=latency, cost=0.0, success=True)
-                return AgentReply(summary=text, model_used=f"gemini:{gemini_model}", token_usage=usage)
+                tracker.track_request(
+                    f"gemini:{gemini_model}", latency=latency, cost=0.0, success=True
+                )
+                return AgentReply(
+                    summary=text, model_used=f"gemini:{gemini_model}", token_usage=usage
+                )
             except Exception as e:
                 logger.warning(f"[MAF] Gemini {gemini_model} failed: {e}")
 
@@ -229,7 +292,9 @@ class ModelPipeline:
             model_used="unavailable",
         )
 
-    async def chat(self, message: str, model_override: Optional[str] = None) -> AgentResponse:
+    async def chat(
+        self, message: str, model_override: Optional[str] = None
+    ) -> AgentResponse:
         unsupported_response = build_unsupported_track_response(message)
         if unsupported_response:
             return AgentResponse(
@@ -258,27 +323,45 @@ class ModelPipeline:
 
 # ── Unified Orchestrator (public API — signature unchanged) ───────────────────
 
+
 class UnifiedOrchestrator:
     def __init__(self, strike_tips=None):
         self.strike = strike_tips
         self.pipeline = ModelPipeline(strike_tips)
         self._history: List[Dict] = []
 
-    async def chat(self, message: str, model_override: Optional[str] = None) -> AgentResponse:
+    async def chat(
+        self, message: str, model_override: Optional[str] = None
+    ) -> AgentResponse:
         msg_lower = message.lower().strip()
 
         # Instant handlers (no LLM)
         if msg_lower in ("hi", "hello", "hey"):
             return AgentResponse(
                 summary="🏇 Strike Tips AI ready. Ask me about race cards, value bets, or your bankroll.",
-                model_used="intent_handler", confidence=1.0,
+                model_used="intent_handler",
+                confidence=1.0,
             )
-        if any(kw in msg_lower for kw in ("status", "balance", "bankroll", "how much", "my account", "my balance")) and self.strike:
+        if (
+            any(
+                kw in msg_lower
+                for kw in (
+                    "status",
+                    "balance",
+                    "bankroll",
+                    "how much",
+                    "my account",
+                    "my balance",
+                )
+            )
+            and self.strike
+        ):
             try:
                 s = self.strike.get_bankroll_status()
                 return AgentResponse(
                     summary=f"💰 Bankroll: R{s['current_bankroll']:.2f} | P&L: R{s['total_profit_loss']:.2f} | Open: {s['open_bets']}",
-                    model_used="intent_handler", confidence=1.0,
+                    model_used="intent_handler",
+                    confidence=1.0,
                 )
             except Exception:
                 pass

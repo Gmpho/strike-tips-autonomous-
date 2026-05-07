@@ -1,6 +1,7 @@
 from typing import List, Dict
 from core_agent.skills.race_analysis import RaceCard, Runner
 
+
 def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
     """
     Maps parsed PDF tips into the RaceCard and Runner objects.
@@ -10,7 +11,7 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
     tips = intelligence.get("parsed_tips", [])
     if not tips:
         return []
-        
+
     # Group tips by race number
     race_map = {}
     for tip in tips:
@@ -26,7 +27,7 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
             for name in runners_list
             if name
         ]
-        
+
         # Only add race if we have at least one runner identified
         if runners:
             races.append(
@@ -36,9 +37,7 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
                     race_time="12:00",
                     track_condition="Good",
                     distance=1600,
-                    runners=runners
+                    runners=runners,
                 )
             )
     return races
-
-

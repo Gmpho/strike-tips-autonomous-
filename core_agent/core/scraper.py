@@ -136,9 +136,11 @@ def _fetch_program_races(program_code: str, track_name: str) -> List[Dict]:
                 race_info = {
                     "track": target_program.get("ProgramName", track_name),
                     "race_number": int(r.get("Race", 0)),
-                    "race_time": r.get("AdvertisedStartTime", "").split(" ")[1][:5]
-                    if " " in r.get("AdvertisedStartTime", "")
-                    else "00:00",
+                    "race_time": (
+                        r.get("AdvertisedStartTime", "").split(" ")[1][:5]
+                        if " " in r.get("AdvertisedStartTime", "")
+                        else "00:00"
+                    ),
                     "distance": r.get("Distance", "Unknown"),
                     "condition": r.get("Surface", "Good"),
                     "runners": _get_runner_stubs(r.get("LiveRunners", "")),

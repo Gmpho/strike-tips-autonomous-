@@ -13,17 +13,25 @@ logger = logging.getLogger("race-schedule")
 # All 7 SA tracks always included
 SA_TRACKS_ALWAYS = {
     "turffontein": {"region": "SA", "code": "XTD", "location": "Johannesburg"},
-    "vaal":        {"region": "SA", "code": "XVA", "location": "Vereeniging"},
-    "fairview":    {"region": "SA", "code": "XFA", "location": "Gqeberha"},
+    "vaal": {"region": "SA", "code": "XVA", "location": "Vereeniging"},
+    "fairview": {"region": "SA", "code": "XFA", "location": "Gqeberha"},
     "scottsville": {"region": "SA", "code": "XED", "location": "Pietermaritzburg"},
-    "kenilworth":  {"region": "SA", "code": "XCP", "location": "Cape Town"},
-    "greyville":   {"region": "SA", "code": "XGR", "location": "Durban"},
+    "kenilworth": {"region": "SA", "code": "XCP", "location": "Cape Town"},
+    "greyville": {"region": "SA", "code": "XGR", "location": "Durban"},
     "durbanville": {"region": "SA", "code": "XDU", "location": "Cape Town"},
 }
 
 # International tracks by region
 INTERNATIONAL_TRACKS = {
-    "UK": ["cheltenham", "ascot", "newmarket", "goodwood", "epsom", "york", "southwell"],
+    "UK": [
+        "cheltenham",
+        "ascot",
+        "newmarket",
+        "goodwood",
+        "epsom",
+        "york",
+        "southwell",
+    ],
     "Australia": ["flemington", "randwick", "caulfield", "moonee_valley", "rosehill"],
     "USA": ["churchill_downs", "santa_anita", "belmont_park", "saratoga"],
     "Ireland": ["leopardstown", "curragh", "fairyhouse"],
@@ -152,7 +160,9 @@ class RaceScheduleService:
         self._today_cache = tracks
         self._cache_date = today
 
-        logger.info(f"[SCHEDULE] Today's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)")
+        logger.info(
+            f"[SCHEDULE] Today's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)"
+        )
         return tracks
 
     async def get_tomorrows_tracks(self) -> Dict[str, Dict]:
@@ -160,19 +170,23 @@ class RaceScheduleService:
         Fetch racing schedules for tomorrow.
         """
         from datetime import timedelta
+
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
-        
+
         tracks = dict(SA_TRACKS_ALWAYS)
         international = await self._fetch_international_schedule(tomorrow)
         tracks.update(international)
-        
-        logger.info(f"[SCHEDULE] Tomorrow's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)")
+
+        logger.info(
+            f"[SCHEDULE] Tomorrow's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)"
+        )
         return tracks
 
     async def _fetch_international_schedule(self, date_str: str) -> Dict[str, Dict]:
         """Fetch live international racing schedule from TAB API"""
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=10) as client:
                 url = self.TAB_SCHEDULE_URL.format(date=date_str.replace("-", ""))
                 response = await client.get(url)

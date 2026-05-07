@@ -2,6 +2,7 @@
 Strike Tips - Racing Routes
 API endpoints for scanning tracks and gathering racing intelligence.
 """
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from core_agent.services.racing_service import RacingService
@@ -11,6 +12,7 @@ from datetime import date, timedelta
 
 router = APIRouter(prefix="/api", tags=["racing"])
 racing_service = RacingService()
+
 
 @router.get("/tracks")
 async def get_tracks():
@@ -23,21 +25,20 @@ async def get_tracks():
             active_tracks = [t.lower() for t in active]
         else:
             active_tracks = ["turffontein"]
-        return {
-            "tracks": TRACKS,
-            "today_tracks": active_tracks
-        }
+        return {"tracks": TRACKS, "today_tracks": active_tracks}
     except Exception as e:
         print(f"[WARN] Dynamic track discovery failed: {e}")
         return {"tracks": TRACKS, "today_tracks": ["turffontein"]}
 
+
 from datetime import date, timedelta, datetime
 import pytz
+
 
 @router.get("/scan_all")
 async def scan_all(days_ahead: int = 0):
     """Scan all tracks with local SAST date."""
-    sa_tz = pytz.timezone('Africa/Johannesburg')
+    sa_tz = pytz.timezone("Africa/Johannesburg")
     today_local = datetime.now(sa_tz).date()
     target_date = (today_local + timedelta(days=days_ahead)).isoformat()
     results = {}
@@ -45,20 +46,25 @@ async def scan_all(days_ahead: int = 0):
     # 1. Dynamically discover which tracks are actually racing today/tomorrow
     try:
         active_tracks = brain.strike.scraper.get_active_tracks()
-        print(f"[SCAN] Found {len(active_tracks)} active tracks for {target_date}: {active_tracks}")
+        print(
+            f"[SCAN] Found {len(active_tracks)} active tracks for {target_date}: {active_tracks}"
+        )
     except Exception as e:
         print(f"[ERR] Dynamic track discovery failed: {e}")
-        active_tracks = list(TRACKS.keys()) # Fallback to static config
+        active_tracks = list(TRACKS.keys())  # Fallback to static config
 
     # 2. Iterate ONLY through discovered active tracks
     for track in active_tracks:
         try:
-            results[track] = await racing_service.scan_and_analyze(track, date_str=target_date)
+            results[track] = await racing_service.scan_and_analyze(
+                track, date_str=target_date
+            )
         except Exception as e:
             print(f"Error scanning {track}: {e}")
             results[track] = []
-            
+
     return {"date": target_date, "results": results}
+
 
 @router.get("/scan/{track}")
 async def scan_track(track: str):
@@ -69,11 +75,12 @@ async def scan_track(track: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/racing/intelligence")
 async def get_racing_intelligence(
     track: str = "Turffontein",
     intelligence_type: str = "Computaform SA",
-    date: Optional[str] = None
+    date: Optional[str] = None,
 ):
     """Get PDF racing intelligence directly."""
     try:
@@ -81,6 +88,7 @@ async def get_racing_intelligence(
         return {"success": True, "data": data}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
 
 @router.get("/racing/analyze/{track}/{race_number}")
 async def analyze_specific_race(track: str, race_number: int):

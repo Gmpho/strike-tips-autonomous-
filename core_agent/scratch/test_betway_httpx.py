@@ -5,8 +5,9 @@ BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     "Referer": "https://www.betway.co.za/sport/horse-racing",
-    "Origin": "https://www.betway.co.za"
+    "Origin": "https://www.betway.co.za",
 }
+
 
 async def test_fetch():
     async with httpx.AsyncClient(headers=HEADERS, timeout=10.0) as client:
@@ -18,14 +19,16 @@ async def test_fetch():
         if r.status_code == 200:
             data = r.json()
             events = []
-            for reg in data.get('regions', []):
-                for e in reg.get('sportEvents', []):
+            for reg in data.get("regions", []):
+                for e in reg.get("sportEvents", []):
                     events.append(e)
-            
+
             if events:
-                eid = events[0]['eventId']
+                eid = events[0]["eventId"]
                 print(f"Found Event ID: {eid} ({events[0].get('name')})")
-                url_event = f"{BASE_URL}/GetEvent?eventId={eid}&isVirtual=false&countryCode=ZA"
+                url_event = (
+                    f"{BASE_URL}/GetEvent?eventId={eid}&isVirtual=false&countryCode=ZA"
+                )
                 print(f"Fetching Event: {url_event}")
                 r_e = await client.get(url_event)
                 print(f"Status: {r_e.status_code}")
@@ -39,6 +42,8 @@ async def test_fetch():
         else:
             print(f"FAILED to fetch daily: {r.text[:200]}")
 
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(test_fetch())
