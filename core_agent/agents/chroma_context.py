@@ -2,13 +2,27 @@
 MAF ContextProvider that injects ChromaDB RAG results before each agent run.
 Replaces the manual grounding block in ModelPipeline.chat().
 """
+
 from typing import Any
 from agent_framework import BaseContextProvider as ContextProvider
 
 _RACING_KEYWORDS = {
-    "race", "track", "form", "odds", "runner", "horse", "jockey", "trainer",
-    "turffontein", "vaal", "greyville", "scottsville", "kenilworth",
-    "fairview", "durbanville", "flamingo",
+    "race",
+    "track",
+    "form",
+    "odds",
+    "runner",
+    "horse",
+    "jockey",
+    "trainer",
+    "turffontein",
+    "vaal",
+    "greyville",
+    "scottsville",
+    "kenilworth",
+    "fairview",
+    "durbanville",
+    "flamingo",
 }
 
 
@@ -19,7 +33,9 @@ class ChromaContextProvider(ContextProvider):
         super().__init__(self.source_id)
         self._memory = memory
 
-    async def before_run(self, *, agent: Any, session: Any, context: Any, state: dict) -> None:
+    async def before_run(
+        self, *, agent: Any, session: Any, context: Any, state: dict
+    ) -> None:
         # Extract user message text
         msg = ""
         for m in getattr(context, "input_messages", []):

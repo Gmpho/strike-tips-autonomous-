@@ -13,6 +13,7 @@ logger = logging.getLogger("result-tracker")
 
 try:
     from duckduckgo_search import DDGS
+
     HAS_DDGS = True
 except ImportError:
     HAS_DDGS = False
@@ -52,7 +53,9 @@ class ResultTracker:
             logger.warning(f"DDG search failed for {track} R{race_number}: {e}")
             return None
 
-    def _extract_winner(self, text: str, candidates: List[str]) -> Tuple[Optional[str], float]:
+    def _extract_winner(
+        self, text: str, candidates: List[str]
+    ) -> Tuple[Optional[str], float]:
         """
         Try to find one of the candidate horse names in the result text.
         Returns (horse_name, confidence_score).
@@ -101,16 +104,24 @@ class ResultTracker:
             winner, confidence = self._extract_winner(result_text, [bet.horse])
             if winner and confidence >= 0.6:
                 won = winner == bet.horse
-                success = self.governor.settle_bet(bet.bet_id, won=won, notes=f"Auto-settled (confidence={confidence:.0%})")
+                success = self.governor.settle_bet(
+                    bet.bet_id,
+                    won=won,
+                    notes=f"Auto-settled (confidence={confidence:.0%})",
+                )
                 if success:
-                    logger.info(f"Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'}")
-                    settled.append({
-                        "bet_id": bet.bet_id,
-                        "horse": bet.horse,
-                        "track": bet.track,
-                        "race_number": bet.race_number,
-                        "won": won,
-                        "confidence": confidence,
-                    })
+                    logger.info(
+                        f"Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'}"
+                    )
+                    settled.append(
+                        {
+                            "bet_id": bet.bet_id,
+                            "horse": bet.horse,
+                            "track": bet.track,
+                            "race_number": bet.race_number,
+                            "won": won,
+                            "confidence": confidence,
+                        }
+                    )
 
         return settled

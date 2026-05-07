@@ -1,14 +1,15 @@
 import json
 
+
 def verify():
-    file_path = 'data/market_snapshot_latest.json'
+    file_path = "data/market_snapshot_latest.json"
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             data = json.load(f)
     except FileNotFoundError:
         print(f"Snapshot file not found at {file_path}")
         return
-        
+
     events = data.get("events", {})
     if not events:
         print("Snapshot is empty!")
@@ -30,6 +31,7 @@ def verify():
         else:
             print("  No runners found.")
         print("-" * 20)
+
 
 if __name__ == "__main__":
     verify()

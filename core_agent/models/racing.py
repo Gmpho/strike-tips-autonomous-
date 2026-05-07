@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+
 class Runner(BaseModel):
     name: str
     odds: float | str = Field(..., description="Decimal odds or 'SP' if pending")
@@ -21,6 +22,7 @@ class Runner(BaseModel):
 
     class Config:
         populate_by_name = True
+
 
 class RaceEvent(BaseModel):
     id: str

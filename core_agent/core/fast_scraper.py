@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("FastScraper")
 
+
 class FastScraper:
     """
     Tier 3 Intelligence: High-speed HTML parser using BeautifulSoup/lxml.
@@ -21,12 +22,8 @@ class FastScraper:
         self.ai_client = ai_client
         self.timeout = timeout
         self.session: Optional[aiohttp.ClientSession] = None
-        
-        self.stats = {
-            "request_count": 0,
-            "success_count": 0,
-            "error_count": 0
-        }
+
+        self.stats = {"request_count": 0, "success_count": 0, "error_count": 0}
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
@@ -37,7 +34,7 @@ class FastScraper:
     async def scrape(self, url: str) -> Dict[str, Any]:
         """Fetch, clean, and intelligently extract data from a static URL."""
         self.stats["request_count"] += 1
-        
+
         try:
             session = await self._get_session()
             headers = {
@@ -45,30 +42,30 @@ class FastScraper:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1"
+                "Upgrade-Insecure-Requests": "1",
             }
 
             async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     self.stats["error_count"] += 1
                     return {"success": False, "error": f"HTTP {response.status}"}
-                
+
                 html = await response.text()
-                
+
             # Tier 3 Logic: Speed Cleaning
             clean_content = self._parse_and_clean_html(html)
-            
+
             # Intelligent Extraction (AI Fallback)
             races = []
             if self.ai_client:
                 races = await self.ai_client.extract_race_data(clean_content, url)
-            
+
             self.stats["success_count"] += 1
             return {
                 "success": True,
                 "races": races,
                 "source": url,
-                "strategy": "BEAUTIFULSOUP"
+                "strategy": "BEAUTIFULSOUP",
             }
 
         except Exception as e:
@@ -84,19 +81,21 @@ class FastScraper:
         3. Normalize whitespace
         """
         try:
-            soup = BeautifulSoup(html, 'lxml')
-            
+            soup = BeautifulSoup(html, "lxml")
+
             # Decompose heavy/noisy tags
-            for tag in soup(['script', 'style', 'noscript', 'meta', 'link', 'svg', 'iframe']):
+            for tag in soup(
+                ["script", "style", "noscript", "meta", "link", "svg", "iframe"]
+            ):
                 tag.decompose()
-                
+
             # Extract main text content
-            text = soup.get_text(separator=' ')
-            
+            text = soup.get_text(separator=" ")
+
             # Normalize whitespace
-            text = re.sub(r'\s+', ' ', text)
+            text = re.sub(r"\s+", " ", text)
             return text.strip()
-            
+
         except Exception as e:
             logger.warning(f"Cleanup failed, returning raw: {e}")
             return html

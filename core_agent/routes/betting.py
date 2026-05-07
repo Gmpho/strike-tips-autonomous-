@@ -2,6 +2,7 @@
 Strike Tips - Betting Routes
 Endpoints for placing, settling, and managing bets.
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -24,6 +25,7 @@ def _load_json(filename: str) -> Any:
             return json.load(f)
     return None
 
+
 class BetRequest(BaseModel):
     track: str
     race_number: int
@@ -33,6 +35,7 @@ class BetRequest(BaseModel):
     confidence: str
     stake: Optional[float] = None
 
+
 class BetSettleRequest(BaseModel):
     bet_id: str
     won: bool
@@ -41,6 +44,7 @@ class BetSettleRequest(BaseModel):
 
 class BettingRootResponse(BaseModel):
     """Lightweight betting route index for endpoint discovery."""
+
     service: str
     endpoints: Dict[str, str]
 
@@ -73,11 +77,12 @@ async def place_bet(bet: BetRequest):
         odds=bet.odds,
         edge_percent=bet.edge_percent,
         confidence=bet.confidence,
-        override_stake=bet.stake
+        override_stake=bet.stake,
     )
     if result:
         return {"success": True, "bet": result}
     raise HTTPException(status_code=400, detail="Failed to place bet")
+
 
 @router.post("/settle")
 async def settle_bet(request: BetSettleRequest):
@@ -87,34 +92,38 @@ async def settle_bet(request: BetSettleRequest):
     result = brain.strike.settle_bet(request.bet_id, request.won, request.notes or "")
     return {"success": True, "result": result}
 
+
 @router.get("/history")
 async def get_bets():
     """Get all bets - reads from bet_history.json"""
     bets_data = _load_json("bet_history.json")
     if not bets_data:
         return {"bets": [], "count": 0}
-    
+
     # Convert to BetRecord format with camelCase
     bets = []
     for b in bets_data if isinstance(bets_data, list) else []:
         settled = b.get("status") in ["WON", "LOST"]
         won = b.get("status") == "WON" if settled else None
-        bets.append(BetRecord(
-            id=b.get("bet_id", ""),
-            track=b.get("track", ""),
-            raceNumber=b.get("race_number", 1),
-            horse=b.get("horse", ""),
-            odds=b.get("odds", 0.0),
-            edgePercent=b.get("edge_percent", 0.0),
-            stake=b.get("stake", 0.0),
-            confidence=b.get("confidence", "VALUE"),
-            placedAt=b.get("timestamp", datetime.now().isoformat()),
-            settled=settled,
-            won=won,
-            payout=b.get("actual_return", 0.0) if won else None,
-            notes=b.get("notes", "")
-        ).model_dump(by_alias=True, exclude_none=True))
+        bets.append(
+            BetRecord(
+                id=b.get("bet_id", ""),
+                track=b.get("track", ""),
+                raceNumber=b.get("race_number", 1),
+                horse=b.get("horse", ""),
+                odds=b.get("odds", 0.0),
+                edgePercent=b.get("edge_percent", 0.0),
+                stake=b.get("stake", 0.0),
+                confidence=b.get("confidence", "VALUE"),
+                placedAt=b.get("timestamp", datetime.now().isoformat()),
+                settled=settled,
+                won=won,
+                payout=b.get("actual_return", 0.0) if won else None,
+                notes=b.get("notes", ""),
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
     return {"bets": bets, "count": len(bets)}
+
 
 @router.get("/open")
 async def get_open_bets():
@@ -122,26 +131,29 @@ async def get_open_bets():
     bets_data = _load_json("bet_history.json")
     if not bets_data or not isinstance(bets_data, list):
         return {"bets": [], "count": 0}
-    
+
     # Filter for pending bets (not WON or LOST)
     pending = [b for b in bets_data if b.get("status") not in ["WON", "LOST"]]
-    
+
     bets = []
     for b in pending:
-        bets.append(BetRecord(
-            id=b.get("bet_id", ""),
-            track=b.get("track", ""),
-            raceNumber=b.get("race_number", 1),
-            horse=b.get("horse", ""),
-            odds=b.get("odds", 0.0),
-            edgePercent=b.get("edge_percent", 0.0),
-            stake=b.get("stake", 0.0),
-            confidence=b.get("confidence", "VALUE"),
-            placedAt=b.get("timestamp", datetime.now().isoformat()),
-            settled=False,
-            notes=b.get("notes", "")
-        ).model_dump(by_alias=True, exclude_none=True))
+        bets.append(
+            BetRecord(
+                id=b.get("bet_id", ""),
+                track=b.get("track", ""),
+                raceNumber=b.get("race_number", 1),
+                horse=b.get("horse", ""),
+                odds=b.get("odds", 0.0),
+                edgePercent=b.get("edge_percent", 0.0),
+                stake=b.get("stake", 0.0),
+                confidence=b.get("confidence", "VALUE"),
+                placedAt=b.get("timestamp", datetime.now().isoformat()),
+                settled=False,
+                notes=b.get("notes", ""),
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
     return {"bets": bets, "count": len(bets)}
+
 
 @router.get("/stats")
 async def get_bet_stats():
@@ -154,24 +166,27 @@ async def get_bet_stats():
             "losses": 0,
             "stakeTotal": 0.0,
             "payoutTotal": 0.0,
-            "roi": 0.0
+            "roi": 0.0,
         }
-    
+
     total_bets = len(bets_data)
     wins = sum(1 for b in bets_data if b.get("status") == "WON")
     losses = sum(1 for b in bets_data if b.get("status") == "LOST")
     stake_total = sum(b.get("stake", 0.0) for b in bets_data)
-    payout_total = sum(b.get("actual_return", 0.0) for b in bets_data if b.get("status") == "WON")
+    payout_total = sum(
+        b.get("actual_return", 0.0) for b in bets_data if b.get("status") == "WON"
+    )
     roi = ((payout_total - stake_total) / stake_total * 100) if stake_total > 0 else 0.0
-    
+
     return {
         "totalBets": total_bets,
         "wins": wins,
         "losses": losses,
         "stakeTotal": stake_total,
         "payoutTotal": payout_total,
-        "roi": round(roi, 2)
+        "roi": round(roi, 2),
     }
+
 
 @router.get("/learning/roi-by-track")
 async def get_roi_by_track():
@@ -179,6 +194,7 @@ async def get_roi_by_track():
     if not brain or not brain.strike or not brain.strike.learning:
         return {}
     return brain.strike.learning.get_roi_summary()
+
 
 @router.get("/bankroll")
 @router.get("/account-summary")
@@ -191,29 +207,32 @@ async def get_bankroll_state():
             "dailyLimit": 200.0,
             "dailyLoss": 0.0,
             "maxStake": 50.0,
-            "totalExposure": 0.0
+            "totalExposure": 0.0,
         }
-    
+
     # Use brain if available for more accurate data
     if brain and brain.strike and brain.strike.bankroll:
         bankroll = brain.strike.bankroll
         today_stats = bankroll.get_today_stats()
         open_bets = bankroll.get_open_bets()
         total_exposure = sum(b.stake for b in open_bets)
-        
+
         return BankrollState(
             balance=bankroll.current_bankroll,
-            dailyLimit=bankroll.current_bankroll * (bankroll.DAILY_LOSS_LIMIT_PERCENT / 100.0),
-            dailyLoss=abs(today_stats.profit_loss) if today_stats.profit_loss < 0 else 0.0,
+            dailyLimit=bankroll.current_bankroll
+            * (bankroll.DAILY_LOSS_LIMIT_PERCENT / 100.0),
+            dailyLoss=(
+                abs(today_stats.profit_loss) if today_stats.profit_loss < 0 else 0.0
+            ),
             maxStake=bankroll.current_bankroll * (bankroll.MAX_BET_PERCENT / 100.0),
-            totalExposure=total_exposure
+            totalExposure=total_exposure,
         ).model_dump(by_alias=True)
-    
+
     # Fallback to JSON file
     return {
         "balance": data.get("current_bankroll", 1000.0),
         "dailyLimit": 200.0,
         "dailyLoss": abs(data.get("total_profit_loss", 0.0)),
         "maxStake": 50.0,
-        "totalExposure": 0.0
+        "totalExposure": 0.0,
     }

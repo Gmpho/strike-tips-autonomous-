@@ -2,6 +2,7 @@
 MAF Workflow for the daily race scan pipeline.
 ScrapeExecutor → AnalyseExecutor → BankrollExecutor → NotifyExecutor
 """
+
 import logging
 from typing import Any
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
@@ -41,7 +42,14 @@ class AnalyseExecutor(Executor):
                     f"Analyse race {race.get('race_number', '?')} at {race.get('track', '?')}",
                     session=session,
                 )
-                results.append({"race": race, "analysis": result.text if hasattr(result, "text") else str(result)})
+                results.append(
+                    {
+                        "race": race,
+                        "analysis": (
+                            result.text if hasattr(result, "text") else str(result)
+                        ),
+                    }
+                )
             except Exception as e:
                 logger.warning(f"[ANALYSE] Race failed: {e}")
         await ctx.send_message(results)
@@ -62,11 +70,15 @@ class BankrollExecutor(Executor):
                     f"Evaluate this analysis for a selection: {item['analysis']}",
                     session=session,
                 )
-                decisions.append({
-                    "race": item["race"],
-                    "analysis": item["analysis"],
-                    "decision": result.text if hasattr(result, "text") else str(result),
-                })
+                decisions.append(
+                    {
+                        "race": item["race"],
+                        "analysis": item["analysis"],
+                        "decision": (
+                            result.text if hasattr(result, "text") else str(result)
+                        ),
+                    }
+                )
             except Exception as e:
                 logger.warning(f"[BANKROLL] Decision failed: {e}")
         await ctx.send_message(decisions)

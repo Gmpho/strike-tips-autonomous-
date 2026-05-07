@@ -11,13 +11,14 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("learning-engine")
 
-MIN_SAMPLES = 5          # Minimum bets before applying adjustments
-MAX_ADJUSTMENT = 0.30    # Max ±30% probability adjustment
+MIN_SAMPLES = 5  # Minimum bets before applying adjustments
+MAX_ADJUSTMENT = 0.30  # Max ±30% probability adjustment
 
 
 @dataclass
 class SegmentStats:
     """Performance stats for a specific betting segment"""
+
     bets: int = 0
     wins: int = 0
     total_staked: float = 0.0
@@ -29,7 +30,11 @@ class SegmentStats:
 
     @property
     def roi(self) -> float:
-        return ((self.total_returned - self.total_staked) / self.total_staked * 100.0) if self.total_staked > 0 else 0.0
+        return (
+            ((self.total_returned - self.total_staked) / self.total_staked * 100.0)
+            if self.total_staked > 0
+            else 0.0
+        )
 
     @property
     def has_enough_data(self) -> bool:
@@ -63,9 +68,7 @@ class LearningEngine:
         except Exception as e:
             logger.warning(f"Could not save learning stats: {e}")
 
-    def _get_segment_key(
-        self, track: str, distance: Optional[int], odds: float
-    ) -> str:
+    def _get_segment_key(self, track: str, distance: Optional[int], odds: float) -> str:
         """Build a segment key for grouping bets"""
         dist_bucket = "any"
         if distance:
@@ -91,7 +94,12 @@ class LearningEngine:
         """Record a bet result to update segment statistics"""
         key = self._get_segment_key(track, distance, odds)
         if key not in self._stats:
-            self._stats[key] = {"bets": 0, "wins": 0, "total_staked": 0.0, "total_returned": 0.0}
+            self._stats[key] = {
+                "bets": 0,
+                "wins": 0,
+                "total_staked": 0.0,
+                "total_returned": 0.0,
+            }
 
         self._stats[key]["bets"] += 1
         self._stats[key]["total_staked"] += stake
@@ -139,7 +147,10 @@ class LearningEngine:
             track_stats[track]["returned"] += stats["total_returned"]
 
         return {
-            track: round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
-            if v["staked"] > 0 else 0.0
+            track: (
+                round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
+                if v["staked"] > 0
+                else 0.0
+            )
             for track, v in track_stats.items()
         }

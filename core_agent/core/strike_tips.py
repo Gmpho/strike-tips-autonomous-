@@ -72,7 +72,11 @@ if not _prometheus_enabled:
 from core_agent.skills.race_analysis import RaceAnalyzer, RaceCard, Runner
 from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
 from core_agent.skills.bankroll_manager import BankrollGovernor
-from core_agent.skills.parsers.tab4racing import TAB4RacingScraper, ScrapedRunner, ScrapedRace
+from core_agent.skills.parsers.tab4racing import (
+    TAB4RacingScraper,
+    ScrapedRunner,
+    ScrapedRace,
+)
 from core_agent.skills.parsers.betway_api import BetwayAPI
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.skills.parsers.self_healing import SelfHealingParser
@@ -81,8 +85,9 @@ from core_agent.agents.ai_providers import AIProvider
 from core_agent.skills.learning.analyzer import AdaptiveAnalyzer
 
 import sys
-if '/app' not in sys.path:
-    sys.path.append('/app')
+
+if "/app" not in sys.path:
+    sys.path.append("/app")
 
 from core_agent.config.settings import BANKROLL, TRACKS
 
@@ -96,13 +101,14 @@ class StrikeTips:
     def __init__(self, data_dir: Optional[str] = None, enable_telegram: bool = True):
         # 🛡️ Docker Resilience: Use env var if present, otherwise fallback to centralized config
         from core_agent.config.paths import DATA_DIR as PROJECT_DATA_DIR
+
         env_data_dir = os.getenv("DATA_DIR")
         if env_data_dir:
             self.data_dir = env_data_dir
         else:
             # Use absolute path to the centralized directory
             self.data_dir = data_dir or str(PROJECT_DATA_DIR)
-            
+
         # Only attempt to create if it's not a root-level system path we don't own
         try:
             os.makedirs(self.data_dir, exist_ok=True)
@@ -110,7 +116,9 @@ class StrikeTips:
             # Fallback to local default if requested is inaccessible
             self.data_dir = os.path.abspath("./data")
             os.makedirs(self.data_dir, exist_ok=True)
-            print(f"[WARN] Permission denied for data directory. Falling back to: {self.data_dir}")
+            print(
+                f"[WARN] Permission denied for data directory. Falling back to: {self.data_dir}"
+            )
 
         # Initialize components
         self.analyzer = RaceAnalyzer()
@@ -122,15 +130,16 @@ class StrikeTips:
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
         self.learning = AdaptiveAnalyzer(data_dir=self.data_dir)
-        
+
         # Initialize Memory
         from core_agent.skills.memory.chroma_memory import RacingMemory
+
         self.memory = RacingMemory(data_dir=os.path.join(self.data_dir, "chroma"))
 
         # 🛡️ Loop & Concurrency Protection
         self._processing_tracks = set()
         self._scraping_lock = asyncio.Lock()
-        self._track_data_cache = {} # Cache for raw race data during parallel runs
+        self._track_data_cache = {}  # Cache for raw race data during parallel runs
 
         # Initialize Telegram if configured
         self.telegram = None
@@ -146,11 +155,13 @@ class StrikeTips:
     ) -> List[Dict]:
         today_iso = date_str or date.today().isoformat()
         track_key = f"{track}_{today_iso}"
-        
+
         if track_key in self._processing_tracks:
-            print(f"[WARN] Track {track} is already being analyzed. Skipping to prevent loop.")
+            print(
+                f"[WARN] Track {track} is already being analyzed. Skipping to prevent loop."
+            )
             return []
-            
+
         self._processing_tracks.add(track_key)
         try:
             # 1. Fetch Raw Data (Primary: Betway + Oddschecker)
@@ -158,80 +169,103 @@ class StrikeTips:
                 if track_key not in self._track_data_cache:
                     print(f"[BETWAY] Harvesting races for {track}...")
                     all_betway_races = await self.betway.get_races()
-                    
+
                     # Filter for specific track
-                    races = [r for r in all_betway_races if track.lower() in r.track.lower()]
-                    
+                    races = [
+                        r for r in all_betway_races if track.lower() in r.track.lower()
+                    ]
+
                     if not races:
-                        print(f"[FALLBACK] No Betway data for {track}, trying TAB4Racing...")
+                        print(
+                            f"[FALLBACK] No Betway data for {track}, trying TAB4Racing..."
+                        )
                         races = await self.scraper.scrape_racecard(track, date_str)
-                    
+
                     self._track_data_cache[track_key] = races
                 else:
                     races = self._track_data_cache[track_key]
-            
+
             if not races:
                 print(f"[WARN] No race data found for {track} after all attempts.")
                 return []
-            
+
             # 2. Dispatch Parallel AI Analysis
-            print(f"[LIST] Found {len(races)} races. Dispatching parallel AI analysis...")
+            print(
+                f"[LIST] Found {len(races)} races. Dispatching parallel AI analysis..."
+            )
             prompts = []
             for r in races:
                 prompt = (
                     f"Analyze this single race for value (Edge > 5%): {json.dumps(asdict(r))}. "
                     f"Context: {track} Race {r.race_number}. "
-                    "Return ONLY valid JSON: {'race_number': " + str(r.race_number) + ", 'summary': '...', 'value_bets': []}."
+                    "Return ONLY valid JSON: {'race_number': "
+                    + str(r.race_number)
+                    + ", 'summary': '...', 'value_bets': []}."
                 )
                 prompts.append(prompt)
-                
+
             # Use the parallel provider if available
             # Dispatch in batches of 2 to protect 8GB RAM
             ai_responses = []
             for i in range(0, len(prompts), 2):
-                batch = prompts[i:i+2]
+                batch = prompts[i : i + 2]
                 logger.info(f"[SWARM] Processing batch {i//2 + 1}...")
-                batch_responses = await self.ai._call_kimi_parallel(batch, strike_instance=self)
+                batch_responses = await self.ai._call_kimi_parallel(
+                    batch, strike_instance=self
+                )
                 ai_responses.extend(batch_responses)
-                await asyncio.sleep(2) # Throttle delay for 8GB RAM
-            
+                await asyncio.sleep(2)  # Throttle delay for 8GB RAM
+
             results = []
             for i, r in enumerate(races):
                 analysis_result = ai_responses[i].content
                 # Parse Insight
                 try:
                     # Robust cleaning
-                    clean_text = analysis_result.replace('```json', '').replace('```', '').strip()
-                    
+                    clean_text = (
+                        analysis_result.replace("```json", "")
+                        .replace("```", "")
+                        .strip()
+                    )
+
                     # Emergency fix: if LLM returns Python-style dict with single quotes outside keys
                     if "'" in clean_text and '"' not in clean_text:
-                         # Very basic heuristic to swap types for JSON feasibility
-                         import ast
-                         try:
-                             # Convert python string liteal to dict then to json string
-                             data_dict = ast.literal_eval(clean_text)
-                             clean_text = json.dumps(data_dict)
-                         except:
-                             pass
+                        # Very basic heuristic to swap types for JSON feasibility
+                        import ast
+
+                        try:
+                            # Convert python string liteal to dict then to json string
+                            data_dict = ast.literal_eval(clean_text)
+                            clean_text = json.dumps(data_dict)
+                        except:
+                            pass
 
                     if "{" in clean_text and "}" in clean_text:
-                        clean_text = clean_text[clean_text.find("{"):clean_text.rfind("}")+1]
-                    
+                        clean_text = clean_text[
+                            clean_text.find("{") : clean_text.rfind("}") + 1
+                        ]
+
                     insight = json.loads(clean_text)
                 except Exception as e:
                     print(f"[DEBUG] AI Parse failed for {track} R{r.race_number}: {e}")
-                    insight = {"race_number": r.race_number, "summary": analysis_result, "value_bets": []}
-                
-                results.append({
-                    "track": track,
-                    "race_number": r.race_number,
-                    "race_time": r.race_time,
-                    "condition": r.track_condition,
-                    "runners": [run.horse_name for run in r.runners],
-                    "value_bets": insight.get("value_bets", []),
-                    "ai_insight": insight.get("summary", analysis_result)
-                })
-            
+                    insight = {
+                        "race_number": r.race_number,
+                        "summary": analysis_result,
+                        "value_bets": [],
+                    }
+
+                results.append(
+                    {
+                        "track": track,
+                        "race_number": r.race_number,
+                        "race_time": r.race_time,
+                        "condition": r.track_condition,
+                        "runners": [run.horse_name for run in r.runners],
+                        "value_bets": insight.get("value_bets", []),
+                        "ai_insight": insight.get("summary", analysis_result),
+                    }
+                )
+
             return results
         finally:
             self._processing_tracks.remove(track_key)
@@ -424,11 +458,13 @@ class StrikeTips:
 
         # 1. Harvest Official PDF Tips FIRST
         from core_agent.skills.parsers.pdf_harvester import PDFHarvester
+
         pdf = PDFHarvester()
         pdf_res = await pdf.get_latest_racing_intelligence("Any", "Daily Tips")
         pdf_tips = pdf_res.get("parsed_tips", [])
 
         from core_agent.core.strike_brain import brain
+
         memory = brain.memory
 
         if memory and pdf_tips:
@@ -437,7 +473,11 @@ class StrikeTips:
                 memory.add_form_insight(
                     horse=f"Official_Tip_R{tip['race_number']}",
                     insight=f"OFFICIAL TAB TIP: For Race {tip['race_number']}, the official selection is {tip['selections']}.",
-                    metadata={"date": today_str, "type": "official_tip", "race": tip["race_number"]},
+                    metadata={
+                        "date": today_str,
+                        "type": "official_tip",
+                        "race": tip["race_number"],
+                    },
                 )
             print(f"  📜 {len(pdf_tips)} official PDF tips grounded in memory.")
 
@@ -446,14 +486,19 @@ class StrikeTips:
         if agents:
             try:
                 from core_agent.agents.workflow import build_race_scan_workflow
+
                 workflow = build_race_scan_workflow(self, agents)
                 events = await workflow.run(tracks)
                 outputs = events.get_outputs() or []
                 total_value_bets = sum(
-                    1 for item in outputs
-                    if isinstance(item, dict) and "RECORD" in str(item.get("decision", "")).upper()
+                    1
+                    for item in outputs
+                    if isinstance(item, dict)
+                    and "RECORD" in str(item.get("decision", "")).upper()
                 )
-                print(f"\n[OK] MAF Workflow scan complete! {total_value_bets} selections flagged.")
+                print(
+                    f"\n[OK] MAF Workflow scan complete! {total_value_bets} selections flagged."
+                )
                 return {
                     "date": date.today().isoformat(),
                     "tracks_scanned": len(tracks),
@@ -471,7 +516,11 @@ class StrikeTips:
                 results = await self.scrape_and_analyze_track(track)
                 all_results[track] = results
                 if results:
-                    total_value_bets += sum(len(r.get("value_bets", [])) for r in results if isinstance(r, dict))
+                    total_value_bets += sum(
+                        len(r.get("value_bets", []))
+                        for r in results
+                        if isinstance(r, dict)
+                    )
                 if memory and results:
                     today_str = date.today().isoformat()
                     for race in results:
@@ -481,7 +530,11 @@ class StrikeTips:
                                 f"OFFICIAL RACE CARD: {race['track']} Race {race['race_number']} at {race['race_time']}. "
                                 f"Condition: {race['condition']}. Runners: {race['runners']}."
                             ),
-                            metadata={"date": today_str, "track": race["track"], "type": "official_card"},
+                            metadata={
+                                "date": today_str,
+                                "track": race["track"],
+                                "type": "official_card",
+                            },
                         )
             except Exception as e:
                 print(f"[ERR] Error processing {track}: {e}")
@@ -493,18 +546,24 @@ class StrikeTips:
             except Exception as e:
                 print(f"[ERR] Failed to send daily summary: {e}")
 
-        output_file = os.path.join(self.data_dir, f"daily_scan_{date.today().isoformat()}.json")
+        output_file = os.path.join(
+            self.data_dir, f"daily_scan_{date.today().isoformat()}.json"
+        )
         with open(output_file, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
 
         if _prometheus_enabled:
             try:
                 gateway_url = os.getenv("PROMETHEUS_PUSHGATEWAY", "localhost:9091")
-                push_to_gateway(gateway_url, job="strike_tips_daily_scan", registry=REGISTRY)
+                push_to_gateway(
+                    gateway_url, job="strike_tips_daily_scan", registry=REGISTRY
+                )
             except Exception:
                 pass
 
-        print(f"\n[OK] Scan complete! Found {total_value_bets} value bets across all tracks")
+        print(
+            f"\n[OK] Scan complete! Found {total_value_bets} value bets across all tracks"
+        )
         return {
             "date": date.today().isoformat(),
             "tracks_scanned": len(tracks),
@@ -517,39 +576,56 @@ class StrikeTips:
         return self.bankroll.generate_daily_report()
 
     async def evaluate_race(
-        self, track: str, race_number: int, horse_probabilities: Optional[Dict[str, float]] = None
+        self,
+        track: str,
+        race_number: int,
+        horse_probabilities: Optional[Dict[str, float]] = None,
     ) -> Dict:
         """Evaluate a specific race for value opportunities."""
         if not horse_probabilities:
             # 🛡️ Recursion Check: If we're already processing this track, don't trigger another full scrape_and_analyze
             today_iso = date.today().isoformat()
             track_key = f"{track}_{today_iso}"
-            
+
             if track_key in self._processing_tracks:
                 # Try to get from cache if it exists, otherwise return a wait/busy message
                 if track_key in self._track_data_cache:
                     races = self._track_data_cache[track_key]
                     for race in races:
                         if race.race_number == race_number:
-                             return {"status": "DATA_READY", "message": f"Data for {track} R{race_number} is available. Suggesting analysis on cached card.", "race_card": asdict(race)}
-                return {"status": "BUSY", "message": f"Track {track} is currently under analysis. Please wait 10 seconds."}
+                            return {
+                                "status": "DATA_READY",
+                                "message": f"Data for {track} R{race_number} is available. Suggesting analysis on cached card.",
+                                "race_card": asdict(race),
+                            }
+                return {
+                    "status": "BUSY",
+                    "message": f"Track {track} is currently under analysis. Please wait 10 seconds.",
+                }
 
             results = await self.scrape_and_analyze_track(track)
             for race in results:
                 if race.get("race_number") == race_number:
                     return {
-                        "status": "VALUE_FOUND" if race.get("value_bets") else "NO_VALUE",
-                        "top_selection": race["value_bets"][0] if race.get("value_bets") else None,
+                        "status": (
+                            "VALUE_FOUND" if race.get("value_bets") else "NO_VALUE"
+                        ),
+                        "top_selection": (
+                            race["value_bets"][0] if race.get("value_bets") else None
+                        ),
                         "all_selections": race.get("value_bets", []),
-                        "insight": race.get("ai_insight", "")
+                        "insight": race.get("ai_insight", ""),
                     }
-            return {"status": "NO_VALUE", "message": f"Race {race_number} at {track} not found"}
+            return {
+                "status": "NO_VALUE",
+                "message": f"Race {race_number} at {track} not found",
+            }
 
         # If they ARE provided (e.g. from an LLM estimate), run the edge analyzer
         # This part requires creating a temporary RaceCard
         # For simplicity, we'll use the existing analyzer logic
         from core_agent.skills.race_analysis.analyzer import RaceCard, Runner
-        
+
         # We'd need actual odds here, but we'll assume current market odds if possible
         # For now, return a placeholder or use form-based estimates
         return {"status": "ANALYSIS_COMPLETE", "track": track, "race": race_number}
@@ -567,7 +643,7 @@ class StrikeTips:
                     return data
             except Exception as e:
                 logger.error(f"Error reading odds snapshot: {e}")
-        
+
         return {"status": "no_snapshot_available"}
 
     async def verify_race_event(self, track: str, race_num: int) -> bool:
@@ -584,8 +660,7 @@ class StrikeTips:
             return False
         except Exception as e:
             logger.error(f"Error verifying race {race_num} at {track}: {e}")
-            return False # Assume it doesn't exist if an error occurs
-
+            return False  # Assume it doesn't exist if an error occurs
 
     async def close(self):
         """Clean up resources"""
@@ -669,10 +744,11 @@ async def main_async():
             print("\n[MAF] Strike Tips AI - Interactive Mode")
             print("=" * 50)
             print("Type 'exit' or 'quit' to end session.")
-            
+
             from core_agent.agents.ai_pydantic import UnifiedOrchestrator
+
             orchestrator = UnifiedOrchestrator(strike)
-            
+
             while True:
                 try:
                     # Check for prompt input
@@ -681,7 +757,7 @@ async def main_async():
                         break
                     if not user_input:
                         continue
-                        
+
                     result = await orchestrator.chat(user_input)
                     print(f"\n[AI] {result.summary}")
                 except KeyboardInterrupt:

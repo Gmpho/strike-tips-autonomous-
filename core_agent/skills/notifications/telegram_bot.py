@@ -95,7 +95,9 @@ class TelegramNotifier:
         """Send a bet result notification"""
         emoji = "🎉" if won else "❌"
         status = "WON" if won else "LOST"
-        pl_str = f"+R{profit_loss:.2f}" if profit_loss >= 0 else f"-R{abs(profit_loss):.2f}"
+        pl_str = (
+            f"+R{profit_loss:.2f}" if profit_loss >= 0 else f"-R{abs(profit_loss):.2f}"
+        )
 
         text = (
             f"{emoji} <b>Race Result - {status}</b>\n\n"
@@ -108,7 +110,9 @@ class TelegramNotifier:
     def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
         """Send a daily summary of all value bets found"""
         total_value_bets = sum(
-            len(r.get("value_bets", [])) for races in scan_results.values() for r in races
+            len(r.get("value_bets", []))
+            for races in scan_results.values()
+            for r in races
         )
 
         lines = [f"🏇 <b>STRIKE TIPS - Daily Intelligence Report</b>\n"]

@@ -21,30 +21,57 @@ from core_agent.config.settings import TRACKS, NOTIFICATIONS
 import io
 import sys
 
+
 def setup_emoji_filter():
     """Setup to replace ASCII tags with emojis in stdout."""
+
     class EmojiFilter(io.TextIOWrapper):
         def __init__(self, buffer):
             super().__init__(buffer, encoding="utf-8", errors="replace")
+
         def write(self, text):
             replacements = {
-                "[RUN]": "🏇", "[DATE]": "📅", "[OK]": "✅", "[ERR]": "❌",
-                "[SCAN]": "🔄", "[HIT]": "🎯", "[TIME]": "⏰", "[LOC]": "📍",
-                "[MAF]": "🧠", "[STOP]": "🛑", "[START]": "🚀", "[WORLD]": "🌍",
-                "[SA]": "🇿🇦", "[UK]": "🇬🇧", "[AU]": "🇦🇺", "[US]": "🇺🇸",
-                "[IE]": "🇮🇪", "[FR]": "🇫🇷", "[HK]": "🇭🇰", "[JP]": "🇯🇵",
-                "[WARN]": "⚠️", "[STATS]": "📊", "[LOOKUP]": "🔍", "[LIST]": "📋",
-                "[BOT]": "🤖", "[CHAT]": "💬", "[HEALTH]": "🏥", "[SEC]": "🔐",
+                "[RUN]": "🏇",
+                "[DATE]": "📅",
+                "[OK]": "✅",
+                "[ERR]": "❌",
+                "[SCAN]": "🔄",
+                "[HIT]": "🎯",
+                "[TIME]": "⏰",
+                "[LOC]": "📍",
+                "[MAF]": "🧠",
+                "[STOP]": "🛑",
+                "[START]": "🚀",
+                "[WORLD]": "🌍",
+                "[SA]": "🇿🇦",
+                "[UK]": "🇬🇧",
+                "[AU]": "🇦🇺",
+                "[US]": "🇺🇸",
+                "[IE]": "🇮🇪",
+                "[FR]": "🇫🇷",
+                "[HK]": "🇭🇰",
+                "[JP]": "🇯🇵",
+                "[WARN]": "⚠️",
+                "[STATS]": "📊",
+                "[LOOKUP]": "🔍",
+                "[LIST]": "📋",
+                "[BOT]": "🤖",
+                "[CHAT]": "💬",
+                "[HEALTH]": "🏥",
+                "[SEC]": "🔐",
             }
             for tag, emoji in replacements.items():
                 text = text.replace(tag, emoji)
             super().write(text)
+
     sys.stdout = EmojiFilter(sys.stdout.buffer)
+
 
 try:
     setup_emoji_filter()
 except:
     pass
+
 
 class StrikeTipsScheduler:
     def __init__(self, scan_time: str = "11:00", data_dir: str = "./data"):
@@ -56,6 +83,7 @@ class StrikeTipsScheduler:
 
     async def _get_todays_tracks(self) -> list:
         from core_agent.skills.race_schedule import RaceScheduleService
+
         service = RaceScheduleService()
         tracks = await service.get_todays_tracks()
         return tracks
@@ -71,17 +99,24 @@ class StrikeTipsScheduler:
 
     def run_daily_grounding_job(self):
         """Syncs all track PDFs into memory via strike_tips.py."""
-        print(f"\n[TIME] Starting daily PDF memory grounding at {datetime.now().strftime('%H:%M')}")
+        print(
+            f"\n[TIME] Starting daily PDF memory grounding at {datetime.now().strftime('%H:%M')}"
+        )
         try:
             # We use a subprocess call to trigger the sync logic defined in strike_tips.py
             import subprocess
-            subprocess.run(["python3", "core_agent/core/strike_tips.py", "sync_pdfs"], check=True)
+
+            subprocess.run(
+                ["python3", "core_agent/core/strike_tips.py", "sync_pdfs"], check=True
+            )
             print("[OK] Daily grounding complete.")
         except Exception as e:
             print(f"[ERR] PDF grounding failed: {e}")
 
     def pre_warm_tomorrow_job(self):
-        print(f"\n[TIME] Pre-warming tomorrow's data at {datetime.now().strftime('%H:%M')}")
+        print(
+            f"\n[TIME] Pre-warming tomorrow's data at {datetime.now().strftime('%H:%M')}"
+        )
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -91,10 +126,11 @@ class StrikeTipsScheduler:
 
     async def _pre_warm_tomorrow_async(self):
         from core_agent.skills.race_schedule import RaceScheduleService
+
         service = RaceScheduleService()
         tracks = await service.get_tomorrows_tracks()
         sa_tracks = [t for t in tracks.keys() if t in TRACKS]
-        
+
         if sa_tracks:
             print(f"[CACHE] Pre-warming {len(sa_tracks)} tracks for tomorrow.")
             strike = StrikeTips(data_dir=self.data_dir)
@@ -106,7 +142,9 @@ class StrikeTipsScheduler:
                 await strike.close()
 
     def daily_scan_job(self):
-        print(f"\n{'=' * 60}\n[TIME] Daily scan starting at {datetime.now().strftime('%H:%M')}\n{'=' * 60}")
+        print(
+            f"\n{'=' * 60}\n[TIME] Daily scan starting at {datetime.now().strftime('%H:%M')}\n{'=' * 60}"
+        )
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -157,16 +195,20 @@ class StrikeTipsScheduler:
         if self.scheduler_thread:
             self.scheduler_thread.join()
 
+
 async def run_immediate_scan_async():
     print("[RUN] Running immediate scan...")
     # Add your robust daily scan logic here
     print("[OK] Immediate scan complete.")
 
+
 def run_immediate_scan():
     asyncio.run(run_immediate_scan_async())
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Strike Tips Scheduler")
     parser.add_argument("command", choices=["start", "scan"])
     args = parser.parse_args()
@@ -174,6 +216,7 @@ def main():
         StrikeTipsScheduler().start()
     elif args.command == "scan":
         run_immediate_scan()
+
 
 if __name__ == "__main__":
     main()

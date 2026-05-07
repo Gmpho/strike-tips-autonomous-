@@ -4,10 +4,12 @@ from typing import List, Dict
 
 router = APIRouter(prefix="/api/dreaming", tags=["dreaming"])
 
+
 @router.get("/logs")
 async def get_dream_logs():
     """Get the most recent AI dreams/simulations."""
     return dream_engine.get_recent_dreams()
+
 
 @router.post("/pulse")
 async def trigger_dream():

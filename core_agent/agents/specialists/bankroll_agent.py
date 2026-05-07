@@ -4,6 +4,7 @@ from core_agent.config.model_factory import get_client
 
 def build_bankroll_agent(strike, skills_provider: SkillsProvider) -> Agent:
     from core_agent.agents.tools import build_tools
+
     _, bankroll_tools, _ = build_tools(strike)
     client = get_client("FUNC_CALL")
     return client.as_agent(

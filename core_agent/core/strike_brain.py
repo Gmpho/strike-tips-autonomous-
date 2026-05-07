@@ -19,13 +19,14 @@ class StrikeBrain:
     def __init__(self, data_dir: Optional[str] = None, enable_telegram: bool = True):
         # 🛡️ Docker Resilience: Use env var if present, otherwise fallback to centralized config
         from core_agent.config.paths import DATA_DIR as PROJECT_DATA_DIR
+
         env_data_dir = os.getenv("DATA_DIR")
         if env_data_dir:
             self.data_dir = env_data_dir
         else:
             # Use absolute path to the centralized directory
             self.data_dir = data_dir or str(PROJECT_DATA_DIR)
-        
+
         self.chroma_dir = os.path.join(self.data_dir, "chroma")
         self.enable_telegram = enable_telegram
 
@@ -56,9 +57,10 @@ class StrikeBrain:
 
         # Domain Imports
         import sys
-        if '/app' not in sys.path:
-            sys.path.append('/app')
-            
+
+        if "/app" not in sys.path:
+            sys.path.append("/app")
+
         from core_agent.core.strike_tips import StrikeTips
         from core_agent.skills.memory.chroma_memory import RacingMemory
         from core_agent.tools.maf_tool_registry import TOOL_REGISTRY as AgentTools

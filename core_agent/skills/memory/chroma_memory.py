@@ -12,6 +12,7 @@ logger = logging.getLogger("racing-memory")
 try:
     import chromadb
     from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
     HAS_CHROMA = True
 except ImportError:
     HAS_CHROMA = False
@@ -30,6 +31,7 @@ class RacingMemory:
 
     def __init__(self, data_dir: str = None):
         from core_agent.config.paths import CHROMA_DIR
+
         self.data_dir = os.path.abspath(data_dir or CHROMA_DIR)
         os.makedirs(self.data_dir, exist_ok=True)
 
@@ -45,6 +47,7 @@ class RacingMemory:
         """Initialize ChromaDB persistent client"""
         try:
             import chromadb
+
             self._client = chromadb.PersistentClient(path=self.data_dir)
             self._form_collection = self._client.get_or_create_collection(
                 name="form_insights",
@@ -109,14 +112,13 @@ class RacingMemory:
 
     # ─── Chat History ─────────────────────────────────────────────────────────
 
-    def add_chat_message(
-        self, role: str, content: str, source: str = "web"
-    ) -> bool:
+    def add_chat_message(self, role: str, content: str, source: str = "web") -> bool:
         """Store a chat message in history"""
         if not self._is_ready:
             return False
         try:
             from datetime import datetime
+
             doc_id = f"chat_{datetime.now().timestamp()}"
             self._chat_collection.add(
                 documents=[content],
@@ -159,7 +161,9 @@ class RacingMemory:
                     self._chat_collection.delete(ids=ids)
             else:
                 self._client.delete_collection("chat_history")
-                self._chat_collection = self._client.get_or_create_collection("chat_history")
+                self._chat_collection = self._client.get_or_create_collection(
+                    "chat_history"
+                )
             return True
         except Exception as e:
             logger.error(f"Clear history error: {e}")
@@ -186,15 +190,14 @@ class RacingMemory:
         """
         import httpx
         from core_agent.config.model_config import ModelConfig
-        
+
         host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
         model = ModelConfig.EMBEDDER or "nomic-embed-text"
-        
+
         try:
             with httpx.Client(timeout=30.0) as client:
                 resp = client.post(
-                    f"{host}/api/embeddings",
-                    json={"model": model, "prompt": text}
+                    f"{host}/api/embeddings", json={"model": model, "prompt": text}
                 )
                 if resp.status_code == 200:
                     return resp.json().get("embedding", [])

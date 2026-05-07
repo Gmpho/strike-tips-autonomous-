@@ -96,6 +96,7 @@ TOOL_INFO: Dict[str, Dict] = {
 
 # ─── Tool Implementations ─────────────────────────────────────────────────────
 
+
 def get_account_summary(strike=None, **kwargs) -> Dict:
     """Return bankroll status and performance summary."""
     if not strike:
@@ -127,10 +128,9 @@ def calculate_probability_edge(
             "edge_percent": round(edge, 2),
             "has_value": edge >= 5.0,
             "confidence": (
-                "STRONG_VALUE" if edge >= 15 else
-                "VALUE" if edge >= 8 else
-                "MARGINAL" if edge >= 5 else
-                "NO_VALUE"
+                "STRONG_VALUE"
+                if edge >= 15
+                else "VALUE" if edge >= 8 else "MARGINAL" if edge >= 5 else "NO_VALUE"
             ),
         }
     except Exception as e:
@@ -169,11 +169,15 @@ def record_selection(
     """Record a selection through the bankroll governor."""
     if not strike:
         return {"status": "ERROR", "reason": "StrikeTips not initialized"}
-    
+
     from core_agent.core.strike_brain import brain
+
     if hasattr(brain, "emergency_stop") and brain.emergency_stop:
-        return {"status": "REJECTED", "reason": "SAFETY REJECTED: System Lock Active (Kill Switch Triggered)"}
-        
+        return {
+            "status": "REJECTED",
+            "reason": "SAFETY REJECTED: System Lock Active (Kill Switch Triggered)",
+        }
+
     try:
         bet = strike.bankroll.record_bet(
             track=track,
@@ -186,7 +190,10 @@ def record_selection(
         )
         if bet:
             return {"status": "RECORDED", "bet_id": bet.bet_id, "stake": bet.stake}
-        return {"status": "REJECTED", "reason": "Governor limits exceeded or insufficient edge"}
+        return {
+            "status": "REJECTED",
+            "reason": "Governor limits exceeded or insufficient edge",
+        }
     except Exception as e:
         return {"status": "ERROR", "reason": str(e)}
 
@@ -207,7 +214,10 @@ def update_race_result(
                 "result": "WON" if won else "LOST",
                 "new_balance": strike.bankroll.current_bankroll,
             }
-        return {"status": "ERROR", "reason": f"Selection {selection_id} not found or already settled"}
+        return {
+            "status": "ERROR",
+            "reason": f"Selection {selection_id} not found or already settled",
+        }
     except Exception as e:
         return {"status": "ERROR", "reason": str(e)}
 
@@ -232,29 +242,29 @@ def search_racing_data(query: str, **kwargs) -> Dict:
     try:
         from ddgs import DDGS
         from datetime import datetime
-        
+
         current_year = datetime.now().year
-        
+
         # List of queries for high-confidence current discovery
         queries = [
             f"{query} today's racecard results {current_year}",
             f"{query} live odds fixtures {current_year}",
-            f"South African horse racing {query} {current_year}"
+            f"South African horse racing {query} {current_year}",
         ]
-        
+
         all_snippets = []
         with DDGS() as ddgs:
             for q in queries:
                 results = list(ddgs.text(q, max_results=2))
                 all_snippets.extend([r.get("body", "") for r in results])
-        
+
         # Deduplicate snippets
         unique_snippets = list(set(all_snippets))
         return {
-            "query": query, 
-            "results": unique_snippets, 
+            "query": query,
+            "results": unique_snippets,
             "count": len(unique_snippets),
-            "status": "success" if unique_snippets else "no_data_found"
+            "status": "success" if unique_snippets else "no_data_found",
         }
     except Exception as e:
         return {"query": query, "error": str(e), "results": [], "status": "error"}
@@ -266,6 +276,7 @@ def verify_race_exists(track: str, race_number: int, strike=None, **kwargs) -> D
         return {"exists": False, "reason": "StrikeTips not initialized"}
     try:
         import asyncio
+
         loop = asyncio.get_event_loop()
         exists = loop.run_until_complete(strike.verify_race_event(track, race_number))
         return {
@@ -284,6 +295,7 @@ def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) -> Dic
         return {"status": "no_snapshot_available"}
     try:
         import asyncio
+
         loop = asyncio.get_event_loop()
         return loop.run_until_complete(strike.get_odds_snapshot(track=track))
     except Exception as e:
@@ -302,7 +314,9 @@ async def evaluate_race(
         return {"status": "ERROR", "reason": str(e)}
 
 
-async def run_daily_analysis(tracks: Optional[List[str]] = None, strike=None, **kwargs) -> Dict:
+async def run_daily_analysis(
+    tracks: Optional[List[str]] = None, strike=None, **kwargs
+) -> Dict:
     """Run the full daily analysis scan across all tracks."""
     if not strike:
         return {"status": "ERROR", "reason": "StrikeTips not initialized"}

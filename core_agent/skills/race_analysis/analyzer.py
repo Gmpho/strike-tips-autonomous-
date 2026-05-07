@@ -14,6 +14,7 @@ logger = logging.getLogger("race-analysis")
 @dataclass
 class Runner:
     """Represents a horse in a race"""
+
     horse_name: str
     odds_decimal: float
     odds_fractional: Optional[str] = None
@@ -29,6 +30,7 @@ class Runner:
 @dataclass
 class RaceCard:
     """Full race card for a single race"""
+
     track: str
     race_number: int
     race_time: str
@@ -42,6 +44,7 @@ class RaceCard:
 @dataclass
 class ValueBet:
     """A value bet opportunity identified by analysis"""
+
     horse: str
     track: str
     race_number: int
@@ -76,9 +79,7 @@ class RaceAnalyzer:
             return 1.0
         return 1.0 / decimal_odds
 
-    def calculate_edge(
-        self, estimated_prob: float, decimal_odds: float
-    ) -> float:
+    def calculate_edge(self, estimated_prob: float, decimal_odds: float) -> float:
         """Calculate the edge as a percentage"""
         implied_prob = self.calculate_implied_probability(decimal_odds)
         return (estimated_prob - implied_prob) * 100.0
@@ -129,60 +130,86 @@ class RaceAnalyzer:
             if runner.horse_name in probability_estimates:
                 # Safety handler for Starting Price (SP) or non-numeric odds
                 try:
-                    safe_odds = float(runner.odds_decimal) if runner.odds_decimal else 5.0
+                    safe_odds = (
+                        float(runner.odds_decimal) if runner.odds_decimal else 5.0
+                    )
                 except (ValueError, TypeError):
                     safe_odds = 5.0
 
-                runners_data.append({
-                    "name": runner.horse_name,
-                    "odds": safe_odds,
-                    "est_prob": probability_estimates[runner.horse_name]
-                })
+                runners_data.append(
+                    {
+                        "name": runner.horse_name,
+                        "odds": safe_odds,
+                        "est_prob": probability_estimates[runner.horse_name],
+                    }
+                )
 
         if not runners_data:
             return []
 
         df = pl.DataFrame(runners_data)
-        
+
         # Vectorized calculations
-        df = df.with_columns([
-            (pl.col("est_prob") - (1.0 / pl.col("odds"))).mul(100.0).alias("edge_percent"),
-            (((pl.col("odds") - 1.0) * pl.col("est_prob") - (1.0 - pl.col("est_prob"))) / (pl.col("odds") - 1.0)).alias("kelly")
-        ])
-        
+        df = df.with_columns(
+            [
+                (pl.col("est_prob") - (1.0 / pl.col("odds")))
+                .mul(100.0)
+                .alias("edge_percent"),
+                (
+                    (
+                        (pl.col("odds") - 1.0) * pl.col("est_prob")
+                        - (1.0 - pl.col("est_prob"))
+                    )
+                    / (pl.col("odds") - 1.0)
+                ).alias("kelly"),
+            ]
+        )
+
         # Kelly Calculation
-        df = df.with_columns([
-            (pl.col("kelly") * self.KELLY_FRACTION * 100.0).alias("kelly_stake_percent")
-        ])
-        
+        df = df.with_columns(
+            [
+                (pl.col("kelly") * self.KELLY_FRACTION * 100.0).alias(
+                    "kelly_stake_percent"
+                )
+            ]
+        )
+
         # Filter for value and clamp stake
         df = df.filter(pl.col("edge_percent") >= self.MIN_EDGE_PERCENT)
-        df = df.with_columns([
-            pl.col("kelly_stake_percent").clip(0.0, self.MAX_BET_PERCENT).alias("clamped_kelly")
-        ])
-        
+        df = df.with_columns(
+            [
+                pl.col("kelly_stake_percent")
+                .clip(0.0, self.MAX_BET_PERCENT)
+                .alias("clamped_kelly")
+            ]
+        )
+
         value_bets = []
         reasoning_map = reasoning_map or {}
-        
+
         for row in df.to_dicts():
             advised_stake = (row["clamped_kelly"] / 100.0) * self.bankroll
             confidence = self.get_confidence(row["edge_percent"])
-            
-            value_bets.append(ValueBet(
-                horse=row["name"],
-                track=race_card.track,
-                race_number=race_card.race_number,
-                race_time=race_card.race_time,
-                odds_decimal=row["odds"],
-                estimated_probability=row["est_prob"],
-                implied_probability=1.0 / row["odds"],
-                edge_percent=round(row["edge_percent"], 2),
-                kelly_stake_percent=round(row["clamped_kelly"], 2),
-                advised_stake=round(advised_stake, 2),
-                confidence=confidence,
-                reasoning=reasoning_map.get(row["name"], "Edge detected via Polars engine"),
-            ))
-            
+
+            value_bets.append(
+                ValueBet(
+                    horse=row["name"],
+                    track=race_card.track,
+                    race_number=race_card.race_number,
+                    race_time=race_card.race_time,
+                    odds_decimal=row["odds"],
+                    estimated_probability=row["est_prob"],
+                    implied_probability=1.0 / row["odds"],
+                    edge_percent=round(row["edge_percent"], 2),
+                    kelly_stake_percent=round(row["clamped_kelly"], 2),
+                    advised_stake=round(advised_stake, 2),
+                    confidence=confidence,
+                    reasoning=reasoning_map.get(
+                        row["name"], "Edge detected via Polars engine"
+                    ),
+                )
+            )
+
         value_bets.sort(key=lambda vb: vb.edge_percent, reverse=True)
         return value_bets
 

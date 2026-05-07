@@ -4,7 +4,15 @@ Strike Bot API Entry Point
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
-from core_agent.routes import agent, betting, racing, config, monitoring, healing, dreaming
+from core_agent.routes import (
+    agent,
+    betting,
+    racing,
+    config,
+    monitoring,
+    healing,
+    dreaming,
+)
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import AuthMiddleware
 from fastapi.middleware.cors import CORSMiddleware
