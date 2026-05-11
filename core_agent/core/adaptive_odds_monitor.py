@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import sys
-import os
 import difflib
 from datetime import datetime
 
@@ -37,7 +36,7 @@ class AdaptiveOddsMonitor:
         self.events_cache = self.intel_cache.rehydrate()
 
     async def _fetch_oc_odds_loop(self):
-        """Task to fetch Oddschecker odds."""
+        """Fetch Oddschecker best odds periodically (lightweight httpx, no browser)."""
         while self.monitoring_active:
             try:
                 odds = await self.oc_scraper.get_latest_odds()
@@ -45,7 +44,7 @@ class AdaptiveOddsMonitor:
                     self.oc_state["odds"] = odds
             except Exception as e:
                 logger.warning(f"⚠️ OC fetch error: {e}")
-            await asyncio.sleep(90)
+            await asyncio.sleep(300)
 
     async def run(self):
         await self.initialize()
@@ -133,7 +132,7 @@ class AdaptiveOddsMonitor:
 
                 logger.debug(traceback.format_exc())
 
-            await asyncio.sleep(20)
+            await asyncio.sleep(45)
 
 
 if __name__ == "__main__":
