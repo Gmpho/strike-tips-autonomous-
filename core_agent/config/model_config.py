@@ -51,9 +51,15 @@ class ModelConfig:
     ]
 
     # Fallback chains
-    PARALLEL = "gemini-3-flash-preview:cloud"
-    CLOUD_FALLBACK = "gemini-3-flash-preview:cloud"
-    GEMINI_CHAIN = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-3-flash-preview"]
+    PARALLEL = "gemini-2.0-flash"
+    CLOUD_FALLBACK = "gemini-2.0-flash"
+    GEMINI_CHAIN = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+
+    # Groq model aliases
+    ORCHESTRATOR = "llama-3.1-8b-instant"
+    SCRAPER = "racing_llama"
+    FUNC_CALL = "func_gemma"
+    FAST_LOCAL = "llama3.2:1b"
 
     @classmethod
     def get_provider_config(cls) -> Dict:

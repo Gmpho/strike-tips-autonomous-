@@ -3,7 +3,6 @@ import json
 from typing import Dict
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
-
 logger = logging.getLogger("oddschecker-scraper")
 
 

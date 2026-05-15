@@ -139,12 +139,12 @@ def _resolve_stream_model(
     specialist = pipeline.classifier.specialist_for(intent) if intent else "analyst"
 
     specialist_model_map = {
-        "analyst": ModelConfig.THINKING or ModelConfig.FAST_LOCAL,
-        "scanner": ModelConfig.SCRAPER or ModelConfig.FAST_LOCAL,
-        "bankroll": ModelConfig.FUNC_CALL or ModelConfig.SCRAPER,
-        "search": ModelConfig.FAST_LOCAL or ModelConfig.SCRAPER,
+        "analyst": "groq:llama-3.1-8b-instant",
+        "scanner": "groq:llama-3.1-8b-instant",
+        "bankroll": "groq:llama-3.1-8b-instant",
+        "search": "groq:llama-3.1-8b-instant",
     }
-    routed_model = specialist_model_map.get(specialist, ModelConfig.FAST_LOCAL)
+    routed_model = specialist_model_map.get(specialist, ModelConfig.CLOUD_FALLBACK)
 
     override = (model_override or "").strip()
     # Safe pass-through: only allow simple model-id characters.
@@ -265,6 +265,42 @@ async def agent_chat_stream(request: AgentRequest, fastapi_request: Request):
             from core_agent.config.model_config import ModelConfig
 
             routing = _resolve_stream_model(request.message, request.model)
+            final_model = routing["model"]
+            final_provider = routing["provider"]
+            started = time.monotonic()
+            req_id = _request_id(fastapi_request)
+
+            # --- Groq fast path ---
+            if final_provider == "groq":
+                import os
+                groq_key = os.getenv("GROQ_API_KEY", "")
+                groq_model = final_model.replace("groq:", "")
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        async with client.stream(
+                            "POST",
+                            "https://api.groq.com/openai/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                            json={"model": groq_model, "messages": [{"role": "user", "content": request.message}], "stream": True, "max_tokens": 512},
+                        ) as resp:
+                            async for line in resp.aiter_lines():
+                                if not line or not line.startswith("data: "):
+                                    continue
+                                raw = line[6:]
+                                if raw.strip() == "[DONE]":
+                                    yield f"data: {_json.dumps({'token': '', 'done': True, 'model': groq_model, 'provider': 'groq'})}\n\n"
+                                    break
+                                try:
+                                    chunk = _json.loads(raw)
+                                    token = chunk["choices"][0]["delta"].get("content", "")
+                                    if token:
+                                        yield f"data: {_json.dumps({'token': token, 'done': False})}\n\n"
+                                except Exception:
+                                    continue
+                except Exception as e:
+                    yield f"data: {_json.dumps({'token': f'Groq error: {str(e)[:80]}', 'done': True})}\n\n"
+                return
+
             chat_url = ModelConfig.ollama_native_url("/api/chat")
             payload = {
                 "model": routing["model"],
@@ -273,10 +309,6 @@ async def agent_chat_stream(request: AgentRequest, fastapi_request: Request):
                 "think": False,
                 "options": {"num_predict": 256, "temperature": 0.1},
             }
-            final_model = routing["model"]
-            final_provider = routing["provider"]
-            started = time.monotonic()
-            req_id = _request_id(fastapi_request)
 
             try:
                 async with httpx.AsyncClient(
