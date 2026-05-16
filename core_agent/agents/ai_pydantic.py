@@ -12,11 +12,8 @@ Existing imports like `from core_agent.agents.ai_pydantic import UnifiedOrchestr
 continue to work unchanged.
 """
 
-from core_agent.agents.orchestrator import AgentResponse, UnifiedOrchestrator
-from core_agent.agents.pipeline import run as _pipeline_run
+from core_agent.agents.orchestrator import AgentResponse, UnifiedOrchestrator, _reply_to_response
 from core_agent.agents.schemas import AgentReply
-
-# Legacy classes kept for any direct imports
 from core_agent.agents.intent_classifier import IntentClassifier
 
 
@@ -28,8 +25,8 @@ class ModelPipeline:
         self.classifier = IntentClassifier()
 
     async def chat(self, message: str, model_override=None) -> AgentResponse:
-        from core_agent.agents.orchestrator import _reply_to_response
-        reply = await _pipeline_run(message, model_override=model_override)
+        from core_agent.agents import pipeline
+        reply = await pipeline.run(message, model_override=model_override)
         return _reply_to_response(reply)
 
 

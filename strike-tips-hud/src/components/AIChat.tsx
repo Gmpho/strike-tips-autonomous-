@@ -12,7 +12,7 @@ export const AIChat: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
-  const [lastModelUsed] = useState<string | null>(null);
+  const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const getActivities = (msg: string): string[] => {
@@ -50,43 +50,31 @@ export const AIChat: React.FC = () => {
     setMessages(prev => [...prev, { role: 'ai', content: '', timestamp: now }]);
 
     try {
-      const res = await fetch('/ollama/api/chat', {
+      const res = await fetch('/api/agent/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': 'sk_prod_f45b26f15c97460e9809133e1959c1d8',
+        },
         body: JSON.stringify({
-          model: selectedModel !== 'auto' ? selectedModel : 'racing_llama',
-          messages: [{ role: 'user', content: userMsg }],
-          stream: true,
+          message: userMsg,
+          model: selectedModel !== 'auto' ? selectedModel : undefined,
         }),
       });
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const data = await res.json();
+      clearInterval(actInterval);
+      setCurrentActivity(null);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+      const text = data.response || data.summary || 'No response received.';
+      const modelUsed = data.model || data.model_used || '';
+      if (modelUsed) setLastModelUsed(modelUsed);
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const chunk = JSON.parse(line);
-            if (chunk.message && chunk.message.content) {
-              clearInterval(actInterval);
-              setCurrentActivity(null);
-              setMessages(prev => prev.map((m, i) =>
-                i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: m.content + chunk.message.content }
-                  : m
-              ));
-            }
-          } catch (e) { console.error('Stream parse error', e); }
-        }
-      }
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m.role === 'ai'
+          ? { ...m, content: text, activity: modelUsed }
+          : m
+      ));
     } catch {
       clearInterval(actInterval);
       setMessages(prev => prev.map((m, i) =>
@@ -179,7 +167,10 @@ export const AIChat: React.FC = () => {
             onChange={(e) => setSelectedModel(e.target.value)}
             className="bg-transparent border border-white/10 rounded-xl px-3 py-3 text-white text-xs focus:outline-none focus:border-purple-500"
             >
-            <option value="auto" className="bg-black">Auto Route</option>
+            <option value="auto" className="bg-black">⚡ Auto (Groq)</option>
+            <option value="groq:llama-3.1-8b-instant" className="bg-black">Groq Llama 3.1</option>
+            <option value="gemini:gemini-2.0-flash" className="bg-black">Gemini 2.0 Flash</option>
+            <option value="gemini:gemini-2.5-flash" className="bg-black">Gemini 2.5 Flash</option>
             <option value="racing_llama" className="bg-black">racing_llama</option>
             <option value="racing_qwen" className="bg-black">racing_qwen</option>
             <option value="func_gemma" className="bg-black">func_gemma</option>

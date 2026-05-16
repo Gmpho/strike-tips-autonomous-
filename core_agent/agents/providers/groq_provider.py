@@ -56,6 +56,13 @@ TOOLS: List[Dict[str, Any]] = [
             "estimated_probability": {"type": "number"},
         }, "required": ["decimal_odds", "estimated_probability"]},
     }},
+    {"type": "function", "function": {
+        "name": "search_racing_data",
+        "description": "Search the web for horse racing information — tomorrow's races, results, news, track conditions.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Search query e.g. 'tomorrow SA races 2026' or 'Kenilworth results today'"}
+        }, "required": ["query"]},
+    }},
 ]
 
 

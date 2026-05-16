@@ -244,27 +244,30 @@ def search_racing_data(query: str, **kwargs) -> Dict:
         from datetime import datetime
 
         current_year = datetime.now().year
-
-        # List of queries for high-confidence current discovery
         queries = [
-            f"{query} today's racecard results {current_year}",
-            f"{query} live odds fixtures {current_year}",
-            f"South African horse racing {query} {current_year}",
+            f"{query} {current_year}",
+            f"horse racing {query} {current_year}",
         ]
 
-        all_snippets = []
+        all_results = []
+        seen = set()
         with DDGS() as ddgs:
             for q in queries:
-                results = list(ddgs.text(q, max_results=2))
-                all_snippets.extend([r.get("body", "") for r in results])
+                for r in ddgs.text(q, max_results=3):
+                    key = r.get("href", "")
+                    if key not in seen:
+                        seen.add(key)
+                        all_results.append({
+                            "title": r.get("title", ""),
+                            "snippet": r.get("body", ""),
+                            "url": r.get("href", ""),
+                        })
 
-        # Deduplicate snippets
-        unique_snippets = list(set(all_snippets))
         return {
             "query": query,
-            "results": unique_snippets,
-            "count": len(unique_snippets),
-            "status": "success" if unique_snippets else "no_data_found",
+            "results": all_results[:6],
+            "count": len(all_results),
+            "status": "success" if all_results else "no_data_found",
         }
     except Exception as e:
         return {"query": query, "error": str(e), "results": [], "status": "error"}

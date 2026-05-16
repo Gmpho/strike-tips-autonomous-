@@ -5,7 +5,6 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
 logger = logging.getLogger("oddschecker-scraper")
 
-
 class OddscheckerScraper:
     """Oddschecker scraper using Crawl4AI. Browser spawns and closes per call — no persistent process."""
 

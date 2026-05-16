@@ -56,7 +56,7 @@ class ModelConfig:
     GEMINI_CHAIN = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
 
     # Groq model aliases
-    ORCHESTRATOR = "llama-3.1-8b-instant"
+    ORCHESTRATOR = "llama-3.3-70b-versatile"  # Better tool calling than 8b
     SCRAPER = "racing_llama"
     FUNC_CALL = "func_gemma"
     FAST_LOCAL = "llama3.2:1b"
