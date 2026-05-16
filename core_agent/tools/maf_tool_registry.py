@@ -242,6 +242,7 @@ def search_racing_data(query: str, **kwargs) -> Dict:
     try:
         from ddgs import DDGS
         from datetime import datetime
+        import httpx
 
         current_year = datetime.now().year
         queries = [
@@ -262,6 +263,28 @@ def search_racing_data(query: str, **kwargs) -> Dict:
                             "snippet": r.get("body", ""),
                             "url": r.get("href", ""),
                         })
+
+        # For SA-specific queries, also try to fetch Racing SA directly
+        if any(kw in query.lower() for kw in ("south africa", " sa ", "sa race", "kenilworth", "scottsville", "vaal", "turffontein", "fairview", "greyville")):
+            try:
+                resp = httpx.get(
+                    "https://www.racingsa.co.za/racing-calendar/",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=8,
+                    follow_redirects=True,
+                )
+                if resp.status_code == 200:
+                    # Extract text content (strip HTML tags simply)
+                    import re
+                    text = re.sub(r"<[^>]+>", " ", resp.text)
+                    text = re.sub(r"\s+", " ", text).strip()
+                    all_results.insert(0, {
+                        "title": "Racing SA Official Calendar",
+                        "snippet": text[:800],
+                        "url": "https://www.racingsa.co.za/racing-calendar/",
+                    })
+            except Exception:
+                pass
 
         return {
             "query": query,
