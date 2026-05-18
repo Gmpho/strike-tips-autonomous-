@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import difflib
 from datetime import datetime
@@ -10,6 +11,29 @@ from core_agent.core.alert_engine import AlertEngine
 from core_agent.skills.parsers.betway_api import BetwayAPI
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
+
+HEALING_EVENTS_PATH = os.path.join("data", "healing_events.json")
+
+
+def _write_healing_event(action: str, details: str, agent: str = "OddsMonitor", status: str = "SUCCESS"):
+    """Append a healing event to the shared log file."""
+    try:
+        events = []
+        if os.path.exists(HEALING_EVENTS_PATH):
+            with open(HEALING_EVENTS_PATH) as f:
+                events = json.load(f)
+        events.append({
+            "id": f"{action.lower()}-{int(datetime.now().timestamp())}",
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "details": details,
+            "agent": agent,
+            "status": status,
+        })
+        with open(HEALING_EVENTS_PATH, "w") as f:
+            json.dump(events[-50:], f, indent=2)  # keep last 50
+    except Exception:
+        pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,6 +142,13 @@ class AdaptiveOddsMonitor:
 
                 logger.info(
                     f"👻 Synchronized {state.get('count')} races ({len(active_ids)} active)."
+                )
+
+                # Write healing event for this sync
+                _write_healing_event(
+                    action="SYNC_COMPLETE",
+                    details=f"Synchronized {state.get('count')} races across {len(set(e.get('en','').split(':')[0].strip() for e in state['events'].values()))} regions.",
+                    agent="OddsMonitor",
                 )
 
                 # 4. Alert Evaluation
