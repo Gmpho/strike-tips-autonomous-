@@ -13,6 +13,6 @@ async def get_dream_logs():
 
 @router.post("/pulse")
 async def trigger_dream():
-    """Manually trigger a new neural dream simulation."""
-    dream = dream_engine.generate_dream()
+    """Trigger a new AI dream using live race data + Groq."""
+    dream = await dream_engine.generate_dream()
     return {"status": "success", "dream": dream}

@@ -22,7 +22,6 @@ _RACING_KEYWORDS = {
     "kenilworth",
     "fairview",
     "durbanville",
-    "flamingo",
 }
 
 

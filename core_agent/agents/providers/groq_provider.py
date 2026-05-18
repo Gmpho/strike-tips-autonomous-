@@ -86,7 +86,11 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
     if not api_key:
         raise ValueError("GROQ_API_KEY not set")
 
-    model = model or ModelConfig.ORCHESTRATOR
+    # Use fast 8b for simple queries, 70b only when tools are likely needed
+    _tool_keywords = ("tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture")
+    needs_tools = any(kw in message.lower() for kw in _tool_keywords)
+    model = model or (ModelConfig.ORCHESTRATOR if needs_tools else "llama-3.1-8b-instant")
+
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     messages = [
         {"role": "system", "content": build_system_prompt()},
@@ -94,14 +98,17 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
     ]
 
     async with httpx.AsyncClient(timeout=25.0) as client:
-        # First call
-        resp = await client.post(_URL, headers=headers, json={
+        # Only pass tools to the 70b model — 8b hallucinates tool calls
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "tools": TOOLS,
             "max_tokens": 400,
             "temperature": 0.3,
-        })
+        }
+        if needs_tools:
+            payload["tools"] = TOOLS
+
+        resp = await client.post(_URL, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]

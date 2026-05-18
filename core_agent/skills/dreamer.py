@@ -1,7 +1,21 @@
+"""
+DreamEngine — AI-powered race simulation using live snapshot data + Groq.
+Generates real insights from actual today's races, not hardcoded strings.
+"""
+
+import json
+import logging
+import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
+
+import httpx
+
+from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+
+logger = logging.getLogger("dream-engine")
 
 
 @dataclass
@@ -11,53 +25,94 @@ class Dream:
     scenario: str
     probability_shift: float
     insight: str
-    vividness: float  # 0.0 to 1.0
+    vividness: float
+    track: str = ""
+    race: str = ""
+
+
+def _load_snapshot() -> Dict[str, Any]:
+    try:
+        with open(MARKET_SNAPSHOT_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {"events": {}}
+
+
+def _pick_race(snap: Dict) -> Dict:
+    events = list(snap.get("events", {}).values())
+    return random.choice(events) if events else {}
+
+
+async def _groq_insight(scenario: str, race: Dict) -> str:
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key:
+        return "Groq unavailable — insight pending."
+
+    runners = race.get("runners", [])[:5]
+    runner_summary = ", ".join(
+        f"{r.get('name','?')} @ {r.get('odds','SP')}" for r in runners
+    )
+    prompt = (
+        f"Horse racing analyst. Scenario: {scenario}\n"
+        f"Race: {race.get('course','?')} R{race.get('raceNumber','?')}. "
+        f"Runners: {runner_summary}.\n"
+        f"Give one concise insight (1-2 sentences) on how this affects value/probability."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 80, "temperature": 0.7},
+            )
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.warning(f"Groq dream failed: {e}")
+        return "Simulation complete — insight unavailable."
+
+
+SCENARIO_TEMPLATES = [
+    "What if the going changed to Heavy at {course}?",
+    "Simulating a 20km/h headwind on the straight at {course}.",
+    "What if the favourite was a late scratch in Race {race}?",
+    "Evaluating jockey substitution impact at {course} Race {race}.",
+    "Calculating edge drift if market opens 30 minutes late at {course}.",
+    "Simulating rain delay effect on {course} Race {race} odds.",
+    "What if the distance was extended by 200m at {course}?",
+    "Analysing outsider value if top trainer is suspended at {course}.",
+]
 
 
 class DreamEngine:
-    SCENARIOS = [
-        "What if Kenilworth was Heavy ground today?",
-        "Simulating Turffontein with a 20km/h headwind on the straight.",
-        "Refactoring probability edge for low-liquidity Maiden Plates.",
-        "Synthesizing 1000 races at Greyville under night lights.",
-        "Evaluating the 'Jockey Factor' if Richard Fourie switched mounts.",
-        "Calculating the ripple effect of a late scratch in Race 7.",
-        "Dreaming of a perfect ROI sequence at Scottsville.",
-        "Neural re-training on historical 'Rank Outsider' wins.",
-    ]
-
-    INSIGHTS = [
-        "Detected 3.2% edge variance in soft conditions.",
-        "Wind factor outweighs distance in 400m sprint simulations.",
-        "Market sentiment is lagging behind trainer strike rate.",
-        "Potential value lock identified in early morning odds drift.",
-        "Systemic bias toward favorites discovered in night races.",
-        "Half-Kelly fraction shows stability in extreme volatility tests.",
-    ]
-
     def __init__(self):
         self.history: List[Dream] = []
 
-    def generate_dream(self) -> Dream:
+    async def generate_dream(self) -> Dream:
+        snap = _load_snapshot()
+        race = _pick_race(snap)
+        course = race.get("course", "Unknown Track")
+        race_num = race.get("raceNumber", "?")
+
+        scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
+        insight = await _groq_insight(scenario, race)
+
         dream = Dream(
-            id=f"dream-{random.randint(1000, 9999)}",
+            id=f"dream-{int(datetime.now().timestamp())}",
             timestamp=datetime.now().strftime("%H:%M:%S"),
-            scenario=random.choice(self.SCENARIOS),
+            scenario=scenario,
             probability_shift=round(random.uniform(-0.15, 0.15), 3),
-            insight=random.choice(self.INSIGHTS),
+            insight=insight,
             vividness=round(random.uniform(0.4, 0.95), 2),
+            track=course,
+            race=str(race_num),
         )
         self.history.insert(0, dream)
         if len(self.history) > 20:
             self.history.pop()
         return dream
 
-    def get_recent_dreams(self) -> List[Dream]:
-        if not self.history:
-            # Seed with some initial dreams
-            for _ in range(5):
-                self.generate_dream()
-        return self.history
+    def get_recent_dreams(self) -> List[Dict]:
+        return [asdict(d) for d in self.history]
 
 
 dream_engine = DreamEngine()

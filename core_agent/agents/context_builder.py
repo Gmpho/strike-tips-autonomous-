@@ -45,8 +45,14 @@ def build_system_prompt(base: Optional[str] = None) -> str:
     """Full system prompt for any provider."""
     base = base or "You are Strike Tips Racing AI. Answer concisely and accurately."
     context = build_race_context()
+    sa_schedule = (
+        "Active South Africa racing tracks: Turffontein (Johannesburg), "
+        "Kenilworth/Durbanville (Cape Town), Vaal (Vereeniging), "
+        "Greyville/Scottsville (Durban/KZN), Fairview (Port Elizabeth). "
+        "Always verify with search_racing_data for the actual schedule."
+    )
     return (
-        f"{base} {context} "
+        f"{base} {context} {sa_schedule} "
         "Use search_racing_data ONCE for tomorrow's races, future fixtures, or recent results. "
         "After receiving search results, give a direct answer — never call tools in your final response."
     )

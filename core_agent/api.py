@@ -52,6 +52,16 @@ async def startup_event():
     # Initialize cache in app state
     app.state.snapshot_cache = {}
 
+    # Pre-warm agent pipeline — pays the SkillsProvider import cost at startup, not per-request
+    async def prewarm_pipeline():
+        try:
+            from core_agent.agents import pipeline  # noqa: F401 — triggers all imports
+            logger.info("✅ Agent pipeline pre-warmed")
+        except Exception as e:
+            logger.warning(f"Pipeline pre-warm failed: {e}")
+
+    asyncio.create_task(prewarm_pipeline())
+
     # Background task to poll disk snapshot
     async def refresh_snapshot():
         while True:
