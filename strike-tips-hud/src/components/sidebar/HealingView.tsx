@@ -146,6 +146,49 @@ export const HealingView: React.FC = () => {
           ))}
         </div>
       </div>
+      {/* GitHub Workflow Runs */}
+      {healing.githubRuns.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 px-1">
+            <GitBranch className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">GitHub Actions</h3>
+          </div>
+          <div className="space-y-3">
+            {healing.githubRuns.slice(0, 5).map((run: any, idx: number) => (
+              <motion.a
+                key={run.id}
+                href={run.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ delay: idx * 0.1 }}
+                className="p-4 rounded-xl bg-theme-panel border border-theme flex gap-4 items-start group hover:bg-theme-secondary transition-all cursor-pointer"
+              >
+                <div className={`mt-1 p-1.5 rounded-lg ${run.conclusion === 'success' ? 'bg-emerald-500/10 text-emerald-400' : run.status === 'in_progress' ? 'bg-cyan-500/10 text-cyan-400 animate-pulse' : 'bg-red-500/10 text-red-400'}`}>
+                  <GitBranch className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-black text-theme-primary group-hover:text-cyan-400 transition-colors uppercase tracking-wider truncate">
+                      {run.name || 'Workflow Run'}
+                    </span>
+                    <span className="text-[10px] text-theme-secondary font-black tabular ml-2 shrink-0">
+                      {new Date(run.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className={`text-[10px] font-black uppercase tracking-tighter ${run.conclusion === 'success' ? 'text-emerald-500' : run.status === 'in_progress' ? 'text-cyan-400' : 'text-red-400'}`}>
+                      {run.status === 'in_progress' ? 'RUNNING' : run.conclusion?.toUpperCase() || run.status?.toUpperCase()}
+                    </span>
+                    <span className="text-[10px] text-theme-secondary">GitHub Actions</span>
+                  </div>
+                </div>
+              </motion.a>
+            ))}
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 };
