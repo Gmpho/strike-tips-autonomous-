@@ -56,7 +56,7 @@ async def get_healing_activity(limit: int = 10):
                 "Authorization": f"token {github_token}",
                 "Accept": "application/vnd.github.v3+json",
             }
-            url = f"https://api.github.com/repos/{repo}/actions/workflows/gemini-plan-execute.yml/runs?per_page=5"
+            url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=5"
             response = httpx.get(url, headers=headers)
             if response.status_code == 200:
                 data = response.json()
@@ -68,6 +68,7 @@ async def get_healing_activity(limit: int = 10):
                             "conclusion": run["conclusion"],
                             "createdAt": run["created_at"],
                             "url": run["html_url"],
+                            "name": run.get("name", ""),
                         }
                     )
         except Exception as e:
