@@ -75,6 +75,12 @@ class AdaptiveOddsMonitor:
         # Start Oddschecker in background
         asyncio.create_task(self._fetch_oc_odds_loop())
 
+        # Start heartbeat loop — generates dreams + saves to ChromaDB every 5min
+        from core_agent.core.heartbeat import run_heartbeat_loop
+        from core_agent.skills.memory.chroma_memory import RacingMemory
+        _memory = RacingMemory()
+        asyncio.create_task(run_heartbeat_loop(_memory))
+
         logger.info("🚀 L7 Monitor Active (Refactored: Pure Python Mode)")
 
         while self.monitoring_active:

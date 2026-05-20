@@ -54,6 +54,17 @@ export const AgentDashboard: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+            {agents.length === 0 && (
+              [1,2,3].map(i => (
+                <div key={i} className="p-5 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-between animate-pulse">
+                  <div className="space-y-2">
+                    <div className="h-3 w-24 bg-white/10 rounded" />
+                    <div className="h-2 w-16 bg-white/5 rounded" />
+                  </div>
+                  <div className="h-6 w-16 bg-white/10 rounded-xl" />
+                </div>
+              ))
+            )}
             {agents.map((agent, i) => (
             <motion.div 
               initial={{ opacity: 0, x: -20 }}

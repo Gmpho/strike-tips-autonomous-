@@ -98,7 +98,7 @@ class DreamEngine:
 
         dream = Dream(
             id=f"dream-{int(datetime.now().timestamp())}",
-            timestamp=datetime.now().strftime("%H:%M:%S"),
+            timestamp=datetime.now().isoformat(),
             scenario=scenario,
             probability_shift=round(random.uniform(-0.15, 0.15), 3),
             insight=insight,

@@ -82,7 +82,11 @@ export const HealingView: React.FC = () => {
           
           <div className="flex items-end gap-2 mb-2">
             <span className="text-4xl font-black text-theme-primary tracking-tighter">
-              {healing.githubRuns.filter(r => r.status === 'in_progress').length + (healing.events.length > 0 ? 1 : 0)}
+              {new Set([
+                ...healing.githubRuns.filter((r: any) => r.status === 'in_progress').map(() => 'github'),
+                ...(healing.events.some((e: any) => e.agent === 'OddsMonitor') ? ['OddsMonitor'] : []),
+                ...(healing.events.some((e: any) => e.agent === 'AlertEngine') ? ['AlertEngine'] : []),
+              ]).size || 1}
             </span>
             <span className="text-cyan-400 text-xs font-bold uppercase mb-1.5 animate-pulse">
               Active Workers

@@ -42,6 +42,7 @@ services:
     volumes:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile
+      - chroma_cache:/root/.cache/chroma
     ipc: host
     shm_size: 2gb
     init: true

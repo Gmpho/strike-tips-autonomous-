@@ -5,6 +5,7 @@ Single responsibility: build the system context string.
 
 import json
 import logging
+import os
 from collections import Counter
 from datetime import datetime
 from typing import Optional
@@ -51,8 +52,26 @@ def build_system_prompt(base: Optional[str] = None) -> str:
         "Greyville/Scottsville (Durban/KZN), Fairview (Port Elizabeth). "
         "Always verify with search_racing_data for the actual schedule."
     )
+
+    # Inject heartbeat memory — agent's living diary of recent insights
+    heartbeat = ""
+    try:
+        heartbeat_path = os.path.join("data", "heartbeat.md")
+        if os.path.exists(heartbeat_path):
+            with open(heartbeat_path) as f:
+                content = f.read()
+            # Only inject the last 3 entries to stay within token budget
+            entries = [e.strip() for e in content.split("##") if e.strip() and not e.startswith("#")]
+            if entries:
+                heartbeat = "\n\nRecent AI insights (heartbeat memory):\n" + "\n".join(
+                    f"- {e.splitlines()[2].replace('**Insight:** ', '') if len(e.splitlines()) > 2 else ''}"
+                    for e in entries[:3]
+                )
+    except Exception:
+        pass
+
     return (
-        f"{base} {context} {sa_schedule} "
+        f"{base} {context} {sa_schedule}{heartbeat} "
         "Use search_racing_data ONCE for tomorrow's races, future fixtures, or recent results. "
         "After receiving search results, give a direct answer — never call tools in your final response."
     )

@@ -2,8 +2,15 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bot, User, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+const STORAGE_KEY = 'strike_chat_messages';
+
 export const AIChat: React.FC = () => {
-  const [messages, setMessages] = useState<{role: 'user' | 'ai', content: string, timestamp: string, activity?: string}[]>([]);
+  const [messages, setMessages] = useState<{role: 'user' | 'ai', content: string, timestamp: string, activity?: string}[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [sessions] = useState<{id: string, title: string}[]>([
     { id: '1', title: 'Race Triage - Kelso' },
     { id: '2', title: 'Bankroll Strategy' },
@@ -54,7 +61,6 @@ export const AIChat: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-KEY': 'sk_prod_f45b26f15c97460e9809133e1959c1d8',
         },
         body: JSON.stringify({
           message: userMsg,
@@ -93,11 +99,16 @@ export const AIChat: React.FC = () => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages, currentActivity]);
 
+  // Persist messages to localStorage
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-50))); } catch {}
+  }, [messages]);
+
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex h-full min-h-[400px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
+      className="flex h-full min-h-[600px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)]"
     >
       {/* Session Sidebar */}
       <div className="w-48 border-r border-white/10 p-4 bg-black/20 flex flex-col gap-2">
@@ -109,7 +120,7 @@ export const AIChat: React.FC = () => {
         ))}
         <div className="mt-auto flex flex-col gap-2 pt-4 border-t border-white/10">
           <button className="text-[10px] font-bold text-slate-600 hover:text-purple-400">Export Logs</button>
-          <button onClick={() => setMessages([])} className="text-[10px] font-bold text-red-500/60 hover:text-red-500">Clear Session</button>
+          <button onClick={() => { setMessages([]); localStorage.removeItem(STORAGE_KEY); }} className="text-[10px] font-bold text-red-500/60 hover:text-red-500">Clear Session</button>
         </div>
       </div>
 
