@@ -65,40 +65,7 @@ graph TB
     S5 --> CHROMA
 ```
 
-> **v2.0 Change:** Models now run in `ollama` container instead of directly on host.
-        TG[Telegram Bot]
-        PATCH[patches/pending<br/>patches/applied]
-    end
-    
-    %% Main Flow
-    R -->|handoff| S1
-    R -->|handoff| S2
-    R -->|handoff| S3
-    R -->|handoff| S4
-    R -->|handoff| S5
-    
-    S1 -->|detects failure| S2
-    S2 -->|generates patch| S3
-    S3 -->|validates| S4
-    S4 -->|approves| PATCH
-    
-    S1 -.->|scrapes| TAB
-    S5 -.->|notifies| TG
-    
-    S1 -.-> M
-    S2 -.-> M
-    S3 -.-> M
-    S4 -.-> M
-    M -.-> R
-    
-    style R fill:#1a1a2e,stroke:#0f0,color:#fff
-    style S1 fill:#16213e,stroke:#0ff,color:#fff
-    style S2 fill:#16213e,stroke:#0ff,color:#fff
-    style S3 fill:#16213e,stroke:#0ff,color:#fff
-    style S4 fill:#16213e,stroke:#0ff,color:#fff
-    style S5 fill:#16213e,stroke:#0ff,color:#fff
-    style M fill:#0f3460,stroke:#f09,color:#fff
-```
+
 
 ## Agent Specifications
 

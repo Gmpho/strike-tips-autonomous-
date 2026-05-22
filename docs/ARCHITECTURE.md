@@ -104,6 +104,7 @@ graph TB
     %% ─── CONNECTIONS ───
     HUD --> SB
     TELE -.-> ORCH
+```
 
 ---
 
@@ -247,50 +248,116 @@ core_agent/agents/
 
 ### Daily Scan Flow
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ Scheduler│────▶│  Scraper │────▶│ Analyzer │────▶│ Telegram │
-│  (11:00) │     │(TAB4Rac- │     │(Value   │     │ (Notify) │
-│          │     │  ing)    │     │  Engine) │     │          │
-└──────────┘     └──────────┘     └──────────┘     └──────────┘
-                      │                 │
-                      ▼                 ▼
-                ┌──────────┐      ┌──────────┐
-                │  HTML    │      │ Form     │
-                │  Parse   │      │ Analysis │
-                └──────────┘      └──────────┘
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph LR
+    classDef scheduler fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef scraper fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef analyzer fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef notify fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef parse fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+
+    SCHED["Scheduler<br/>(11:00)"]
+    SCRAPER["Scraper<br/>(TAB4Racing)"]
+    ANALYZER["Analyzer<br/>(Value Engine)"]
+    TG["Telegram<br/>(Notify)"]
+    PARSE["HTML Parse"]
+    FORM["Form Analysis"]
+
+    SCHED --> SCRAPER --> ANALYZER --> TG
+    SCRAPER --> PARSE
+    ANALYZER --> FORM
+    class SCHED scheduler
+    class SCRAPER scraper
+    class ANALYZER analyzer
+    class TG notify
+    class PARSE parse
+    class FORM parse
 ```
 
 ### Bet Placement Flow
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│  User    │────▶│Governor │────▶│ Validate │────▶│  Record  │
-│  Input   │     │ Check    │     │  Rules   │     │   Bet    │
-└──────────┘     └──────────┘     └──────────┘     └──────────┘
-                                        │
-                                        ▼
-                                  ┌──────────┐
-                                  │ Telegram │
-                                  │ Confirm  │
-                                  └──────────┘
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph LR
+    classDef user fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef gov fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef validate fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef record fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    classDef confirm fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+
+    USER["User Input"]
+    GOV["Governor Check"]
+    VALIDATE["Validate Rules"]
+    RECORD["Record Bet"]
+    CONFIRM["Telegram Confirm"]
+
+    USER --> GOV --> VALIDATE --> RECORD
+    VALIDATE --> CONFIRM
+    class USER user
+    class GOV gov
+    class VALIDATE validate
+    class RECORD record
+    class CONFIRM confirm
 ```
 
 ### AI Pipeline Flow
 
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│User Message │───▶│   Intent    │───▶│   Direct    │───▶│  Response   │
-│             │    │Classifier  │    │   Tools     │    │             │
-│"balance?"   │    │  (~0ms)    │    │ (Python)    │    │  Synthesis  │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-                                              │
-                                              ▼
-                   ┌─────────────┐    ┌─────────────┐
-                   │  Fallback   │    │   Memory    │
-                   │   LLM       │    │  Grounding │
-                    │  (Ollama)   │    │  (ChromaDB + Honcho) │
-                   └─────────────┘    └─────────────┘
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph TD
+    classDef query fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef intent fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef tool fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef response fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef fallback fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+
+    USER["User Message<br/>'balance?'"]
+    INTENT["Intent Classifier<br/>(~0ms)"]
+    TOOLS["Direct Tools<br/>(Python)"]
+    RESP["Response Synthesis"]
+    FALLBACK["Fallback LLM<br/>(Ollama)"]
+    MEMORY["Memory Grounding<br/>(ChromaDB + Honcho)"]
+
+    USER --> INTENT --> TOOLS --> RESP
+    TOOLS --> FALLBACK
+    TOOLS --> MEMORY
+    class USER query
+    class INTENT intent
+    class TOOLS tool
+    class RESP response
+    class FALLBACK fallback
+    class MEMORY fallback
 ```
 
 ---
