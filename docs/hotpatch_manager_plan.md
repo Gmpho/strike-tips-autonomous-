@@ -143,22 +143,53 @@ class SelfHealingParser:
 ### 5. Detect-Diagnose-Repair-Verify Flow
 
 ```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
 graph TD
-    A[Scraper uses selector] --> B{Selector returns data?}
-    B -->|Yes| C[Update success count]
-    B -->|No| D[Update fail count]
-    D --> E{5+ consecutive failures?}
+    classDef normal fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef fail fill:#7F1D1D,stroke:#EF4444,stroke-width:2px,color:#FEE2E2
+    classDef detect fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef repair fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef apply fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef reject fill:#7F1D1D,stroke:#EF4444,stroke-width:2px,color:#FEE2E2
+
+    A["Scraper uses selector"] --> B{"Selector returns data?"}
+    class A normal
+    B -->|Yes| C["✅ Update success count"]
+    B -->|No| D["❌ Update fail count"]
+    class C normal
+    class D fail
+    D --> E{"5+ consecutive<br/>failures?"}
+    class E detect
     E -->|No| C
-    E -->|Yes| F[DETECT: Mark CRITICAL_FAILURE]
-    F --> G[DIAGNOSIS: Compare old vs new HTML]
-    G --> H[REPAIR: Generate JSON patch]
-    H --> I[VERIFY: Test new selector]
-    I --> J{Validation passes?}
-    J -->|Yes| K[APPLY: Move to patches/applied/]
-    J -->|No| L[REJECT: Move to patches/rejected/]
-    K --> M[Notify via Telegram]
+    E -->|Yes| F["🔴 DETECT: Mark CRITICAL_FAILURE"]
+    class F detect
+    F --> G["🔍 DIAGNOSIS: Compare old vs new HTML"]
+    class G detect
+    G --> H["🔧 REPAIR: Generate JSON patch"]
+    class H repair
+    H --> I["✅ VERIFY: Test new selector"]
+    class I repair
+    I --> J{"Validation passes?"}
+    class J repair
+    J -->|Yes| K["✅ APPLY: Move to patches/applied/"]
+    class K apply
+    J -->|No| L["❌ REJECT: Move to patches/rejected/"]
+    class L reject
+    K --> M["📱 Notify via Telegram"]
     L --> M
-    C --> N[Continue scraping]
+    class M normal
+    C --> N["⏩ Continue scraping"]
+    class N normal
 ```
 
 ### 6. Validation Rules

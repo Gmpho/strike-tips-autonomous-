@@ -168,7 +168,7 @@ core_agent/                          # Python backend (refactored April 2026)
 ├── skills/                        # Domain skills
 │   ├── race_analysis/            # Race analyzer, form analyzer
 │   ├── bankroll_manager/          # Bankroll governor (Kelly criterion)
-│   ├── memory/                   # ChromaDB vector memory
+│   ├── memory/                   # ChromaDB + Honcho memory (dual system)
 │   ├── parsers/                  # Tab4, PDF, odds scrapers
 │   ├── learning/                  # Learning engine (ROI tracking)
 │   └── notifications/            # Telegram notifier
@@ -226,24 +226,64 @@ The system uses a delegation chain for fast AI responses:
 
 ### Fallback Chain
 
-```
-Local Ollama Models → Groq Cloud → Gemini Cloud
-     ↓                    ↓            ↓
-(racing_llama)      (llama-3.3-70b)  (gemini-2.0-flash)
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph LR
+    classDef local fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef groq fill:#065F46,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef gemini fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+
+    Ollama["Ollama Local<br/>racing_llama"] --> Groq["Groq Cloud<br/>llama-3.3-70b"] --> Gemini["Gemini Cloud<br/>gemini-2.0-flash"]
+    class Ollama local
+    class Groq groq
+    class Gemini gemini
 ```
 
 ### Intent Routing Flow
 
-```
-User Query → IntentClassifier (regex, ~0ms)
-     ↓
-[Direct Tool Execution] OR [LLM Specialist]
-     ↓
-[Grounding Data from memory/snapshot]
-     ↓
-[Response Synthesis]
-     ↓
-Response + History Update
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph TD
+    classDef query fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef tool fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef memory fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    classDef response fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+
+    Q["User Query"] --> IC["IntentClassifier<br/>(Regex, ~0ms)"]
+    class Q query
+    class IC query
+    IC --> DT{"Direct Tool? / LLM?"}
+    DT -->|Direct| TOOL["Direct Tool Execution<br/>(Python ~1-2s)"]
+    DT -->|LLM| LLM_SPEC["LLM Specialist Model"]
+    class TOOL tool
+    class LLM_SPEC tool
+    TOOL --> GDS["Grounding Data<br/>(ChromaDB + Snapshot)"]
+    LLM_SPEC --> GDS
+    class GDS memory
+    GDS --> SYNTH["Response Synthesis"]
+    class SYNTH response
+    SYNTH --> RESP["Response + History Update<br/>(ChromaDB + Honcho)"]
+    class RESP response
 ```
 
 ---
@@ -328,6 +368,14 @@ MODEL_SCRAPER=racing_qwen
 MODEL_FUNC_CALL=func_gemma
 MODEL_THINKING=lfm_racing
 MODEL_FAST_LOCAL=racing_llama
+
+# ChromaDB Cloud (optional — falls back to local persistent storage)
+CHROMA_API_KEY=xxx
+CHROMA_HOST=api.trychroma.com
+CHROMA_DATABASE=strike_tips26
+
+# Embedding model (local Ollama, with Gemini cloud fallback)
+MODEL_EMBEDDER=embeddinggemma:300m
 ```
 
 ---
@@ -367,7 +415,7 @@ pytest core_agent/tests/test_analyzer.py -v
 1. **No Pydantic AI**: The system now uses direct `httpx` calls to Ollama instead of Pydantic AI
 2. **Docker First**: Always test in Docker before deploying
 3. **Centralized Config**: All model config is in `core_agent/config/model_config.py`
-4. **ChromaDB Cloud**: Memory uses hosted ChromaDB (api.trychroma.com)
+4. **ChromaDB Cloud**: Memory uses hosted ChromaDB (api.trychroma.com) with local Ollama embedding (embeddinggemma:300m) and Gemini cloud fallback
 5. **Keep Tools Gambling-Free**: Always use tool names like `record_selection` not `place_bet`
 
 ---

@@ -27,96 +27,112 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 
 ## 🏛️ Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      STRIKE TIPS                                │
-│              South African Racing Intelligence                   │
-│                        v2.0 (April 2026)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-        ┌────────────────────────┴────────────────────────┐
-        ▼                                                 ▼
-┌───────────────────────┐                     ┌───────────────────────┐
-│   FRONTEND            │                     │   BACKEND             │
-│   (Vite/Vanilla TS)   │                     │   (core_agent/)       │
-│   Port: 5173          │                     │   Port: 8000 (FastAPI)│
-└───────────────────────┘                     └───────────────────────┘
-        │                                               │
-        │                                               ▼
-        │                    ┌─────────────────────────────────────┐
-        │                    │         STRIKE BRAIN (Singleton)      │
-        │                    │    (Central State Management)         │
-        │                    └─────────────────────────────────────┘
-        │                                 │
-        ▼                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    MODEL PIPELINE (AI AGENTS)                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  User Query → IntentClassifier (regex, ~0ms)            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                          │                                      │
-│           ┌──────────────┼──────────────┐                      │
-│           ▼              ▼              ▼                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │Direct Tools │  │   LLM       │  │  Memory     │            │
-│  │(Python)     │  │  Specialist │  │  (ChromaDB) │            │
-│  │ ~1-2s       │  │  Models     │  │  + Honcho   │            │
-│  └─────────────┘  └─────────────┘  └─────────────┘            │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌───────────────┐      ┌───────────────┐      ┌───────────────┐
-│   Learning    │      │    Result     │      │    Memory     │
-│    Engine     │      │   Tracker     │      │   (ChromaDB)  │
-└───────────────┘      └───────────────┘      └───────────────┘
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      STRIKE TIPS                                │
-│              South African Racing Intelligence                   │
-│                        v2.0 (April 2026)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-        ┌────────────────────────┴────────────────────────┐
-        ▼                                                 ▼
-┌───────────────────────┐                     ┌───────────────────────┐
-│   FRONTEND            │                     │   BACKEND             │
-│   (Vite/Vanilla TS)   │                     │   (core_agent/)       │
-│   Port: 5173          │                     │   Port: 8000 (FastAPI)│
-└───────────────────────┘                     └───────────────────────┘
-        │                                               │
-        │                                               ▼
-        │                    ┌─────────────────────────────────────┐
-        │                    │         STRIKE BRAIN (Singleton)      │
-        │                    │    (Central State Management)         │
-        │                    └─────────────────────────────────────┘
-        │                                 │
-        ▼                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    MODEL PIPELINE (AI AGENTS)                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  User Query → IntentClassifier (regex, ~0ms)            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                          │                                      │
-│           ┌──────────────┼──────────────┐                      │
-│           ▼              ▼              ▼                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │Direct Tools │  │   LLM       │  │  Memory     │            │
-│  │(Python)     │  │  Specialist │  │ (ChromaDB)  │            │
-│  │ ~1-2s       │  │  Models     │  │ + Honcho    │            │
-│  └─────────────┘  └─────────────┘  └─────────────┘            │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌───────────────┐      ┌───────────────┐      ┌───────────────┐
-│   Learning    │      │    Result     │      │    Memory     │
-│    Engine     │      │   Tracker     │      │   (ChromaDB)  │
-└───────────────┘      └───────────────┘      └───────────────┘
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8',
+      'secondaryColor': '#0F172A',
+      'tertiaryColor': '#1E293B'
+    }
+  }
+}%%
+graph TB
+    subgraph TITLE["🏇 STRIKE TIPS — South African Racing Intelligence v2.0 (April 2026)"]
+        direction LR
+    end
+
+    style TITLE fill:#1E3A5F,stroke:#2563EB,stroke-width:3px,color:#FFD700,font-size:18px
+
+    %% ─── USER LAYER ───
+    subgraph USERS["📱 User Layer"]
+        TG["Telegram Bot"]
+        WEB["Web HUD (Vite/Vanilla TS)<br/>Port: 5173"]
+    end
+    style USERS fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+
+    %% ─── API LAYER ───
+    subgraph API["🖥️ Backend API"]
+        FASTAPI["FastAPI Server<br/>Port: 8000"]
+        STRIKE_BRAIN["🧠 Strike Brain<br/>(Singleton State Manager)"]
+    end
+    style API fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+
+    %% ─── AI SWARM ───
+    subgraph SWARM["🤖 AI Swarm — Model Pipeline"]
+        INTENT["⚡ Intent Classifier<br/>(Regex ~0ms)"]
+        DT["🔧 Direct Tools<br/>(Python ~1-2s)"]
+        LLM["🧠 LLM Specialists<br/>(Fallback Chain)"]
+        MEM["📚 Memory Layer<br/>(ChromaDB + Honcho)"]
+        INTENT --> DT & LLM & MEM
+    end
+    style SWARM fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+
+    %% ─── LLM FALLBACK ───
+    subgraph LLM_CHAIN["⬇️ LLM Fallback Chain"]
+        GROQ["Groq Cloud<br/>llama-3.3-70b"]
+        GEMINI["Gemini Cloud<br/>2.0-flash → 2.5-pro"]
+        OLLAMA["Ollama Local<br/>racing_llama + 4 specialists"]
+    end
+    style LLM_CHAIN fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF
+    LLM --> GROQ --> GEMINI --> OLLAMA
+
+    %% ─── DREAM ENGINE ───
+    subgraph DREAM["💭 Dream Engine"]
+        HEARTBEAT["Heartbeat Loop<br/>(Every 5 min)"]
+        SEARCH["Web Search<br/>(DuckDuckGo)"]
+        SIM["Simulation<br/>(Groq llama-3.1-8b)"]
+        HEARTBEAT --> SEARCH --> SIM
+    end
+    style DREAM fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+
+    %% ─── MEMORY ───
+    subgraph MEM_SYS["💾 Memory Systems"]
+        CHROMA["ChromaDB<br/>(Cloud / Local)"]
+        HONCHO["Honcho<br/>(User Memory)"]
+        EMBED["Embedding: Ollama → Gemini → Default"]
+    end
+    style MEM_SYS fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    MEM --> CHROMA & HONCHO
+    CHROMA --- EMBED
+
+    %% ─── DATA LAYER ───
+    subgraph DATA["🗄️ Data Sources & Scrapers"]
+        TAB["TAB4Racing<br/>(Racecards)"]
+        BETWAY["Betway SA<br/>(Odds)"]
+        ODDCHECK["Oddschecker<br/>(Best Odds)"]
+        PDF["PDF Scraper<br/>(Form Guides)"]
+    end
+    style DATA fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+
+    %% ─── BACKGROUND ───
+    subgraph BG["⏰ Background Services"]
+        SCHED["Scheduler<br/>(APScheduler)"]
+        MONITOR["Odds Monitor<br/>(Live Tracking)"]
+        ALERT["Alert Engine<br/>(Value Detection)"]
+        LEARN["Learning Engine<br/>(Bayesian Calibration)"]
+        RESULT["Result Tracker<br/>(Auto-Settle)"]
+    end
+    style BG fill:#374151,stroke:#9CA3AF,stroke-width:2px,color:#F9FAFB
+
+    %% ─── CONNECTIONS ───
+    TG --> FASTAPI
+    WEB --> FASTAPI
+    FASTAPI --> STRIKE_BRAIN
+    STRIKE_BRAIN --> INTENT
+    DT --> LEARN & RESULT
+    SIM --> CHROMA
+    TAB --> STRIKE_BRAIN
+    BETWAY --> MONITOR
+    ODDCHECK --> MONITOR
+    MONITOR --> ALERT
+    PDF --> STRIKE_BRAIN
+    ALERT --> TG
+    SCHED --> STRIKE_BRAIN
 ```
 
 ---
@@ -459,6 +475,12 @@ strike-tips-frontend/               # Next.js frontend (unchanged)
 | `MAX_BET_PERCENT` | Max % per bet | 5 |
 | `DAILY_LOSS_LIMIT` | Stop after % loss | 20 |
 | `DATA_DIR` | Data storage path | ./data |
+| `CHROMA_API_KEY` | ChromaDB Cloud API key (for cloud storage) | None |
+| `CHROMA_HOST` | ChromaDB Cloud host (e.g., api.trychroma.com) | None |
+| `CHROMA_TENANT` | ChromaDB tenant (optional) | None |
+| `CHROMA_DATABASE` | ChromaDB database name | default_database |
+| `GEMINI_API_KEY` | Gemini API key for embedding fallback | None |
+| `MODEL_EMBEDDER` | Embedding model for Ollama (local) | embeddinggemma:300m |
 
 ### Customizing in Code
 

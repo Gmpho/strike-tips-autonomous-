@@ -66,32 +66,55 @@ Extends the existing **MAF system** (StrikeMAFAgent + Tool Registry) with specia
 Instead of separate agents, the healing swarm integrates as **specialized MAF tools** that can be invoked by the main StrikeMAFAgent.
 
 ```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
 graph TB
-    subgraph "MAF Core (Existing)"
-        MAF[🤖 StrikeMAFAgent<br/>routing_llama]
-        INTENT[🎯 Intent Classifier]
-        TOOLS[📦 Tool Registry<br/>11 tools]
+    classDef core fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef heal fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef model fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+
+    subgraph MAF_CORE["🤖 MAF Core (Existing)"]
+        MAF["StrikeMAFAgent<br/>routing_llama"]
+        INTENT["Intent Classifier"]
+        TOOLS["Tool Registry<br/>11 tools"]
     end
-    
-    subgraph "Healing Tools (New - Extend MAF)"
-        HEAL[🩺 heal_selector<br/>Tool: diagnose + fix broken selector]
-        SCAN[🔍 health_scan<br/>Tool: check all selectors]
-        VALID[✅ validate_patch<br/>Tool: verify patch]
-        NOTIF[📬 send_healing_alert<br/>Tool: Telegram notification]
+    class MAF_CORE,MAF,INTENT,TOOLS core
+
+    subgraph HEAL_TOOLS["🩺 Healing Tools (New - Extend MAF)"]
+        HEAL["heal_selector<br/>Diagnose + Fix Broken Selector"]
+        SCAN["health_scan<br/>Check All Selectors"]
+        VALID["validate_patch<br/>Verify Patch"]
+        NOTIF["send_healing_alert<br/>Telegram Notification"]
     end
-    
-    subgraph "Ollama Models (Local + Cloud)"
-        MOD1[ds_racing - reasoning]
-        MOD2[racing_qwen - fast]
-        MOD3[lfm_racing - analysis]
-        MOD4[func_gemma - function]
-        MOD5[nemotron-nano - agentic]
-        MOD6[nemotron-super - deep reasoning]
+    class HEAL_TOOLS,HEAL,SCAN,VALID,NOTIF heal
+
+    subgraph MODELS["🦙 Ollama Models (Local + Cloud)"]
+        MOD1["ds_racing - reasoning"]
+        MOD2["racing_qwen - fast"]
+        MOD3["lfm_racing - analysis"]
+        MOD4["func_gemma - function"]
+        MOD5["nemotron-nano - agentic"]
+        MOD6["nemotron-super - deep reasoning"]
     end
-    
+    class MODELS,MOD1,MOD2,MOD3,MOD4,MOD5,MOD6 model
+
     MAF -->|classifies intent| INTENT
     MAF -->|executes tools| TOOLS
-    
+    INTENT -.->|healing intent| HEAL & SCAN
+    HEAL --> MOD4
+    SCAN --> MOD3
+    VALID --> MOD1
+    NOTIF -.->|alert| Telegram
+```
     TOOLS -->|calls when selector fails| HEAL
     TOOLS -->|calls for health check| SCAN
     TOOLS -->|calls to validate| VALID
@@ -288,34 +311,60 @@ def send_healing_alert(
 ## Integration Flow with MAF
 
 ```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'actorBorders': '#2563EB',
+      'actorTextColor': '#1E3A5F',
+      'signalColor': '#94A3B8',
+      'signalTextColor': '#1E293B',
+      'noteBkgColor': '#1E3A5F',
+      'noteTextColor': '#DBEAFE'
+    }
+  }
+}%%
 sequenceDiagram
-    participant User
-    participant MAF as StrikeMAFAgent
-    participant Tools as Tool Registry
-    participant Heal as heal_selector
-    participant Parser as SelfHealingParser
-    participant Patch as patches/
+    participant User as 👤 User
+    participant MAF as 🤖 StrikeMAFAgent
+    participant Tools as 🧰 Tool Registry
+    participant Heal as 🩺 heal_selector
+    participant Parser as 🔧 SelfHealingParser
+    participant Patch as 📁 patches/
 
-    User->>MAF: "Scan today's races"
-    MAF->>Tools: run_daily_analysis
-    Tools->>MAF: Results with 5 selector failures
+    rect rgb(30, 58, 95)
+        User->>MAF: "Scan today's races"
+    end
+    rect rgb(6, 78, 59)
+        MAF->>Tools: run_daily_analysis
+        Tools->>MAF: Results with 5 selector failures
+    end
     
-    Note over MAF: Detects selector failure
+    rect rgb(120, 53, 15)
+        Note over MAF: Detects selector failure
+    end
     
-    MAF->>Tools: heal_selector(target="tab4racing", element="odds")
-    Tools->>Heal: Call heal_selector tool
-    
-    Heal->>Parser: suggest_new_selectors(html, "odds")
-    Parser-->>Heal: [".price-display", ".odds-new"]
-    
-    Heal->>Patch: Save to pending/patch_xxx.json
-    
-    MAF->>Tools: validate_patch(patch, live_html)
-    Tools->>Patch: Move to applied/ (if valid)
-    
-    MAF->>Tools: send_healing_alert("PATCH_APPLIED", "odds selector healed")
-    
-    MAF->>User: "Found 3 value bets. 1 selector was auto-healed."
+    rect rgb(76, 29, 149)
+        MAF->>Tools: heal_selector(target="tab4racing", element="odds")
+        Tools->>Heal: Call heal_selector tool
+    end
+    rect rgb(31, 41, 55)
+        Heal->>Parser: suggest_new_selectors(html, "odds")
+        Parser-->>Heal: [".price-display", ".odds-new"]
+    end
+    rect rgb(120, 53, 15)
+        Heal->>Patch: Save to pending/patch_xxx.json
+    end
+    rect rgb(76, 29, 149)
+        MAF->>Tools: validate_patch(patch, live_html)
+        Tools->>Patch: Move to applied/ (if valid)
+    end
+    rect rgb(6, 78, 59)
+        MAF->>Tools: send_healing_alert("PATCH_APPLIED", "odds selector healed")
+    end
+    rect rgb(30, 58, 95)
+        MAF->>User: "Found 3 value bets. 1 selector was auto-healed."
+    end
 ```
 
 ## Updated Tool Registry

@@ -10,34 +10,59 @@ Multi-agent swarm architecture using **Ollama-hosted local models** for autonomo
 ## Architecture Diagram (v2.0)
 
 ```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
 graph TB
-    subgraph "Docker Containers"
-        subgraph "strike-bot (FastAPI)"
-            R[🤖 routing_llama<br/>Intent Classification]
-            S1[🔍 scanner_agent<br/>Race Scanning]
-            S2[🩺 diagnostic_agent<br/>HTML Diagnosis]
-            S3[🛠️ repair_agent<br/>Patch Generation]
-            S4[✅ verifier_agent<br/>Validation]
-            S5[💰 bankroll_agent<br/>Risk Management]
+    classDef bot fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef ollama fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef external fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+    classDef monitoring fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+
+    subgraph DOCKER["🐳 Docker Containers"]
+        subgraph BOT["strike-bot (FastAPI)"]
+            R["🤖 routing_llama<br/>Intent Classification"]
+            S1["🔍 scanner_agent<br/>Race Scanning"]
+            S2["🩺 diagnostic_agent<br/>HTML Diagnosis"]
+            S3["🛠️ repair_agent<br/>Patch Generation"]
+            S4["✅ verifier_agent<br/>Validation"]
+            S5["💰 bankroll_agent<br/>Risk Management"]
         end
+        class BOT bot
+        class R,S1,S2,S3,S4,S5 bot
         
-        subgraph "ollama (Local LLM)"
-            M[(🧠 Models<br/>racing_llama<br/>racing_qwen<br/>func_gemma)]
+        subgraph OLLAMA["ollama (Local LLM)"]
+            M["🧠 Models<br/>racing_llama<br/>racing_qwen<br/>func_gemma"]
         end
+        class OLLAMA ollama
+        class M ollama
     end
+    class DOCKER ollama
     
-    subgraph "External Systems"
-        TAB[TAB4Racing API]
-        DDG[DuckDuckGo Search]
+    subgraph EXTERNAL["🌐 External Systems"]
+        TAB["TAB4Racing API"]
+        DDG["DuckDuckGo Search"]
+        CHROMA["ChromaDB Cloud<br/>Memory Store"]
     end
-    
-    R --> S1
-    R --> S2
-    S2 --> S3
-    S3 --> S4
-    S4 --> TAB
+    class EXTERNAL external
+    class TAB,DDG,CHROMA external
+
+    R --> S1 & S2 & S5
+    S2 --> S3 --> S4
+    S1 & S3 & S4 --> M
+    M --> |Ollama API| BOT
     TAB --> S1
-    S1 --> DDG
+    DDG --> S2
+    S4 --> CHROMA
+    S5 --> CHROMA
 ```
 
 > **v2.0 Change:** Models now run in `ollama` container instead of directly on host.

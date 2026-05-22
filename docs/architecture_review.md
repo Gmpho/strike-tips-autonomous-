@@ -9,41 +9,90 @@ This document provides a principal-level engineering review of the **Strike Tips
 The system is built as an autonomous, high-availability racing intelligence platform containerized into a 3-container topology:
 
 ```mermaid
-graph TD
-    subgraph Core System
-        Bot[strike-bot: FastAPI Backend]
-        OM[odds-monitor: Scraper & Monitor]
-        DB[(Local JSON & ChromaDB Store)]
-    end
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph TB
+    classDef core fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef ai fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef data fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+    classDef client fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef memory fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    classDef dream fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef gateway fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF
 
-    subgraph AI Swarm
-        Ollama[ollama: Intel GPU / Local Swarm]
-        Cloud[Cloud API: Groq / Gemini]
+    subgraph CLIENTS["📱 Clients & Notifications"]
+        HUD["Web HUD (Vite/Vanilla TS)"]
+        TG["Telegram Bot"]
     end
+    style CLIENTS fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    class HUD,TG client
 
-    subgraph Data & Scraping
-        Tab[TAB4Racing / Betway APIs]
-        OC[Oddschecker Scraper]
-        DDG[DuckDuckGo Search API]
+    subgraph CORE["⚙️ Core System"]
+        Bot["Strike-Bot<br/>FastAPI Backend<br/>Port: 8000"]
+        OM["Odds Monitor<br/>Playwright Scraper"]
+        BRAIN["🧠 Strike Brain<br/>(Singleton)"]
+        PIPELINE["ModelPipeline<br/>IntentClassifier + Orchestrator"]
     end
+    style CORE fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    class Bot,OM,BRAIN,PIPELINE core
 
-    subgraph Client & Notifications
-        HUD[strike-tips-hud: React/Vite HUD]
-        TG[Telegram Channels]
+    subgraph AI["🤖 AI Swarm"]
+        OLLAMA["Ollama Local<br/>Intel GPU / 5 Specialists"]
+        GROQ["Groq Cloud<br/>llama-3.3-70b"]
+        GEMINI["Gemini Cloud<br/>2.0-flash → 2.5-pro"]
     end
+    style AI fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    class OLLAMA,GROQ,GEMINI ai
 
-    %% Data flow connections
-    Tab -->|Live Racecards| Bot
-    Tab -->|Market Snapshots| OM
+    subgraph MEM["💾 Memory Layer"]
+        CHROMA["ChromaDB<br/>Cloud / Local<br/>Ollama→Gemini Embeddings"]
+        HONCHO["Honcho<br/>User Memory + Dreams"]
+        LOCAL_JSON["Local Storage<br/>(JSON files)"]
+    end
+    style MEM fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    class CHROMA,HONCHO,LOCAL_JSON memory
+
+    subgraph DATA_SRC["🗄️ Data & Scraping"]
+        TAB["TAB4Racing / Betway APIs"]
+        OC["Oddschecker Scraper"]
+        DDG["DuckDuckGo Search API"]
+        PDF_HARV["PDF Harvester<br/>(Form Guides)"]
+    end
+    style DATA_SRC fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+    class TAB,OC,DDG,PDF_HARV data
+
+    subgraph DREAM["💭 Dream Engine"]
+        HEARTBEAT["Heartbeat Loop<br/>(5 min interval)"]
+        SIMULATION["Groq Simulation<br/>llama-3.1-8b-instant"]
+        WEB_SEARCH["Web Search<br/>Real News Grounding"]
+        HEARTBEAT --> SIMULATION --> WEB_SEARCH
+    end
+    style DREAM fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    class HEARTBEAT,SIMULATION,WEB_SEARCH dream
+
+    %% Connections
+    TAB -->|Live Racecards| Bot
+    TAB -->|Market Snapshots| OM
     OC -->|Best Odds Feed| OM
-    OM -->|Fuzzy Merge & Caching| DB
+    OM -->|Fuzzy Merge & Caching| LOCAL_JSON
     OM -->|Alert Evaluation| TG
-    Bot -->|Intent Routing| Ollama
-    Ollama -->|Fallback Chain| Cloud
-    Bot -->|RAG Grounding| DB
-    Bot -->|Bankroll / Staking| DB
+    Bot -->|RAG Grounding| CHROMA
+    Bot -->|User Context| HONCHO
+    Bot -->|Bankroll / Staking| LOCAL_JSON
     Bot -->|Live HUD State| HUD
-    Bot -->|Fuzzy Settle bets| DDG
+    Bot -->|Fuzzy Settle| DDG
+    PIPELINE -->|Intent Routing| OLLAMA
+    OLLAMA -->|Fallback| GROQ --> GEMINI
+    WEB_SEARCH -->|Real News| CHROMA
 ```
 
 ### Component Breakdown
@@ -52,6 +101,7 @@ graph TD
 3. **`core_agent/core/adaptive_odds_monitor.py` (Odds Monitor daemon)**: Synthesizes live market snapshots from Betway with Oddschecker price feeds. It runs an asynchronous loop to keep the baseline cache hydrated.
 4. **`core_agent/core/alert_engine.py` (The Mathematical Evaluator)**: Listens to the odds monitor, tracks price drops or value opportunities, and handles autonomous auto-betting and alerts.
 5. **`core_agent/core/heartbeat.py` & `dreamer.py` (Vivid Simulation Loop)**: Periodically acts as a "dream state" simulator, generating speculative racing outcomes, saving them to ChromaDB, and keeping the system prompt grounded with the latest tactical context.
+6. **`core_agent/skills/memory/` (Dual Memory Layer)**: Combines ChromaDB (vector storage, cloud/local, with Ollama→Gemini embedding fallback) for race intelligence RAG and Honcho for user/agent behaviour reasoning.
 
 ---
 
@@ -103,20 +153,47 @@ This guarantees that:
 To overcome static rating drift, `AdaptiveAnalyzer` (`core_agent/skills/learning/analyzer.py`) implements a localized Bayesian calibration engine:
 
 ```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'actorBorders': '#2563EB',
+      'actorTextColor': '#1E3A5F',
+      'sequenceNumberColor': '#FFF',
+      'signalColor': '#94A3B8',
+      'signalTextColor': '#1E293B',
+      'noteBkgColor': '#1E3A5F',
+      'noteTextColor': '#DBEAFE'
+    }
+  }
+}%%
 sequenceDiagram
     participant ST as strike_tips.py
     participant AA as AdaptiveAnalyzer
     participant LE as LearningEngine
     participant DB as learning_stats.json
 
-    ST->{2} AA: adjust_probabilities({horse: base_prob})
-    AA->{2} LE: get_adjustment_factor(track, distance, odds)
-    LE->{2} DB: Read Segment stats (track:dist_bucket:odds_bucket)
-    Note over LE: If total segment bets < 5, return 1.0 (no adjust)
-    Note over LE: implied_prob = 1 / odds<br/>actual_win_rate = wins / bets<br/>factor = actual_win_rate / implied_prob
-    Note over LE: Clamp factor to [0.70, 1.30]
-    LE-->>AA: adjustment_factor (e.g. 1.15)
-    AA-->>ST: Return adjusted & normalized probabilities
+    rect rgb(6, 78, 59)
+        ST->>+AA: adjust_probabilities({horse: base_prob})
+    end
+    rect rgb(76, 29, 149)
+        AA->>+LE: get_adjustment_factor(track, distance, odds)
+    end
+    rect rgb(31, 41, 55)
+        LE->>+DB: Read Segment stats
+    end
+    rect rgb(164, 78, 237)
+        Note over LE: If bets < 5 → return 1.0 (no adjust)
+        Note over LE: factor = win_rate / implied_prob
+        Note over LE: Clamp factor to [0.70, 1.30]
+    end
+    DB-->>-LE: Segment data
+    rect rgb(76, 29, 149)
+        LE-->>-AA: adjustment_factor (e.g. 1.15)
+    end
+    rect rgb(6, 78, 59)
+        AA-->>-ST: Adjusted & normalized probabilities
+    end
 ```
 
 ### Mathematical Calibration
@@ -152,9 +229,9 @@ The continuous intelligence of the bot is driven by a periodic background thread
 ### The Heartbeat Loop (`core_agent/core/heartbeat.py`)
 Runs every 5 minutes and coordinates three critical memory tasks:
 1. **Speculative Race Simulation (Dreaming)**: Calls `dreamer.py`, picking a random active race from the live market snapshot and querying Groq (`llama-3.1-8b-instant`) to simulate a tactical change (e.g., Heavy going, headwinds, late scratches).
-2. **ChromaDB Grounding**: The resulting "dream insight" is pushed to the local ChromaDB `form_insights` collection alongside official TAB tips, official race cards, and historical chat messages.
+2. **ChromaDB Grounding**: The resulting "dream insight" is pushed to the local or cloud ChromaDB `form_insights` collection alongside official TAB tips, official race cards, and historical chat messages. Embeddings use Ollama local (embeddinggemma:300m) with Gemini cloud fallback.
 3. **Prompt Injection**: The latest 10 dream entries are formatted and written directly to `data/heartbeat.md`. This file is injected into the system prompt of every LLM query, giving the agents real-time awareness of simulated tactical shifts and system context.
-4. **Honcho Memory Preservation**: The user's chat history is written to a specialized multi-turn database (`HonchoMemory`), building a persistent persona of user betting preferences.
+4. **Honcho Memory Preservation**: The user's chat history is written to a specialized multi-turn database (`HonchoMemory`), building a persistent persona of user betting preferences. Chat history is also mirrored to ChromaDB for local RAG grounding.
 
 ---
 

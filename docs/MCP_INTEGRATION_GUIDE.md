@@ -7,17 +7,44 @@ Strike Tips uses a **Specialist Agent** pattern where a central `StrikeBrain` or
 
 ### System Diagram
 ```mermaid
-graph TD
-    A[External Automation / n8n] -- MCP Protocol --> B[FastAPI API Server]
-    B -- SSE Hub --> C{StrikeBrain Orchestrator}
-    C --> D[MAF Specialist Skills]
-    D --> E[(ChromaDB Memory)]
-    D --> F[TAB4Racing Scraper]
-    D --> G[Bankroll Governor]
-    C --> H[Model Pipeline]
-    H --> I[Local Ollama]
-    H --> J[Groq Cloud]
-    H --> K[Gemini Cloud]
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph TB
+    classDef external fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+    classDef api fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef core fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+    classDef skills fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    classDef memory fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    classDef cloud fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF
+
+    A["⚡ External Automation / n8n"] -- MCP Protocol --> B["🖥️ FastAPI API Server<br/>Port: 8000"]
+    B -- SSE Hub --> C{"🧠 StrikeBrain<br/>Orchestrator"}
+    C --> D["🧩 MAF Specialist Skills"]
+    D --> E["💾 ChromaDB + Honcho<br/>(Dual Memory)"]
+    D --> F["📄 TAB4Racing Scraper"]
+    D --> G["💰 Bankroll Governor"]
+    C --> H["🤖 Model Pipeline"]
+    H --> I["🦙 Local Ollama"]
+    H --> J["☁️ Groq Cloud"]
+    H --> K["🔮 Gemini Cloud"]
+
+    class A external
+    class B api
+    class C core
+    class D skills
+    class E memory
+    class F,G skills
+    class H core
+    class I,J,K cloud
 ```
 
 ### Updated Components (April 2026)

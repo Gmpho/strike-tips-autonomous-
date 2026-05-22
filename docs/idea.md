@@ -142,7 +142,9 @@ SECTION 3 — FILES TO CREATE / MODIFY
 [MODIFY] core_agent/core/strike_tips.py — add LLM extraction using llama3.2:1b:
 
 [MODIFY] core_agent/skills/memory/chroma_memory.py
-  Replace hardcoded "embeddinggemma:300m" with ModelConfig.EMBEDDER.
+  [DONE] Replaced hardcoded "embeddinggemma:300m" with ModelConfig.EMBEDDER via _make_embedding_fn()
+  [DONE] Added cloud/local ChromaDB detection (CHROMA_API_KEY/CHROMA_HOST)
+  [DONE] Added embedding fallback chain: Ollama → Gemini → ChromaDB default
 
 
 ═══════════════════════════════════════════════════════════════

@@ -4,114 +4,163 @@
 
 Strike Tips is built on a modular skill-based architecture inspired by agent systems. Each skill is self-contained and can operate independently.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           STRIKE TIPS SYSTEM v2.0                           │
-│                        (Refactored to core_agent/)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        FRONTEND (Next.js)                           │   │
-│  │                      strike-tips-frontend/                          │   │
-│  │                      Port: 3000                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                     BACKEND (FastAPI)                                │   │
-│  │                       core_agent/                                    │   │
-│  │                       Port: 8000                                     │   │
-│  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │                                                                     │   │
-│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
-│  │  │              STRIKE BRAIN (Singleton)                      │   │   │
-│  │  │           Central State Management                        │   │   │
-│  │  │  • strike: StrikeTips orchestrator                        │   │   │
-│  │  │  • memory: RacingMemory (ChromaDB)                       │   │   │
-│  │  │  • orchestrator: UnifiedOrchestrator                      │   │   │
-│  │  │  • pipeline: ModelPipeline                               │   │   │
-│  │  └─────────────────────────────────────────────────────────────┘   │   │
-│  │                                    │                                  │   │
-│  └────────────────────────────────────┼──────────────────────────────────┘   │
-│                                       ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   MODEL PIPELINE LAYER (AI AGENTS)                  │   │
-│  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │                                                                     │   │
-│  │  ┌───────────────────────────────────────────────────────────────┐ │   │
-│  │  │  User Query → IntentClassifier (regex, ~0ms)                 │ │   │
-│  │  └───────────────────────────────────────────────────────────────┘ │   │
-│  │                              │                                       │   │
-│  │         ┌────────────────────┼────────────────────┐                │   │
-│  │         ▼                    ▼                    ▼                │   │
-│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │   │
-│  │  │ Direct Tools│    │   LLM       │    │   Memory    │            │   │
-│  │  │ (Python)    │    │  Specialist │    │  (ChromaDB) │            │   │
-│  │  │ ~1-2s       │    │   Models    │    │   Grounding │            │   │
-│  │  └─────────────┘    └─────────────┘    └─────────────┘            │   │
-│  │                                                                     │   │
-│  │  ┌───────────────────────────────────────────────────────────────┐ │   │
-│  │  │  Fallback: local Ollama → Groq (cloud) → Gemini (cloud)       │ │   │
-│  │  └───────────────────────────────────────────────────────────────┘ │   │
-│  │                                                                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                       │                                      │
-│         ┌─────────────────────────────┼─────────────────────────────┐       │
-│         ▼                             ▼                             ▼       │
-│  ┌─────────────┐              ┌─────────────┐              ┌─────────────┐   │
-│  │   RACE      │              │  BANKROLL   │              │ NOTIFICATIONS│  │
-│  │  ANALYSIS   │              │   GOVERNOR   │              │  (Telegram)  │  │
-│  │   SKILL     │              │   SKILL      │              │    SKILL     │  │
-│  ├─────────────┤              ├─────────────┤              ├─────────────┤   │
-│  │ • Value     │              │ • Max 5%   │              │ • Daily     │   │
-│  │   Engine    │              │   Rule     │              │   Tips      │   │
-│  │ • Kelly     │              │ • Loss     │              │ • Bet       │   │
-│  │   Staking   │              │   Limits   │              │   Alerts    │   │
-│  │ • Form      │              │ • P&L      │              │ • Results   │   │
-│  │   Analysis  │              │   Track    │              │ • Bankroll  │   │
-│  └─────────────┘              └─────────────┘              └─────────────┘   │
-│         │                             │                             │        │
-│         └─────────────────────────────┼─────────────────────────────┘        │
-│                                       ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                     DATA INGESTION LAYER                            │   │
-│  ├─────────────────────────────────────────────────────────────────────┤   │
-│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐        │   │
-│  │  │ TAB4Racing    │  │ Adaptive      │  │ Live Odds     │        │   │
-│  │  │ Scraper       │  │ Parser        │  │ Monitor       │        │   │
-│  │  │ (SA Racing)   │  │ (Self-Healing)│  │ (Playwright)  │        │   │
-│  │  └───────────────┘  └───────────────┘  └───────────────┘        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8',
+      'secondaryColor': '#0F172A',
+      'tertiaryColor': '#1E293B'
+    }
+  }
+}%%
+graph TB
+    subgraph TITLE["🏇 STRIKE TIPS SYSTEM v2.0 — core_agent/"]
+        direction LR
+    end
+    style TITLE fill:#1E3A5F,stroke:#2563EB,stroke-width:3px,color:#FFD700,font-size:16px
+
+    %% ─── FRONTEND ───
+    subgraph FE["🎨 Frontend Layer"]
+        HUD["Web HUD<br/>(Vite/Vanilla TS)<br/>Port: 5173"]
+    end
+    style FE fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+
+    %% ─── BACKEND ───
+    subgraph BE["⚙️ Backend — FastAPI (Port 8000)"]
+        SB["🧠 Strike Brain<br/>(Singleton)"]
+        MP["🤖 ModelPipeline"]
+        INTENT["⚡ IntentClassifier<br/>(Regex ~0ms)"]
+        ORCH["🔀 UnifiedOrchestrator"]
+        SB --- MP
+        MP --- INTENT
+        MP --- ORCH
+    end
+    style BE fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+
+    %% ─── SKILL LAYER ───
+    subgraph SKILLS["🧩 Domain Skills"]
+        RA["🏇 Race Analysis<br/>• Value Engine<br/>• Kelly Staking<br/>• Form Analysis"]
+        BGOV["💰 Bankroll Governor<br/>• Max 5% Rule<br/>• Daily Loss Limits<br/>• P&L Tracking"]
+        NOTIF["📱 Notifications<br/>• Daily Tips<br/>• Bet Alerts<br/>• Results"]
+    end
+    style SKILLS fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+    ORCH --> RA & BGOV & NOTIF
+
+    %% ─── FALLBACK CHAIN ───
+    subgraph FALLBACK["⬇️ LLM Fallback Chain"]
+        GROQ["Groq Cloud<br/>llama-3.3-70b"]
+        GEMINI["Gemini Chain<br/>2.0-flash→2.5-flash→2.5-pro"]
+        LOCAL["Ollama Local<br/>racing_llama, racing_qwen<br/>func_gemma, lfm_racing, ds_racing"]
+    end
+    style FALLBACK fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF
+    ORCH -.- GROQ --> GEMINI --> LOCAL
+
+    %% ─── MEMORY ───
+    subgraph MEMORY["💾 Memory Systems"]
+        CHROMA["ChromaDB<br/>(Cloud / Local)"]
+        HONCHO["Honcho<br/>(User Memory + Dreams)"]
+        EMBED["Embedding: Ollama→Gemini→Default"]
+    end
+    style MEMORY fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
+    INTENT -.-> CHROMA & HONCHO
+    CHROMA --- EMBED
+
+    %% ─── DATA LAYER ───
+    subgraph DATA["🗄️ Data Ingestion"]
+        TAB["📄 TAB4Racing<br/>(Racecards)"]
+        PARSER["🔧 Adaptive Parser<br/>(Self-Healing)"]
+        ODMON["👁️ Live Odds Monitor<br/>(Playwright)"]
+        PDF["📑 PDF Harvester<br/>(Form Guides)"]
+    end
+    style DATA fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
+    SB --> TAB & PARSER & ODMON & PDF
+
+    %% ─── BACKGROUND ───
+    subgraph BG["⏰ Background Processes"]
+        HEART["💓 Heartbeat<br/>(Every 5 min)"]
+        DREAM["💭 Dream Engine<br/>(Simulation)"]
+        SEARCH["🔍 Web Search<br/>(DuckDuckGo)"]
+        LEARN["📊 Learning Engine<br/>(Bayesian)"]
+        RESULT["✅ Result Tracker<br/>(Auto-Settle)"]
+    end
+    style BG fill:#374151,stroke:#9CA3AF,stroke-width:2px,color:#F9FAFB
+    HEART --> DREAM --> SEARCH
+    ORCH --> LEARN & RESULT
+
+    %% ─── EXTERNAL ───
+    subgraph EXT["🌐 External Services"]
+        TELE["Telegram Bot"]
+        DDG["DuckDuckGo API"]
+    end
+    style EXT fill:#1F2937,stroke:#6B7280,stroke-width:1px,color:#D1D5DB
+    NOTIF --> TELE
+    SEARCH --> DDG
+
+    %% ─── CONNECTIONS ───
+    HUD --> SB
+    TELE -.-> ORCH
 
 ---
 
 ## Docker 3-Container Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        DOCKER COMPOSE SETUP                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌────────────────────┐     ┌────────────────────┐     ┌────────────────┐  │
-│   │    strike-bot     │     │      ollama       │     │  odds-monitor │  │
-│   │    (FastAPI)      │     │   (Local LLM)     │     │  (Scraper)     │  │
-│   │                    │     │                    │     │                │  │
-│   │  Port: 8000        │     │  Port: 11434       │     │  Playwright    │  │
-│   │  /docs (Swagger)   │     │  racing_llama     │     │                │  │
-│   │  /api/agent        │     │  racing_qwen      │     │  CPU-limited   │  │
-│   │  /api/betting      │     │  func_gemma        │     │  0.8 CPU       │  │
-│   │  /api/bets → 307   │     │  lfm_racing        │     │  1.5GB RAM     │  │
-│   │  PYTHONPATH=/app   │     │  ds_racing        │     │                │  │
-│   └─────────┬──────────┘     └─────────┬──────────┘     └───────┬────────┘  │
-│             │                           │                      │           │
-│             │                           │                      │           │
-│             ▼                           ▼                      │           │
-│        Shared Volume (/app)         WSL2 GPU                  │           │
-│                                                  Bridge Network            │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#1E3A5F',
+      'primaryTextColor': '#FFF',
+      'primaryBorderColor': '#2563EB',
+      'lineColor': '#94A3B8'
+    }
+  }
+}%%
+graph LR
+    subgraph DOCKER["🐳 Docker Compose — 3-Container Architecture"]
+        direction LR
+
+        subgraph BOT["Strike Bot 🖥️"]
+            direction TB
+            API["FastAPI Server<br/>Port: 8000"]
+            SWAGGER["📘 Swagger: /docs"]
+            AGENT["/api/agent"]
+            BETTING["/api/betting"]
+            BOT_APPS["/api/betting/history<br/>/api/betting/account-summary"]
+        end
+        style BOT fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
+
+        subgraph OLLAMA["Ollama 🤖"]
+            direction TB
+            LLM_LOCAL["Local LLMs<br/>Port: 11434"]
+            M1["racing_llama"]
+            M2["racing_qwen"]
+            M3["func_gemma"]
+            M4["lfm_racing"]
+            M5["ds_racing"]
+        end
+        style OLLAMA fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
+
+        subgraph MONITOR["Odds Monitor 👁️"]
+            direction TB
+            SCRAPER["Playwright Scraper"]
+            CPU["CPU: 0.8 core"]
+            RAM["RAM: 1.5 GB"]
+        end
+        style MONITOR fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    end
+    style DOCKER fill:#0F172A,stroke:#475569,stroke-width:2px,color:#E2E8F0
+
+    BOT <--> OLLAMA
+    BOT <--> MONITOR
+    BOT --- SHARED["📁 Shared Volume: /app"]
+    OLLAMA --- GPU["🎮 WSL2 Intel GPU"]
+    MONITOR --- NET["🌐 Bridge Network"]
 ```
 
 ---
@@ -240,7 +289,7 @@ core_agent/agents/
                    ┌─────────────┐    ┌─────────────┐
                    │  Fallback   │    │   Memory    │
                    │   LLM       │    │  Grounding │
-                   │  (Ollama)   │    │  (ChromaDB) │
+                    │  (Ollama)   │    │  (ChromaDB + Honcho) │
                    └─────────────┘    └─────────────┘
 ```
 
@@ -263,6 +312,9 @@ class ModelConfig:
     SCRAPER = os.getenv("MODEL_SCRAPER", "racing_qwen")
     FUNC_CALL = os.getenv("MODEL_FUNC_CALL", "func_gemma")
     THINKING = os.getenv("MODEL_THINKING", "lfm_racing")
+    
+    # Embedding model (Ollama local, used by ChromaDB)
+    EMBEDDER = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
     
     # Cloud fallbacks
     CLOUD_FALLBACK = os.getenv("MODEL_CLOUD_FALLBACK", "kimi-k2.5:cloud")
@@ -341,9 +393,10 @@ data/
 - Loaded via environment variables
 
 ### Data Protection
-- User data stored locally
-- ChromaDB cloud for memory (with API key)
-- No external APIs except Telegram/Groq/Gemini
+- User data stored locally + optionally in ChromaDB Cloud
+- ChromaDB Cloud for persistent memory (requires CHROMA_API_KEY)
+- Embedding models: Ollama local (embeddinggemma:300m) → Gemini cloud fallback → ChromaDB default
+- No external APIs except Telegram/Groq/Gemini/ChromaDB Cloud
 
 ### Betting Safety
 - Hard-coded limits (5% max, 20% daily loss)
