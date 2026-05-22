@@ -12,6 +12,19 @@ from dataclasses import dataclass, asdict, field
 from datetime import date, datetime
 from typing import List, Optional, Dict
 
+def _load_paper_settings(data_dir: str) -> dict:
+    """Read paper_mode and paper_balance from settings.json"""
+    path = os.path.join(data_dir, "settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                s = json.load(f)
+            return {"paper_mode": s.get("paper_mode", False), "paper_balance": s.get("paper_balance", 1000.0)}
+        except Exception:
+            pass
+    return {"paper_mode": False, "paper_balance": 1000.0}
+
+
 logger = logging.getLogger("bankroll-governor")
 
 
@@ -110,6 +123,9 @@ class BankrollGovernor:
             self.peak_bankroll = starting_bankroll
             self.total_profit_loss = 0.0
 
+        # Paper trading balance (separate from real bankroll)
+        self.paper_balance = state.get("paper_balance", 1000.0) if os.path.exists(self._state_file) else 1000.0
+
         if os.path.exists(self._bets_file):
             try:
                 with open(self._bets_file) as f:
@@ -128,6 +144,7 @@ class BankrollGovernor:
                         "current_bankroll": self.current_bankroll,
                         "peak_bankroll": self.peak_bankroll,
                         "total_profit_loss": self.total_profit_loss,
+                        "paper_balance": self.paper_balance,
                         "last_updated": datetime.now().isoformat(),
                     },
                     f,
@@ -188,10 +205,15 @@ class BankrollGovernor:
         confidence: str,
     ) -> Optional[BetRecord]:
         """Record a new bet after passing all governor checks"""
-        can_bet, reason = self.can_bet_today()
-        if not can_bet:
-            logger.warning(f"Bet blocked by governor: {reason}")
-            return None
+        # Check paper mode
+        paper_settings = _load_paper_settings(self.data_dir)
+        is_paper = paper_settings["paper_mode"]
+
+        if not is_paper:
+            can_bet, reason = self.can_bet_today()
+            if not can_bet:
+                logger.warning(f"Bet blocked by governor: {reason}")
+                return None
 
         if edge_percent < self.MIN_EDGE_PERCENT:
             logger.warning(
@@ -199,7 +221,10 @@ class BankrollGovernor:
             )
             return None
 
-        max_stake = self.calculate_max_stake(edge_percent)
+        if is_paper:
+            max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
+        else:
+            max_stake = self.calculate_max_stake(edge_percent)
         if stake > max_stake:
             logger.warning(
                 f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"
@@ -224,10 +249,13 @@ class BankrollGovernor:
             confidence=confidence,
         )
 
+        if is_paper:
+            bet.notes = "PAPER"
+            self.paper_balance -= stake
         self._bets.append(bet)
         self._save_state()
         logger.info(
-            f"Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
+            f"{'[PAPER] ' if is_paper else ''}Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
         )
         return bet
 
@@ -253,11 +281,14 @@ class BankrollGovernor:
         bet.profit_loss = actual_return - bet.stake
         bet.notes = notes
 
-        # Update bankroll
-        self.current_bankroll += bet.profit_loss
-        self.total_profit_loss += bet.profit_loss
-        if self.current_bankroll > self.peak_bankroll:
-            self.peak_bankroll = self.current_bankroll
+        # Update bankroll (paper bets don't affect real balance)
+        if bet.notes == "PAPER":
+            self.paper_balance += actual_return
+        else:
+            self.current_bankroll += bet.profit_loss
+            self.total_profit_loss += bet.profit_loss
+            if self.current_bankroll > self.peak_bankroll:
+                self.peak_bankroll = self.current_bankroll
 
         self._save_state()
         logger.info(

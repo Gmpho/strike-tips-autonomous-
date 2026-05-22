@@ -407,6 +407,15 @@ class StrikeTips:
 
         if success:
             bet = next(b for b in self.bankroll._bets if b.bet_id == bet_id)
+            # Wire to learning engine so ROI-by-track is populated from real results
+            self.learning.record_result(
+                track=bet.track,
+                distance=None,
+                odds=bet.odds,
+                stake=bet.stake,
+                won=won,
+                actual_return=bet.actual_return or 0.0,
+            )
             profit_loss = (bet.actual_return or 0) - bet.stake
 
             print(f"[OK] Bet settled: {bet.horse} - {'Won' if won else 'Lost'}")

@@ -47,9 +47,19 @@ class UnifiedOrchestrator:
     def __init__(self, strike_tips=None):
         self.strike = strike_tips
         self._history: List[Dict] = []
+        self._honcho: Optional[object] = None  # HonchoMemory, lazy per user_id
+
+    def _get_honcho(self, user_id: Optional[str] = None):
+        """Return a HonchoMemory instance for this user (lazy, cached by user_id)."""
+        try:
+            from core_agent.skills.memory.honcho_memory import HonchoMemory
+            return HonchoMemory(user_id=user_id)
+        except Exception:
+            return None
 
     async def chat(
-        self, message: str, model_override: Optional[str] = None
+        self, message: str, model_override: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AgentResponse:
         msg_lower = message.lower().strip()
 
@@ -75,12 +85,41 @@ class UnifiedOrchestrator:
             except Exception:
                 pass
 
+        # Inject Honcho context into message before LLM call (Task 3)
+        honcho = self._get_honcho(user_id)
+        memory_context = ""
+        if honcho:
+            memory_context = honcho.get_context()
+
+        enriched_message = message
+        if memory_context:
+            enriched_message = f"[USER MEMORY]\n{memory_context}\n\n[QUERY]\n{message}"
+
         # Delegate to pipeline
-        reply = await pipeline.run(message, model_override=model_override)
+        reply = await pipeline.run(enriched_message, model_override=model_override)
 
         self._history.append({"role": "user", "content": message})
         self._history.append({"role": "assistant", "content": reply.summary})
         self._history = self._history[-20:]
+
+        # Write turn to Honcho in background (Task 2) — non-blocking
+        if honcho:
+            try:
+                import asyncio
+                asyncio.get_event_loop().run_in_executor(
+                    None, honcho.add_turn, message, reply.summary
+                )
+            except Exception:
+                pass
+
+        # Also write to ChromaDB for local RAG grounding
+        try:
+            from core_agent.core.strike_brain import brain
+            if brain and brain.memory and brain.memory._is_ready:
+                brain.memory.add_chat_message("user", message, source=f"user_{self._get_honcho(user_id)._user_id if user_id else 'web'}")
+                brain.memory.add_chat_message("assistant", reply.summary, source="agent_strike")
+        except Exception:
+            pass
 
         return _reply_to_response(reply)
 

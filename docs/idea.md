@@ -277,3 +277,6 @@ END — Strike Tips Multi-Model Architecture Plan v1.0  (2026-03-13)
       cloud, giving us a massive 256K context window for global racing analysis without touching 
       your local RAM.
    4. Gemini-3-Flash (Cloud): Our reliable fallback and primary orchestrator.
+
+
+   

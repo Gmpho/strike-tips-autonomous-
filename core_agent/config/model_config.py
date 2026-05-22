@@ -60,6 +60,7 @@ class ModelConfig:
     SCRAPER = "racing_llama"
     FUNC_CALL = "func_gemma"
     FAST_LOCAL = "llama3.2:1b"
+    EMBEDDER = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
 
     @classmethod
     def get_provider_config(cls) -> Dict:

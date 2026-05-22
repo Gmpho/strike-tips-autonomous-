@@ -27,11 +27,16 @@ export const BankrollView: React.FC = () => {
     >
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold bg-linear-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+          <h2 className="text-2xl font-bold bg-linear-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent flex items-center gap-3">
             Bankroll & ROI
+            {bankroll?.paperMode && (
+              <span className="text-xs font-black px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
+                PAPER
+              </span>
+            )}
           </h2>
           <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
-            Financial Performance & Exposure
+            {bankroll?.paperMode ? `Virtual Balance: R${(bankroll.paperBalance ?? 0).toFixed(2)}` : 'Financial Performance & Exposure'}
           </p>
         </div>
         <button 

@@ -25,6 +25,8 @@ export interface BankrollState {
   dailyLoss: number;
   maxStake: number;
   totalExposure: number;
+  paperMode?: boolean;
+  paperBalance?: number;
 }
 
 export interface LearningState {
@@ -90,6 +92,8 @@ export interface HUDState {
   betStats: BetStats | null;
   logs: string[];
   learning: LearningState | null;
+  bankrollHistory: Array<{ t: string; balance: number }>;
+  honcho: { status: string; context: string; dreamContext: string } | null;
   systemHealth: {
     cpu: number;
     memory: number;

@@ -18,7 +18,7 @@ export class DataBridge {
     const start = performance.now();
     try {
       // Parallel fetch for speed
-      const [snapshotRes, healthRes, bankrollRes, betsRes, historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes] = await Promise.all([
+      const [snapshotRes, healthRes, bankrollRes, betsRes, historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
         fetch('/api/monitoring/snapshot'),
         fetch('/api/system/health'),
         fetch(BETTING_ENDPOINTS.accountSummary),
@@ -29,7 +29,9 @@ export class DataBridge {
         fetch('/api/logs?tail=100'),
         fetch('/api/healing/activity'),
         fetch('/api/healing/selectors'),
-        fetch('/api/system/vitals')
+        fetch('/api/system/vitals'),
+        fetch('/api/betting/bankroll-history'),
+        fetch('/api/agent/memory')
       ]);
 
       if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
@@ -40,11 +42,15 @@ export class DataBridge {
       const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
       const history = historyRes.ok ? await historyRes.json() : { bets: [] };
       const stats = statsRes.ok ? await statsRes.json() : null;
-      const roiByTrack = roiRes.ok ? await roiRes.json() : {};
+      const roiRaw = roiRes.ok ? await roiRes.json() : {};
+      const roiByTrack = roiRaw.roiByTrack ?? roiRaw;
+      const roiAccuracy = roiRaw.accuracy ?? 0;
       const logs = logsRes.ok ? await logsRes.json() : { logs: [] };
       const healing = healingRes.ok ? await healingRes.json() : { internal_events: [], github_runs: [] };
       const selectors = selectorsRes.ok ? await selectorsRes.json() : { report: {} };
       const vitals = vitalsRes.ok ? await vitalsRes.json() : { vitals: [] };
+      const bankrollHist = bankrollHistRes.ok ? await bankrollHistRes.json() : { history: [] };
+      const memoryData = memoryRes.ok ? await memoryRes.json() : null;
       
       const latency = performance.now() - start;
 
@@ -57,9 +63,15 @@ export class DataBridge {
           totalRoi: stats?.roi || 0,
           samples: stats?.totalBets || 0,
           topTrack: Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
-          accuracy: 0,
+          accuracy: roiAccuracy,
           roiByTrack: roiByTrack
         },
+        bankrollHistory: bankrollHist.history || [],
+        honcho: memoryData ? {
+          status: memoryData.status || 'no_data_yet',
+          context: memoryData.context || '',
+          dreamContext: memoryData.dream_context || '',
+        } : null,
         bankroll: bankroll ? {
           balance: bankroll.balance,
           dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,

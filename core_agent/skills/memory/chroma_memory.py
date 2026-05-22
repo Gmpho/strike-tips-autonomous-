@@ -9,14 +9,55 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("racing-memory")
 
-try:
-    import chromadb
-    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-    HAS_CHROMA = True
-except ImportError:
-    HAS_CHROMA = False
-    logger.warning("chromadb not installed - memory in stub mode")
+def _make_embedding_fn():
+    """
+    Returns the best available embedding function:
+    1. embeddinggemma:300m via Ollama (local, free, already pulled)
+    2. Gemini text-embedding-004 (cloud fallback)
+    3. ChromaDB default all-MiniLM (last resort)
+    """
+    from chromadb.utils.embedding_functions import EmbeddingFunction
+    from core_agent.config.model_config import ModelConfig
+    import httpx
+
+    class OllamaEmbeddingFn(EmbeddingFunction):
+        def __call__(self, input: list) -> list:
+            host = ModelConfig.OLLAMA_BASE_URL
+            model = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
+            results = []
+            for text in input:
+                try:
+                    with httpx.Client(timeout=15.0) as client:
+                        r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
+                        results.append(r.json().get("embedding", []))
+                except Exception:
+                    results.append([])
+            return results
+
+    # Try Ollama first
+    try:
+        fn = OllamaEmbeddingFn()
+        # Quick health check
+        test = fn(["test"])
+        if test and test[0]:
+            logger.info("[MEMORY] Embedding: embeddinggemma:300m (Ollama)")
+            return fn
+    except Exception:
+        pass
+
+    # Gemini fallback
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if gemini_key:
+        try:
+            from chromadb.utils.embedding_functions import GoogleGenerativeAiEmbeddingFunction
+            logger.info("[MEMORY] Embedding: Gemini text-embedding-004 (fallback)")
+            return GoogleGenerativeAiEmbeddingFunction(api_key=gemini_key, model_name="models/text-embedding-004")
+        except Exception:
+            pass
+
+    logger.info("[MEMORY] Embedding: ChromaDB default (last resort)")
+    return DefaultEmbeddingFunction()
 
 
 class RacingMemory:
@@ -44,21 +85,41 @@ class RacingMemory:
             self._init_chroma()
 
     def _init_chroma(self):
-        """Initialize ChromaDB persistent client"""
+        """Initialize ChromaDB — cloud if CHROMA_API_KEY is set, else local persistent."""
         try:
             import chromadb
 
-            self._client = chromadb.PersistentClient(path=self.data_dir)
+            chroma_api_key = os.getenv("CHROMA_API_KEY", "")
+            chroma_host = os.getenv("CHROMA_HOST", "")
+            chroma_tenant = os.getenv("CHROMA_TENANT", "")
+            chroma_database = os.getenv("CHROMA_DATABASE", "default_database")
+
+            # Build embedding function: Ollama local → Gemini fallback → ChromaDB default
+            embed_fn = _make_embedding_fn()
+
+            if chroma_api_key and chroma_host:
+                # ChromaDB Cloud
+                self._client = chromadb.HttpClient(
+                    host=chroma_host,
+                    ssl=True,
+                    headers={"x-chroma-token": chroma_api_key},
+                    tenant=chroma_tenant or chromadb.DEFAULT_TENANT,
+                    database=chroma_database,
+                )
+                logger.info(f"[MEMORY] ChromaDB Cloud: {chroma_host}/{chroma_database}")
+            else:
+                self._client = chromadb.PersistentClient(path=self.data_dir)
+                logger.info(f"[MEMORY] ChromaDB local: {self.data_dir}")
+
+            col_kwargs = {"metadata": {"hnsw:space": "cosine"}, "embedding_function": embed_fn}
             self._form_collection = self._client.get_or_create_collection(
-                name="form_insights",
-                metadata={"hnsw:space": "cosine"},
+                name="form_insights", **col_kwargs
             )
             self._chat_collection = self._client.get_or_create_collection(
-                name="chat_history",
-                metadata={"hnsw:space": "cosine"},
+                name="chat_history", **col_kwargs
             )
             self._is_ready = True
-            logger.info(f"[MEMORY] ChromaDB initialized at {self.data_dir}")
+            logger.info(f"[MEMORY] Ready — form:{self._form_collection.count()} chat:{self._chat_collection.count()}")
         except Exception as e:
             logger.error(f"ChromaDB init failed: {e}")
             self._is_ready = False

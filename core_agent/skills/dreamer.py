@@ -52,10 +52,21 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
     runner_summary = ", ".join(
         f"{r.get('name','?')} @ {r.get('odds','SP')}" for r in runners
     )
+
+    # Search for real news to ground the dream
+    search_context = ""
+    try:
+        from core_agent.skills.memory.search_tool import search_racing_data
+        results = search_racing_data(f"{race.get('course','SA racing')} horse racing {scenario[:40]}", limit=2)
+        if results:
+            search_context = "\nReal-world context: " + " | ".join(r[:120] for r in results if r)
+    except Exception:
+        pass
+
     prompt = (
         f"Horse racing analyst. Scenario: {scenario}\n"
         f"Race: {race.get('course','?')} R{race.get('raceNumber','?')}. "
-        f"Runners: {runner_summary}.\n"
+        f"Runners: {runner_summary}.{search_context}\n"
         f"Give one concise insight (1-2 sentences) on how this affects value/probability."
     )
     try:
@@ -109,6 +120,17 @@ class DreamEngine:
         self.history.insert(0, dream)
         if len(self.history) > 20:
             self.history.pop()
+
+        # Write to Honcho as agent_dream peer (non-blocking, best-effort)
+        try:
+            from core_agent.skills.memory.honcho_memory import dream_honcho
+            import asyncio
+            asyncio.get_event_loop().run_in_executor(
+                None, dream_honcho.record_dream, scenario, insight, course
+            )
+        except Exception:
+            pass
+
         return dream
 
     def get_recent_dreams(self) -> List[Dict]:

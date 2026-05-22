@@ -218,6 +218,10 @@ class AlertEngine:
             await self.notification_callback(msg)
             self.stats["notifications_sent"] += 1
 
+        # Autonomous betting: place bet if auto_bet_enabled and this is a value_bet alert
+        if alert.condition_type == "value_bet":
+            await self._maybe_auto_bet(alert, horse, race_data)
+
         await self._log_history(msg)
 
     async def _log_history(self, msg: Dict):
@@ -227,6 +231,50 @@ class AlertEngine:
                 f.write(json.dumps(msg) + "\n")
         except Exception as e:
             logger.error(f"Failed to log alert history: {e}")
+
+    async def _maybe_auto_bet(self, alert: AlertCondition, horse: Dict, race_data: Dict):
+        """Place an autonomous bet if auto_bet_enabled in settings."""
+        try:
+            import json as _json, os as _os
+            settings_path = _os.path.join(self.data_dir, "settings.json")
+            if not _os.path.exists(settings_path):
+                return
+            with open(settings_path) as f:
+                settings = _json.load(f)
+            if not settings.get("auto_bet_enabled", False):
+                return
+            min_edge = float(settings.get("auto_bet_min_edge", 8.0))
+
+            from core_agent.core.strike_brain import brain
+            if not brain or not brain.strike or not brain.strike.bankroll:
+                return
+
+            odds = self._parse_odds(str(horse.get("odds", "1/1")))
+            # Edge = (1/implied_prob - 1) * 100 as a rough estimate
+            implied_prob = 1.0 / max(odds, 1.01)
+            edge = round((1.0 - implied_prob) * 100 * 0.15, 1)  # conservative 15% of margin
+            if edge < min_edge:
+                return
+
+            track = race_data.get("course", "Unknown")
+            race_number = int(race_data.get("raceNumber", race_data.get("race_number", 1)))
+            horse_name = horse.get("name", "Unknown")
+
+            bet = brain.strike.bankroll.record_bet(
+                track=track,
+                race_number=race_number,
+                horse=horse_name,
+                odds=odds,
+                stake=brain.strike.bankroll.calculate_max_stake(edge),
+                edge_percent=edge,
+                confidence="AUTO",
+            )
+            if bet:
+                bet.notes = (bet.notes + " AUTO").strip() if bet.notes else "AUTO"
+                brain.strike.bankroll._save_state()
+                logger.info(f"[AUTO-BET] Placed: {horse_name} @ {track} R{race_number} odds={odds:.2f} edge={edge}%")
+        except Exception as e:
+            logger.warning(f"Auto-bet failed: {e}")
 
     def get_stats(self) -> Dict:
         return self.stats

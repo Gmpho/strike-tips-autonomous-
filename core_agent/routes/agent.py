@@ -119,9 +119,8 @@ class AgentRequest(BaseModel):
     """Chat request with optional model override."""
 
     message: str
-    model: Optional[str] = (
-        None  # racing_llama, racing_qwen, llama-3.3-70b-versatile, etc.
-    )
+    model: Optional[str] = None
+    user_id: Optional[str] = None  # Telegram user ID for Honcho memory
 
 
 def _resolve_stream_model(
@@ -191,7 +190,7 @@ async def agent_chat(request: AgentRequest, fastapi_request: Request):
         req_id = _request_id(fastapi_request)
         try:
             result = await asyncio.wait_for(
-                orchestrator.chat(request.message, model_override=request.model),
+                orchestrator.chat(request.message, model_override=request.model, user_id=request.user_id),
                 timeout=AGENT_STREAM_TIMEOUT_SEC,
             )
         except asyncio.TimeoutError:
@@ -505,6 +504,25 @@ async def search_memory(query: str):
         return {"success": True, "query": query, "results": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/memory")
+async def get_memory(query: str = "betting preferences, favourite tracks, risk tolerance", user_id: Optional[str] = None):
+    """Query Honcho for synthesised insights about a user."""
+    try:
+        from core_agent.skills.memory.honcho_memory import HonchoMemory, dream_honcho
+        mem = HonchoMemory(user_id=user_id)
+        user_context = mem.get_context(query)
+        dream_context = dream_honcho.get_dream_context()
+        return {
+            "success": True,
+            "user_id": user_id or "anon_web",
+            "context": user_context,
+            "dream_context": dream_context,
+            "status": "active" if user_context else "no_data_yet",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "context": "", "dream_context": ""}
 
 
 # =============================================================================

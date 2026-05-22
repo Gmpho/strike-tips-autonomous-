@@ -28,6 +28,8 @@ class HUDStore {
       topTrack: 'N/A',
       accuracy: 0
     },
+    bankrollHistory: [],
+    honcho: null,
     systemHealth: {
       cpu: 0,
       memory: 0,

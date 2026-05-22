@@ -20,13 +20,58 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📱 Telegram Notifications** - Sends tips and updates directly to your phone
 - **🔧 Self-Healing Parsers** - Adapts when racing websites change structure
 - **⏰ Automated Scheduling** - Daily scans at your preferred time
-- **🧠 Learning System** - Improves predictions based on historical results
+- **🧠 Dual Memory System** - Combines ChromaDB for race intelligence RAG (local/cloud) and Honcho for user/agent memory with background reasoning, using local Ollama embeddings with Gemini fallback
 - **🔄 Auto-Result Updates** - Automatically settles bets when races complete
 
 ---
 
 ## 🏛️ Architecture
 
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      STRIKE TIPS                                │
+│              South African Racing Intelligence                   │
+│                        v2.0 (April 2026)                        │
+└─────────────────────────────────────────────────────────────────┘
+                                  │
+        ┌────────────────────────┴────────────────────────┐
+        ▼                                                 ▼
+┌───────────────────────┐                     ┌───────────────────────┐
+│   FRONTEND            │                     │   BACKEND             │
+│   (Vite/Vanilla TS)   │                     │   (core_agent/)       │
+│   Port: 5173          │                     │   Port: 8000 (FastAPI)│
+└───────────────────────┘                     └───────────────────────┘
+        │                                               │
+        │                                               ▼
+        │                    ┌─────────────────────────────────────┐
+        │                    │         STRIKE BRAIN (Singleton)      │
+        │                    │    (Central State Management)         │
+        │                    └─────────────────────────────────────┘
+        │                                 │
+        ▼                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    MODEL PIPELINE (AI AGENTS)                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  User Query → IntentClassifier (regex, ~0ms)            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                          │                                      │
+│           ┌──────────────┼──────────────┐                      │
+│           ▼              ▼              ▼                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
+│  │Direct Tools │  │   LLM       │  │  Memory     │            │
+│  │(Python)     │  │  Specialist │  │  (ChromaDB) │            │
+│  │ ~1-2s       │  │  Models     │  │  + Honcho   │            │
+│  └─────────────┘  └─────────────┘  └─────────────┘            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌───────────────┐      ┌───────────────┐      ┌───────────────┐
+│   Learning    │      │    Result     │      │    Memory     │
+│    Engine     │      │   Tracker     │      │   (ChromaDB)  │
+└───────────────┘      └───────────────┘      └───────────────┘
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      STRIKE TIPS                                │
@@ -61,13 +106,13 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 │           ▼              ▼              ▼                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
 │  │Direct Tools │  │   LLM       │  │  Memory     │            │
-│  │(Python)     │  │  Specialist │  │  (ChromaDB) │            │
-│  │ ~1-2s       │  │  Models     │  │             │            │
+│  │(Python)     │  │  Specialist │  │ (ChromaDB)  │            │
+│  │ ~1-2s       │  │  Models     │  │ + Honcho    │            │
 │  └─────────────┘  └─────────────┘  └─────────────┘            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
-        │
-        ▼
+         │
+         ▼
 ┌───────────────┐      ┌───────────────┐      ┌───────────────┐
 │   Learning    │      │    Result     │      │    Memory     │
 │    Engine     │      │   Tracker     │      │   (ChromaDB)  │
