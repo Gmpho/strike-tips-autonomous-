@@ -5,11 +5,37 @@ Tool names follow the func_gemma-compatible naming convention.
 """
 
 import logging
+import re
 from dataclasses import asdict
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional
 
+from core_agent.skills.memory.search_cache import get_cache, set_cache
+
 logger = logging.getLogger("maf-tool-registry")
+
+KNOWN_SAFE_DOMAINS = {
+    "sportingpost.co.za", "tabonline.co.za",
+    "sport24.co.za", "sabra.co.za", "sahracing.com",
+    "sportinglife.com", "goldcircle.co.za",
+    "bloodhorse.com", "thoroughbredracing.com",
+    "sportingnews.com", "espn.com", "espn.co.uk",
+}
+
+SUSPICIOUS_PATTERNS = re.compile(
+    r"(https?://\d+\.\d+\.\d+\.\d+)"  # IP-based URLs
+    r"|(\.(?:gq|ml|cf|ga|tk|xyz|top|download|review|bid|date|racing|bet|click|loan|men|stream|trade|webcam|work|site|win|party|racing))/",  # suspicious TLDs
+    re.I,
+)
+
+
+def _is_url_safe(url: str) -> bool:
+    if SUSPICIOUS_PATTERNS.search(url):
+        return False
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    domain = parsed.hostname or ""
+    return any(domain.endswith(f".{safe}") or domain == safe for safe in KNOWN_SAFE_DOMAINS)
 
 # ─── Tool Metadata ─────────────────────────────────────────────────────────────
 
@@ -238,7 +264,13 @@ def search_past_races(query: str, n_results: int = 5, strike=None, **kwargs) -> 
 
 
 def search_racing_data(query: str, **kwargs) -> Dict:
-    """Search for racing information via DuckDuckGo with autonomous multi-query refinement."""
+    """Search for racing information via DuckDuckGo with URL safety filtering and persistent cache."""
+    cache_key = f"maf_search:{query}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        logger.info(f"[MAF] Cache hit: {query}")
+        return cached
+
     try:
         from ddgs import DDGS
         from datetime import datetime
@@ -254,15 +286,19 @@ def search_racing_data(query: str, **kwargs) -> Dict:
         seen = set()
         with DDGS() as ddgs:
             for q in queries:
-                for r in ddgs.text(q, max_results=3):
-                    key = r.get("href", "")
-                    if key not in seen:
-                        seen.add(key)
-                        all_results.append({
-                            "title": r.get("title", ""),
-                            "snippet": r.get("body", ""),
-                            "url": r.get("href", ""),
-                        })
+                for r in ddgs.text(q, max_results=3, backend="duckduckgo"):
+                    url = r.get("href", "")
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    if not _is_url_safe(url):
+                        logger.info(f"[MAF] Filtered unsafe URL: {url}")
+                        continue
+                    all_results.append({
+                        "title": r.get("title", ""),
+                        "snippet": r.get("body", ""),
+                        "url": url,
+                    })
 
         # For SA-specific queries, also try to fetch Racing SA directly
         if any(kw in query.lower() for kw in ("south africa", " sa ", "sa race", "kenilworth", "scottsville", "vaal", "turffontein", "fairview", "greyville")):
@@ -274,8 +310,6 @@ def search_racing_data(query: str, **kwargs) -> Dict:
                     follow_redirects=True,
                 )
                 if resp.status_code == 200:
-                    # Extract text content (strip HTML tags simply)
-                    import re
                     text = re.sub(r"<[^>]+>", " ", resp.text)
                     text = re.sub(r"\s+", " ", text).strip()
                     all_results.insert(0, {
@@ -286,12 +320,14 @@ def search_racing_data(query: str, **kwargs) -> Dict:
             except Exception:
                 pass
 
-        return {
+        result = {
             "query": query,
             "results": all_results[:6],
             "count": len(all_results),
             "status": "success" if all_results else "no_data_found",
         }
+        set_cache(cache_key, result)
+        return result
     except Exception as e:
         return {"query": query, "error": str(e), "results": [], "status": "error"}
 

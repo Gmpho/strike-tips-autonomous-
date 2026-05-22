@@ -9,6 +9,12 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("racing-memory")
 
+try:
+    import chromadb
+    HAS_CHROMA = True
+except ImportError:
+    HAS_CHROMA = False
+
 
 def _make_embedding_fn():
     """
@@ -17,7 +23,7 @@ def _make_embedding_fn():
     2. Gemini text-embedding-004 (cloud fallback)
     3. ChromaDB default all-MiniLM (last resort)
     """
-    from chromadb.utils.embedding_functions import EmbeddingFunction
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction, EmbeddingFunction
     from core_agent.config.model_config import ModelConfig
     import httpx
 

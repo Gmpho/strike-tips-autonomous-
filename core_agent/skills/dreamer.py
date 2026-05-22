@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import List, Dict, Any
@@ -55,13 +56,18 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
 
     # Search for real news to ground the dream
     search_context = ""
-    try:
-        from core_agent.skills.memory.search_tool import search_racing_data
-        results = search_racing_data(f"{race.get('course','SA racing')} horse racing {scenario[:40]}", limit=2)
-        if results:
-            search_context = "\nReal-world context: " + " | ".join(r[:120] for r in results if r)
-    except Exception:
-        pass
+    course = race.get("course", "")
+    if course and course != "Unknown Track":
+        try:
+            from core_agent.skills.memory.search_tool import search_racing_data
+            scenario_clean = scenario.replace(f" at {course}", "").replace(f" on {course}", "")
+            scenario_clean = re.sub(r"Race \d+", "", scenario_clean).strip().rstrip("?,.")
+            key_terms = scenario_clean[:25]
+            results = search_racing_data(f"{course} horse racing {key_terms}", limit=2)
+            if results:
+                search_context = "\nReal-world context: " + " | ".join(r[:120] for r in results if r)
+        except Exception:
+            pass
 
     prompt = (
         f"Horse racing analyst. Scenario: {scenario}\n"
