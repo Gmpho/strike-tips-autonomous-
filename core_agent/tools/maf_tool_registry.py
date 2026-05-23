@@ -263,9 +263,9 @@ def search_past_races(query: str, n_results: int = 5, strike=None, **kwargs) -> 
         return {"query": query, "error": str(e)}
 
 
-def search_racing_data(query: str, **kwargs) -> Dict:
+def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
     """Search for racing information via DuckDuckGo with URL safety filtering and persistent cache."""
-    cache_key = f"maf_search:{query}"
+    cache_key = f"maf_search:{query}:{limit}"
     cached = get_cache(cache_key)
     if cached is not None:
         logger.info(f"[MAF] Cache hit: {query}")
@@ -286,7 +286,7 @@ def search_racing_data(query: str, **kwargs) -> Dict:
         seen = set()
         with DDGS() as ddgs:
             for q in queries:
-                for r in ddgs.text(q, max_results=3, backend="duckduckgo"):
+                for r in ddgs.text(q, max_results=limit, backend="duckduckgo"):
                     url = r.get("href", "")
                     if url in seen:
                         continue

@@ -12,6 +12,7 @@ from core_agent.routes import (
     monitoring,
     healing,
     dreaming,
+    tasks,
 )
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import AuthMiddleware
@@ -51,6 +52,17 @@ async def startup_event():
 
     # Initialize cache in app state
     app.state.snapshot_cache = {}
+
+    # Start background task worker
+    async def start_task_worker():
+        from core_agent.core.task_worker import run_worker_loop
+        logger.info("Starting background task worker...")
+        try:
+            await run_worker_loop(poll_interval=2.0)
+        except Exception as e:
+            logger.warning("Task worker stopped: %s", e)
+
+    asyncio.create_task(start_task_worker())
 
     # Pre-warm agent pipeline — pays the SkillsProvider import cost at startup, not per-request
     async def prewarm_pipeline():
@@ -230,6 +242,7 @@ app.include_router(config.router)
 app.include_router(monitoring.router)
 app.include_router(healing.router)
 app.include_router(dreaming.router)
+app.include_router(tasks.router)
 
 
 @app.api_route(

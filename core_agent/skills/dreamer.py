@@ -59,13 +59,14 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
     course = race.get("course", "")
     if course and course != "Unknown Track":
         try:
-            from core_agent.skills.memory.search_tool import search_racing_data
+            from core_agent.tools.maf_tool_registry import search_racing_data
             scenario_clean = scenario.replace(f" at {course}", "").replace(f" on {course}", "")
             scenario_clean = re.sub(r"Race \d+", "", scenario_clean).strip().rstrip("?,.")
             key_terms = scenario_clean[:25]
-            results = search_racing_data(f"{course} horse racing {key_terms}", limit=2)
-            if results:
-                search_context = "\nReal-world context: " + " | ".join(r[:120] for r in results if r)
+            result = search_racing_data(f"{course} horse racing {key_terms}", limit=2)
+            snippets = [r.get("snippet", "") for r in result.get("results", [])]
+            if snippets:
+                search_context = "\nReal-world context: " + " | ".join(s[:120] for s in snippets if s)
         except Exception:
             pass
 
