@@ -12,8 +12,6 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import List, Dict, Any
 
-import httpx
-
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 
 logger = logging.getLogger("dream-engine")
@@ -32,11 +30,8 @@ class Dream:
 
 
 def _load_snapshot() -> Dict[str, Any]:
-    try:
-        with open(MARKET_SNAPSHOT_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {"events": {}}
+    from core_agent.core.snapshot_cache import get_snapshot
+    return get_snapshot()
 
 
 def _pick_race(snap: Dict) -> Dict:
@@ -77,13 +72,14 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
         f"Give one concise insight (1-2 sentences) on how this affects value/probability."
     )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 80, "temperature": 0.7},
-            )
-            return resp.json()["choices"][0]["message"]["content"].strip()
+        from core_agent.core.http_client import get_async_client
+        client = get_async_client(timeout=10.0)
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 80, "temperature": 0.7},
+        )
+        return resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         logger.warning(f"Groq dream failed: {e}")
         return "Simulation complete — insight unavailable."

@@ -185,14 +185,14 @@ class RaceScheduleService:
     async def _fetch_international_schedule(self, date_str: str) -> Dict[str, Dict]:
         """Fetch live international racing schedule from TAB API"""
         try:
-            import httpx
+            from core_agent.core.http_client import get_async_client
 
-            async with httpx.AsyncClient(timeout=10) as client:
-                url = self.TAB_SCHEDULE_URL.format(date=date_str.replace("-", ""))
-                response = await client.get(url)
-                if response.status_code == 200:
-                    data = response.json()
-                    return self._parse_schedule_response(data)
+            client = get_async_client(timeout=10)
+            url = self.TAB_SCHEDULE_URL.format(date=date_str.replace("-", ""))
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                return self._parse_schedule_response(data)
         except Exception as e:
             logger.debug(f"International schedule fetch failed: {e}")
 

@@ -31,10 +31,11 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
         "options": {"num_predict": 256, "temperature": 0.1},
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    from core_agent.core.http_client import get_async_client
+    client = get_async_client(timeout=30.0)
+    resp = await client.post(url, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
 
     text = data.get("message", {}).get("content", "")
     if not text:

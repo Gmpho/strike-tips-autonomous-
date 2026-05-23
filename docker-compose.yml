@@ -13,6 +13,7 @@ services:
       - PYTHONPATH=/app
       - DATA_DIR=/app/data
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
       - chroma_cache:/root/.cache/chroma
@@ -24,6 +25,7 @@ services:
     restart: unless-stopped
     depends_on:
       - ollama
+      - redis
 
   odds-monitor:
     build:
@@ -39,6 +41,7 @@ services:
       - DATA_DIR=/app/data
       - OLLAMA_HOST=http://host.docker.internal:11434
       - MAX_CONCURRENT_PAGES=2
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile
@@ -60,6 +63,7 @@ services:
     restart: unless-stopped
     depends_on:
       - ollama
+      - redis
 
   telegram-agent:
     build:
@@ -68,6 +72,7 @@ services:
     container_name: telegram-agent-new
     environment:
       - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
     env_file:
       - .env
     restart: always
@@ -75,12 +80,15 @@ services:
       - .:/app
     depends_on:
       - ollama
+      - redis
 
   redis:
     image: redis:alpine
     container_name: strike-tips-redis
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: always
 
   ollama:
@@ -115,4 +123,5 @@ services:
 volumes:
   ollama_data:
   redisinsight_data:
+  redis_data:
   chroma_cache:

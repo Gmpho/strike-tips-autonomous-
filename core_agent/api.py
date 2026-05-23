@@ -50,8 +50,9 @@ async def startup_event():
     ollama_host = ModelConfig.ollama_host()
     logger.info("Ollama configured host: %s", ollama_host)
 
-    # Initialize cache in app state
-    app.state.snapshot_cache = {}
+    # Initialize cache in app state from shared snapshot cache
+    from core_agent.core.snapshot_cache import get_snapshot
+    app.state.snapshot_cache = get_snapshot()
 
     # Start background task worker
     async def start_task_worker():
@@ -74,16 +75,16 @@ async def startup_event():
 
     asyncio.create_task(prewarm_pipeline())
 
-    # Background task to poll disk snapshot
+    # Background task to keep in-memory snapshot cache fresh via Redis pub/sub
     async def refresh_snapshot():
-        while True:
-            try:
-                if os.path.exists(MARKET_SNAPSHOT_PATH):
-                    with open(MARKET_SNAPSHOT_PATH, "r") as f:
-                        app.state.snapshot_cache = json.load(f)
-            except Exception:
-                pass
-            await asyncio.sleep(5)
+        try:
+            from core_agent.core.task_queue import get_redis
+            redis_client = await get_redis()
+            from core_agent.core.snapshot_cache import subscribe_snapshot, get_snapshot
+            asyncio.create_task(subscribe_snapshot(redis_client))
+            logger.info("Snapshot cache subscriber started")
+        except Exception as e:
+            logger.warning("Redis subscriber failed, using disk fallback: %s", e)
 
     asyncio.create_task(refresh_snapshot())
 
@@ -148,30 +149,31 @@ async def startup_event():
             )
             started = time.monotonic()
             try:
-                async with httpx.AsyncClient(timeout=warmup_timeout_sec) as client:
-                    if await _ollama_busy_or_loading(client):
-                        logger.info(
-                            "keepalive_skipped_busy model=%s elapsed_sec=0.00",
-                            model_name,
-                        )
-                        await asyncio.sleep(sleep_for)
-                        continue
-                    await client.post(
-                        chat_url,
-                        json={
-                            "model": model_name,
-                            "messages": [{"role": "user", "content": "ping"}],
-                            "stream": False,
-                            "options": {"num_predict": 1},
-                        },
-                    )
-                    elapsed = time.monotonic() - started
+                from core_agent.core.http_client import get_async_client
+                client = get_async_client(timeout=warmup_timeout_sec)
+                if await _ollama_busy_or_loading(client):
                     logger.info(
-                        "keepalive_ping_ok model=%s elapsed_sec=%.2f timeout_sec=%.2f",
+                        "keepalive_skipped_busy model=%s elapsed_sec=0.00",
                         model_name,
-                        elapsed,
-                        warmup_timeout_sec,
                     )
+                    await asyncio.sleep(sleep_for)
+                    continue
+                await client.post(
+                    chat_url,
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "stream": False,
+                        "options": {"num_predict": 1},
+                    },
+                )
+                elapsed = time.monotonic() - started
+                logger.info(
+                    "keepalive_ping_ok model=%s elapsed_sec=%.2f timeout_sec=%.2f",
+                    model_name,
+                    elapsed,
+                    warmup_timeout_sec,
+                )
             except (httpx.HTTPError, ValueError, TypeError) as exc:
                 elapsed = time.monotonic() - started
                 logger.warning(
@@ -185,26 +187,26 @@ async def startup_event():
             await asyncio.sleep(sleep_for)
 
     async def ollama_startup_self_check() -> bool:
-        import httpx
+        from core_agent.core.http_client import get_async_client
 
         tags_url = ModelConfig.ollama_native_url("/api/tags")
         try:
-            async with httpx.AsyncClient(timeout=6) as client:
-                response = await client.get(tags_url)
-                model_count = "n/a"
-                if response.status_code == 200:
-                    try:
-                        payload = response.json()
-                        model_count = len(payload.get("models", []))
-                    except Exception:
-                        model_count = "unparseable-json"
-                logger.info(
-                    "Ollama self-check: status=%s tags_url=%s model_count=%s",
-                    response.status_code,
-                    tags_url,
-                    model_count,
-                )
-                return response.status_code == 200
+            client = get_async_client(timeout=6)
+            response = await client.get(tags_url)
+            model_count = "n/a"
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                    model_count = len(payload.get("models", []))
+                except Exception:
+                    model_count = "unparseable-json"
+            logger.info(
+                "Ollama self-check: status=%s tags_url=%s model_count=%s",
+                response.status_code,
+                tags_url,
+                model_count,
+            )
+            return response.status_code == 200
         except Exception as exc:
             logger.warning(
                 "Ollama self-check failed: tags_url=%s error=%s", tags_url, exc

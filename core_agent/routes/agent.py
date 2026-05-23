@@ -100,10 +100,11 @@ async def _get_cached_ollama_status() -> str:
         ollama_status = "unknown"
         try:
             ollama_tags_url = ModelConfig.ollama_native_url("/api/tags")
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    ollama_tags_url, timeout=OLLAMA_HEALTH_TIMEOUT_SEC
-                )
+            from core_agent.core.http_client import get_async_client
+            client = get_async_client(timeout=OLLAMA_HEALTH_TIMEOUT_SEC)
+            response = await client.get(
+                ollama_tags_url
+            )
             ollama_status = "connected" if response.status_code == 200 else "error"
         except Exception:
             ollama_status = "not_running"
@@ -275,10 +276,11 @@ async def agent_chat_stream(request: AgentRequest, fastapi_request: Request):
                 groq_key = os.getenv("GROQ_API_KEY", "")
                 groq_model = final_model.replace("groq:", "")
                 try:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        async with client.stream(
-                            "POST",
-                            "https://api.groq.com/openai/v1/chat/completions",
+                    from core_agent.core.http_client import get_async_client
+                    client = get_async_client(timeout=30.0)
+                    async with client.stream(
+                        "POST",
+                        "https://api.groq.com/openai/v1/chat/completions",
                             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                             json={"model": groq_model, "messages": [{"role": "user", "content": request.message}], "stream": True, "max_tokens": 512},
                         ) as resp:
@@ -310,10 +312,11 @@ async def agent_chat_stream(request: AgentRequest, fastapi_request: Request):
             }
 
             try:
-                async with httpx.AsyncClient(
+                from core_agent.core.http_client import get_async_client
+                client = get_async_client(
                     timeout=AGENT_STREAM_TIMEOUT_SEC
-                ) as client:
-                    async with client.stream("POST", chat_url, json=payload) as resp:
+                )
+                async with client.stream("POST", chat_url, json=payload) as resp:
                         logger.debug(
                             "[stream] opened ollama stream url=%s status=%s model=%s intent=%s specialist=%s",
                             chat_url,

@@ -20,8 +20,8 @@ def build_race_context() -> str:
     today = datetime.now().strftime("%A, %d %B %Y")
 
     try:
-        with open(MARKET_SNAPSHOT_PATH) as f:
-            snap = json.load(f)
+        from core_agent.core.snapshot_cache import get_snapshot
+        snap = get_snapshot()
 
         regions: Counter = Counter()
         courses: set = set()

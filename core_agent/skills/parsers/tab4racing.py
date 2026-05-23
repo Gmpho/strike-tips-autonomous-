@@ -63,10 +63,10 @@ def get_live_odds(
     """Lookup live odds from market_snapshot_latest.json or provided snapshot."""
     try:
         if snapshot is None:
-            if not os.path.exists(MARKET_SNAPSHOT_PATH):
+            from core_agent.core.snapshot_cache import get_snapshot
+            snapshot = get_snapshot()
+            if not snapshot.get("events"):
                 return 5.0
-            with open(MARKET_SNAPSHOT_PATH, "r") as f:
-                snapshot = json.load(f)
 
         # Flatten events to find the horse
         for event_id, event in snapshot.get("events", {}).items():
@@ -220,14 +220,9 @@ class TAB4RacingScraper:
             data = response.json()
             programs = data.get("data", {}).get("option_list", {})
 
-            # Pre-load snapshot once for all runners
-            snapshot = None
-            if os.path.exists(MARKET_SNAPSHOT_PATH):
-                try:
-                    with open(MARKET_SNAPSHOT_PATH, "r") as f:
-                        snapshot = json.load(f)
-                except Exception:
-                    pass
+            # Pre-load snapshot once for all runners from in-memory cache
+            from core_agent.core.snapshot_cache import get_snapshot
+            snapshot = get_snapshot()
 
             for k, v in programs.items():
                 if v.get("ProgramCode") == program_code:
@@ -278,14 +273,9 @@ class TAB4RacingScraper:
 
         races = []
         try:
-            # Pre-load snapshot once for all runners
-            snapshot = None
-            if os.path.exists(MARKET_SNAPSHOT_PATH):
-                try:
-                    with open(MARKET_SNAPSHOT_PATH, "r") as f:
-                        snapshot = json.load(f)
-                except Exception:
-                    pass
+            # Pre-load snapshot once for all runners from in-memory cache
+            from core_agent.core.snapshot_cache import get_snapshot
+            snapshot = get_snapshot()
 
             soup = BeautifulSoup(html, "html.parser")
             race_containers = soup.select(".race-card, [class*='race'], [data-race]")

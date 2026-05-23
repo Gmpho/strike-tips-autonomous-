@@ -134,6 +134,14 @@ class AdaptiveOddsMonitor:
 
                 with open(MARKET_SNAPSHOT_PATH, "w") as f:
                     json.dump(state, f, indent=2)
+                try:
+                    from core_agent.core.snapshot_cache import set_snapshot, publish_snapshot
+                    from core_agent.core.task_queue import get_redis
+                    set_snapshot(state)
+                    redis_client = await get_redis()
+                    await publish_snapshot(redis_client, state)
+                except Exception:
+                    pass
 
                 active_ids = list(state["events"].keys())
 

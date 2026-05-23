@@ -56,28 +56,29 @@ class PDFHarvester:
             track=self._get_track_code(track), date=formatted_date
         )
 
-        async with httpx.AsyncClient(timeout=15) as client:
-            try:
-                response = await client.get(url, follow_redirects=True)
+        from core_agent.core.http_client import get_async_client
+        client = get_async_client(timeout=15)
+        try:
+            response = await client.get(url, follow_redirects=True)
 
-                # Try Smart Discovery if 404
-                if response.status_code == 404:
-                    logger.info(
-                        f"[PDF] 404 detected. Discovering dynamic URL for {track}..."
+            # Try Smart Discovery if 404
+            if response.status_code == 404:
+                logger.info(
+                    f"[PDF] 404 detected. Discovering dynamic URL for {track}..."
+                )
+                discovered_url = await PDFDiscoveryService.get_live_pdf_url(track)
+                if discovered_url:
+                    logger.info(f"[PDF] Discovery successful: {discovered_url}")
+                    response = await client.get(
+                        discovered_url, follow_redirects=True
                     )
-                    discovered_url = await PDFDiscoveryService.get_live_pdf_url(track)
-                    if discovered_url:
-                        logger.info(f"[PDF] Discovery successful: {discovered_url}")
-                        response = await client.get(
-                            discovered_url, follow_redirects=True
-                        )
 
-                if response.status_code == 200:
-                    return await self._parse_pdf_bytes(
-                        response.content, track, today, intelligence_type, cache_file
-                    )
-            except Exception as e:
-                logger.error(f"Download failed for {track}: {e}")
+            if response.status_code == 200:
+                return await self._parse_pdf_bytes(
+                    response.content, track, today, intelligence_type, cache_file
+                )
+        except Exception as e:
+            logger.error(f"Download failed for {track}: {e}")
 
         return self._stub_intelligence(track, today)
 

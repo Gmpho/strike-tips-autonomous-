@@ -34,9 +34,10 @@ def _make_embedding_fn():
             results = []
             for text in input:
                 try:
-                    with httpx.Client(timeout=15.0) as client:
-                        r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
-                        results.append(r.json().get("embedding", []))
+                    from core_agent.core.http_client import get_sync_client
+                    client = get_sync_client(timeout=15.0)
+                    r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
+                    results.append(r.json().get("embedding", []))
                 except Exception:
                     results.append([])
             return results
@@ -255,22 +256,22 @@ class RacingMemory:
         Generate a vector embedding for the given text using local Ollama.
         Uses the model defined in ModelConfig.EMBEDDER.
         """
-        import httpx
+        from core_agent.core.http_client import get_sync_client
         from core_agent.config.model_config import ModelConfig
 
         host = ModelConfig.OLLAMA_HOST or "http://localhost:11434"
         model = ModelConfig.EMBEDDER or "nomic-embed-text"
 
         try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(
-                    f"{host}/api/embeddings", json={"model": model, "prompt": text}
-                )
-                if resp.status_code == 200:
-                    return resp.json().get("embedding", [])
-                else:
-                    logger.error(f"Embedding failed: {resp.text}")
-                    return []
+            client = get_sync_client(timeout=30.0)
+            resp = client.post(
+                f"{host}/api/embeddings", json={"model": model, "prompt": text}
+            )
+            if resp.status_code == 200:
+                return resp.json().get("embedding", [])
+            else:
+                logger.error(f"Embedding failed: {resp.text}")
+                return []
         except Exception as e:
             logger.error(f"Ollama connection error during embedding: {e}")
             return []

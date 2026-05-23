@@ -38,22 +38,21 @@ _loki_enabled = False
 if os.getenv("ENABLE_LOKI", "true").lower() == "true":
     loki_url = os.getenv("LOKI_URL", "http://localhost:3100/loki/api/v1/push")
     try:
-        import httpx
-
-        with httpx.Client(timeout=2) as client:
-            health_url = loki_url.replace("/push", "/ready")
-            response = client.get(health_url)
-            if logging_loki and response.status_code == 200:
-                loki_handler = logging_loki.LokiHandler(
-                    url=loki_url,
-                    tags={"application": "strike-tips-cli"},
-                    version="1",
-                )
-                loki_handler.setLevel(logging.WARNING)
-                logger.addHandler(loki_handler)
-                _loki_enabled = True
-                print("[OK] Loki logging enabled")
-            else:
+        from core_agent.core.http_client import get_sync_client
+        client = get_sync_client(timeout=2)
+        health_url = loki_url.replace("/push", "/ready")
+        response = client.get(health_url)
+        if logging_loki and response.status_code == 200:
+            loki_handler = logging_loki.LokiHandler(
+                url=loki_url,
+                tags={"application": "strike-tips-cli"},
+                version="1",
+            )
+            loki_handler.setLevel(logging.WARNING)
+            logger.addHandler(loki_handler)
+            _loki_enabled = True
+            print("[OK] Loki logging enabled")
+        else:
                 if not logging_loki:
                     print("[INFO] logging_loki module missing, skipping log shipping")
                 else:

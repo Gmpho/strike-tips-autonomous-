@@ -4,7 +4,7 @@ High-precision racing data extraction using official TAB4Racing backend endpoint
 Includes L7 LLM-assisted extraction fallback for complex/messy data.
 """
 
-import httpx
+from core_agent.core.http_client import get_sync_client
 import re
 import json
 import logging
@@ -110,44 +110,44 @@ def _fetch_program_races(program_code: str, track_name: str) -> List[Dict]:
     params = {"msisdn": "0000", "game": "horseracing", "selectionType": "0"}
 
     try:
-        with httpx.Client(timeout=30) as client:
-            response = client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+        client = get_sync_client(timeout=30)
+        response = client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
 
-            programs = data.get("data", {}).get("option_list", {})
-            target_program = None
+        programs = data.get("data", {}).get("option_list", {})
+        target_program = None
 
-            # Handle if programs is a list or dict
-            items = programs.values() if isinstance(programs, dict) else programs
+        # Handle if programs is a list or dict
+        items = programs.values() if isinstance(programs, dict) else programs
 
-            for prog in items:
-                if prog.get("ProgramCode") == program_code:
-                    target_program = prog
-                    break
+        for prog in items:
+            if prog.get("ProgramCode") == program_code:
+                target_program = prog
+                break
 
-            if not target_program:
-                return []
+        if not target_program:
+            return []
 
-            races = []
-            race_list = target_program.get("RaceList", [])
+        races = []
+        race_list = target_program.get("RaceList", [])
 
-            for r in race_list:
-                race_info = {
-                    "track": target_program.get("ProgramName", track_name),
-                    "race_number": int(r.get("Race", 0)),
-                    "race_time": (
-                        r.get("AdvertisedStartTime", "").split(" ")[1][:5]
-                        if " " in r.get("AdvertisedStartTime", "")
-                        else "00:00"
-                    ),
-                    "distance": r.get("Distance", "Unknown"),
-                    "condition": r.get("Surface", "Good"),
-                    "runners": _get_runner_stubs(r.get("LiveRunners", "")),
-                }
-                races.append(race_info)
+        for r in race_list:
+            race_info = {
+                "track": target_program.get("ProgramName", track_name),
+                "race_number": int(r.get("Race", 0)),
+                "race_time": (
+                    r.get("AdvertisedStartTime", "").split(" ")[1][:5]
+                    if " " in r.get("AdvertisedStartTime", "")
+                    else "00:00"
+                ),
+                "distance": r.get("Distance", "Unknown"),
+                "condition": r.get("Surface", "Good"),
+                "runners": _get_runner_stubs(r.get("LiveRunners", "")),
+            }
+            races.append(race_info)
 
-            return races
+        return races
     except Exception as e:
         logger.error(f"[ERR] Program fetch failed: {e}")
         return []
@@ -166,18 +166,18 @@ def _fetch_all_and_filter(track_name: str) -> List[Dict]:
     """Fetches everything and finds the track by name"""
     url = "https://totex-vasx.4racing.com/PRODUCTS/webservice/phumelelaV4/get/GamePlayRequest/horseracing/4RACINGWEB_TAB"
     try:
-        with httpx.Client(timeout=30) as client:
-            response = client.get(
-                url,
-                params={"msisdn": "0000", "game": "horseracing", "selectionType": "0"},
-            )
-            data = response.json()
-            programs = data.get("data", {}).get("option_list", {})
+        client = get_sync_client(timeout=30)
+        response = client.get(
+            url,
+            params={"msisdn": "0000", "game": "horseracing", "selectionType": "0"},
+        )
+        data = response.json()
+        programs = data.get("data", {}).get("option_list", {})
 
-            items = programs.values() if isinstance(programs, dict) else programs
-            for prog in items:
-                if track_name in prog.get("ProgramName", "").lower():
-                    return _fetch_program_races(prog.get("ProgramCode"), track_name)
+        items = programs.values() if isinstance(programs, dict) else programs
+        for prog in items:
+            if track_name in prog.get("ProgramName", "").lower():
+                return _fetch_program_races(prog.get("ProgramCode"), track_name)
     except:
         pass
 

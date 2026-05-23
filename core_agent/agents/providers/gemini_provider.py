@@ -35,10 +35,11 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
         "generationConfig": {"maxOutputTokens": 400, "temperature": 0.3},
     }
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    from core_agent.core.http_client import get_async_client
+    client = get_async_client(timeout=20.0)
+    resp = await client.post(url, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
 
     text = data["candidates"][0]["content"]["parts"][0]["text"]
     usage = data.get("usageMetadata", {})

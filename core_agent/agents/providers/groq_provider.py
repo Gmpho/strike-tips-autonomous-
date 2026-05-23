@@ -97,37 +97,38 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
         {"role": "user", "content": message},
     ]
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        # Only pass tools to the 70b model — 8b hallucinates tool calls
-        payload: Dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 400,
-            "temperature": 0.3,
-        }
-        if needs_tools:
-            payload["tools"] = TOOLS
+    from core_agent.core.http_client import get_async_client
+    client = get_async_client(timeout=25.0)
+    # Only pass tools to the 70b model — 8b hallucinates tool calls
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": 400,
+        "temperature": 0.3,
+    }
+    if needs_tools:
+        payload["tools"] = TOOLS
 
-        resp = await client.post(_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        choice = data["choices"][0]
+    resp = await client.post(_URL, headers=headers, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    choice = data["choices"][0]
 
-        # Execute tool calls if requested
-        if choice.get("finish_reason") == "tool_calls":
-            messages.append(choice["message"])
-            for tc in choice["message"].get("tool_calls", []):
-                fn_name = tc["function"]["name"]
-                fn_args = json.loads(tc["function"].get("arguments", "{}"))
-                result = await _execute_tool(fn_name, fn_args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": json.dumps(result),
-                })
-                logger.debug(f"Tool {fn_name}({fn_args}) → {str(result)[:100]}")
+    # Execute tool calls if requested
+    if choice.get("finish_reason") == "tool_calls":
+        messages.append(choice["message"])
+        for tc in choice["message"].get("tool_calls", []):
+            fn_name = tc["function"]["name"]
+            fn_args = json.loads(tc["function"].get("arguments", "{}"))
+            result = await _execute_tool(fn_name, fn_args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": json.dumps(result),
+            })
+            logger.debug(f"Tool {fn_name}({fn_args}) → {str(result)[:100]}")
 
-            # Second call with tool results
+        # Second call with tool results
             resp2 = await client.post(_URL, headers=headers, json={
                 "model": model,
                 "messages": messages,
