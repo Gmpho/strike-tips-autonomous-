@@ -94,6 +94,8 @@ SCENARIO_TEMPLATES = [
     "Simulating rain delay effect on {course} Race {race} odds.",
     "What if the distance was extended by 200m at {course}?",
     "Analysing outsider value if top trainer is suspended at {course}.",
+    "What if the favourite was a late scratch in Race {race}?",
+    "Evaluating jockey substitution impact at {course} Race {race}.",
 ]
 
 
@@ -106,6 +108,13 @@ class DreamEngine:
         race = _pick_race(snap)
         course = race.get("course", "Unknown Track")
         race_num = race.get("raceNumber", "?")
+        jockey = race.get("jockey", "")
+        odds = race.get("odds", "")
+        distance = race.get("distance", "")
+        trainer = race.get("trainer", "")
+        weight = race.get("weight", "")
+        form = race.get("form", "")
+
 
         scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
         insight = await _groq_insight(scenario, race)

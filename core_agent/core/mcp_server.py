@@ -4,6 +4,7 @@ Implements Model Context Protocol (MCP) using FastMCP
 Target: Senior L7 AI DevOps standard (High Reliability)
 """
 
+import asyncio
 from fastmcp import FastMCP
 from typing import List, Optional, Dict
 from core_agent.core.strike_brain import brain
@@ -52,12 +53,16 @@ for tool_name, tool_fn in TOOL_REGISTRY.items():
     tool_meta = TOOL_INFO.get(tool_name, {})
 
     def create_wrapper(name, fn, meta):
-        @mcp.tool(name=name, description=meta.get("description", "No description"))
-        def dynamic_tool(query: str = "") -> str:
-            """Dynamic bridge to MAF tools"""
-            return str(fn(query=query, strike=brain.strike))
-
-        return dynamic_tool
+        if asyncio.iscoroutinefunction(fn):
+            @mcp.tool(name=name, description=meta.get("description", "No description"))
+            async def dynamic_tool(query: str = "") -> str:
+                return str(await fn(query=query, strike=brain.strike))
+            return dynamic_tool
+        else:
+            @mcp.tool(name=name, description=meta.get("description", "No description"))
+            def dynamic_tool(query: str = "") -> str:
+                return str(fn(query=query, strike=brain.strike))
+            return dynamic_tool
 
     create_wrapper(tool_name, tool_fn, tool_meta)
 

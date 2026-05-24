@@ -4,13 +4,14 @@ Each tool is a plain Python function callable by the agent pipeline.
 Tool names follow the func_gemma-compatible naming convention.
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import asdict
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional
 
-from core_agent.skills.memory.search_cache import get_cache, set_cache
+from core_agent.core.redis_cache import get_cache, set_cache
 
 logger = logging.getLogger("maf-tool-registry")
 
@@ -263,10 +264,10 @@ def search_past_races(query: str, n_results: int = 5, strike=None, **kwargs) -> 
         return {"query": query, "error": str(e)}
 
 
-def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
+async def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
     """Search for racing information via DuckDuckGo with URL safety filtering and persistent cache."""
     cache_key = f"maf_search:{query}:{limit}"
-    cached = get_cache(cache_key)
+    cached = await get_cache(cache_key)
     if cached is not None:
         logger.info(f"[MAF] Cache hit: {query}")
         return cached
@@ -274,7 +275,7 @@ def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
     try:
         from ddgs import DDGS
         from datetime import datetime
-        import httpx
+        from core_agent.core.http_client import get_async_client
 
         current_year = datetime.now().year
         queries = [
@@ -284,29 +285,18 @@ def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
 
         all_results = []
         seen = set()
-        with DDGS() as ddgs:
-            for q in queries:
-                for r in ddgs.text(q, max_results=limit, backend="duckduckgo"):
-                    url = r.get("href", "")
-                    if url in seen:
-                        continue
-                    seen.add(url)
-                    if not _is_url_safe(url):
-                        logger.info(f"[MAF] Filtered unsafe URL: {url}")
-                        continue
-                    all_results.append({
-                        "title": r.get("title", ""),
-                        "snippet": r.get("body", ""),
-                        "url": url,
-                    })
+        loop = asyncio.get_event_loop()
+        for q in queries:
+            for r in await loop.run_in_executor(None, _search_ddgs, q, limit, seen):
+                all_results.append(r)
 
         # For SA-specific queries, also try to fetch Racing SA directly
         if any(kw in query.lower() for kw in ("south africa", " sa ", "sa race", "kenilworth", "scottsville", "vaal", "turffontein", "fairview", "greyville")):
             try:
-                resp = httpx.get(
+                client = get_async_client(timeout=8)
+                resp = await client.get(
                     "https://www.racingsa.co.za/racing-calendar/",
                     headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=8,
                     follow_redirects=True,
                 )
                 if resp.status_code == 200:
@@ -326,21 +316,38 @@ def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
             "count": len(all_results),
             "status": "success" if all_results else "no_data_found",
         }
-        set_cache(cache_key, result)
+        await set_cache(cache_key, result)
         return result
     except Exception as e:
         return {"query": query, "error": str(e), "results": [], "status": "error"}
 
 
-def verify_race_exists(track: str, race_number: int, strike=None, **kwargs) -> Dict:
+def _search_ddgs(query: str, limit: int, seen: set) -> list:
+    """Run DDGS search in a thread pool — DDGS is sync-only."""
+    from ddgs import DDGS
+    results = []
+    with DDGS() as ddgs:
+        for r in ddgs.text(query, max_results=limit, backend="duckduckgo"):
+            url = r.get("href", "")
+            if url in seen:
+                continue
+            seen.add(url)
+            if not _is_url_safe(url):
+                continue
+            results.append({
+                "title": r.get("title", ""),
+                "snippet": r.get("body", ""),
+                "url": url,
+            })
+    return results
+
+
+async def verify_race_exists(track: str, race_number: int, strike=None, **kwargs) -> Dict:
     """Check if a race is scheduled for today at a given track."""
     if not strike:
         return {"exists": False, "reason": "StrikeTips not initialized"}
     try:
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        exists = loop.run_until_complete(strike.verify_race_event(track, race_number))
+        exists = await strike.verify_race_event(track, race_number)
         return {
             "track": track,
             "race_number": race_number,
@@ -351,15 +358,12 @@ def verify_race_exists(track: str, race_number: int, strike=None, **kwargs) -> D
         return {"exists": False, "error": str(e)}
 
 
-def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) -> Dict:
+async def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) -> Dict:
     """Return the latest odds snapshot for a track or all tracks."""
     if not strike:
         return {"status": "no_snapshot_available"}
     try:
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(strike.get_odds_snapshot(track=track))
+        return await strike.get_odds_snapshot(track=track)
     except Exception as e:
         return {"status": "error", "error": str(e)}
 

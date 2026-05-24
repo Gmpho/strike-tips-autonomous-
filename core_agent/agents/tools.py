@@ -62,23 +62,23 @@ def build_tools(strike):
         return TOOL_REGISTRY["search_racing_data"](query=query)
 
     @tool(approval_mode="never_require")
-    def verify_race_exists(
+    async def verify_race_exists(
         track: Annotated[str, Field(description="Track name e.g. turffontein")],
         race_number: Annotated[int, Field(description="Race number")],
     ) -> dict:
         """Verify if a race is scheduled today at the given track."""
-        return TOOL_REGISTRY["verify_race_exists"](
+        return await TOOL_REGISTRY["verify_race_exists"](
             track=track, race_number=race_number, strike=strike
         )
 
     @tool(approval_mode="never_require")
-    def get_odds_snapshot(
+    async def get_odds_snapshot(
         track: Annotated[
             Optional[str], Field(description="Track name or None for all tracks")
         ] = None,
     ) -> dict:
         """Return latest odds snapshot for one or all tracks."""
-        return TOOL_REGISTRY["get_odds_snapshot"](track=track, strike=strike)
+        return await TOOL_REGISTRY["get_odds_snapshot"](track=track, strike=strike)
 
     @tool(approval_mode="never_require")
     async def evaluate_race(
