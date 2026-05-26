@@ -1,9 +1,8 @@
 """
-Result Tracker - Auto-settle open bets using DuckDuckGo race result search.
+Result Tracker - Auto-settle open bets using search service (Brave → Tavily → DDGS).
 Uses fuzzy matching on horse names to handle slight name variations.
 """
 
-import asyncio
 import logging
 import re
 from datetime import date
@@ -11,19 +10,11 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("result-tracker")
 
-try:
-    from duckduckgo_search import DDGS
-
-    HAS_DDGS = True
-except ImportError:
-    HAS_DDGS = False
-    logger.warning("duckduckgo_search not installed - result tracker in stub mode")
-
 
 class ResultTracker:
     """
     Automatically settles open bets by searching for race results
-    via DuckDuckGo. Uses fuzzy matching to handle horse name variations.
+    via unified SearchService. Uses fuzzy matching to handle horse name variations.
     Runs on a schedule (every 5 minutes post-race).
     """
 
@@ -39,18 +30,17 @@ class ResultTracker:
         intersection = len(a & b)
         return intersection / max(len(a), len(b))
 
-    def _search_result(self, track: str, race_number: int) -> Optional[str]:
-        """Search DuckDuckGo for race result text"""
-        if not HAS_DDGS:
-            return None
-        today = date.today().strftime("%d %B %Y")
-        query = f"{track} Race {race_number} result winner {today} South Africa horse racing"
+    async def _search_result(self, track: str, race_number: int) -> Optional[str]:
+        """Search for race result text via unified SearchService."""
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=5))
-            return " ".join(r.get("body", "") for r in results)
+            from core_agent.skills.search_service import search_racing
+            today = date.today().strftime("%d %B %Y")
+            query = f"{track} Race {race_number} result winner {today} South Africa horse racing"
+            result = await search_racing(query, limit=5)
+            snippets = [r.get("snippet", "") for r in result.get("results", [])]
+            return " ".join(snippets) if snippets else None
         except Exception as e:
-            logger.warning(f"DDG search failed for {track} R{race_number}: {e}")
+            logger.warning(f"Search failed for {track} R{race_number}: {e}")
             return None
 
     def _extract_winner(

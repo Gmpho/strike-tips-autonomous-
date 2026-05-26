@@ -1,40 +1,61 @@
 import logging
 import httpx
 from typing import Optional
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
 
 logger = logging.getLogger("pdf-discovery")
 
 
 class PDFDiscoveryService:
-    """Discovers live PDF URLs by rendering the SPA portal via Playwright."""
-
-    PORTAL_URL = "https://www.tab.co.za/tabs/content/horseracing_cards"
+    API_URL = (
+        "https://totex-col.4racing.com/PRODUCTS/webservice/phumelelaV4"
+        "/get/Content/4RACINGWEB_TAB"
+    )
 
     @classmethod
-    async def get_live_pdf_url(cls, track: str) -> Optional[str]:
-        """Dynamically finds the PDF URL by simulating a user click."""
-        logger.info(f"[PDFDiscovery] Simulating user click for track: {track}")
-        browser = None
+    async def get_live_pdf_url(
+        cls, track: str, date_str: Optional[str] = None
+    ) -> Optional[str]:
+        from datetime import date
+        today = date_str or date.today().isoformat()
+
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                await page.goto(cls.PORTAL_URL, wait_until="networkidle", timeout=60000)
-                await page.wait_for_timeout(5000)
-                content = await page.content()
-                soup = BeautifulSoup(content, "html.parser")
-                for link in soup.find_all("a", href=True):
-                    href = link["href"]
-                    if track.lower() in href.lower() and href.endswith(".pdf"):
-                        return urljoin("https://www.tab.co.za", href)
-                logger.warning(f"[PDFDiscovery] No PDF found for track: {track}")
-                return None
-        except Exception as e:
-            logger.error(f"[PDFDiscovery] Error rendering portal: {e}")
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    cls.API_URL,
+                    params={
+                        "sub_action": "getComputaform",
+                        "tag": "ComputaformSA",
+                        "date": today,
+                    },
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "Referer": "https://www.tab.co.za/",
+                        "User-Agent": (
+                            "Mozilla/5.0 (X11; Linux x86_64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/148.0.0.0 Safari/537.36"
+                        ),
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            pdfs = (data.get("data", {}) or {}).get("ComputaformSA", [])
+            track_lower = track.lower()
+
+            for pdf in pdfs:
+                name = (pdf.get("name") or "").lower()
+                if track_lower in name:
+                    path = pdf.get("path")
+                    if path:
+                        logger.info(
+                            f"[PDFDiscovery] Found matching PDF: {pdf['name']}"
+                        )
+                        return path
+
+            logger.warning(f"[PDFDiscovery] No PDF found for track: {track}")
             return None
-        finally:
-            if browser:
-                await browser.close()
+
+        except Exception as e:
+            logger.error(f"[PDFDiscovery] API call failed: {e}")
+            return None

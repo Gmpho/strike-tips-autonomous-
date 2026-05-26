@@ -48,6 +48,8 @@ class UnifiedOrchestrator:
         self.strike = strike_tips
         self._history: List[Dict] = []
         self._honcho: Optional[object] = None  # HonchoMemory, lazy per user_id
+        from core_agent.agents.intent_classifier import IntentClassifier
+        self._classifier = IntentClassifier()
 
     def _get_honcho(self, user_id: Optional[str] = None):
         """Return a HonchoMemory instance for this user (lazy, cached by user_id)."""
@@ -62,6 +64,7 @@ class UnifiedOrchestrator:
         user_id: Optional[str] = None,
     ) -> AgentResponse:
         msg_lower = message.lower().strip()
+        intent = self._classifier.classify(msg_lower)
 
         # Instant handlers — no LLM needed
         if msg_lower in ("hi", "hello", "hey"):
@@ -71,10 +74,7 @@ class UnifiedOrchestrator:
                 confidence=1.0,
             )
 
-        if self.strike and any(
-            kw in msg_lower
-            for kw in ("status", "balance", "bankroll", "how much", "my account", "my balance")
-        ):
+        if self.strike and intent == "get_account_summary":
             try:
                 s = self.strike.get_bankroll_status()
                 return AgentResponse(
@@ -85,7 +85,7 @@ class UnifiedOrchestrator:
             except Exception:
                 pass
 
-        # Inject Honcho context into message before LLM call (Task 3)
+        # Inject Honcho context into message before LLM call
         honcho = self._get_honcho(user_id)
         memory_context = ""
         if honcho:
@@ -95,8 +95,8 @@ class UnifiedOrchestrator:
         if memory_context:
             enriched_message = f"[USER MEMORY]\n{memory_context}\n\n[QUERY]\n{message}"
 
-        # Delegate to pipeline
-        reply = await pipeline.run(enriched_message, model_override=model_override)
+        # Delegate to pipeline with intent awareness
+        reply = await pipeline.run(enriched_message, model_override=model_override, intent=intent)
 
         self._history.append({"role": "user", "content": message})
         self._history.append({"role": "assistant", "content": reply.summary})

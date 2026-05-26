@@ -5,6 +5,7 @@ import os
 import sys
 import difflib
 from datetime import datetime
+from typing import Optional
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
 from core_agent.core.alert_engine import AlertEngine
@@ -48,12 +49,36 @@ class AdaptiveOddsMonitor:
         self.intel_cache = IntelligenceCacheManager(
             MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
         )
-        self.alert_engine = AlertEngine()
+        self._telegram_notifier: Optional[TelegramNotifier] = None
+        try:
+            from core_agent.skills.notifications.telegram_bot import TelegramNotifier
+            self._telegram_notifier = TelegramNotifier()
+        except Exception:
+            pass
+
+        self.alert_engine = AlertEngine(
+            notification_callback=self._on_alert
+        )
         self.betway = BetwayAPI()
         self.oc_scraper = OddscheckerScraper()
 
         self.monitoring_active = True
         self.oc_state = {"odds": {}}
+
+    def _on_alert(self, msg: dict):
+        """Callback fired by AlertEngine when a condition triggers."""
+        if not self._telegram_notifier:
+            return
+        tag = msg.get("type", "alert")
+        horse = msg.get("horse", "?")
+        course = msg.get("course", "?")
+        odds = msg.get("odds", "?")
+        self._telegram_notifier.send_message(
+            f"🚨 <b>Live Alert</b>\n"
+            f"Type: {tag}\n"
+            f"🐎 {horse} @ {course}\n"
+            f"💰 Odds: {odds}"
+        )
 
     async def initialize(self):
         await self.alert_engine.initialize()

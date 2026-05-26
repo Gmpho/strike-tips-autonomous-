@@ -8,9 +8,12 @@ import json
 import logging
 import os
 import uuid
+import fcntl
+import time
 from dataclasses import dataclass, asdict, field
 from datetime import date, datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Generator
+from contextlib import contextmanager
 
 def _load_paper_settings(data_dir: str) -> dict:
     """Read paper_mode and paper_balance from settings.json"""
@@ -98,11 +101,40 @@ class BankrollGovernor:
 
         self._state_file = os.path.join(self.data_dir, "bankroll_state.json")
         self._bets_file = os.path.join(self.data_dir, "bet_history.json")
+        self._lock_file = os.path.join(self.data_dir, "bankroll.lock")
 
         self._bets: List[BetRecord] = []
+        self._starting_bankroll = starting_bankroll
         self._load_state(starting_bankroll)
 
     # ─── Persistence ────────────────────────────────────────────────────────
+
+    @contextmanager
+    def _atomic_transaction(self) -> Generator[None, None, None]:
+        """
+        Context manager for thread-safe and process-safe state modifications.
+        1. Acquire exclusive file lock
+        2. Reload state from disk
+        3. Yield to the operation
+        4. Save updated state back to disk
+        5. Release lock
+        """
+        lock_fd = open(self._lock_file, "w")
+        try:
+            # Block until lock is acquired
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            
+            # Reload state to ensure we have the absolute latest from disk
+            self._load_state(self._starting_bankroll)
+            
+            yield
+            
+            # Save updated state
+            self._save_state()
+            
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
 
     def _load_state(self, starting_bankroll: float):
         """Load persisted bankroll state"""
@@ -113,18 +145,18 @@ class BankrollGovernor:
                 self.current_bankroll = state.get("current_bankroll", starting_bankroll)
                 self.peak_bankroll = state.get("peak_bankroll", starting_bankroll)
                 self.total_profit_loss = state.get("total_profit_loss", 0.0)
+                self.paper_balance = state.get("paper_balance", 1000.0)
             except Exception as e:
                 logger.warning(f"Could not load bankroll state: {e}")
                 self.current_bankroll = starting_bankroll
                 self.peak_bankroll = starting_bankroll
                 self.total_profit_loss = 0.0
+                self.paper_balance = 1000.0
         else:
             self.current_bankroll = starting_bankroll
             self.peak_bankroll = starting_bankroll
             self.total_profit_loss = 0.0
-
-        # Paper trading balance (separate from real bankroll)
-        self.paper_balance = state.get("paper_balance", 1000.0) if os.path.exists(self._state_file) else 1000.0
+            self.paper_balance = 1000.0
 
         if os.path.exists(self._bets_file):
             try:
@@ -204,97 +236,102 @@ class BankrollGovernor:
         edge_percent: float,
         confidence: str,
     ) -> Optional[BetRecord]:
-        """Record a new bet after passing all governor checks"""
-        # Check paper mode
-        paper_settings = _load_paper_settings(self.data_dir)
-        is_paper = paper_settings["paper_mode"]
+        """Record a new bet after passing all governor checks (Atomic)"""
+        with self._atomic_transaction():
+            # Check paper mode
+            paper_settings = _load_paper_settings(self.data_dir)
+            is_paper = paper_settings["paper_mode"]
 
-        if not is_paper:
-            can_bet, reason = self.can_bet_today()
-            if not can_bet:
-                logger.warning(f"Bet blocked by governor: {reason}")
+            if not is_paper:
+                can_bet, reason = self.can_bet_today()
+                if not can_bet:
+                    logger.warning(f"Bet blocked by governor: {reason}")
+                    return None
+
+            if edge_percent < self.MIN_EDGE_PERCENT:
+                logger.warning(
+                    f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)"
+                )
                 return None
 
-        if edge_percent < self.MIN_EDGE_PERCENT:
-            logger.warning(
-                f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)"
+            if is_paper:
+                max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
+            else:
+                max_stake = self.calculate_max_stake(edge_percent)
+            if stake > max_stake:
+                logger.warning(
+                    f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"
+                )
+                stake = max_stake
+
+            now = datetime.now()
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
+
+            bet = BetRecord(
+                bet_id=bet_id,
+                timestamp=now.isoformat(),
+                date=date.today().isoformat(),
+                track=track,
+                race_number=race_number,
+                horse=horse,
+                odds=odds,
+                stake=stake,
+                potential_return=round(stake * odds, 2),
+                status="PENDING",
+                edge_percent=edge_percent,
+                confidence=confidence,
             )
-            return None
 
-        if is_paper:
-            max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
-        else:
-            max_stake = self.calculate_max_stake(edge_percent)
-        if stake > max_stake:
-            logger.warning(
-                f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"
+            if is_paper:
+                bet.notes = "PAPER"
+                self.paper_balance -= stake
+            
+            self._bets.append(bet)
+            # _atomic_transaction will handle _save_state()
+            
+            logger.info(
+                f"{'[PAPER] ' if is_paper else ''}Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
             )
-            stake = max_stake
-
-        now = datetime.now()
-        bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
-
-        bet = BetRecord(
-            bet_id=bet_id,
-            timestamp=now.isoformat(),
-            date=date.today().isoformat(),
-            track=track,
-            race_number=race_number,
-            horse=horse,
-            odds=odds,
-            stake=stake,
-            potential_return=round(stake * odds, 2),
-            status="PENDING",
-            edge_percent=edge_percent,
-            confidence=confidence,
-        )
-
-        if is_paper:
-            bet.notes = "PAPER"
-            self.paper_balance -= stake
-        self._bets.append(bet)
-        self._save_state()
-        logger.info(
-            f"{'[PAPER] ' if is_paper else ''}Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
-        )
-        return bet
+            return bet
 
     def settle_bet(self, bet_id: str, won: bool, notes: str = "") -> bool:
-        """Settle a pending bet with a result"""
-        bet = next((b for b in self._bets if b.bet_id == bet_id), None)
-        if not bet:
-            logger.warning(f"Bet not found: {bet_id}")
-            return False
+        """Settle a pending bet with a result (Atomic)"""
+        with self._atomic_transaction():
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            if not bet:
+                logger.warning(f"Bet not found: {bet_id}")
+                return False
 
-        if bet.status != "PENDING":
-            logger.warning(f"Bet {bet_id} already settled as {bet.status}")
-            return False
+            if bet.status != "PENDING":
+                logger.warning(f"Bet {bet_id} already settled as {bet.status}")
+                return False
 
-        if won:
-            actual_return = bet.potential_return
-            bet.status = "WON"
-        else:
-            actual_return = 0.0
-            bet.status = "LOST"
+            if won:
+                actual_return = bet.potential_return
+                bet.status = "WON"
+            else:
+                actual_return = 0.0
+                bet.status = "LOST"
 
-        bet.actual_return = actual_return
-        bet.profit_loss = actual_return - bet.stake
-        bet.notes = notes
+            bet.actual_return = actual_return
+            bet.profit_loss = actual_return - bet.stake
+            bet.notes = notes
 
-        # Update bankroll (paper bets don't affect real balance)
-        if bet.notes == "PAPER":
-            self.paper_balance += actual_return
-        else:
-            self.current_bankroll += bet.profit_loss
-            self.total_profit_loss += bet.profit_loss
-            if self.current_bankroll > self.peak_bankroll:
-                self.peak_bankroll = self.current_bankroll
+            # Update bankroll (paper bets don't affect real balance)
+            if bet.notes == "PAPER":
+                self.paper_balance += actual_return
+            else:
+                self.current_bankroll += bet.profit_loss
+                self.total_profit_loss += bet.profit_loss
+                if self.current_bankroll > self.peak_bankroll:
+                    self.peak_bankroll = self.current_bankroll
 
-        self._save_state()
-        logger.info(
-            f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}"
-        )
-        return True
+            # _atomic_transaction will handle _save_state()
+            
+            logger.info(
+                f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}"
+            )
+            return True
 
     # ─── Reporting ───────────────────────────────────────────────────────────
 

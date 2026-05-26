@@ -15,11 +15,11 @@ from core_agent.config.model_config import ModelConfig
 logger = logging.getLogger("ollama-provider")
 
 
-async def chat(message: str, model: Optional[str] = None) -> AgentReply:
+async def chat(message: str, model: Optional[str] = None, intent: Optional[str] = None) -> AgentReply:
     """Send message to local Ollama, return AgentReply."""
     model = model or ModelConfig.SCRAPER
     url = ModelConfig.ollama_native_url("/api/chat")
-    system_prompt = build_system_prompt()
+    system_prompt = build_system_prompt(intent=intent)
 
     payload = {
         "model": model,

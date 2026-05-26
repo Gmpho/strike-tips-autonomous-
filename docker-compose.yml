@@ -75,9 +75,13 @@ services:
       - REDIS_URL=redis://redis:6379/0
     env_file:
       - .env
+    command: python3 core_agent/agents/telegram_agent_loop.py
     restart: always
     volumes:
       - .:/app
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       - ollama
       - redis

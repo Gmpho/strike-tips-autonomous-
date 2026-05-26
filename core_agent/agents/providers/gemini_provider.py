@@ -19,15 +19,16 @@ logger = logging.getLogger("gemini-provider")
 _BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
-async def chat(message: str, model: Optional[str] = None) -> AgentReply:
+async def chat(message: str, model: Optional[str] = None, intent: Optional[str] = None) -> AgentReply:
     """Send message to Gemini REST API, return AgentReply."""
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("GEMINI_API_KEY not set")
 
     model = model or ModelConfig.GEMINI_CHAIN[0]
-    system_prompt = build_system_prompt()
+    system_prompt = build_system_prompt(intent=intent)
     url = f"{_BASE}/{model}:generateContent?key={api_key}"
+
 
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},

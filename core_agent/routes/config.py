@@ -97,11 +97,13 @@ async def save_config(payload: Dict[str, Any]):
 
 @router.post("/config/test_telegram")
 async def test_telegram():
-    """Send a test Telegram message"""
-    if brain.strike and brain.strike.telegram:
-        brain.strike.telegram.send_message("🏇 Strike Tips — test message OK")
-        return {"success": True}
-    raise HTTPException(status_code=503, detail="Telegram not configured")
+    """Send a test Telegram message and verify delivery"""
+    if not brain.strike or not brain.strike.telegram:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    ok = brain.strike.telegram.send_message("🏇 Strike Tips — test message OK")
+    if not ok:
+        raise HTTPException(status_code=502, detail="Telegram delivery failed — check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+    return {"success": True, "detail": "Test message delivered successfully"}
 
 
 @router.get("/report")

@@ -11,7 +11,8 @@ from datetime import date
 from dataclasses import asdict
 
 # Import existing skills
-from core_agent.skills.parsers.tab4racing import TAB4RacingScraper, ScrapedRace
+from core_agent.skills.parsers.betway_api import BetwayAPI
+from core_agent.skills.parsers.tab4racing import ScrapedRace
 from core_agent.skills.parsers.pdf_harvester import PDFHarvester
 from core_agent.skills.race_analysis import RaceAnalyzer, RaceCard, Runner
 from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
@@ -21,7 +22,7 @@ from core_agent.config.settings import BANKROLL
 
 class RacingService:
     def __init__(self):
-        self.scraper = TAB4RacingScraper()
+        self.betway = BetwayAPI()
         self.harvester = PDFHarvester()
         self.analyzer = RaceAnalyzer()
         self.form_analyzer = FormAnalyzer()
@@ -63,8 +64,9 @@ class RacingService:
                 track=track, intelligence_type="Computaform SA", specific_date=date_str
             )
 
-            # Scrape
-            races = await self.scraper.scrape_racecard(track, date_str)
+            # Scrape from Betway
+            all_races = await self.betway.get_races()
+            races = [r for r in all_races if track.lower() in r.track.lower()]
             if not races:
                 return []
 

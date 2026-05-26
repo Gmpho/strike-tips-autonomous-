@@ -18,12 +18,20 @@ class ScrapeExecutor(Executor):
     @handler
     async def scrape(self, tracks: list[str], ctx: WorkflowContext[list]) -> None:
         races = []
-        for track in tracks:
-            try:
-                scraped = await self._strike.scraper.scrape_racecard(track)
-                races.extend(scraped or [])
-            except Exception as e:
-                logger.warning(f"[SCRAPE] {track} failed: {e}")
+        try:
+            # 1. Fetch all races from Betway (Primary source)
+            all_betway_races = await self._strike.betway.get_races()
+            
+            # 2. Filter for the requested tracks
+            for track in tracks:
+                matched = [r for r in all_betway_races if track.lower() in r.track.lower()]
+                if matched:
+                    races.extend(matched)
+                else:
+                    logger.info(f"[SCRAPE] No Betway data for {track}")
+        except Exception as e:
+            logger.warning(f"[SCRAPE] Betway fetch failed: {e}")
+            
         await ctx.send_message(races)
 
 

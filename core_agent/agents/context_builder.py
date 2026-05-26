@@ -42,36 +42,45 @@ def build_race_context() -> str:
     return f"Today is {today}. {race_info}"
 
 
-def build_system_prompt(base: Optional[str] = None) -> str:
-    """Full system prompt for any provider."""
+def build_system_prompt(base: Optional[str] = None, intent: Optional[str] = None) -> str:
+    """Full system prompt for any provider, trimmed based on intent."""
     base = base or "You are Strike Tips Racing AI. Answer concisely and accurately."
-    context = build_race_context()
-    sa_schedule = (
-        "Active South Africa racing tracks: Turffontein (Johannesburg), "
-        "Kenilworth/Durbanville (Cape Town), Vaal (Vereeniging), "
-        "Greyville/Scottsville (Durban/KZN), Fairview (Port Elizabeth). "
-        "Always verify with search_racing_data for the actual schedule."
-    )
+    
+    # 🕵️ Intent-Aware Trimming
+    # Skip heavy context for simple balance/utility queries
+    is_bankroll = intent in ("get_account_summary", "calculate_max_position", "update_race_result")
+    is_search = intent in ("search_racing_data", "search_past_races")
 
-    # Inject heartbeat memory — agent's living diary of recent insights
-    heartbeat = ""
-    try:
-        heartbeat_path = os.path.join("data", "heartbeat.md")
-        if os.path.exists(heartbeat_path):
-            with open(heartbeat_path) as f:
-                content = f.read()
-            # Only inject the last 3 entries to stay within token budget
-            entries = [e.strip() for e in content.split("##") if e.strip() and not e.startswith("#")]
-            if entries:
-                heartbeat = "\n\nRecent AI insights (heartbeat memory):\n" + "\n".join(
-                    f"- {e.splitlines()[2].replace('**Insight:** ', '') if len(e.splitlines()) > 2 else ''}"
-                    for e in entries[:3]
-                )
-    except Exception:
-        pass
+    if is_bankroll:
+        context = f"Today is {datetime.now().strftime('%A, %d %B %Y')}."
+        sa_schedule = ""
+        heartbeat = ""
+    else:
+        context = build_race_context()
+        sa_schedule = (
+            "\nActive South Africa racing tracks: Turffontein, Kenilworth/Durbanville, "
+            "Vaal, Greyville/Scottsville, Fairview."
+        )
+        
+        # Inject heartbeat memory only for analysis/strategy tasks
+        heartbeat = ""
+        if not is_search:
+            try:
+                heartbeat_path = os.path.join("data", "heartbeat.md")
+                if os.path.exists(heartbeat_path):
+                    with open(heartbeat_path) as f:
+                        content = f.read()
+                    entries = [e.strip() for e in content.split("##") if e.strip() and not e.startswith("#")]
+                    if entries:
+                        heartbeat = "\n\nRecent AI insights (heartbeat memory):\n" + "\n".join(
+                            f"- {e.splitlines()[2].replace('**Insight:** ', '') if len(e.splitlines()) > 2 else ''}"
+                            for e in entries[:2]  # Reduced from 3 to 2 for even more speed
+                        )
+            except Exception:
+                pass
 
     return (
         f"{base} {context} {sa_schedule}{heartbeat} "
-        "Use search_racing_data ONCE for tomorrow's races, future fixtures, or recent results. "
-        "After receiving search results, give a direct answer — never call tools in your final response."
+        "Use search_racing_data ONCE if needed for tomorrow's races or results. "
+        "Return direct answers — no trailing tool calls."
     )

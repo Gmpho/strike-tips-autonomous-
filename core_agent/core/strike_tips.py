@@ -77,7 +77,7 @@ from core_agent.skills.parsers.tab4racing import (
     ScrapedRace,
 )
 from core_agent.skills.parsers.betway_api import BetwayAPI
-from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
+# NOTE: OddscheckerScraper imported lazily in __init__ (crawl4ai hangs at module level)
 from core_agent.skills.parsers.self_healing import SelfHealingParser
 from core_agent.skills.notifications.telegram_bot import TelegramNotifier
 from core_agent.agents.ai_providers import AIProvider
@@ -125,7 +125,11 @@ class StrikeTips:
         self.bankroll = BankrollGovernor(data_dir=self.data_dir)
         self.scraper = TAB4RacingScraper()
         self.betway = BetwayAPI()
-        self.oddschecker = OddscheckerScraper()
+        try:
+            from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
+            self.oddschecker = OddscheckerScraper()
+        except Exception:
+            self.oddschecker = None
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
         self.learning = AdaptiveAnalyzer(data_dir=self.data_dir)
@@ -176,9 +180,10 @@ class StrikeTips:
 
                     if not races:
                         print(
-                            f"[FALLBACK] No Betway data for {track}, trying TAB4Racing..."
+                            f"[WARN] No Betway data for {track}. Skipping fallback to TAB as per data-source policy."
                         )
-                        races = await self.scraper.scrape_racecard(track, date_str)
+                        self._track_data_cache[track_key] = []
+                        return []
 
                     self._track_data_cache[track_key] = races
                 else:
@@ -204,16 +209,16 @@ class StrikeTips:
                 prompts.append(prompt)
 
             # Use the parallel provider if available
-            # Dispatch in batches of 2 to protect 8GB RAM
+            # Dispatch in batches of 1 to protect 8GB RAM (Sequential reasoning)
             ai_responses = []
-            for i in range(0, len(prompts), 2):
-                batch = prompts[i : i + 2]
-                logger.info(f"[SWARM] Processing batch {i//2 + 1}...")
+            for i in range(0, len(prompts)):
+                batch = prompts[i : i + 1]
+                logger.info(f"[SWARM] Processing race {i+1}/{len(prompts)}...")
                 batch_responses = await self.ai._call_kimi_parallel(
                     batch, strike_instance=self
                 )
                 ai_responses.extend(batch_responses)
-                await asyncio.sleep(2)  # Throttle delay for 8GB RAM
+                await asyncio.sleep(3)  # Increased throttle delay for 8GB RAM
 
             results = []
             for i, r in enumerate(races):
@@ -445,9 +450,10 @@ class StrikeTips:
             "performance": self.bankroll.get_performance_summary(),
         }
 
-    def get_active_tracks(self) -> List[str]:
-        """Return list of active SA track names"""
-        return self.scraper.get_active_tracks()
+    async def get_active_tracks(self) -> List[str]:
+        """Return list of active SA track names from Betway."""
+        races = await self.betway.get_races()
+        return list(set(r.track for r in races))
 
     async def run_daily_scan(self, tracks: Optional[List[str]] = None) -> Dict:
         """
@@ -569,6 +575,42 @@ class StrikeTips:
             except Exception:
                 pass
 
+        # Auto-bet: place bets for qualifying value bets from daily scan
+        auto_bets_placed = 0
+        try:
+            settings_path = os.path.join(self.data_dir, "settings.json")
+            if os.path.exists(settings_path):
+                with open(settings_path) as f:
+                    settings = json.load(f)
+                if settings.get("auto_bet_enabled", False):
+                    min_edge = float(settings.get("auto_bet_min_edge", 5.5))
+                    for track, races in all_results.items():
+                        for race in races:
+                            if not isinstance(race, dict):
+                                continue
+                            for vb in race.get("value_bets", []):
+                                edge = float(vb.get("edge_percent", 0))
+                                if edge < min_edge:
+                                    continue
+                                self.place_bet(
+                                    horse=vb.get("horse", "Unknown"),
+                                    track=track,
+                                    race_number=race.get("race_number", 0),
+                                    odds=float(vb.get("odds_decimal", 2.0)),
+                                    edge_percent=edge,
+                                    confidence="AUTO",
+                                )
+                                auto_bets_placed += 1
+                    if auto_bets_placed:
+                        print(f"[AUTO-BET] Placed {auto_bets_placed} bets from daily scan")
+                        if self.telegram:
+                            self.telegram.send_message(
+                                f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
+                                f"Placed {auto_bets_placed} value bet(s) from today's scan."
+                            )
+        except Exception as e:
+            print(f"[ERR] Auto-bet placement failed: {e}")
+
         print(
             f"\n[OK] Scan complete! Found {total_value_bets} value bets across all tracks"
         )
@@ -576,6 +618,7 @@ class StrikeTips:
             "date": date.today().isoformat(),
             "tracks_scanned": len(tracks),
             "total_value_bets": total_value_bets,
+            "auto_bets_placed": auto_bets_placed,
             "results": all_results,
         }
 
@@ -655,20 +698,17 @@ class StrikeTips:
         return {"status": "no_snapshot_available"}
 
     async def verify_race_event(self, track: str, race_num: int) -> bool:
-        """Verify if a specific race is scheduled for today."""
+        """Verify if a specific race is scheduled for today via Betway."""
         logger.info(f"Verifying race {race_num} at {track}")
         try:
-            today_iso = date.today().isoformat()
-            # Fetch races for today from the specified track
-            races = await self.scraper.scrape_racecard(track=track, date_str=today_iso)
-            if races:
-                for race in races:
-                    if race.race_number == race_num:
-                        return True
+            races = await self.betway.get_races()
+            for race in races:
+                if track.lower() in race.track.lower() and race.race_number == race_num:
+                    return True
             return False
         except Exception as e:
             logger.error(f"Error verifying race {race_num} at {track}: {e}")
-            return False  # Assume it doesn't exist if an error occurs
+            return False
 
     async def close(self):
         """Clean up resources"""

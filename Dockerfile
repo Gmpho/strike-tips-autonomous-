@@ -9,10 +9,10 @@ ENV SENTENCE_TRANSFORMERS_HOME=/app/data/.cache/torch
 
 WORKDIR /app
 
-# Install Python requirements
+# Install Python requirements (no --no-cache-dir: pip cache survives rebuilds, ~10x faster)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt pypdf
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
 
 
 # Pre-install browsers (included in base, but ensuring for current version)

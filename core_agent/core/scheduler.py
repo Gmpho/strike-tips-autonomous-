@@ -132,14 +132,7 @@ class StrikeTipsScheduler:
         sa_tracks = [t for t in tracks.keys() if t in TRACKS]
 
         if sa_tracks:
-            print(f"[CACHE] Pre-warming {len(sa_tracks)} tracks for tomorrow.")
-            strike = StrikeTips(data_dir=self.data_dir)
-            try:
-                tomorrow = (date.today() + timedelta(days=1)).isoformat()
-                for track in sa_tracks:
-                    await strike.scraper.scrape_racecard(track, date_str=tomorrow)
-            finally:
-                await strike.close()
+            print(f"[CACHE] Pre-warming skipped — Betway API needs no pre-cache. {len(sa_tracks)} tracks for tomorrow: {', '.join(sa_tracks)}")
 
     def daily_scan_job(self):
         print(
@@ -161,16 +154,125 @@ class StrikeTipsScheduler:
             await self.strike.close()
 
     def check_race_results_job(self):
-        pass
+        """Auto-settle open bets by searching race results via ResultTracker"""
+        try:
+            # Use the singleton brain instance (set up by API startup)
+            from core_agent.core.strike_brain import brain
+
+            if not brain or not brain.strike or not brain.strike.bankroll:
+                return
+
+            open_bets = brain.strike.bankroll.get_open_bets()
+            if not open_bets:
+                return
+
+            print(
+                f"[RESULT] Checking {len(open_bets)} open bet(s) for race results..."
+            )
+
+            async def _check_and_settle():
+                from core_agent.skills.result_tracker import ResultTracker
+
+                tracker = ResultTracker()
+                settled = []
+                for bet in open_bets:
+                    result_text = await tracker._search_result(
+                        bet.track, bet.race_number
+                    )
+                    if not result_text:
+                        continue
+                    winner, confidence = tracker._extract_winner(
+                        result_text, [bet.horse]
+                    )
+                    if winner and confidence >= 0.6:
+                        won = winner == bet.horse
+                        brain.strike.settle_bet(
+                            bet_id=bet.bet_id,
+                            won=won,
+                            notes=f"Auto-settled (confidence={confidence:.0%})",
+                        )
+                        settled.append(bet)
+                return settled
+
+            settled = asyncio.run(_check_and_settle())
+            if settled:
+                print(f"[OK] Auto-settled {len(settled)} bet(s)")
+        except Exception as e:
+            print(f"[ERR] Auto-settlement failed: {e}")
 
     def continuous_scan_job(self):
-        pass
+        """Lightweight scan for value bets on today's active races (runs every 15min)."""
+        try:
+            from core_agent.core.strike_brain import brain
+            if not brain or not brain.strike:
+                return
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._continuous_scan_async(brain))
+        except Exception as e:
+            print(f"[ERR] Continuous scan failed: {e}")
+
+    async def _continuous_scan_async(self, brain):
+        """Fetch Betway snapshot and check for value opportunities."""
+        print(f"[SCAN] Continuous scan at {datetime.now().strftime('%H:%M')}")
+        state = await brain.strike.betway.get_snapshot_format()
+        events = state.get("events", {})
+        if not events:
+            return
+        settings_path = os.path.join(self.data_dir, "settings.json")
+        min_edge = 8.0
+        if os.path.exists(settings_path):
+            with open(settings_path) as f:
+                settings = json.load(f)
+                min_edge = float(settings.get("auto_bet_min_edge", 8.0))
+        found = 0
+        for eid, event in events.items():
+            course = event.get("course", "Unknown")
+            runners = event.get("runners", [])
+            for runner in runners:
+                odds_str = str(runner.get("odds", "1/1"))
+                if odds_str.upper() == "SP":
+                    continue
+                try:
+                    odds = float(odds_str)
+                except ValueError:
+                    continue
+                if odds <= 0:
+                    continue
+                implied = 1.0 / max(odds, 1.01)
+                edge = round((1.0 - implied) * 100 * 0.15, 1)
+                if edge >= min_edge:
+                    print(f"[SCAN] Value: {runner.get('name')} @ {course} odds={odds} edge={edge}%")
+                    found += 1
+        print(f"[SCAN] Continuous scan complete — {found} value opportunities found")
 
     def update_learning_job(self):
-        pass
+        """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""
+        try:
+            from core_agent.core.strike_brain import brain
+            if not brain or not brain.strike or not brain.strike.learning:
+                return
+            brain.strike.learning.analyze_recent_results()
+            print(f"[OK] Learning update complete at {datetime.now().strftime('%H:%M')}")
+        except Exception as e:
+            print(f"[ERR] Learning update failed: {e}")
 
     def _end_of_day_report(self):
-        pass
+        """Generate and send end-of-day performance report."""
+        try:
+            from core_agent.core.strike_brain import brain
+            if not brain or not brain.strike:
+                return
+            report = brain.strike.generate_report()
+            print(f"\n{'='*60}\n[REPORT] End of Day Report\n{'='*60}")
+            print(report)
+            if brain.strike.telegram:
+                brain.strike.telegram.send_message(
+                    f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
+                )
+            print("[OK] End-of-day report sent")
+        except Exception as e:
+            print(f"[ERR] End-of-day report failed: {e}")
 
     def run_pending(self):
         while self.running:

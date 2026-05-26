@@ -246,13 +246,12 @@ class AlertEngine:
             min_edge = float(settings.get("auto_bet_min_edge", 8.0))
 
             from core_agent.core.strike_brain import brain
-            if not brain or not brain.strike or not brain.strike.bankroll:
+            if not brain or not brain.strike:
                 return
 
             odds = self._parse_odds(str(horse.get("odds", "1/1")))
-            # Edge = (1/implied_prob - 1) * 100 as a rough estimate
             implied_prob = 1.0 / max(odds, 1.01)
-            edge = round((1.0 - implied_prob) * 100 * 0.15, 1)  # conservative 15% of margin
+            edge = round((1.0 - implied_prob) * 100 * 0.15, 1)
             if edge < min_edge:
                 return
 
@@ -260,18 +259,15 @@ class AlertEngine:
             race_number = int(race_data.get("raceNumber", race_data.get("race_number", 1)))
             horse_name = horse.get("name", "Unknown")
 
-            bet = brain.strike.bankroll.record_bet(
+            bet = brain.strike.place_bet(
                 track=track,
                 race_number=race_number,
                 horse=horse_name,
                 odds=odds,
-                stake=brain.strike.bankroll.calculate_max_stake(edge),
                 edge_percent=edge,
                 confidence="AUTO",
             )
             if bet:
-                bet.notes = (bet.notes + " AUTO").strip() if bet.notes else "AUTO"
-                brain.strike.bankroll._save_state()
                 logger.info(f"[AUTO-BET] Placed: {horse_name} @ {track} R{race_number} odds={odds:.2f} edge={edge}%")
         except Exception as e:
             logger.warning(f"Auto-bet failed: {e}")

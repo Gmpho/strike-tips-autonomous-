@@ -29,12 +29,39 @@ def get_snapshot() -> Dict[str, Any]:
             return _snapshot
     except Exception as e:
         logger.debug("Snapshot disk fallback failed: %s", e)
-    return {"events": {}}
+    return _snapshot or {"events": {}}
 
 
 def set_snapshot(data: Dict[str, Any]) -> None:
     _snapshot.clear()
     _snapshot.update(data)
+
+
+async def ensure_populated() -> None:
+    """If snapshot is empty, try to fetch live data from Betway."""
+    if _snapshot:
+        return
+    try:
+        from core_agent.skills.parsers.betway_api import BetwayAPI
+        betway = BetwayAPI()
+        races = await betway.get_races()
+        if races:
+            events = {}
+            for r in races:
+                events[str(id(r))] = {
+                    "en": r.track,
+                    "raceNumber": r.race_number,
+                    "t": r.race_time,
+                    "course": r.track,
+                    "runners": [
+                        {"outcomeName": rn.horse_name, "odds": rn.odds_decimal}
+                        for rn in r.runners[:5]
+                    ],
+                }
+            set_snapshot({"events": events, "count": len(events)})
+            logger.info(f"[SNAPSHOT] Populated from Betway: {len(events)} races")
+    except Exception as e:
+        logger.debug(f"[SNAPSHOT] Betway fallback failed: {e}")
 
 
 async def publish_snapshot(redis_client, data: Dict[str, Any]) -> None:

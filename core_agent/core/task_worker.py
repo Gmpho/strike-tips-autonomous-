@@ -101,21 +101,14 @@ async def handle_pdf_sync(days_back: int = 3):
 
 @register_handler("pre_warm")
 async def handle_pre_warm(region: Optional[str] = None):
-    from core_agent.core.strike_tips import StrikeTips
     from core_agent.skills.race_schedule import RaceScheduleService
     service = RaceScheduleService()
     tracks = await service.get_tomorrows_tracks()
     target_tracks = [t for t in tracks.keys() if t in TRACKS]
     if region:
         target_tracks = [t for t in target_tracks if tracks[t].get("region") == region]
-    strike = StrikeTips()
-    try:
-        tomorrow = (date.today() + timedelta(days=1)).isoformat()
-        for track in target_tracks:
-            await strike.scraper.scrape_racecard(track, date_str=tomorrow)
-        return {"pre_warmed": len(target_tracks), "tracks": target_tracks}
-    finally:
-        await strike.close()
+    print(f"[CACHE] Pre-warm skipped — Betway API needs no pre-cache. {len(target_tracks)} tracks identified for tomorrow.")
+    return {"pre_warmed": 0, "reason": "Betway API — no pre-cache needed", "tracks": target_tracks}
 
 
 @register_handler("scrape_track")

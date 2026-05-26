@@ -137,7 +137,7 @@ Public API for other services.
 │                    USER INTERFACE                            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
 │  │  Frontend   │  │  Telegram   │  │   Agent     │       │
-│  │   (Next.js) │  │    Bot      │  │  Dashboard  │       │
+│  │(Vite vanilla/Typescript) │   │    Bot      │  │  Dashboard  │       │
 │  └─────────────┘  └─────────────┘  └─────────────┘       │
 └─────────────────────────────────────────────────────────────┘
                               │

@@ -1,17 +1,37 @@
 import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
+import { playAlertTone, playValueBetTone, playSettleTone } from './audio';
 
 export class DataBridge {
   private interval: number | null = null;
+  private prevEventCount = 0;
+  private prevBetCount = 0;
 
   start() {
     this.sync();
-    // Fast cycle for real-time intelligence
     this.interval = window.setInterval(() => this.sync(), 5000);
   }
 
   stop() {
     if (this.interval) clearInterval(this.interval);
+  }
+
+  private playSoundsForChanges(snapshot: any, bankroll: any, history: any) {
+    const eventCount = Object.keys(snapshot.events || {}).length;
+    if (eventCount > this.prevEventCount && this.prevEventCount > 0) {
+      playAlertTone();
+    }
+    this.prevEventCount = eventCount;
+
+    const bets = history.bets || [];
+    const settledCount = bets.filter((b: any) => b.settled).length;
+    const prevSettled = this.prevBetCount;
+    if (settledCount > prevSettled && prevSettled > 0) {
+      const newSettled = bets.filter((b: any) => b.settled);
+      const won = newSettled[newSettled.length - 1]?.won ?? false;
+      playSettleTone(won);
+    }
+    this.prevBetCount = settledCount;
   }
 
   private async sync() {
@@ -53,6 +73,8 @@ export class DataBridge {
       const memoryData = memoryRes.ok ? await memoryRes.json() : null;
       
       const latency = performance.now() - start;
+
+      this.playSoundsForChanges(snapshot, bankroll, history);
 
       hudStore.updateState({
         events: snapshot.events || {},

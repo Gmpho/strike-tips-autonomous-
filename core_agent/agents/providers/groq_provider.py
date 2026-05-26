@@ -80,7 +80,7 @@ async def _execute_tool(name: str, args: Dict) -> Dict:
         return {"error": str(e)}
 
 
-async def chat(message: str, model: Optional[str] = None) -> AgentReply:
+async def chat(message: str, model: Optional[str] = None, intent: Optional[str] = None) -> AgentReply:
     """Send message to Groq, handle tool calls, return AgentReply."""
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
@@ -88,12 +88,12 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
 
     # Use fast 8b for simple queries, 70b only when tools are likely needed
     _tool_keywords = ("tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture")
-    needs_tools = any(kw in message.lower() for kw in _tool_keywords)
+    needs_tools = any(kw in message.lower() for kw in _tool_keywords) or intent in ("search_racing_data", "run_daily_analysis")
     model = model or (ModelConfig.ORCHESTRATOR if needs_tools else "llama-3.1-8b-instant")
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     messages = [
-        {"role": "system", "content": build_system_prompt()},
+        {"role": "system", "content": build_system_prompt(intent=intent)},
         {"role": "user", "content": message},
     ]
 
@@ -129,14 +129,17 @@ async def chat(message: str, model: Optional[str] = None) -> AgentReply:
             logger.debug(f"Tool {fn_name}({fn_args}) → {str(result)[:100]}")
 
         # Second call with tool results
-            resp2 = await client.post(_URL, headers=headers, json={
-                "model": model,
-                "messages": messages,
-                "max_tokens": 400,
-                "temperature": 0.3,
-            })
-            resp2.raise_for_status()
-            data = resp2.json()
+        payload2 = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 400,
+            "temperature": 0.3,
+        }
+        if needs_tools:
+            payload2["tools"] = TOOLS
+        resp2 = await client.post(_URL, headers=headers, json=payload2)
+        resp2.raise_for_status()
+        data = resp2.json()
 
     text = data["choices"][0]["message"]["content"]
     return AgentReply(summary=text, model_used=f"groq:{model}")

@@ -17,6 +17,24 @@ from core_agent.agents.schemas import AgentReply
 from core_agent.agents.intent_classifier import IntentClassifier
 
 
+SA_TRACKS = {"turffontein", "vaal", "fairview", "scottsville", "kenilworth", "greyville", "durbanville"}
+UK_ALIASES = {"cheltenham", "ascot", "newmarket", "goodwood", "epsom", "york", "southwell"}
+
+
+def build_unsupported_track_response(query: str) -> str | None:
+    query_lower = query.lower()
+    for alias in UK_ALIASES:
+        if alias in query_lower:
+            return (
+                f"I can't scan {alias.title()} — this system only supports South African tracks. "
+                f"Try one of: Vaal, Turffontein, Kenilworth, Fairview, Scottsville, Greyville, Durbanville."
+            )
+    for sa_track in SA_TRACKS:
+        if sa_track in query_lower:
+            return None
+    return None
+
+
 class ModelPipeline:
     """Thin shim — delegates to the new pipeline module."""
 
@@ -26,7 +44,8 @@ class ModelPipeline:
 
     async def chat(self, message: str, model_override=None) -> AgentResponse:
         from core_agent.agents import pipeline
-        reply = await pipeline.run(message, model_override=model_override)
+        intent = self.classifier.classify(message)
+        reply = await pipeline.run(message, model_override=model_override, intent=intent)
         return _reply_to_response(reply)
 
 

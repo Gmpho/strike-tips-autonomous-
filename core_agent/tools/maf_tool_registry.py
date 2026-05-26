@@ -265,81 +265,45 @@ def search_past_races(query: str, n_results: int = 5, strike=None, **kwargs) -> 
 
 
 async def search_racing_data(query: str, limit: int = 3, **kwargs) -> Dict:
-    """Search for racing information via DuckDuckGo with URL safety filtering and persistent cache."""
+    """Search for racing information via unified SearchService (Brave → Tavily → DDGS)."""
+    from core_agent.skills.search_service import search_racing
+    from datetime import datetime
+
     cache_key = f"maf_search:{query}:{limit}"
     cached = await get_cache(cache_key)
     if cached is not None:
         logger.info(f"[MAF] Cache hit: {query}")
         return cached
 
+    current_year = datetime.now().year
+    queries = [
+        f"{query} {current_year}",
+        f"horse racing {query} {current_year}",
+    ]
+
     try:
-        from ddgs import DDGS
-        from datetime import datetime
-        from core_agent.core.http_client import get_async_client
-
-        current_year = datetime.now().year
-        queries = [
-            f"{query} {current_year}",
-            f"horse racing {query} {current_year}",
-        ]
-
         all_results = []
-        seen = set()
-        loop = asyncio.get_event_loop()
+        seen_urls = set()
         for q in queries:
-            for r in await loop.run_in_executor(None, _search_ddgs, q, limit, seen):
-                all_results.append(r)
+            result = await search_racing(q, limit=limit)
+            for item in result.get("results", []):
+                url = item.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_results.append(item)
+            if result.get("provider") != "none":
+                break
 
-        # For SA-specific queries, also try to fetch Racing SA directly
-        if any(kw in query.lower() for kw in ("south africa", " sa ", "sa race", "kenilworth", "scottsville", "vaal", "turffontein", "fairview", "greyville")):
-            try:
-                client = get_async_client(timeout=8)
-                resp = await client.get(
-                    "https://www.racingsa.co.za/racing-calendar/",
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    follow_redirects=True,
-                )
-                if resp.status_code == 200:
-                    text = re.sub(r"<[^>]+>", " ", resp.text)
-                    text = re.sub(r"\s+", " ", text).strip()
-                    all_results.insert(0, {
-                        "title": "Racing SA Official Calendar",
-                        "snippet": text[:800],
-                        "url": "https://www.racingsa.co.za/racing-calendar/",
-                    })
-            except Exception:
-                pass
-
-        result = {
+        final = {
             "query": query,
-            "results": all_results[:6],
+            "results": all_results[:limit * 2],
             "count": len(all_results),
             "status": "success" if all_results else "no_data_found",
         }
-        await set_cache(cache_key, result)
-        return result
+        await set_cache(cache_key, final)
+        return final
     except Exception as e:
         return {"query": query, "error": str(e), "results": [], "status": "error"}
-
-
-def _search_ddgs(query: str, limit: int, seen: set) -> list:
-    """Run DDGS search in a thread pool — DDGS is sync-only."""
-    from ddgs import DDGS
-    results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, max_results=limit, backend="duckduckgo"):
-            url = r.get("href", "")
-            if url in seen:
-                continue
-            seen.add(url)
-            if not _is_url_safe(url):
-                continue
-            results.append({
-                "title": r.get("title", ""),
-                "snippet": r.get("body", ""),
-                "url": url,
-            })
-    return results
 
 
 async def verify_race_exists(track: str, race_number: int, strike=None, **kwargs) -> Dict:

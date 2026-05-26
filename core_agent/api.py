@@ -23,9 +23,11 @@ import os
 import logging
 import random
 import time
+from threading import Thread
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 from core_agent.core.strike_brain import brain
 from core_agent.config.model_config import ModelConfig
+from core_agent.core.scheduler import StrikeTipsScheduler
 
 logger = logging.getLogger("strike-api")
 
@@ -218,6 +220,20 @@ async def startup_event():
 
     # Initialize the brain
     brain.initialize()
+
+    # Start StrikeTipsScheduler daemon thread in executor to avoid import deadlock
+    def start_scheduler():
+        try:
+            sched = StrikeTipsScheduler(data_dir=os.getenv("DATA_DIR", "./data"))
+            sched.running = True
+            sched.setup_schedule()
+            sched.scheduler_thread = Thread(target=sched.run_pending, daemon=True)
+            sched.scheduler_thread.start()
+            print("[RUN] StrikeTipsScheduler started with 7 jobs")
+        except Exception as e:
+            print(f"[WARN] Scheduler startup failed: {e}")
+
+    start_scheduler()
 
     print("\n" + "=" * 50)
     print("Strike Tips Bot Initialized")

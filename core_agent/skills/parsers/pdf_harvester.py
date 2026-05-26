@@ -4,7 +4,7 @@ import re
 import json
 import httpx
 import io
-import pypdf
+import fitz
 from datetime import date
 from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
@@ -14,9 +14,15 @@ logger = logging.getLogger("pdf-harvester")
 
 
 class PDFHarvester:
+    CDN_BASE = "https://aztabstorage.blob.core.windows.net/tabonline-blob/FieldsPDF"
+
     INTELLIGENCE_URLS = {
-        "Computaform SA": "https://az-pgl-dsi-ag-cdn-aztabstorage.4racing.com/tabonline-blob/FieldsPDF/CF_ITW/{track}@{date}.pdf",
-        "Daily Tips": "https://computaform.co.za/pdf/daily_tips_{date}.pdf",
+        "Computaform SA": f"{CDN_BASE}/ComputaformSA/{{track}}@{{date}}.pdf",
+        "Daily Tips": f"{CDN_BASE}/Tips/TIPPINGSHEET@{{date}}.pdf",
+    }
+
+    SPONSORED_TRACKS = {
+        "greyville": "HOLLYWOODBETS GREYVILLE",
     }
 
     def __init__(self, cache_dir: Optional[str] = None):
@@ -24,16 +30,10 @@ class PDFHarvester:
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def _get_track_code(self, track: str) -> str:
-        code_map = {
-            "fairview": "XFA",
-            "turffontein": "XTD",
-            "greyville": "XGR",
-            "vaal": "XVA",
-            "scottsville": "XED",
-            "kenilworth": "XCP",
-            "durbanville": "XDU",
-        }
-        return code_map.get(track.lower(), track.upper())
+        lowered = track.lower()
+        if lowered in self.SPONSORED_TRACKS:
+            return self.SPONSORED_TRACKS[lowered]
+        return track.upper()
 
     async def get_latest_racing_intelligence(
         self,
@@ -50,23 +50,24 @@ class PDFHarvester:
             with open(cache_file) as f:
                 return {**json.load(f), "cached": True}
 
-        url_template = self.INTELLIGENCE_URLS.get(intelligence_type, "")
-        formatted_date = today.replace("-", ".")
-        url = url_template.format(
-            track=self._get_track_code(track), date=formatted_date
-        )
+        url = precomputed_url
+        if not url:
+            url_template = self.INTELLIGENCE_URLS.get(intelligence_type, "")
+            formatted_date = today.replace("-", ".")
+            url = url_template.format(
+                track=self._get_track_code(track), date=formatted_date
+            )
 
         from core_agent.core.http_client import get_async_client
         client = get_async_client(timeout=15)
         try:
             response = await client.get(url, follow_redirects=True)
 
-            # Try Smart Discovery if 404
             if response.status_code == 404:
                 logger.info(
-                    f"[PDF] 404 detected. Discovering dynamic URL for {track}..."
+                    f"[PDF] 404 for {url}. Discovering dynamic URL for {track}..."
                 )
-                discovered_url = await PDFDiscoveryService.get_live_pdf_url(track)
+                discovered_url = await PDFDiscoveryService.get_live_pdf_url(track, today)
                 if discovered_url:
                     logger.info(f"[PDF] Discovery successful: {discovered_url}")
                     response = await client.get(
@@ -94,8 +95,9 @@ class PDFHarvester:
             return self._stub_intelligence(track, today)
 
         try:
-            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-            raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            raw_text = "\n".join(page.get_text() or "" for page in doc)
+            doc.close()
         except Exception as e:
             logger.error(f"Failed to parse PDF for {track}: {e}")
             return self._stub_intelligence(track, today)
@@ -134,7 +136,7 @@ class PDFHarvester:
             "track": track,
             "date": today,
             "parsed_tips": tips,
-            "raw_text": raw_text[:2000],
+            "raw_text": raw_text[:50000],
             "cached": False,
         }
         with open(cache_file, "w") as f:
