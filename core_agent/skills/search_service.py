@@ -64,12 +64,12 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     seen: set = set()
     provider = "none"
 
-    # 1. DDGS → get URLs
+    # 1. DDGS → get URLs (try auto backend, not lite which was removed)
     ddgs_items = []
     try:
         from ddgs import DDGS
         with DDGS() as d:
-            for r in d.text(query, max_results=limit * 2, backend="lite"):
+            for r in d.text(query, max_results=limit * 2):
                 url = r.get("href", "") or r.get("url", "")
                 if url and not _blocked(url) and url not in seen:
                     seen.add(url)
@@ -114,6 +114,28 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
             "snippet": item.get("snippet", "")[:500],
             "url": url,
         })
+
+    # 4. SA-specific fallback — direct fetch to known SA racing sites
+    _is_sa_query = any(kw in query.lower() for kw in ("south africa", "sa ", "sa racing", "tomorrow", "scottsville", "kenilworth", "fairview", "turffontein", "vaal", "greyville", "durbanville"))
+    _has_sa_result = any("tab4racing" in r.get("url","") or "sahorseracing" in r.get("url","") or "topbets" in r.get("url","") or "raceform" in r.get("url","") or "goldcircle" in r.get("url","") or "bethq" in r.get("url","") for r in results)
+    if _is_sa_query and (not _has_sa_result or len(results) < 3):
+        sa_urls = [
+            "https://www.tab4racing.com/racecards",
+            "https://www.topbets.co.za/racing",
+            "https://www.raceform.co.za/",
+            "https://www.sahorseracing.com/race-meetings",
+        ]
+        texts = await asyncio.gather(*[_fetch(u) for u in sa_urls])
+        for url, text in zip(sa_urls, texts):
+            if text and url not in seen:
+                seen.add(url)
+                label = url.split("//")[1].split(".")[0]
+                results.append({
+                    "title": f"{label.title()} — SA Racing",
+                    "snippet": text[:1500],
+                    "url": url,
+                })
+                logger.info(f"[SEARCH] SA-fallback: {url} ({len(text)} chars)")
 
     if not results:
         logger.warning(f"[SEARCH] Empty for '{query[:60]}'")

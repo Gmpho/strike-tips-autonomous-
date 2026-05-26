@@ -7,12 +7,13 @@ API_KEY = os.getenv("STRIKE_TIPS_API_KEY")
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Allow health checks, docs, root, MCP, and dashboard API routes without key
+        # Allow health checks, docs, root, MCP, dashboard API, and Telegram webhook without key
         path = request.url.path
         if (
             path in ["/", "/docs", "/openapi.json"]
             or path.startswith("/mcp")
             or path.startswith("/api/")
+            or path == "/telegram-webhook"
         ):
             return await call_next(request)
 
