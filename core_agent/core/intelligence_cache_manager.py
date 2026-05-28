@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any
 
@@ -76,22 +77,34 @@ class IntelligenceCacheManager:
                 pass
         return {}
 
-    def prune_stale_data(self, active_event_ids: list):
-        """Remove baseline files for races that are no longer active."""
+    def prune_stale_data(self, active_event_ids: list, max_age_hours: int = 6):
+        """Remove baseline files for races that are no longer active or too old.
+
+        Args:
+            active_event_ids: List of currently running race event IDs.
+            max_age_hours: Files older than this are removed regardless of active status.
+        """
         try:
             active_ids = {str(eid) for eid in active_event_ids}
+            now = time.time()
             pruned_count = 0
+            max_age_sec = max_age_hours * 3600
 
             for file in self.cache_dir.glob("event_*.json"):
-                # Extract ID from filename: event_12345.json -> 12345
                 file_id = file.stem.replace("event_", "")
                 if file_id not in active_ids:
                     file.unlink()
                     pruned_count += 1
+                elif max_age_hours > 0:
+                    file_age = now - file.stat().st_mtime
+                    if file_age > max_age_sec:
+                        file.unlink()
+                        pruned_count += 1
+                        logger.debug(f"TTL prune: {file.name} ({file_age/3600:.1f}h old)")
 
             if pruned_count > 0:
                 logger.info(
-                    f"🧹 Intelligence Cache: Pruned {pruned_count} finished races from disk."
+                    f"🧹 Intelligence Cache: Pruned {pruned_count} finished/aged races from disk."
                 )
         except Exception as e:
             logger.error(f"❌ Intelligence Cache: Pruning failed: {e}")

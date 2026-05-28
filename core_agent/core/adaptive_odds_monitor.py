@@ -65,7 +65,7 @@ class AdaptiveOddsMonitor:
         self.monitoring_active = True
         self.oc_state = {"odds": {}}
 
-    def _on_alert(self, msg: dict):
+    async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
         if not self._telegram_notifier:
             return
@@ -73,7 +73,7 @@ class AdaptiveOddsMonitor:
         horse = msg.get("horse", "?")
         course = msg.get("course", "?")
         odds = msg.get("odds", "?")
-        self._telegram_notifier.send_message(
+        await self._telegram_notifier.send_message(
             f"🚨 <b>Live Alert</b>\n"
             f"Type: {tag}\n"
             f"🐎 {horse} @ {course}\n"

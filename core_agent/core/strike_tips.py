@@ -16,6 +16,15 @@ from dataclasses import asdict
 os.environ.setdefault("ENABLE_LOKI", "false")
 os.environ.setdefault("ENABLE_PROMETHEUS", "false")
 
+
+def _fire_async(coro):
+    """Fire an async coroutine from sync code (fire-and-forget)."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+    except RuntimeError:
+        asyncio.run(coro)
+
 try:
     import logging_loki
 except ImportError:
@@ -336,7 +345,7 @@ class StrikeTips:
             return
 
         try:
-            self.telegram.send_value_bet(
+            _fire_async(self.telegram.send_value_bet(
                 horse=value_bet.horse,
                 track=value_bet.track,
                 race_number=value_bet.race_number,
@@ -346,7 +355,7 @@ class StrikeTips:
                 stake=value_bet.advised_stake,
                 confidence=value_bet.confidence,
                 reasoning=value_bet.reasoning,
-            )
+            ))
         except Exception as e:
             print(f"[ERR] Failed to send Telegram notification: {e}")
 
@@ -390,13 +399,13 @@ class StrikeTips:
 
             # Notify
             if self.telegram:
-                self.telegram.send_message(
+                _fire_async(self.telegram.send_message(
                     f"[NOTE] <b>Bet Placed</b>\n\n"
                     f"🐎 {horse}\n"
                     f"[LOC] {track} R{race_number}\n"
                     f"💰 Odds: {odds} | Stake: R{stake:.2f}\n"
                     f"[STATS] Edge: +{edge_percent}%"
-                )
+                ))
 
         return asdict(bet) if bet else None
 
@@ -426,7 +435,7 @@ class StrikeTips:
 
             # Notify
             if self.telegram:
-                self.telegram.send_bet_result(
+                _fire_async(self.telegram.send_bet_result(
                     horse=bet.horse,
                     track=bet.track,
                     race_number=bet.race_number,
@@ -434,7 +443,7 @@ class StrikeTips:
                     stake=bet.stake,
                     returns=bet.actual_return or 0,
                     profit_loss=profit_loss,
-                )
+                ))
 
         return self.get_bankroll_status()
 
@@ -556,7 +565,7 @@ class StrikeTips:
 
         if self.telegram:
             try:
-                self.telegram.send_daily_tips(all_results)
+                _fire_async(self.telegram.send_daily_tips(all_results))
             except Exception as e:
                 print(f"[ERR] Failed to send daily summary: {e}")
 
@@ -615,10 +624,10 @@ class StrikeTips:
                     if auto_bets_placed:
                         print(f"[AUTO-BET] Placed {auto_bets_placed} bets from daily scan")
                         if self.telegram:
-                            self.telegram.send_message(
+                            _fire_async(self.telegram.send_message(
                                 f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
                                 f"Placed {auto_bets_placed} value bet(s) from today's scan."
-                            )
+                            ))
         except Exception as e:
             print(f"[ERR] Auto-bet placement failed: {e}")
 

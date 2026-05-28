@@ -31,9 +31,9 @@ class AlertEngine:
     Ported from User's Gold Standard Project.
     """
 
-    def __init__(self, notification_callback=None, data_dir="/app/data"):
+    def __init__(self, notification_callback=None, data_dir=None):
         self.notification_callback = notification_callback
-        self.data_dir = data_dir
+        self.data_dir = data_dir or os.getenv("DATA_DIR", "/app/data")
         self.alerts_file = os.path.join(data_dir, "alert_conditions.json")
         self.history_file = os.path.join(data_dir, "alert_history.json")
 

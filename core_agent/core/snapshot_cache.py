@@ -48,7 +48,8 @@ async def ensure_populated() -> None:
         if races:
             events = {}
             for r in races:
-                events[str(id(r))] = {
+                eid = f"{r.track}_{r.race_number}".replace(" ", "_").lower()
+                events[eid] = {
                     "en": r.track,
                     "raceNumber": r.race_number,
                     "t": r.race_time,
