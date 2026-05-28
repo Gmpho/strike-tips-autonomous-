@@ -112,14 +112,16 @@ class UnifiedOrchestrator:
             except Exception:
                 pass
 
-        # Also write to ChromaDB for local RAG grounding
-        try:
-            from core_agent.core.strike_brain import brain
-            if brain and brain.memory and brain.memory._is_ready:
-                brain.memory.add_chat_message("user", message, source=f"user_{self._get_honcho(user_id)._user_id if user_id else 'web'}")
-                brain.memory.add_chat_message("assistant", reply.summary, source="agent_strike")
-        except Exception:
-            pass
+        # ChromaDB fallback — only if Honcho didn't already write
+        if not honcho:
+            try:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.memory and brain.memory._is_ready:
+                    uid = user_id or "web"
+                    brain.memory.add_chat_message("user", message, source=f"user_{uid}")
+                    brain.memory.add_chat_message("assistant", reply.summary, source="agent_strike")
+            except Exception:
+                pass
 
         return _reply_to_response(reply)
 

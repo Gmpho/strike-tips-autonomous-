@@ -4,8 +4,10 @@ Fallback order: Groq → Gemini (each model in chain) → Ollama.
 Single responsibility: try providers in order, return first success.
 """
 
+import asyncio
 import logging
 import hashlib
+import os
 from typing import Optional
 
 from core_agent.agents.schemas import AgentReply
@@ -60,15 +62,20 @@ async def run(message: str, model_override: Optional[str] = None, intent: Option
             except Exception as e:
                 logger.warning(f"Gemini {gemini_model} failed: {e}")
 
-    # 3. Ollama local — last resort
+    # 3. Ollama — last resort (cloud or local)
     if not reply:
+        ollama_timeout = 25.0 if os.getenv("OLLAMA_API_KEY") else 5.0
         try:
-            # Special logic for simple intents to use the fastest model (1b)
             local_model = None
             if intent in ("get_account_summary", "calculate_max_position", "verify_race_exists"):
                 local_model = ModelConfig.FAST_LOCAL
             
-            reply = await ollama_provider.chat(message, model=local_model, intent=intent)
+            reply = await asyncio.wait_for(
+                ollama_provider.chat(message, model=local_model, intent=intent),
+                timeout=ollama_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Ollama timed out (skipped)")
         except Exception as e:
             logger.warning(f"Ollama failed: {e}")
 

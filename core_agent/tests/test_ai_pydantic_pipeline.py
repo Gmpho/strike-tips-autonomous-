@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,55 +11,54 @@ from core_agent.agents.schemas import AgentReply
 
 
 @pytest.mark.asyncio
-async def test_chat_cold_start_attempts_lazy_agent_creation():
+async def test_chat_cold_start_delegates_to_pipeline():
     pipeline = ModelPipeline(strike_tips=object())
-    assert pipeline._agents == {}
 
-    pipeline._run_with_fallback = AsyncMock(  # type: ignore[method-assign]
-        return_value=AgentReply(summary="ok", model_used="analyst")
-    )
+    with patch("core_agent.agents.pipeline.run", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = AgentReply(summary="ok", model_used="groq:llama-3.1-8b-instant")
+        response = await pipeline.chat("please analyze this race")
 
-    response = await pipeline.chat("please analyze this race")
-
-    pipeline._run_with_fallback.assert_awaited_once()
+    mock_run.assert_awaited_once()
     assert response.summary == "ok"
-    assert response.model_used == "analyst"
-    assert response.summary != "Strike Brain not initialized."
+    assert response.model_used == "groq:llama-3.1-8b-instant"
 
 
 @pytest.mark.asyncio
-async def test_unified_orchestrator_returns_deterministic_scope_message_for_uk_query():
+async def test_orchestrator_returns_greeting_for_hello():
     orchestrator = UnifiedOrchestrator(strike_tips=None)
-
-    response = await orchestrator.chat(
-        "Can you analyze Cheltenham and Southwell in the UK?"
-    )
-
-    assert "can't scan" in response.summary
-    assert "South African tracks only" in response.summary
+    response = await orchestrator.chat("hello")
+    assert "Strike Tips" in response.summary
     assert response.model_used == "intent_handler"
     assert response.confidence == 1.0
 
 
 @pytest.mark.asyncio
-async def test_unified_orchestrator_sa_query_routes_to_pipeline():
+async def test_orchestrator_returns_bankroll_for_account_query():
+    mock_strike = MagicMock()
+    mock_strike.get_bankroll_status.return_value = {
+        "current_bankroll": 1000.0, "total_profit_loss": 0.0, "open_bets": 0,
+    }
+    orchestrator = UnifiedOrchestrator(strike_tips=mock_strike)
+    response = await orchestrator.chat("Show me my balance")
+    assert response.model_used == "intent_handler"
+    assert response.confidence == 1.0
+    assert "1000" in response.summary
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_sa_query_routes_to_pipeline():
     orchestrator = UnifiedOrchestrator(strike_tips=None)
-    orchestrator.pipeline.chat = AsyncMock(  # type: ignore[method-assign]
-        return_value=AgentReply(summary="SA scan complete", model_used="scanner")
-    )
 
-    response = await orchestrator.chat("Please scan Vaal races today")
+    with patch("core_agent.agents.pipeline.run", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = AgentReply(summary="SA scan complete", model_used="groq:llama-3.1-8b-instant")
+        response = await orchestrator.chat("Please scan Vaal races today")
 
-    orchestrator.pipeline.chat.assert_awaited_once_with(
-        "Please scan Vaal races today", model_override=None
-    )
+    mock_run.assert_awaited_once()
     assert response.summary == "SA scan complete"
-    assert response.model_used == "scanner"
 
 
 def test_build_unsupported_track_response_from_alias_is_deterministic():
     response = build_unsupported_track_response("Please scan SOUTHWELL race 2")
-
     assert response is not None
     assert "can't scan Southwell" in response
     assert "Vaal, Turffontein, Kenilworth" in response

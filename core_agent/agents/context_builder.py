@@ -82,5 +82,10 @@ def build_system_prompt(base: Optional[str] = None, intent: Optional[str] = None
     return (
         f"{base} {context} {sa_schedule}{heartbeat} "
         "Use search_racing_data ONCE if needed for tomorrow's races or results. "
-        "Return direct answers — no trailing tool calls."
+        "Return direct answers — no trailing tool calls. "
+        "CRITICAL: Never invent or guess statistics, betting history, horse names, win rates, "
+        "or any data you cannot confirm from tool results or the system state provided above. "
+        "If you lack the data to answer, say 'I don't have that information' — do not fabricate. "
+        "For betting history, win rate, or performance stats: only report numbers from get_account_summary "
+        "or get_odds_snapshot tool results. Never make up historical bet counts or win percentages."
     )
