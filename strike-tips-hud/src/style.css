@@ -7,14 +7,16 @@
   
   --font-hud: 'Inter', system-ui, -apple-system, sans-serif;
   --font-tabular: 'JetBrains Mono', 'Roboto Mono', monospace;
+
+  --breakpoint-xs: 400px;
 }
 
 /* Theme Variables */
 :root {
-  --bg-primary: #000000;
+  --bg-primary: var(--tg-theme-bg-color, #000000);
+  --text-primary: var(--tg-theme-text-color, #ffffff);
   --bg-secondary: rgba(255, 255, 255, 0.03);
   --bg-panel: rgba(0, 0, 0, 0.6);
-  --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.7);
   --text-muted: rgba(255, 255, 255, 0.4);
   --border-color: rgba(255, 255, 255, 0.1);
@@ -101,6 +103,47 @@ body {
 
 .animate-pulse-slow {
   animation: pulse-slow 3s infinite ease-in-out;
+}
+
+/* Mobile optimizations */
+@media (max-width: 767px) {
+  .hud-card {
+    border-radius: 1rem;
+    transform: none;
+  }
+  .hud-card:hover {
+    transform: none;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 2px;
+  }
+}
+
+/* Scrollbar styling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(168, 85, 247, 0.3);
+  border-radius: 10px;
+}
+
+/* Prevent text size adjustment on mobile orientation change */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Better touch targets on mobile */
+@media (max-width: 767px) {
+  button, a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 

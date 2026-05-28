@@ -376,27 +376,26 @@ class BankrollGovernor:
             "roi": (total_pl / total_staked * 100) if total_staked > 0 else 0.0,
         }
 
-    def generate_daily_report(self) -> str:
-        """Generate a human-readable daily report"""
-        stats = self.get_today_stats()
-        perf = self.get_performance_summary()
-        open_bets = self.get_open_bets()
-
-        return (
-            f"\n{'='*50}\n"
-            f"STRIKE TIPS - Daily Report ({date.today().isoformat()})\n"
-            f"{'='*50}\n"
-            f"Bankroll: R{self.current_bankroll:.2f} "
-            f"(Peak: R{self.peak_bankroll:.2f} | Drawdown: {self.drawdown_percent:.1f}%)\n"
-            f"\nToday:\n"
-            f"  Bets Placed: {stats.bets_placed}\n"
-            f"  Total Staked: R{stats.total_staked:.2f}\n"
-            f"  P&L: R{stats.profit_loss:.2f}\n"
-            f"  W/L: {stats.wins}/{stats.losses}\n"
-            f"\nAll-Time:\n"
-            f"  Win Rate: {perf['win_rate']:.1f}%\n"
-            f"  ROI: {perf['roi']:.1f}%\n"
-            f"  Total P&L: R{perf['total_profit_loss']:.2f}\n"
-            f"\nOpen Bets: {len(open_bets)}\n"
-            f"{'='*50}\n"
-        )
+    def get_history_stats(self, days: int = 15) -> List[Dict]:
+        """Return cumulative profit/loss history for charting"""
+        from collections import defaultdict
+        daily_pl = defaultdict(float)
+        
+        for bet in self._bets:
+            if bet.status in ("WON", "LOST"):
+                daily_pl[bet.date] += (bet.profit_loss or 0.0)
+                
+        # Sort dates and calculate cumulative
+        sorted_dates = sorted(daily_pl.keys())[-days:]
+        history = []
+        cumulative = 0.0
+        
+        for d in sorted_dates:
+            cumulative += daily_pl[d]
+            history.append({
+                "date": d,
+                "pnl": round(cumulative, 2),
+                "daily_gain": round(daily_pl[d], 2)
+            })
+            
+        return history

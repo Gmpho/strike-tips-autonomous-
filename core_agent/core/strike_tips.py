@@ -566,6 +566,17 @@ class StrikeTips:
         with open(output_file, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
 
+        # Save raw Betway snapshot for the HUD dashboard
+        try:
+            snapshot = await self.betway.get_snapshot_format()
+            if snapshot.get("events"):
+                snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
+                with open(snapshot_file, "w") as f:
+                    json.dump(snapshot, f, indent=2, default=str)
+                print(f"[OK] Saved market snapshot ({len(snapshot['events'])} events)")
+        except Exception as e:
+            print(f"[WARN] Could not save market snapshot: {e}")
+
         if _prometheus_enabled:
             try:
                 gateway_url = os.getenv("PROMETHEUS_PUSHGATEWAY", "localhost:9091")

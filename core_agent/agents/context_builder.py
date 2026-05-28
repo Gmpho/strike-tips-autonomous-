@@ -39,7 +39,7 @@ def build_race_context() -> str:
         logger.debug(f"Could not load snapshot: {e}")
         race_info = "Live race data unavailable."
 
-    return f"Today is {today}. {race_info}"
+    return f"Today is {today}. {race_info} Use get_odds_snapshot to see runners and live odds."
 
 
 def build_system_prompt(base: Optional[str] = None, intent: Optional[str] = None) -> str:

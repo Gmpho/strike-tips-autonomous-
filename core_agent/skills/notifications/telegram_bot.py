@@ -6,7 +6,8 @@ via Telegram Bot API.
 
 import logging
 import os
-import requests
+import httpx
+import asyncio
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("telegram-notifier")
@@ -14,7 +15,7 @@ logger = logging.getLogger("telegram-notifier")
 
 class TelegramNotifier:
     """
-    Telegram Bot interface for Strike Tips notifications.
+    Asynchronous Telegram Bot interface for Strike Tips notifications.
     Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars.
     """
 
@@ -30,19 +31,25 @@ class TelegramNotifier:
             )
 
         self._base = self.BASE_URL.format(token=self.token)
-        logger.info("TelegramNotifier initialized")
+        self._client: Optional[httpx.AsyncClient] = None
+        logger.info("TelegramNotifier (Async) initialized")
 
-    def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send a raw message to the configured chat"""
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=10.0)
+        return self._client
+
+    async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
+        """Send a raw message to the configured chat asynchronously"""
         try:
-            response = requests.post(
+            client = await self._get_client()
+            response = await client.post(
                 f"{self._base}/sendMessage",
                 json={
                     "chat_id": self.chat_id,
                     "text": text,
                     "parse_mode": parse_mode,
                 },
-                timeout=10,
             )
             if response.status_code == 200:
                 return True
@@ -52,7 +59,29 @@ class TelegramNotifier:
             logger.error(f"Telegram error: {e}")
             return False
 
-    def send_value_bet(
+    async def send_photo(self, photo_bytes: bytes, caption: Optional[str] = None, parse_mode: str = "HTML") -> bool:
+        """Send a photo to the configured chat asynchronously"""
+        try:
+            client = await self._get_client()
+            files = {"photo": ("chart.png", photo_bytes, "image/png")}
+            data = {"chat_id": self.chat_id, "parse_mode": parse_mode}
+            if caption:
+                data["caption"] = caption
+
+            response = await client.post(
+                f"{self._base}/sendPhoto",
+                data=data,
+                files=files,
+            )
+            if response.status_code == 200:
+                return True
+            logger.warning(f"Telegram photo send failed: {response.text}")
+            return False
+        except Exception as e:
+            logger.error(f"Telegram photo error: {e}")
+            return False
+
+    async def send_value_bet(
         self,
         horse: str,
         track: str,
@@ -64,7 +93,7 @@ class TelegramNotifier:
         confidence: str,
         reasoning: str,
     ) -> bool:
-        """Send a value bet alert"""
+        """Send a value bet alert asynchronously"""
         confidence_emoji = {
             "STRONG_VALUE": "🔥",
             "VALUE": "✅",
@@ -80,9 +109,9 @@ class TelegramNotifier:
             f"📝 <i>{reasoning[:200]}</i>\n\n"
             f"⚠️ Bet responsibly. Max 5% per bet rule applied."
         )
-        return self.send_message(text)
+        return await self.send_message(text)
 
-    def send_bet_result(
+    async def send_bet_result(
         self,
         horse: str,
         track: str,
@@ -92,7 +121,7 @@ class TelegramNotifier:
         returns: float,
         profit_loss: float,
     ) -> bool:
-        """Send a bet result notification"""
+        """Send a bet result notification asynchronously"""
         emoji = "🎉" if won else "❌"
         status = "WON" if won else "LOST"
         pl_str = (
@@ -105,10 +134,10 @@ class TelegramNotifier:
             f"💵 Stake: R{stake:.2f} | Returns: R{returns:.2f}\n"
             f"📊 P&L: <b>{pl_str}</b>"
         )
-        return self.send_message(text)
+        return await self.send_message(text)
 
-    def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
-        """Send a daily summary of all value bets found"""
+    async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
+        """Send a daily summary of all value bets found asynchronously"""
         total_value_bets = sum(
             len(r.get("value_bets", []))
             for races in scan_results.values()
@@ -130,16 +159,17 @@ class TelegramNotifier:
                         )
 
         lines.append("\n⚠️ Always bet responsibly.")
-        return self.send_message("\n".join(lines))
+        return await self.send_message("\n".join(lines))
 
-    def send_error_notification(self, error: str, context: str = "") -> bool:
-        """Send a system error alert"""
+    async def send_error_notification(self, error: str, context: str = "") -> bool:
+        """Send a system error alert asynchronously"""
         text = f"🚨 <b>Strike Tips Error</b>\n\n"
         if context:
             text += f"Context: {context}\n"
         text += f"Error: <code>{error[:300]}</code>"
-        return self.send_message(text)
+        return await self.send_message(text)
 
-    def close(self):
-        """Cleanup (no persistent connection needed for requests)"""
-        pass
+    async def close(self):
+        """Cleanup the async client"""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()

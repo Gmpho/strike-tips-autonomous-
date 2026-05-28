@@ -101,6 +101,12 @@ class NotificationConfig:
     telegram_chat_id: str = field(
         default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", "")
     )
+    twa_url: str = field(
+        default_factory=lambda: os.getenv("TELEGRAM_TWA_URL", "https://strike-tips-hud.vercel.app")
+    )
+    access_pin: str = field(
+        default_factory=lambda: os.getenv("BOT_ACCESS_PIN", "")
+    )
     enable_telegram: bool = True
     notification_time: str = "11:00"  # Daily scan time
     timezone: str = "Africa/Johannesburg"

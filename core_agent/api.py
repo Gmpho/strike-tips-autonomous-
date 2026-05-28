@@ -40,6 +40,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://strike-tips-hud.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -53,8 +54,14 @@ async def startup_event():
     logger.info("Ollama configured host: %s", ollama_host)
 
     # Initialize cache in app state from shared snapshot cache
-    from core_agent.core.snapshot_cache import get_snapshot
+    from core_agent.core.snapshot_cache import get_snapshot, ensure_populated
     app.state.snapshot_cache = get_snapshot()
+    # Fallback: populate snapshot from live Betway if file missing
+    try:
+        await ensure_populated()
+        app.state.snapshot_cache = get_snapshot()
+    except Exception as e:
+        logger.warning("Snapshot populate fallback failed: %s", e)
 
     # Start background task worker
     async def start_task_worker():

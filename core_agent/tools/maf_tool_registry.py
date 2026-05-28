@@ -324,12 +324,19 @@ async def verify_race_exists(track: str, race_number: int, strike=None, **kwargs
 
 async def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) -> Dict:
     """Return the latest odds snapshot for a track or all tracks."""
-    if not strike:
-        return {"status": "no_snapshot_available"}
-    try:
-        return await strike.get_odds_snapshot(track=track)
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+    if strike:
+        try:
+            return await strike.get_odds_snapshot(track=track)
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    from core_agent.core.snapshot_cache import get_snapshot
+    snap = get_snapshot()
+    events = snap.get("events", {})
+    if track:
+        track_lower = track.lower()
+        filtered = {k: v for k, v in events.items() if track_lower in v.get("course", "").lower() or track_lower in v.get("en", "").lower()}
+        return {"events": filtered, "count": len(filtered), "track": track}
+    return snap
 
 
 async def evaluate_race(

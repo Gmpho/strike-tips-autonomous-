@@ -7,13 +7,14 @@ import asyncio
 import logging
 import os
 import re
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     MessageHandler,
     filters,
     CommandHandler,
+    CallbackQueryHandler,
 )
 
 from core_agent.core.strike_brain import brain
@@ -34,66 +35,152 @@ class TelegramAgent:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome = """🏇 *Strike Tips Agent*
 
-I'm your AI Racing Data Analyst. Just chat with me:
+I'm your AI Racing Data Analyst. Just chat with me or use commands:
 
-• "scan today's races"
-• "analyze race at Turffontein Race 3"
-• "check my bankroll"
-• "search for horse data"
-• "record my selection"
-
-Use /model to switch AI models.
+/scan - Daily race scan
+/status - Quick balance check
+/model - Switch AI models
+/help - Show this message
 
 What would you like to do?"""
-        await update.message.reply_text(welcome, parse_mode="Markdown")
+        
+        keyboard = [
+            [InlineKeyboardButton("🚀 Open Intelligence HUD", web_app={"url": NOTIFICATIONS.twa_url})]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(welcome, reply_markup=reply_markup, parse_mode="Markdown")
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        help_text = """🧠 *Available Commands*
+
+/auth <PIN> - Unlock bot access
+/scan - Start today's full racing scan
+/status - Get current bankroll & ROI stats
+/model - Change the specialist AI model
+/clear - Reset conversation history
+
+*Ask me things like:*
+• "Who is the top value pick at Vaal?"
+• "Show me my open bets"
+• "Calculate edge for horse A at 6.0 odds"
+"""
+        keyboard = [
+            [InlineKeyboardButton("🚀 Open Intelligence HUD", web_app={"url": NOTIFICATIONS.twa_url})]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not brain.strike:
+            await update.message.reply_text("❌ System not initialized")
+            return
+        
+        s = brain.strike.get_bankroll_status()
+        text = (
+            f"💰 *Account Summary*\n\n"
+            f"Balance: *R{s['current_bankroll']:.2f}*\n"
+            f"P&L: *R{s['total_profit_loss']:.2f}*\n"
+            f"Open Bets: *{s['open_bets']}*\n"
+            f"Drawdown: *{s['drawdown_percent']:.1f}%*"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
 
     async def set_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        from telegram import ReplyKeyboardMarkup
-
-        models = [
-            ["Auto", "racing_llama"],
-            ["racing_qwen", "racing_qwen"],
-            ["func_gemma", "func_gemma"],
-            ["lfm_racing", "lfm_racing"],
+        keyboard = [
+            [InlineKeyboardButton("Auto (Fallback Chain)", callback_data="model:None")],
+            [InlineKeyboardButton("Fast (llama3.2:1b)", callback_data="model:llama3.2:1b")],
+            [InlineKeyboardButton("Logic (func_gemma)", callback_data="model:func_gemma")],
+            [InlineKeyboardButton("Deep (lfm_racing)", callback_data="model:lfm_racing")],
         ]
-
-        reply_markup = ReplyKeyboardMarkup(
-            models, one_time_keyboard=True, resize_keyboard=True
-        )
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "🤖 *Select AI Model*\n\nChoose your engine:",
+            "🤖 *Select AI Specialist Model*",
             reply_markup=reply_markup,
             parse_mode="Markdown",
         )
+
+    async def model_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        
+        model_name = query.data.replace("model:", "")
+        if model_name == "None":
+            context.user_data["selected_model"] = None
+            text = "✅ Model reset to *Auto Fallback*"
+        else:
+            context.user_data["selected_model"] = model_name
+            text = f"✅ Model set to: *{model_name}*"
+            
+        await query.edit_message_text(text, parse_mode="Markdown")
+
+    async def chart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not brain.strike:
+            await update.message.reply_text("❌ System not initialized")
+            return
+
+        await update.message.reply_text("📊 *Generating Performance Chart...*", parse_mode="Markdown")
+        
+        try:
+            from core_agent.tools.visualizer import PerformanceVisualizer
+            
+            history = brain.strike.bankroll.get_history_stats(days=15)
+            if not history:
+                await update.message.reply_text("⚠️ No betting history found yet.")
+                return
+
+            chart_bytes = await PerformanceVisualizer.generate_bankroll_chart(history)
+            if chart_bytes:
+                # We need to send it via our Telegram Notifier instance
+                # because the current 'update.message' doesn't support easy byte-sending 
+                # without extra complexity.
+                if brain.strike.telegram:
+                    await brain.strike.telegram.send_photo(
+                        chart_bytes, 
+                        caption="📈 *Strike Tips — 15 Day Performance*"
+                    )
+                else:
+                    await update.message.reply_photo(photo=chart_bytes, caption="📈 15 Day Performance")
+            else:
+                await update.message.reply_text("❌ Failed to render chart.")
+                
+        except Exception as e:
+            logger.error(f"Chart command failed: {e}")
+            await update.message.reply_text(f"❌ *Chart Error*\n`{str(e)[:200]}`", parse_mode="Markdown")
+
+    async def auth_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from core_agent.core.access_control import is_authorized, authorize
+
+        chat_id = update.effective_chat.id
+        pin = NOTIFICATIONS.access_pin
+        parts = update.message.text.split()
+
+        if len(parts) == 2 and parts[1] == pin:
+            authorize(chat_id)
+            await update.message.reply_text("✅ *Access granted!* You can now use the bot.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("🔒 *Invalid PIN.* Access denied.", parse_mode="Markdown")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_text = update.message.text
         chat_id = update.effective_chat.id
 
-        # Handle model selection buttons
-        if user_text in ["racing_llama", "racing_qwen", "func_gemma", "lfm_racing"]:
-            context.user_data["selected_model"] = user_text
+        from core_agent.core.access_control import is_authorized
+
+        if not is_authorized(chat_id, NOTIFICATIONS.telegram_chat_id):
             await update.message.reply_text(
-                f"✅ Model set to: *{user_text}*", parse_mode="Markdown"
+                "🔒 *Restricted Access*\n\n"
+                "This bot requires authorization. "
+                "Send `/auth <PIN>` to gain access.",
+                parse_mode="Markdown",
             )
-            return
-
-        if user_text == "Auto":
-            context.user_data["selected_model"] = None
-            await update.message.reply_text("✅ Model reset to Auto")
-            return
-
-        if NOTIFICATIONS.telegram_chat_id and str(chat_id) != str(
-            NOTIFICATIONS.telegram_chat_id
-        ):
-            logger.warning(f"Unauthorized access attempt from chat_id: {chat_id}")
             return
 
         selected_model = context.user_data.get("selected_model")
         model_display = selected_model or "Auto"
 
+        # Show initial status
         status_message = await update.message.reply_text(
-            f"⏳ Analyzing with {model_display}..."
+            f"⏳ Thinking ({model_display})..."
         )
 
         async def keep_typing():
@@ -107,41 +194,59 @@ What would you like to do?"""
         typing_task = asyncio.create_task(keep_typing())
 
         try:
-            response = await brain.pipeline.chat(
-                user_text, model_override=selected_model
+            # Use the orchestrator for full RAG and history
+            response = await brain.orchestrator.chat(
+                user_text, model_override=selected_model, user_id=str(chat_id)
             )
 
             typing_task.cancel()
 
-            try:
-                await status_message.delete()
-            except:
-                pass
-
-            # Clean up ASCII tags and convert to emojis
+            # Clean up response
             text = self._clean_response(response.summary)
+            
+            # Print response to console for DevOps
+            logger.info(f"[TELEGRAM] Response: {text[:100]}...")
 
-            # Print response to console for debugging
-            print(f"\n[BOT] >>> Response to user:")
-            print(f"      {text[:500]}")
-            print(f"[BOT] <<< Sent via Telegram\n")
-
+            # Smart chunks
             MAX_LENGTH = 4000
-            chunks = [text[i : i + MAX_LENGTH] for i in range(0, len(text), MAX_LENGTH)]
-
-            for chunk in chunks:
-                try:
+            if len(text) > MAX_LENGTH:
+                chunks = [text[i : i + MAX_LENGTH] for i in range(0, len(text), MAX_LENGTH)]
+                await status_message.delete()
+                for chunk in chunks:
                     await update.message.reply_text(chunk, parse_mode="Markdown")
-                except Exception:
-                    await update.message.reply_text(chunk)
+            else:
+                await status_message.edit_text(text, parse_mode="Markdown")
 
         except Exception as e:
             typing_task.cancel()
             logger.error(f"Telegram Agent Error: {e}")
+            error_msg = f"❌ *Agent Error*\n\n`{str(e)[:200]}`\n\n_Retrying with fallback..._"
             try:
-                await status_message.edit_text(f"❌ Error: {str(e)[:200]}")
+                await status_message.edit_text(error_msg, parse_mode="Markdown")
             except:
-                await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+
+    async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        await update.message.reply_text("🔄 *Starting Daily Scan...*\n_This may take 30-60 seconds._", parse_mode="Markdown")
+        
+        try:
+            # Trigger daily scan via brain.strike
+            result = await brain.strike.run_daily_scan()
+            text = (
+                f"✅ *Daily Scan Complete*\n\n"
+                f"Tracks: *{result.get('tracks_scanned', 0)}*\n"
+                f"Value Bets: *{result.get('total_value_bets', 0)}*\n"
+                f"Auto-Bets: *{result.get('auto_bets_placed', 0)}*"
+            )
+            await update.message.reply_text(text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Scan failed: {e}")
+            await update.message.reply_text(f"❌ *Scan Failed*\n`{str(e)[:200]}`", parse_mode="Markdown")
+
+    async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        brain.orchestrator.clear_history()
+        await update.message.reply_text("🧹 *Conversation history cleared.*", parse_mode="Markdown")
 
     def _clean_response(self, text: str) -> str:
         """Convert ASCII tags to emojis and clean up response."""
@@ -217,7 +322,16 @@ What would you like to do?"""
         application.add_error_handler(self.error_handler)
 
         application.add_handler(CommandHandler("start", self.start))
+        application.add_handler(CommandHandler("auth", self.auth_command))
+        application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("model", self.set_model))
+        application.add_handler(CommandHandler("status", self.status_command))
+        application.add_handler(CommandHandler("scan", self.scan_command))
+        application.add_handler(CommandHandler("chart", self.chart_command))
+        application.add_handler(CommandHandler("clear", self.clear_command))
+        
+        application.add_handler(CallbackQueryHandler(self.model_callback, pattern="^model:"))
+        
         application.add_handler(
             MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
         )

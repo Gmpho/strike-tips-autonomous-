@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useHUD } from './hooks/useHUD';
+import { useTelegram } from './hooks/useTelegram';
 import { AgentDashboard } from './components/AgentDashboard';
 import { RaceCard } from './components/RaceCard.tsx';
 import type { RaceEvent } from './types';
@@ -16,13 +17,15 @@ import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { motion, AnimatePresence } from 'framer-motion';
+import { X } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [activeView, setActiveView] = useState('dashboard');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const state = useHUD();
+  useTelegram();
 
-  // Load-sensing for background effects
   useEffect(() => {
     if (state.systemHealth.cpu > 60) {
       document.body.classList.add('low-power');
@@ -31,14 +34,19 @@ export const App: React.FC = () => {
     }
   }, [state.systemHealth.cpu]);
 
+  const handleMobileNav = (view: string) => {
+    setActiveView(view);
+    setIsMobileMenuOpen(false);
+  };
+
   const renderView = () => {
     const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll && state.bankroll.balance > 0);
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (
-        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-12">
-          <div className="w-16 h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
-          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse">Initializing Neural Link...</p>
+        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-6 md:p-12">
+          <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
+          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse text-xs md:text-sm">Initializing Neural Link...</p>
         </div>
       );
     }
@@ -46,7 +54,7 @@ export const App: React.FC = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
             {Object.values(state.events).map(event => (
               <RaceCard key={event.id} event={event as RaceEvent} />
             ))}
@@ -80,30 +88,71 @@ export const App: React.FC = () => {
         <AmbientCanvas />
       </div>
 
-      <div className="flex">
-        <aside className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel backdrop-blur-2xl transition-all duration-300 ease-in-out z-30`}>
-          <Sidebar 
-            activeView={activeView} 
-            setActiveView={setActiveView} 
-            isCollapsed={isSidebarCollapsed}
-            onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          />
+      {/* Mobile menu overlay */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm md:hidden"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            <motion.aside
+              initial={{ x: -320 }}
+              animate={{ x: 0 }}
+              exit={{ x: -320 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-72 h-full bg-theme-panel border-r border-theme overflow-y-auto"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-end p-4">
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-2 rounded-lg bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-500 transition-all border border-theme"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <Sidebar
+                activeView={activeView}
+                setActiveView={handleMobileNav}
+                isCollapsed={false}
+                onToggle={() => setIsMobileMenuOpen(false)}
+              />
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex flex-col md:flex-row">
+        {/* Desktop sidebar */}
+        <aside className="hidden md:block">
+          <div className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel backdrop-blur-2xl transition-all duration-300 ease-in-out z-30`}>
+            <Sidebar
+              activeView={activeView}
+              setActiveView={setActiveView}
+              isCollapsed={isSidebarCollapsed}
+              onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            />
+          </div>
         </aside>
 
         <main className="flex-1 min-w-0 relative z-10 flex flex-col">
-          {/* Header - Sticky Top */}
-          <div className="sticky top-0 z-20 px-8 lg:px-12 pt-6 lg:pt-8 pb-4 backdrop-blur-md bg-theme-panel border-b border-theme">
-            <Header 
-              onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
-              isSidebarCollapsed={isSidebarCollapsed} 
+          {/* Header */}
+          <div className="sticky top-0 z-20 px-4 md:px-8 lg:px-12 pt-4 md:pt-6 lg:pt-8 pb-3 md:pb-4 backdrop-blur-md bg-theme-panel border-b border-theme">
+            <Header
+              onToggleSidebar={() => setIsMobileMenuOpen(true)}
+              isSidebarCollapsed={isSidebarCollapsed}
             />
           </div>
 
-          {/* Main Content Area - Natural Scroll */}
-          <div className="px-8 lg:px-12 py-8 flex-1">
+          {/* Main Content */}
+          <div className="px-4 md:px-8 lg:px-12 py-4 md:py-8 flex-1">
             <div className="w-full">
               <AnimatePresence mode="wait">
-                <motion.div 
+                <motion.div
                   key={activeView}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -114,10 +163,10 @@ export const App: React.FC = () => {
                 </motion.div>
               </AnimatePresence>
             </div>
-
-            {/* Footer follows content naturally */}
-            <Footer />
           </div>
+
+          {/* Footer */}
+          <Footer />
         </main>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
-import { playAlertTone, playValueBetTone, playSettleTone } from './audio';
+import { playAlertTone, playSettleTone } from './audio';
 
 export class DataBridge {
   private interval: number | null = null;
@@ -16,7 +16,7 @@ export class DataBridge {
     if (this.interval) clearInterval(this.interval);
   }
 
-  private playSoundsForChanges(snapshot: any, bankroll: any, history: any) {
+  private playSoundsForChanges(snapshot: any, _bankroll: any, history: any) {
     const eventCount = Object.keys(snapshot.events || {}).length;
     if (eventCount > this.prevEventCount && this.prevEventCount > 0) {
       playAlertTone();
