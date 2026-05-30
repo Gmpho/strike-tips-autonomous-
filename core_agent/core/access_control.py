@@ -2,13 +2,13 @@ import json
 import logging
 import os
 from pathlib import Path
+from core_agent.config.paths import DATA_DIR
 
 logger = logging.getLogger("access-control")
 
 
 def _whitelist_path() -> Path:
-    data_dir = os.getenv("DATA_DIR", str(Path(__file__).resolve().parent.parent.parent / "data"))
-    return Path(data_dir) / "whitelist.json"
+    return DATA_DIR / "whitelist.json"
 
 
 def _load_whitelist() -> set:

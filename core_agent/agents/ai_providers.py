@@ -76,6 +76,9 @@ class AIProvider:
         except Exception as e:
             return AIResponse(content="", provider=provider, error=str(e))
 
+    _proxy_failures = 0
+    _proxy_circuit_open = False
+
     async def _call_kimi_parallel(
         self, prompts: List[str], strike_instance=None
     ) -> List[AIResponse]:
@@ -86,8 +89,13 @@ class AIProvider:
         client = get_client(model_key)
 
         async def _safe_run(p):
+            nonlocal self
             try:
                 from agent_framework import Message, Content
+
+                # Skip cloud proxy if circuit breaker is open
+                if self._proxy_circuit_open:
+                    raise RuntimeError("proxy_circuit_open")
 
                 # Try the primary model
                 messages = [Message(role="user", contents=[Content.from_text(text=p)])]
@@ -102,11 +110,13 @@ class AIProvider:
                 )
                 return AIResponse(content=text, provider="kimi")
             except Exception as e:
+                # Track proxy failures; open circuit after 10 consecutive
+                self.__class__._proxy_failures += 1
+                if self.__class__._proxy_failures >= 10:
+                    self.__class__._proxy_circuit_open = True
+                    logger.warning("Cloud proxy circuit breaker opened after %d failures", self._proxy_failures)
                 # Fallback: Groq first (High speed, generous quota)
                 if ModelConfig.groq_available():
-                    logger.warning(
-                        f"[SWARM] Cloud proxy {client.model_id} failed, falling back to Groq..."
-                    )
                     from agent_framework.openai import OpenAIChatClient
 
                     groq_client = OpenAIChatClient(

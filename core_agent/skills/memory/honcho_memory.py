@@ -1,8 +1,7 @@
 import logging
-from datetime import datetime
 from typing import Optional
 
-from core_agent.skills.memory.chroma_memory import RacingMemory
+from core_agent.skills.memory.jsonl_session import JSONLSession
 
 logger = logging.getLogger("honcho-memory")
 
@@ -10,32 +9,32 @@ logger = logging.getLogger("honcho-memory")
 class HonchoMemory:
     def __init__(self, user_id: Optional[str] = None):
         self._user_id = user_id or "anon_web"
-        self._memory = RacingMemory()
+        self._session = JSONLSession(user_id=self._user_id)
 
     def get_context(self, query: Optional[str] = None) -> str:
         try:
             if query:
-                results = self._memory.search_form_insights(query, n_results=3)
+                results = self._session.keyword_search(query, n=3)
                 if results:
-                    lines = [r["content"] for r in results]
-                    return "\n".join(lines)
-            recent = self._memory.get_chat_history(limit=5)
+                    return "\n".join(r["content"] for r in results)
+            recent = self._session.get_history(limit=5)
             if recent:
-                parts = [f"{m['role']}: {m['content']}" for m in recent]
-                return "\n".join(parts)
+                return "\n".join(f"{m['role']}: {m['content']}" for m in recent)
         except Exception as e:
-            logger.debug(f"get_context failed: {e}")
+            logger.debug("get_context failed: %s", e)
         return ""
 
     def add_turn(self, user_message: str, assistant_message: str) -> None:
         try:
-            self._memory.add_chat_message("user", user_message, source=f"user_{self._user_id}")
-            self._memory.add_chat_message("assistant", assistant_message, source="agent")
+            self._session.add_message("user", user_message)
+            self._session.add_message("assistant", assistant_message)
         except Exception as e:
-            logger.debug(f"add_turn failed: {e}")
+            logger.debug("add_turn failed: %s", e)
 
 
 class DreamHoncho:
+    """Dream memory placeholder — two-phase memory writes MEMORY.md files instead."""
+
     def get_dream_context(self) -> str:
         return ""
 

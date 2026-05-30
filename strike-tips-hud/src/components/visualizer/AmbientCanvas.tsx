@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import { useRef, useMemo, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Stars } from '@react-three/drei';
 import * as THREE from 'three';
@@ -90,7 +90,28 @@ const DataParticles = () => {
   );
 };
 
+function webglSupported(): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
 export const AmbientCanvas: React.FC = () => {
+  const [hasWebgl] = useState(webglSupported);
+
+  if (!hasWebgl) {
+    return (
+      <div className="absolute inset-0 pointer-events-none z-0"
+        style={{
+          background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.06) 0%, transparent 70%)'
+        }}
+      />
+    );
+  }
+
   // Read if light theme is active by checking document class
   const isLight = document.documentElement.classList.contains('light');
   
@@ -105,6 +126,11 @@ export const AmbientCanvas: React.FC = () => {
           stencil: false, 
           depth: true,
           alpha: true
+        }}
+        onCreated={(state) => {
+          if (!state.gl.capabilities.isWebGL2) {
+            console.warn('[WebGL] Only WebGL1 available, 3D effects may be limited');
+          }
         }}
       >
         <fog attach="fog" args={[isLight ? '#f8fafc' : '#000000', 2, 15]} />

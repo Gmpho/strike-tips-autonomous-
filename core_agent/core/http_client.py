@@ -30,6 +30,7 @@ def get_async_client(base_url: str = "", timeout: float = 30.0, **kwargs) -> htt
         base_url=base_url,
         timeout=httpx.Timeout(timeout),
         limits=_ASYNC_LIMITS,
+        follow_redirects=True,
         **kwargs,
     )
     _async_clients[key] = client
@@ -45,6 +46,7 @@ def get_sync_client(base_url: str = "", timeout: float = 30.0, **kwargs) -> http
         base_url=base_url,
         timeout=httpx.Timeout(timeout),
         limits=_SYNC_LIMITS,
+        follow_redirects=True,
         **kwargs,
     )
     _sync_clients[key] = client

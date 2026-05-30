@@ -2,18 +2,25 @@ import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone } from './audio';
 
+const FAST_INTERVAL = 5000;
+const SLOW_INTERVAL = 30000;
+
 export class DataBridge {
-  private interval: number | null = null;
+  private fastInterval: number | null = null;
+  private slowInterval: number | null = null;
   private prevEventCount = 0;
   private prevBetCount = 0;
 
   start() {
-    this.sync();
-    this.interval = window.setInterval(() => this.sync(), 5000);
+    this.syncFast();
+    this.syncSlow();
+    this.fastInterval = window.setInterval(() => this.syncFast(), FAST_INTERVAL);
+    this.slowInterval = window.setInterval(() => this.syncSlow(), SLOW_INTERVAL);
   }
 
   stop() {
-    if (this.interval) clearInterval(this.interval);
+    if (this.fastInterval) clearInterval(this.fastInterval);
+    if (this.slowInterval) clearInterval(this.slowInterval);
   }
 
   private playSoundsForChanges(snapshot: any, _bankroll: any, history: any) {
@@ -34,15 +41,57 @@ export class DataBridge {
     this.prevBetCount = settledCount;
   }
 
-  private async sync() {
+  private async syncFast() {
     const start = performance.now();
     try {
-      // Parallel fetch for speed
-      const [snapshotRes, healthRes, bankrollRes, betsRes, historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
+      const [snapshotRes, healthRes, bankrollRes, betsRes] = await Promise.all([
         fetch('/api/monitoring/snapshot'),
         fetch('/api/system/health'),
         fetch(BETTING_ENDPOINTS.accountSummary),
         fetch(BETTING_ENDPOINTS.open),
+      ]);
+
+      if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
+
+      const snapshot = await snapshotRes.json();
+      const health = await healthRes.json();
+      const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
+      const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
+
+      const latency = performance.now() - start;
+
+      hudStore.updateState({
+        events: snapshot.events || {},
+        systemHealth: {
+          cpu: health.cpu_usage_percent || 0,
+          memory: health.memory_usage_percent || 0,
+          latency: Math.round(latency),
+          status: 'ONLINE',
+        },
+        bankroll: bankroll ? {
+          balance: bankroll.balance,
+          dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,
+          dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
+          maxStake: bankroll.maxStake || bankroll.max_stake,
+          totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0,
+        } : hudStore.getState().bankroll,
+      });
+
+      this.playSoundsForChanges(snapshot, bankroll, { bets: hudStore.getState().betHistory });
+    } catch {
+      hudStore.updateState({
+        systemHealth: {
+          ...hudStore.getState().systemHealth,
+          status: 'OFFLINE',
+          latency: 0,
+        },
+      });
+    }
+  }
+
+  private async syncSlow() {
+    try {
+      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
         fetch(BETTING_ENDPOINTS.history),
         fetch(BETTING_ENDPOINTS.stats),
         fetch('/api/betting/learning/roi-by-track'),
@@ -51,15 +100,9 @@ export class DataBridge {
         fetch('/api/healing/selectors'),
         fetch('/api/system/vitals'),
         fetch('/api/betting/bankroll-history'),
-        fetch('/api/agent/memory')
+        fetch('/api/agent/memory'),
       ]);
 
-      if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
-      
-      const snapshot = await snapshotRes.json();
-      const health = await healthRes.json();
-      const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
-      const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
       const history = historyRes.ok ? await historyRes.json() : { bets: [] };
       const stats = statsRes.ok ? await statsRes.json() : null;
       const roiRaw = roiRes.ok ? await roiRes.json() : {};
@@ -71,13 +114,8 @@ export class DataBridge {
       const vitals = vitalsRes.ok ? await vitalsRes.json() : { vitals: [] };
       const bankrollHist = bankrollHistRes.ok ? await bankrollHistRes.json() : { history: [] };
       const memoryData = memoryRes.ok ? await memoryRes.json() : null;
-      
-      const latency = performance.now() - start;
-
-      this.playSoundsForChanges(snapshot, bankroll, history);
 
       hudStore.updateState({
-        events: snapshot.events || {},
         betHistory: history.bets || [],
         betStats: stats,
         logs: logs.logs || [],
@@ -86,7 +124,7 @@ export class DataBridge {
           samples: stats?.totalBets || 0,
           topTrack: Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
           accuracy: roiAccuracy,
-          roiByTrack: roiByTrack
+          roiByTrack,
         },
         bankrollHistory: bankrollHist.history || [],
         honcho: memoryData ? {
@@ -94,40 +132,19 @@ export class DataBridge {
           context: memoryData.context || '',
           dreamContext: memoryData.dream_context || '',
         } : null,
-        bankroll: bankroll ? {
-          balance: bankroll.balance,
-          dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,
-          dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
-          maxStake: bankroll.maxStake || bankroll.max_stake,
-          totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0
-        } : hudStore.getState().bankroll,
-        systemHealth: {
-          cpu: health.cpu_usage_percent || 0,
-          memory: health.memory_usage_percent || 0,
-          latency: Math.round(latency),
-          status: 'ONLINE'
-        },
         healing: {
           events: healing.internal_events || [],
           selectors: selectors.report || {},
-          githubRuns: healing.github_runs || []
+          githubRuns: healing.github_runs || [],
         },
         vitals: {
-          docker: vitals.vitals || []
-        }
+          docker: vitals.vitals || [],
+        },
       });
-    } catch (e) {
-      hudStore.updateState({
-        systemHealth: {
-          ...hudStore.getState().systemHealth,
-          status: 'OFFLINE',
-          latency: 0
-        }
-      });
-      // Do NOT load mock data. Keep whatever state we had previously so UI doesn't hardcode flash.
+    } catch {
+      // Silent — non-critical data, keep previous state
     }
   }
-
 }
 
 export const dataBridge = new DataBridge();

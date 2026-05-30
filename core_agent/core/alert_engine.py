@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
+from core_agent.config.paths import DATA_DIR
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +34,9 @@ class AlertEngine:
 
     def __init__(self, notification_callback=None, data_dir=None):
         self.notification_callback = notification_callback
-        self.data_dir = data_dir or os.getenv("DATA_DIR", "/app/data")
-        self.alerts_file = os.path.join(data_dir, "alert_conditions.json")
-        self.history_file = os.path.join(data_dir, "alert_history.json")
+        self.data_dir = data_dir or str(DATA_DIR)
+        self.alerts_file = os.path.join(self.data_dir, "alert_conditions.json")
+        self.history_file = os.path.join(self.data_dir, "alert_history.json")
 
         self.alerts_cache: Dict[str, AlertCondition] = {}
         self.last_trigger_times: Dict[str, datetime] = {}
@@ -51,29 +52,40 @@ class AlertEngine:
         """Initialize the engine and load settings."""
         os.makedirs(self.data_dir, exist_ok=True)
         await self._load_alerts()
+        await self.clear_history()
         logger.info(
             f"🚀 Alert Engine Active: Loaded {len(self.alerts_cache)} conditions."
         )
 
+    async def clear_history(self):
+        """Wipe triggered alert history (call at startup to flush stale entries)."""
+        try:
+            if os.path.exists(self.history_file):
+                os.remove(self.history_file)
+                logger.info("Cleared stale alert history")
+        except Exception as e:
+            logger.warning("Failed to clear alert history: %s", e)
+
     async def _load_alerts(self):
-        """Load alerts from local JSON storage."""
+        """Load alerts from local JSON storage, overriding stale default conditions."""
         if os.path.exists(self.alerts_file):
             try:
                 with open(self.alerts_file, "r") as f:
                     data = json.load(f)
-                    for item in data:
-                        alert = AlertCondition(**item)
-                        self.alerts_cache[alert.id] = alert
+                for item in data:
+                    alert = AlertCondition(**item)
+                    if alert.condition_type == "value_bet":
+                        continue
+                    self.alerts_cache[alert.id] = alert
             except Exception as e:
                 logger.error(f"Failed to load alerts: {e}")
 
-        # Default alerts if none exist
         if not self.alerts_cache:
             self._add_default_alerts()
             await self._save_alerts()
 
     def _add_default_alerts(self):
-        """Standard L7 baseline alerts."""
+        """Standard L7 baseline alerts — conservative to avoid spam."""
         defaults = [
             AlertCondition(
                 id="global_odds_drop",
@@ -82,14 +94,6 @@ class AlertEngine:
                 condition_type="odds_drop",
                 condition_value="15%",
                 notification_channels=["telegram", "websocket"],
-            ),
-            AlertCondition(
-                id="global_value_bet",
-                race_course="Any",
-                horse_name=None,
-                condition_type="value_bet",
-                condition_value="5.0",  # Odds > 5.0
-                notification_channels=["telegram"],
             ),
         ]
         for a in defaults:

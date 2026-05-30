@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import asyncio
+import difflib
 import logging
 from datetime import datetime, date
 from typing import List, Dict, Optional
@@ -17,11 +18,14 @@ os.environ.setdefault("ENABLE_LOKI", "false")
 os.environ.setdefault("ENABLE_PROMETHEUS", "false")
 
 
+_PENDING_TG_TASKS: List[asyncio.Task] = []
+
 def _fire_async(coro):
-    """Fire an async coroutine from sync code (fire-and-forget)."""
+    """Fire an async coroutine from sync code, tracking it for await on shutdown."""
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(coro)
+        task = loop.create_task(coro)
+        _PENDING_TG_TASKS.append(task)
     except RuntimeError:
         asyncio.run(coro)
 
@@ -89,6 +93,7 @@ from core_agent.skills.parsers.betway_api import BetwayAPI
 # NOTE: OddscheckerScraper imported lazily in __init__ (crawl4ai hangs at module level)
 from core_agent.skills.parsers.self_healing import SelfHealingParser
 from core_agent.skills.notifications.telegram_bot import TelegramNotifier
+from core_agent.core.alert_digester import AlertDigester
 from core_agent.agents.ai_providers import AIProvider
 from core_agent.skills.learning.analyzer import AdaptiveAnalyzer
 
@@ -155,9 +160,12 @@ class StrikeTips:
 
         # Initialize Telegram if configured
         self.telegram = None
+        self.digester = None
         if enable_telegram:
             try:
                 self.telegram = TelegramNotifier()
+                self.digester = AlertDigester(self.telegram)
+                self.digester.start()
                 print("SUCCESS: Telegram notifications enabled")
             except ValueError as e:
                 print(f"WARN: Telegram not configured: {e}")
@@ -165,6 +173,8 @@ class StrikeTips:
     async def scrape_and_analyze_track(
         self, track: str, date_str: Optional[str] = None
     ) -> List[Dict]:
+        if self.digester:
+            await self.digester.start_async()
         today_iso = date_str or date.today().isoformat()
         track_key = f"{track}_{today_iso}"
 
@@ -274,7 +284,10 @@ class StrikeTips:
                         "race_time": r.race_time,
                         "condition": r.track_condition,
                         "runners": [run.horse_name for run in r.runners],
-                        "value_bets": insight.get("value_bets", []),
+                        "value_bets": self._validate_value_bets(
+                            insight.get("value_bets", []),
+                            [run.horse_name for run in r.runners],
+                        ),
                         "ai_insight": insight.get("summary", analysis_result),
                     }
                 )
@@ -283,6 +296,25 @@ class StrikeTips:
         finally:
             self._processing_tracks.remove(track_key)
             # We keep track_data_cache for the duration of the track session
+
+    def _validate_value_bets(self, value_bets: List[Dict], valid_horses: List[str]) -> List[Dict]:
+        """Cross-reference AI-generated value bets against actual scraped runners.
+        Filters out hallucinated horse names using fuzzy matching."""
+        validated = []
+        for vb in value_bets:
+            horse = vb.get("horse") or vb.get("name") or vb.get("horse_name") or ""
+            if not horse:
+                continue
+            if horse in valid_horses:
+                validated.append(vb)
+                continue
+            matches = difflib.get_close_matches(horse, valid_horses, n=1, cutoff=0.6)
+            if matches:
+                vb["horse"] = matches[0]
+                validated.append(vb)
+            else:
+                print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
+        return validated
 
     def _convert_race_data(self, scraped_race: ScrapedRace) -> tuple:
         """
@@ -340,24 +372,24 @@ class StrikeTips:
         return race_card, probability_estimates, reasoning_map
 
     def _notify_value_bet(self, value_bet):
-        """Send Telegram notification for a value bet"""
-        if not self.telegram:
+        """Send Telegram notification for a value bet (batched via digester)."""
+        if not self.telegram or not self.digester:
             return
 
         try:
-            _fire_async(self.telegram.send_value_bet(
-                horse=value_bet.horse,
-                track=value_bet.track,
-                race_number=value_bet.race_number,
-                race_time=value_bet.race_time,
-                odds=value_bet.odds_decimal,
-                edge_percent=value_bet.edge_percent,
-                stake=value_bet.advised_stake,
-                confidence=value_bet.confidence,
-                reasoning=value_bet.reasoning,
-            ))
+            icon = {
+                "STRONG_VALUE": "🔥",
+                "VALUE": "✅",
+                "MARGINAL": "💛",
+            }.get(value_bet.confidence, "📊")
+            html = (
+                f"{icon} <b>{value_bet.horse}</b> @ <b>{value_bet.track.title()}</b> "
+                f"R{value_bet.race_number} ({value_bet.race_time})\n"
+                f"💰 Odds: {value_bet.odds_decimal:.2f} | Edge: +{value_bet.edge_percent:.1f}%"
+            )
+            _fire_async(self.digester.push("value_bet", html))
         except Exception as e:
-            print(f"[ERR] Failed to send Telegram notification: {e}")
+            print(f"[ERR] Failed to queue value bet notification: {e}")
 
     def place_bet(
         self,
@@ -479,6 +511,10 @@ class StrikeTips:
         print(f"[LOC] Tracks: {', '.join(t.title() for t in tracks)}")
         print("=" * 60)
 
+        # Start digester background loop if not already running
+        if self.digester:
+            await self.digester.start_async()
+
         # 1. Harvest Official PDF Tips FIRST
         from core_agent.skills.parsers.pdf_harvester import PDFHarvester
 
@@ -565,7 +601,7 @@ class StrikeTips:
 
         if self.telegram:
             try:
-                _fire_async(self.telegram.send_daily_tips(all_results))
+                await self.telegram.send_daily_tips(all_results)
             except Exception as e:
                 print(f"[ERR] Failed to send daily summary: {e}")
 
@@ -624,10 +660,10 @@ class StrikeTips:
                     if auto_bets_placed:
                         print(f"[AUTO-BET] Placed {auto_bets_placed} bets from daily scan")
                         if self.telegram:
-                            _fire_async(self.telegram.send_message(
+                            await self.telegram.send_message(
                                 f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
                                 f"Placed {auto_bets_placed} value bet(s) from today's scan."
-                            ))
+                            )
         except Exception as e:
             print(f"[ERR] Auto-bet placement failed: {e}")
 
@@ -732,9 +768,14 @@ class StrikeTips:
 
     async def close(self):
         """Clean up resources"""
+        if self.digester:
+            await self.digester.stop()
+        if _PENDING_TG_TASKS:
+            await asyncio.gather(*_PENDING_TG_TASKS, return_exceptions=True)
+            _PENDING_TG_TASKS.clear()
         await self.scraper.close()
         if self.telegram:
-            self.telegram.close()
+            await self.telegram.close()
 
 
 async def main_async():

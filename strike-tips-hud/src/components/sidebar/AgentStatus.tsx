@@ -45,8 +45,8 @@ export const AgentStatus: React.FC = () => {
             <Database className="w-4 h-4 text-theme-secondary" />
             <span className="text-xs font-bold text-theme-primary">Local Model (Ollama)</span>
           </div>
-          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.ollama === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-            {health.ollama}
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${health.ollama === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'}`}>
+            {health.ollama === 'connected' ? 'CONNECTED' : 'OFFLINE'}
           </span>
         </div>
       </div>

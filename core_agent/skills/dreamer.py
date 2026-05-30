@@ -102,6 +102,22 @@ class DreamEngine:
     def __init__(self):
         self.history: List[Dream] = []
 
+    def get_context(self, track: str = "") -> str:
+        """Return recent dreams as context string for the system prompt."""
+        try:
+            from core_agent.core.dream_memory import read_memories
+            entries = read_memories("dreams", limit=3)
+            if not entries:
+                return ""
+            lines = []
+            for e in entries:
+                if track and track.lower() not in e.get("tags", "").lower():
+                    continue
+                lines.append(f"- {e.get('title', '')}: {e.get('body', '')}")
+            return "\n".join(lines) if lines else ""
+        except Exception:
+            return ""
+
     async def generate_dream(self) -> Dream:
         snap = _load_snapshot()
         race = _pick_race(snap)
@@ -132,12 +148,15 @@ class DreamEngine:
         if len(self.history) > 20:
             self.history.pop()
 
-        # Write to Honcho as agent_dream peer (non-blocking, best-effort)
+        # Write to two-phase dream memory (non-blocking, best-effort)
         try:
-            from core_agent.skills.memory.honcho_memory import dream_honcho
             import asyncio
+            from core_agent.core.dream_memory import write_memory
             asyncio.get_event_loop().run_in_executor(
-                None, dream_honcho.record_dream, scenario, insight, course
+                None, write_memory, "dreams",
+                f"{course} R{race_num} — {scenario[:40]}",
+                insight,
+                [course, f"R{race_num}", "dream"],
             )
         except Exception:
             pass

@@ -8,6 +8,7 @@ import schedule
 import time
 import sys
 import os
+import json
 from core_agent.core.market_watcher import MarketWatcher
 import asyncio
 from datetime import datetime, date, timedelta
@@ -92,7 +93,7 @@ class StrikeTipsScheduler:
         schedule.every().day.at(self.scan_time).do(self.daily_scan_job)
         schedule.every().day.at("06:00").do(self.run_daily_grounding_job)
         schedule.every().day.at("20:00").do(self.pre_warm_tomorrow_job)
-        schedule.every(15).minutes.do(self.continuous_scan_job)
+        schedule.every(15).minutes.do(self.continuous_scan_job).tag("continuous_scan")
         schedule.every(5).minutes.do(self.check_race_results_job)
         schedule.every().day.at("20:00").do(self._end_of_day_report)
         schedule.every().day.at("21:00").do(self.update_learning_job)
@@ -200,8 +201,12 @@ class StrikeTipsScheduler:
         except Exception as e:
             print(f"[ERR] Auto-settlement failed: {e}")
 
+    _scan_failures = 0
+
     def continuous_scan_job(self):
-        """Lightweight scan for value bets on today's active races (runs every 15min)."""
+        """Lightweight scan for value bets on today's active races (runs every 15min).
+        Uses exponential backoff: after 3 failures → 1h, 10 failures → 4h.
+        """
         try:
             from core_agent.core.strike_brain import brain
             if not brain or not brain.strike:
@@ -209,8 +214,18 @@ class StrikeTipsScheduler:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self._continuous_scan_async(brain))
+            self._scan_failures = 0  # reset on success
         except Exception as e:
-            print(f"[ERR] Continuous scan failed: {e}")
+            self._scan_failures += 1
+            delay = 15  # minutes — default
+            if self._scan_failures > 10:
+                delay = 240  # 4 hours
+            elif self._scan_failures > 3:
+                delay = 60  # 1 hour
+            print(f"[ERR] Continuous scan #{self._scan_failures} failed: {e} (next in {delay}min)")
+            # Reschedule with backoff by re-adding the job at a longer interval
+            schedule.clear("continuous_scan")
+            schedule.every(delay).minutes.do(self.continuous_scan_job).tag("continuous_scan")
 
     async def _continuous_scan_async(self, brain):
         """Fetch Betway snapshot and check for value opportunities."""
@@ -267,9 +282,15 @@ class StrikeTipsScheduler:
             print(f"\n{'='*60}\n[REPORT] End of Day Report\n{'='*60}")
             print(report)
             if brain.strike.telegram:
-                brain.strike.telegram.send_message(
-                    f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
-                )
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(brain.strike.telegram.send_message(
+                        f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
+                    ))
+                except RuntimeError:
+                    asyncio.run(brain.strike.telegram.send_message(
+                        f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
+                    ))
             print("[OK] End-of-day report sent")
         except Exception as e:
             print(f"[ERR] End-of-day report failed: {e}")

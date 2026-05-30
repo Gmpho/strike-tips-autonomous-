@@ -1,16 +1,10 @@
-"""
-Groq provider — direct OpenAI-compatible API with proper tool calling.
-Single responsibility: send a message to Groq, execute any tool calls, return text.
-"""
-
 import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import httpx
-
 from core_agent.agents.context_builder import build_system_prompt
+from core_agent.agents.providers.base_provider import BaseProvider
 from core_agent.agents.schemas import AgentReply
 from core_agent.config.model_config import ModelConfig
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
@@ -19,7 +13,6 @@ logger = logging.getLogger("groq-provider")
 
 _URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# OpenAI-format tool definitions for the 5 most useful tools
 TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "get_odds_snapshot",
@@ -58,16 +51,15 @@ TOOLS: List[Dict[str, Any]] = [
     }},
     {"type": "function", "function": {
         "name": "search_racing_data",
-        "description": "Search the web for horse racing information — tomorrow's races, results, news, track conditions.",
+        "description": "Search the web for horse racing information.",
         "parameters": {"type": "object", "properties": {
-            "query": {"type": "string", "description": "Search query e.g. 'tomorrow SA races 2026' or 'Kenilworth results today'"}
+            "query": {"type": "string", "description": "Search query"}
         }, "required": ["query"]},
     }},
 ]
 
 
 async def _execute_tool(name: str, args: Dict) -> Dict:
-    """Execute a registered tool and return its result."""
     fn = TOOL_REGISTRY.get(name)
     if not fn:
         return {"error": f"Tool '{name}' not found"}
@@ -80,66 +72,67 @@ async def _execute_tool(name: str, args: Dict) -> Dict:
         return {"error": str(e)}
 
 
-async def chat(message: str, model: Optional[str] = None, intent: Optional[str] = None) -> AgentReply:
-    """Send message to Groq, handle tool calls, return AgentReply."""
-    api_key = os.getenv("GROQ_API_KEY", "")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not set")
+class GroqProvider(BaseProvider):
+    MAX_RETRIES = 1
 
-    # Use fast 8b for simple queries, 70b only when tools are likely needed
-    _tool_keywords = ("tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture")
-    needs_tools = any(kw in message.lower() for kw in _tool_keywords) or intent in ("search_racing_data", "run_daily_analysis")
-    model = model or (ModelConfig.ORCHESTRATOR if needs_tools else "llama-3.1-8b-instant")
+    async def _call(self, message: str, model: Optional[str] = None, intent: Optional[str] = None) -> AgentReply:
+        api_key = os.getenv("GROQ_API_KEY", "")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY not set")
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    messages = [
-        {"role": "system", "content": build_system_prompt(intent=intent)},
-        {"role": "user", "content": message},
-    ]
+        _tool_keywords = ("tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture")
+        needs_tools = any(kw in message.lower() for kw in _tool_keywords) or intent in ("search_racing_data", "run_daily_analysis")
+        model = model or (ModelConfig.ORCHESTRATOR if needs_tools else "llama-3.1-8b-instant")
 
-    from core_agent.core.http_client import get_async_client
-    client = get_async_client(timeout=25.0)
-    # Only pass tools to the 70b model — 8b hallucinates tool calls
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": 400,
-        "temperature": 0.3,
-    }
-    if needs_tools:
-        payload["tools"] = TOOLS
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        messages = [
+            {"role": "system", "content": build_system_prompt(intent=intent)},
+            {"role": "user", "content": message},
+        ]
 
-    resp = await client.post(_URL, headers=headers, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-    choice = data["choices"][0]
-
-    # Execute tool calls if requested
-    if choice.get("finish_reason") == "tool_calls":
-        messages.append(choice["message"])
-        for tc in choice["message"].get("tool_calls", []):
-            fn_name = tc["function"]["name"]
-            fn_args = json.loads(tc["function"].get("arguments", "{}"))
-            result = await _execute_tool(fn_name, fn_args)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": json.dumps(result),
-            })
-            logger.debug(f"Tool {fn_name}({fn_args}) → {str(result)[:100]}")
-
-        # Second call with tool results
-        payload2 = {
+        from core_agent.core.http_client import get_async_client
+        client = get_async_client(timeout=25.0)
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": 400,
             "temperature": 0.3,
         }
         if needs_tools:
-            payload2["tools"] = TOOLS
-        resp2 = await client.post(_URL, headers=headers, json=payload2)
-        resp2.raise_for_status()
-        data = resp2.json()
+            payload["tools"] = TOOLS
 
-    text = data["choices"][0]["message"]["content"]
-    return AgentReply(summary=text, model_used=f"groq:{model}")
+        resp = await client.post(_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        choice = data["choices"][0]
+
+        if choice.get("finish_reason") == "tool_calls":
+            messages.append(choice["message"])
+            for tc in choice["message"].get("tool_calls", []):
+                fn_name = tc["function"]["name"]
+                fn_args = json.loads(tc["function"].get("arguments", "{}"))
+                result = await _execute_tool(fn_name, fn_args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(result),
+                })
+
+            payload2 = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 400,
+                "temperature": 0.3,
+            }
+            if needs_tools:
+                payload2["tools"] = TOOLS
+            resp2 = await client.post(_URL, headers=headers, json=payload2)
+            resp2.raise_for_status()
+            data = resp2.json()
+
+        text = data["choices"][0]["message"]["content"]
+        return AgentReply(summary=text, model_used=f"groq:{model}")
+
+
+provider = GroqProvider()
+chat = provider.chat

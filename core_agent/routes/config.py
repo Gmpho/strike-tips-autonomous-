@@ -10,11 +10,11 @@ from pydantic import BaseModel
 from typing import Any, Dict, Optional
 from core_agent.core.strike_brain import brain
 from core_agent.config.settings import TRACKS
+from core_agent.config.paths import DATA_DIR
 
 router = APIRouter(prefix="/api", tags=["config"])
 
-DATA_DIR = os.environ.get("DATA_DIR", "data")
-SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+SETTINGS_FILE = str(DATA_DIR / "settings.json")
 
 
 def _load_settings() -> Dict[str, Any]:
@@ -28,7 +28,7 @@ def _load_settings() -> Dict[str, Any]:
 
 
 def _save_settings(data: Dict[str, Any]):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(str(DATA_DIR), exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -70,7 +70,7 @@ async def save_config(payload: Dict[str, Any]):
     new_balance = payload.get("startingBalance")
     if new_balance is not None:
         import json as _json
-        state_path = os.path.join(DATA_DIR, "bankroll_state.json")
+        state_path = str(DATA_DIR / "bankroll_state.json")
         state = {}
         if os.path.exists(state_path):
             try:
@@ -100,7 +100,7 @@ async def test_telegram():
     """Send a test Telegram message and verify delivery"""
     if not brain.strike or not brain.strike.telegram:
         raise HTTPException(status_code=503, detail="Telegram not configured")
-    ok = brain.strike.telegram.send_message("🏇 Strike Tips — test message OK")
+    ok = await brain.strike.telegram.send_message("🏇 Strike Tips — test message OK")
     if not ok:
         raise HTTPException(status_code=502, detail="Telegram delivery failed — check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     return {"success": True, "detail": "Test message delivered successfully"}

@@ -25,12 +25,13 @@ const syncHealth = async () => {
     try {
       const res = await fetch('/api/agent/health');
       const data = await res.json();
+      const ollamaRaw = data.ollama ?? 'error';
       healthState = {
         orchestrator: data.orchestrator ?? 'error',
-        ollama: data.ollama ?? 'error',
+        ollama: ollamaRaw === 'error' ? 'offline' : ollamaRaw,
       };
     } catch {
-      healthState = { orchestrator: 'error', ollama: 'error' };
+      healthState = { orchestrator: 'error', ollama: 'offline' };
     } finally {
       notify();
       inFlight = null;

@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -16,19 +17,25 @@ import redis.asyncio as aioredis
 
 logger = logging.getLogger("task-queue")
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 QUEUE_KEY = "task_queue:pending"
 TASK_PREFIX = "task:"
 TASK_TTL = 86400 * 7  # 7 days
 
 _task_redis: Optional[aioredis.Redis] = None
-
+_lock = asyncio.Lock()
 
 async def get_redis() -> aioredis.Redis:
     global _task_redis
-    if _task_redis is None:
-        _task_redis = aioredis.from_url(REDIS_URL, decode_responses=True)
-    return _task_redis
+    async with _lock:
+        if _task_redis is None:
+            url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            _task_redis = aioredis.from_url(
+                url, 
+                decode_responses=True,
+                max_connections=5, 
+                socket_connect_timeout=5
+            )
+        return _task_redis
 
 
 async def close_redis():

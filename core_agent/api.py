@@ -24,46 +24,57 @@ import logging
 import random
 import time
 from threading import Thread
-from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+from core_agent.config.paths import MARKET_SNAPSHOT_PATH, DATA_DIR
 from core_agent.core.strike_brain import brain
 from core_agent.config.model_config import ModelConfig
 from core_agent.core.scheduler import StrikeTipsScheduler
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger("strike-api")
 
-app = FastAPI(title="Strike Bot API")
 
-app.add_middleware(AuthMiddleware)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start background tasks on server startup, clean up on shutdown."""
+    from core_agent.core.log_setup import configure_file_logging
+    configure_file_logging()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://strike-tips-hud.vercel.app",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def startup_event():
     ollama_host = ModelConfig.ollama_host()
     logger.info("Ollama configured host: %s", ollama_host)
 
     # Initialize cache in app state from shared snapshot cache
     from core_agent.core.snapshot_cache import get_snapshot, ensure_populated
     app.state.snapshot_cache = get_snapshot()
-    # Fallback: populate snapshot from live Betway if file missing
     try:
         await ensure_populated()
         app.state.snapshot_cache = get_snapshot()
     except Exception as e:
         logger.warning("Snapshot populate fallback failed: %s", e)
 
-    # Start background task worker
+    # Clear stale alert conditions that may have been superseded by code defaults
+    try:
+        import os as _os, json as _json
+        from core_agent.config.paths import DATA_DIR as _DATA_DIR
+        ac_path = _DATA_DIR / "alert_conditions.json"
+        if ac_path.exists():
+            with open(ac_path) as _f:
+                _data = _json.load(_f)
+            _before = len(_data)
+            _data = [c for c in _data if c.get("condition_type") != "value_bet"]
+            if len(_data) < _before:
+                with open(ac_path, "w") as _f:
+                    _json.dump(_data, _f, indent=4)
+                logger.info(f"Purged {_before - len(_data)} stale value_bet alert conditions from disk")
+    except Exception as e:
+        logger.warning(f"Alert condition cleanup skipped: {e}")
+
+    # Start AdaptiveOddsMonitor as background task
+    from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
+    monitor = AdaptiveOddsMonitor()
+    bg_task = asyncio.create_task(monitor.run())
+    logger.info("AdaptiveOddsMonitor started as background task")
+
+    # Background tasks from former on_event startup
     async def start_task_worker():
         from core_agent.core.task_worker import run_worker_loop
         logger.info("Starting background task worker...")
@@ -74,17 +85,15 @@ async def startup_event():
 
     asyncio.create_task(start_task_worker())
 
-    # Pre-warm agent pipeline — pays the SkillsProvider import cost at startup, not per-request
     async def prewarm_pipeline():
         try:
-            from core_agent.agents import pipeline  # noqa: F401 — triggers all imports
-            logger.info("✅ Agent pipeline pre-warmed")
+            from core_agent.agents import pipeline
+            logger.info("Agent pipeline pre-warmed")
         except Exception as e:
             logger.warning(f"Pipeline pre-warm failed: {e}")
 
     asyncio.create_task(prewarm_pipeline())
 
-    # Background task to keep in-memory snapshot cache fresh via Redis pub/sub
     async def refresh_snapshot():
         try:
             from core_agent.core.task_queue import get_redis
@@ -97,7 +106,7 @@ async def startup_event():
 
     asyncio.create_task(refresh_snapshot())
 
-    # Background keepalive — pings racing_qwen periodically so it stays loaded
+    # Ollama keepalive
     async def keepalive_model(ollama_ready: bool):
         import httpx
 
@@ -114,12 +123,6 @@ async def startup_event():
                 response = await client.get(ps_url, timeout=8)
                 elapsed = time.monotonic() - started
                 if response.status_code != 200:
-                    logger.warning(
-                        "keepalive_ps_check_non_200 model=%s elapsed_sec=%.2f status_code=%s",
-                        model_name,
-                        elapsed,
-                        response.status_code,
-                    )
                     return False
                 payload = response.json()
                 models = payload.get("models", []) if isinstance(payload, dict) else []
@@ -127,127 +130,88 @@ async def startup_event():
                 for model in models:
                     if not isinstance(model, dict):
                         continue
-                    state_blob = " ".join(
-                        str(model.get(key, "")).lower() for key in ("status", "state")
-                    )
+                    state_blob = " ".join(str(model.get(key, "")).lower() for key in ("status", "state"))
                     if any(marker in state_blob for marker in busy_markers):
                         return True
                 return False
             except (httpx.HTTPError, ValueError, TypeError) as exc:
-                elapsed = time.monotonic() - started
-                logger.warning(
-                    "keepalive_ps_check_failed model=%s elapsed_sec=%.2f exception_class=%s error=%s",
-                    model_name,
-                    elapsed,
-                    exc.__class__.__name__,
-                    exc,
-                )
                 return False
 
         if not ollama_ready:
-            logger.warning(
-                "keepalive_disabled_not_ready model=%s elapsed_sec=0.00 reason=initial_self_check_failed",
-                model_name,
-            )
+            logger.warning("keepalive_disabled model=%s reason=initial_self_check_failed", model_name)
             return
 
-        await asyncio.sleep(15)  # grace period after startup readiness check
+        await asyncio.sleep(15)
         while True:
-            sleep_for = max(
-                30.0, base_interval_sec + random.uniform(-jitter_sec, jitter_sec)
-            )
-            started = time.monotonic()
+            sleep_for = max(30.0, base_interval_sec + random.uniform(-jitter_sec, jitter_sec))
             try:
                 from core_agent.core.http_client import get_async_client
                 client = get_async_client(timeout=warmup_timeout_sec)
                 if await _ollama_busy_or_loading(client):
-                    logger.info(
-                        "keepalive_skipped_busy model=%s elapsed_sec=0.00",
-                        model_name,
-                    )
                     await asyncio.sleep(sleep_for)
                     continue
-                await client.post(
-                    chat_url,
-                    json={
-                        "model": model_name,
-                        "messages": [{"role": "user", "content": "ping"}],
-                        "stream": False,
-                        "options": {"num_predict": 1},
-                    },
-                )
-                elapsed = time.monotonic() - started
-                logger.info(
-                    "keepalive_ping_ok model=%s elapsed_sec=%.2f timeout_sec=%.2f",
-                    model_name,
-                    elapsed,
-                    warmup_timeout_sec,
-                )
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
-                elapsed = time.monotonic() - started
-                logger.warning(
-                    "keepalive_ping_failed model=%s elapsed_sec=%.2f timeout_sec=%.2f exception_class=%s error=%s",
-                    model_name,
-                    elapsed,
-                    warmup_timeout_sec,
-                    exc.__class__.__name__,
-                    exc,
-                )
+                await client.post(chat_url, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "stream": False, "options": {"num_predict": 1}})
+            except (httpx.HTTPError, ValueError, TypeError):
+                pass
             await asyncio.sleep(sleep_for)
 
     async def ollama_startup_self_check() -> bool:
         from core_agent.core.http_client import get_async_client
-
         tags_url = ModelConfig.ollama_native_url("/api/tags")
         try:
             client = get_async_client(timeout=6)
             response = await client.get(tags_url)
-            model_count = "n/a"
-            if response.status_code == 200:
-                try:
-                    payload = response.json()
-                    model_count = len(payload.get("models", []))
-                except Exception:
-                    model_count = "unparseable-json"
-            logger.info(
-                "Ollama self-check: status=%s tags_url=%s model_count=%s",
-                response.status_code,
-                tags_url,
-                model_count,
-            )
+            logger.info("Ollama self-check: status=%s", response.status_code)
             return response.status_code == 200
-        except Exception as exc:
-            logger.warning(
-                "Ollama self-check failed: tags_url=%s error=%s", tags_url, exc
-            )
-        return False
+        except Exception:
+            return False
 
     ollama_ready = await ollama_startup_self_check()
     asyncio.create_task(keepalive_model(ollama_ready))
 
-    # Initialize the brain
     brain.initialize()
 
-    # Start StrikeTipsScheduler daemon thread in executor to avoid import deadlock
     def start_scheduler():
         try:
-            sched = StrikeTipsScheduler(data_dir=os.getenv("DATA_DIR", "./data"))
+            sched = StrikeTipsScheduler(data_dir=str(DATA_DIR))
             sched.running = True
             sched.setup_schedule()
             sched.scheduler_thread = Thread(target=sched.run_pending, daemon=True)
             sched.scheduler_thread.start()
-            print("[RUN] StrikeTipsScheduler started with 7 jobs")
+            logger.info("StrikeTipsScheduler started")
         except Exception as e:
-            print(f"[WARN] Scheduler startup failed: {e}")
+            logger.warning("Scheduler startup failed: %s", e)
 
     start_scheduler()
 
-    print("\n" + "=" * 50)
-    print("Strike Tips Bot Initialized")
-    print("API Base: http://localhost:8000")
-    print("API Docs: http://localhost:8000/docs")
-    print("MCP Endpoint (SSE): http://localhost:8000/mcp")
-    print("=" * 50 + "\n")
+    logger.info("Strike Tips Bot fully initialized")
+    try:
+        yield
+    finally:
+        bg_task.cancel()
+        try:
+            await bg_task
+        except asyncio.CancelledError:
+            pass
+        await monitor.close()
+        logger.info("AdaptiveOddsMonitor stopped")
+
+
+app = FastAPI(title="Strike Bot API", lifespan=lifespan)
+
+app.add_middleware(AuthMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://strike-tips-hud.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Mount MCP
@@ -289,6 +253,17 @@ async def redirect_legacy_bets_routes(path: str = ""):
 @app.get("/")
 async def root():
     return {"message": "Strike Bot API Online"}
+
+
+@app.get("/agent/memory")
+async def agent_memory_root(query: str = "betting preferences, favourite tracks, risk tolerance", user_id: str = ""):
+    """Direct-access alias for /api/agent/memory (handles missing /api prefix)."""
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+    params = f"query={quote(query)}"
+    if user_id:
+        params += f"&user_id={quote(user_id)}"
+    return RedirectResponse(url=f"/api/agent/memory?{params}")
 
 
 @app.get("/mcp", include_in_schema=False)

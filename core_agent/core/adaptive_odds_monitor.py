@@ -9,6 +9,7 @@ from typing import Optional
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
 from core_agent.core.alert_engine import AlertEngine
+from core_agent.core.alert_digester import AlertDigester
 from core_agent.skills.parsers.betway_api import BetwayAPI
 from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
@@ -56,6 +57,11 @@ class AdaptiveOddsMonitor:
         except Exception:
             pass
 
+        self._digester: Optional[AlertDigester] = None
+        if self._telegram_notifier:
+            self._digester = AlertDigester(self._telegram_notifier)
+            self._digester.start()
+
         self.alert_engine = AlertEngine(
             notification_callback=self._on_alert
         )
@@ -64,21 +70,30 @@ class AdaptiveOddsMonitor:
 
         self.monitoring_active = True
         self.oc_state = {"odds": {}}
+        self._last_alert_ts: float = 0
+        self._alert_cooldown: float = 120.0
 
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
-        if not self._telegram_notifier:
+        if not self._telegram_notifier or not self._digester:
             return
+        now = datetime.now().timestamp()
+        if now - self._last_alert_ts < self._alert_cooldown:
+            logger.info(f"Alert rate-limited: {msg.get('type')} {msg.get('horse')} @ {msg.get('course')}")
+            return
+        self._last_alert_ts = now
         tag = msg.get("type", "alert")
         horse = msg.get("horse", "?")
         course = msg.get("course", "?")
         odds = msg.get("odds", "?")
-        await self._telegram_notifier.send_message(
-            f"🚨 <b>Live Alert</b>\n"
-            f"Type: {tag}\n"
+        html = (
             f"🐎 {horse} @ {course}\n"
             f"💰 Odds: {odds}"
         )
+        if tag in ("odds_drop", "value_bet"):
+            await self._digester.push(tag, html)
+        else:
+            await self._digester.push_critical(tag, html)
 
     async def initialize(self):
         await self.alert_engine.initialize()
@@ -97,6 +112,8 @@ class AdaptiveOddsMonitor:
 
     async def run(self):
         await self.initialize()
+        if self._digester:
+            await self._digester.start_async()
         # Start Oddschecker in background
         asyncio.create_task(self._fetch_oc_odds_loop())
 
@@ -203,6 +220,12 @@ class AdaptiveOddsMonitor:
                 logger.debug(traceback.format_exc())
 
             await asyncio.sleep(45)
+
+    async def close(self):
+        """Clean up resources (digester, etc.)."""
+        self.monitoring_active = False
+        if self._digester:
+            await self._digester.stop()
 
 
 if __name__ == "__main__":

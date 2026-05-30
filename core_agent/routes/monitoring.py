@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 from datetime import datetime
+from core_agent.config.paths import DATA_DIR
 
 import logging
 import psutil
@@ -33,31 +34,29 @@ async def get_monitoring_snapshot(request: Request):
         json.dumps(result, sort_keys=True).encode()
     ).hexdigest()
 
-    # Inject active intelligent alerts from the L7 Alert Engine
+    # Inject recently triggered alerts from the AlertEngine's history log
+    result["alerts"] = _load_recent_alerts(20)
+    return result
+
+
+def _load_recent_alerts(limit: int = 20) -> list:
+    """Load last N triggered alerts from alert_history.json (JSONL)."""
     alerts = []
     try:
-        data_dir = os.environ.get("DATA_DIR", "data")
-        alerts_path = os.path.join(data_dir, "alert_conditions.json")
-        if os.path.exists(alerts_path):
-            with open(alerts_path, "r") as f:
-                alerts_data = json.load(f)
-                items = (
-                    alerts_data
-                    if isinstance(alerts_data, list)
-                    else alerts_data.values()
-                )
-                for v in items:
-                    if isinstance(v, dict) and (
-                        v.get("active", False)
-                        or v.get("is_active", False)
-                        or v.get("condition_type") == "value_bet"
-                    ):
-                        alerts.append(v)
+        hist_path = str(DATA_DIR / "alert_history.json")
+        if os.path.exists(hist_path):
+            with open(hist_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            alerts.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+            return alerts[-limit:]
     except Exception:
         pass
-
-    result["alerts"] = alerts
-    return result
+    return alerts
 
 
 @router.get("/system/health")
@@ -92,7 +91,7 @@ async def get_logs(tail: int = 50):
     try:
         # Try multiple log locations
         log_paths = [
-            os.environ.get("DATA_DIR", "data") + "/strike.log",
+            str(DATA_DIR / "strike.log"),
             "monitor.log",
             "ollama.log",
         ]
@@ -112,7 +111,7 @@ async def get_logs(tail: int = 50):
     return {
         "logs": log_lines,
         "count": len(log_lines),
-        "source": log_paths[0] if log_lines else "none",
+        "source": log_path if log_lines else "none",
     }
 
 

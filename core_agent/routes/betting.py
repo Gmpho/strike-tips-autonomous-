@@ -11,15 +11,14 @@ import json
 import os
 from core_agent.core.strike_brain import brain
 from core_agent.models.betting import BetRecord, DailyStats, BankrollState
+from core_agent.config.paths import DATA_DIR
 
 router = APIRouter(tags=["betting"])
-
-DATA_DIR = os.environ.get("DATA_DIR", "data")
 
 
 def _load_json(filename: str) -> Any:
     """Load JSON from data directory"""
-    path = os.path.join(DATA_DIR, filename)
+    path = str(DATA_DIR / filename)
     if os.path.exists(path):
         with open(path, "r") as f:
             return json.load(f)

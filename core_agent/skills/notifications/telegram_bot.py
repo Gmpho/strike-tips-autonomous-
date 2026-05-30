@@ -2,6 +2,10 @@
 Telegram Notifications Skill
 Sends value bet alerts, bet confirmations, results, and daily summaries
 via Telegram Bot API.
+
+All public send_* methods broadcast to the admin (TELEGRAM_CHAT_ID) AND
+every authorized user in the whitelist (users who authenticated via PIN).
+Call `send_message(text, admin_only=True)` for sensitive messages (errors).
 """
 
 import logging
@@ -11,6 +15,16 @@ import asyncio
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("telegram-notifier")
+
+
+def _get_whitelist_ids() -> set[int]:
+    """Load the set of authorized chat_ids from whitelist.json on disk."""
+    try:
+        from core_agent.core.access_control import _load_whitelist
+        return _load_whitelist()
+    except Exception as e:
+        logger.warning("Could not load whitelist: %s", e)
+        return set()
 
 
 class TelegramNotifier:
@@ -32,53 +46,88 @@ class TelegramNotifier:
 
         self._base = self.BASE_URL.format(token=self.token)
         self._client: Optional[httpx.AsyncClient] = None
-        logger.info("TelegramNotifier (Async) initialized")
+        logger.info("TelegramNotifier initialized (admin=%s)", self.chat_id)
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(timeout=10.0)
         return self._client
 
-    async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send a raw message to the configured chat asynchronously"""
+    async def _send_to_chat(self, chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+        """Send a message to a single chat ID."""
         try:
             client = await self._get_client()
             response = await client.post(
                 f"{self._base}/sendMessage",
                 json={
-                    "chat_id": self.chat_id,
+                    "chat_id": chat_id,
                     "text": text,
                     "parse_mode": parse_mode,
                 },
             )
             if response.status_code == 200:
                 return True
-            logger.warning(f"Telegram send failed: {response.text}")
+            logger.warning("Telegram send to %s failed: %s", chat_id, response.text)
             return False
         except Exception as e:
-            logger.error(f"Telegram error: {e}")
+            logger.error("Telegram error for %s: %s", chat_id, e)
             return False
 
-    async def send_photo(self, photo_bytes: bytes, caption: Optional[str] = None, parse_mode: str = "HTML") -> bool:
-        """Send a photo to the configured chat asynchronously"""
+    async def broadcast(self, text: str, parse_mode: str = "HTML") -> None:
+        """Send to the admin + every authorized whitelisted user."""
+        targets: list[str] = [self.chat_id]
+        for cid in _get_whitelist_ids():
+            sid = str(cid)
+            if sid not in targets:
+                targets.append(sid)
+        for t in targets:
+            try:
+                await self._send_to_chat(t, text, parse_mode)
+            except Exception:
+                pass
+
+    async def send_message(self, text: str, parse_mode: str = "HTML", admin_only: bool = False) -> bool:
+        """Send a message.
+
+        If *admin_only* is True, only the admin receives it (for errors, stack traces).
+        Otherwise, it broadcasts to all authorized users.
+        """
+        if admin_only:
+            return await self._send_to_chat(self.chat_id, text, parse_mode)
+        await self.broadcast(text, parse_mode)
+        return True
+
+    async def send_photo(self, photo_bytes: bytes, caption: Optional[str] = None, parse_mode: str = "HTML", admin_only: bool = False) -> bool:
+        """Send a photo."""
+        if admin_only:
+            return await self._send_photo_to_chat(self.chat_id, photo_bytes, caption, parse_mode)
+        targets: list[str] = [self.chat_id]
+        for cid in _get_whitelist_ids():
+            sid = str(cid)
+            if sid not in targets:
+                targets.append(sid)
+        for t in targets:
+            try:
+                await self._send_photo_to_chat(t, photo_bytes, caption, parse_mode)
+            except Exception:
+                pass
+        return True
+
+    async def _send_photo_to_chat(self, chat_id: str, photo_bytes: bytes, caption: Optional[str] = None, parse_mode: str = "HTML") -> bool:
         try:
             client = await self._get_client()
             files = {"photo": ("chart.png", photo_bytes, "image/png")}
-            data = {"chat_id": self.chat_id, "parse_mode": parse_mode}
+            data = {"chat_id": chat_id, "parse_mode": parse_mode}
             if caption:
                 data["caption"] = caption
-
             response = await client.post(
                 f"{self._base}/sendPhoto",
                 data=data,
                 files=files,
             )
-            if response.status_code == 200:
-                return True
-            logger.warning(f"Telegram photo send failed: {response.text}")
-            return False
+            return response.status_code == 200
         except Exception as e:
-            logger.error(f"Telegram photo error: {e}")
+            logger.error("Telegram photo error for %s: %s", chat_id, e)
             return False
 
     async def send_value_bet(
@@ -109,7 +158,8 @@ class TelegramNotifier:
             f"📝 <i>{reasoning[:200]}</i>\n\n"
             f"⚠️ Bet responsibly. Max 5% per bet rule applied."
         )
-        return await self.send_message(text)
+        await self.broadcast(text)
+        return True
 
     async def send_bet_result(
         self,
@@ -134,7 +184,8 @@ class TelegramNotifier:
             f"💵 Stake: R{stake:.2f} | Returns: R{returns:.2f}\n"
             f"📊 P&L: <b>{pl_str}</b>"
         )
-        return await self.send_message(text)
+        await self.broadcast(text)
+        return True
 
     async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
         """Send a daily summary of all value bets found asynchronously"""
@@ -153,21 +204,28 @@ class TelegramNotifier:
                 lines.append(f"\n📍 <b>{track.title()}</b> — {vb_count} selections")
                 for race in races:
                     for vb in race.get("value_bets", [])[:2]:
+                        horse_name = (
+                            vb.get("horse")
+                            or vb.get("name")
+                            or vb.get("horse_name")
+                            or "Unknown"
+                        )
                         lines.append(
-                            f"  R{race['race_number']}: {vb['horse']} @ {vb['odds_decimal']} "
-                            f"(+{vb['edge_percent']}%)"
+                            f"  R{race['race_number']}: {horse_name} @ {vb.get('odds_decimal', '?')} "
+                            f"(+{vb.get('edge_percent', 0)}%)"
                         )
 
         lines.append("\n⚠️ Always bet responsibly.")
-        return await self.send_message("\n".join(lines))
+        await self.broadcast("\n".join(lines))
+        return True
 
     async def send_error_notification(self, error: str, context: str = "") -> bool:
-        """Send a system error alert asynchronously"""
+        """Send a system error alert (admin-only, no broadcast)."""
         text = f"🚨 <b>Strike Tips Error</b>\n\n"
         if context:
             text += f"Context: {context}\n"
         text += f"Error: <code>{error[:300]}</code>"
-        return await self.send_message(text)
+        return await self.send_message(text, admin_only=True)
 
     async def close(self):
         """Cleanup the async client"""

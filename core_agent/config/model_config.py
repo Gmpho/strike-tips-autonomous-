@@ -21,8 +21,8 @@ class ModelConfig:
 
     # ── MODEL REGISTRY
     # We define providers explicitly to stop the container from guessing.
-    # Native Ollama API: http://host.docker.internal:11434 (no /v1)
-    OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
+    # Native Ollama API: Use the persistent Modal Ollama server
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-racing-ollama-server.modal.run")
 
     # Local Specialist Swarm (The "Resident" Trio)
     # These stay loaded in RAM thanks to OLLAMA_MAX_LOADED_MODELS=3
@@ -50,10 +50,10 @@ class ModelConfig:
         {"id": "glm-4.7:cloud", "name": "glm-4.7:cloud", "input": ["text"]},
     ]
 
-    # Fallback chains
-    PARALLEL = "gemini-2.0-flash"
-    CLOUD_FALLBACK = "gemini-2.0-flash"
-    GEMINI_CHAIN = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+    # Fallback chains (use correct available models from Gemini API)
+    PARALLEL = "gemini-2.5-flash-lite"
+    CLOUD_FALLBACK = "gemini-2.5-flash-lite"
+    GEMINI_CHAIN = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
 
     # Groq model aliases
     ORCHESTRATOR = "llama-3.3-70b-versatile"  # Better tool calling than 8b

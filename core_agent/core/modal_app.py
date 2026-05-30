@@ -5,6 +5,7 @@ Entry points:
   serve_api:         FastAPI ASGI app + Telegram webhook (always-on)
   run_scan:          One-shot daily scan (manual or cron)
   run_odds_monitor:  Continuous odds monitoring (runs until stopped)
+  ollama_server:     Persistent Ollama instance
 
 Usage:
   modal deploy core_agent.core.modal_app        # deploy everything
@@ -21,8 +22,31 @@ image = modal.Image.from_dockerfile("Dockerfile")
 app = modal.App("strike-tips-racing")
 
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
+ollama_volume = modal.Volume.from_name("ollama-models", create_if_missing=True)
 
 secrets = [modal.Secret.from_name("strike-tips-secrets")]
+
+
+# ── Persistent Ollama Server (GPU-backed) ────
+# DISABLED: Ollama models volume disk issue causes crash loop (~$0.40/hr wasted).
+# Re-enable after verifying ollama-models volume has sufficient free space:
+#   modal volume ls ollama-models
+#   modal volume rm ollama-models <stale-file>  # free up space
+#
+# @app.function(
+#     image=modal.Image.debian_slim().run_commands(
+#         "apt-get update && apt-get install -y curl zstd",
+#         "curl -fsSL https://ollama.com/install.sh | sh",
+#     ),
+#     volumes={"/root/.ollama": ollama_volume},
+#     gpu="t4",
+#     scaledown_window=60,
+#     container_idle_timeout=300,
+#     allow_concurrent_inputs=False,
+# )
+# @modal.web_server(11434, startup_timeout=120)
+# def ollama_server():
+#     pass
 
 
 # ── ASGI: FastAPI + Telegram webhook ──────────────────────────────────
@@ -30,8 +54,11 @@ secrets = [modal.Secret.from_name("strike-tips-secrets")]
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=2048,
+    memory=1024,
     timeout=3600,
+    env={"OLLAMA_HOST": "https://gmpho--strike-tips-racing-ollama-server.modal.run"},
+    scaledown_window=300,
+    startup_timeout=120,
 )
 @modal.asgi_app()
 def serve_api():
@@ -317,11 +344,13 @@ def run_scan():
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=1536,
+    memory=1024,
     timeout=43200,
+    min_containers=1,
+    env={"OLLAMA_HOST": "https://gmpho--strike-tips-racing-ollama-server.modal.run"}
 )
 async def run_odds_monitor():
-    """Continuous odds monitoring (12h timeout, auto-restart on crash)."""
+    """Continuous odds monitoring (12h timeout, auto-restart on crash, min_containers keeps it alive)."""
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()

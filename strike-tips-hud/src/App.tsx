@@ -14,6 +14,7 @@ import { HealingView } from './components/sidebar/HealingView';
 import { SystemVitalsView } from './components/sidebar/SystemVitalsView';
 import { DreamingView } from './components/sidebar/DreamingView';
 import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
+import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -85,7 +86,9 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-theme-primary text-theme-primary selection:bg-purple-500/30">
       {/* Ambient Background Layer (Fixed) */}
       <div className="fixed inset-0 z-0 pointer-events-none">
-        <AmbientCanvas />
+        <WebGLErrorBoundary>
+          <AmbientCanvas />
+        </WebGLErrorBoundary>
       </div>
 
       {/* Mobile menu overlay */}
