@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Search, Terminal, RefreshCw, Cpu, HardDrive, Activity } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Search, Terminal, RefreshCw, Cpu, HardDrive, Activity, ArrowDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 
@@ -7,13 +7,25 @@ export const LogsView: React.FC = () => {
   const { logs, systemHealth } = useHUD();
   const [filter, setFilter] = useState('');
   const logsRef = useRef<HTMLDivElement>(null);
+  const [isPinned, setIsPinned] = useState(true);
 
-  // Auto-scroll to bottom
+  const handleScroll = useCallback(() => {
+    if (!logsRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = logsRef.current;
+    setIsPinned(scrollHeight - scrollTop - clientHeight < 50);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    if (!logsRef.current) return;
+    logsRef.current.scrollTop = logsRef.current.scrollHeight;
+    setIsPinned(true);
+  }, []);
+
   useEffect(() => {
-    if (logsRef.current) {
+    if (logsRef.current && isPinned) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [logs, isPinned]);
 
   if (systemHealth.status === 'OFFLINE' && logs.length === 0) {
     return (
@@ -86,8 +98,18 @@ export const LogsView: React.FC = () => {
       <div className="flex-1 min-h-0 relative">
         <div 
           ref={logsRef}
+          onScroll={handleScroll}
           className="absolute inset-0 bg-theme-panel border border-theme rounded-3xl overflow-y-auto p-6 font-mono text-[11px] selection:bg-purple-500/30 custom-scrollbar"
         >
+          {!isPinned && (
+            <button
+              onClick={scrollToBottom}
+              className="sticky bottom-2 z-10 mx-auto flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600/80 text-white text-[10px] font-black uppercase tracking-wider backdrop-blur-md border border-purple-400/30 shadow-lg hover:bg-purple-500 transition-all"
+            >
+              <ArrowDown className="w-3 h-3" />
+              Live
+            </button>
+          )}
           <div className="space-y-2">
             <AnimatePresence initial={false}>
               {filteredLogs.map((log, i) => (
