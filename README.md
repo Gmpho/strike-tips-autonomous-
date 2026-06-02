@@ -563,4 +563,4 @@ MIT License - see [LICENSE](LICENSE) file
 
 ---
 
-**🏇 Bet Smart. Bet Disciplined. Strike Tips.**
+**🏇 Bet Smart. Bet Disciplined. Strike Tips. please note this for education and entertainment only**
