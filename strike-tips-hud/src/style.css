@@ -71,10 +71,20 @@ body {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 1.5rem;
+  -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   transform: perspective(1000px) rotateX(1deg);
   transform-style: preserve-3d;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .hud-card {
+    background: rgba(0, 0, 0, 0.85);
+  }
+  html.light .hud-card {
+    background: rgba(255, 255, 255, 0.95);
+  }
 }
 
 .hud-card:hover {

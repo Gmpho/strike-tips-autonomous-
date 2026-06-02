@@ -14,8 +14,7 @@ export default defineConfig({
     tsconfigPaths: true
   },
   build: {
-    // Only use 'esnext' if you don't need to support browsers older than ~2024
-    target: 'esnext' 
+    target: 'es2020'
   },
   server: {
     port: 5173,
