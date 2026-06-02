@@ -143,8 +143,8 @@ graph TB
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/strike-tips.git
-cd strike-tips
+git clone https://github.com/Gmpho/strike-tips-autonomous-.git
+cd strike-tips-autonomous-
 
 # 2. Start all containers (strike-bot, ollama, odds-monitor)
 docker compose up -d
@@ -207,8 +207,8 @@ See [MODAL_README.md](MODAL_README.md) for details.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/strike-tips.git
-cd strike-tips
+git clone https://github.com/Gmpho/strike-tips-autonomous-.git
+cd strike-tips-autonomous-
 
 # 2. Start Backend
 cd core_agent
@@ -373,7 +373,10 @@ python scheduler.py test
 
 ---
 
-## 📱 Telegram Notifications
+## 📱 Telegram Bot Screenshots
+
+<img src="screenshots/telegram-1.jpg" width="32%" /> <img src="screenshots/telegram-2.jpg" width="32%" /> <img src="screenshots/telegram-3.jpg" width="32%" />
+<img src="screenshots/telegram-4.jpg" width="32%" /> <img src="screenshots/telegram-5.jpg" width="32%" /> <img src="screenshots/telegram-6.jpg" width="32%" />
 
 ### Message Types
 
@@ -557,9 +560,9 @@ MIT License - see [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- Issues: [GitHub Issues](https://github.com/yourusername/strike-tips/issues)
+- Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
-- Email: support@striketips.co.za
+- HUD: [https://strike-tips-hud.vercel.app/](https://strike-tips-hud.vercel.app/)
 
 ---
 
