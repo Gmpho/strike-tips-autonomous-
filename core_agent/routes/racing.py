@@ -13,6 +13,18 @@ from datetime import date, timedelta
 router = APIRouter(prefix="/api", tags=["racing"])
 racing_service = RacingService()
 
+ALLOWED_TRACKS = {
+    "turffontein", "vaal", "fairview", "scottsville", "kenilworth",
+    "durbanville", "greyville", "flamingo", "flamingopark", "scottburgh"
+}
+
+
+def _validate_track(track: str) -> str:
+    clean = track.lower().replace(" ", "").replace("/", "").replace("..", "")
+    if clean not in ALLOWED_TRACKS:
+        raise HTTPException(status_code=400, detail=f"Unknown track: {track}")
+    return clean
+
 
 @router.get("/tracks")
 async def get_tracks():
@@ -21,7 +33,6 @@ async def get_tracks():
         active_tracks = []
         if brain.strike and brain.strike.scraper:
             active = brain.strike.scraper.get_active_tracks()
-            # active is a list of track names like ['turffontein', 'vaal']
             active_tracks = [t.lower() for t in active]
         else:
             active_tracks = ["turffontein"]
@@ -43,7 +54,6 @@ async def scan_all(days_ahead: int = 0):
     target_date = (today_local + timedelta(days=days_ahead)).isoformat()
     results = {}
 
-    # 1. Dynamically discover which tracks are actually racing today/tomorrow
     try:
         active_tracks = brain.strike.scraper.get_active_tracks()
         print(
@@ -51,9 +61,8 @@ async def scan_all(days_ahead: int = 0):
         )
     except Exception as e:
         print(f"[ERR] Dynamic track discovery failed: {e}")
-        active_tracks = list(TRACKS.keys())  # Fallback to static config
+        active_tracks = list(TRACKS.keys())
 
-    # 2. Iterate ONLY through discovered active tracks
     for track in active_tracks:
         try:
             results[track] = await racing_service.scan_and_analyze(
@@ -69,11 +78,12 @@ async def scan_all(days_ahead: int = 0):
 @router.get("/scan/{track}")
 async def scan_track(track: str):
     """Scan a specific track and analyze races."""
+    track_clean = _validate_track(track)
     try:
-        results = await racing_service.scan_and_analyze(track)
-        return {"track": track, "results": results}
+        results = await racing_service.scan_and_analyze(track_clean)
+        return {"track": track_clean, "results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to scan track")
 
 
 @router.get("/racing/intelligence")
@@ -83,20 +93,20 @@ async def get_racing_intelligence(
     date: Optional[str] = None,
 ):
     """Get PDF racing intelligence directly."""
+    track_clean = _validate_track(track)
     try:
-        data = await racing_service.get_intelligence(track, intelligence_type, date)
+        data = await racing_service.get_intelligence(track_clean, intelligence_type, date)
         return {"success": True, "data": data}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Failed to retrieve intelligence"}
 
 
 @router.get("/racing/analyze/{track}/{race_number}")
 async def analyze_specific_race(track: str, race_number: int):
     """Trigger the AI Agent to evaluate a specific race for value."""
+    track_clean = _validate_track(track)
     try:
-        # Ensure name consistency (backend expects lowercase usually)
-        track_clean = track.lower().replace(" ", "")
         result = await brain.strike.evaluate_race(track_clean, race_number)
         return {"success": True, "result": result}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Failed to analyze race"}

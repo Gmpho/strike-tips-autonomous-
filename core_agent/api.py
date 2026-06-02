@@ -17,6 +17,7 @@ from core_agent.routes import (
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import AuthMiddleware
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import asyncio
 import json
 import os
@@ -33,16 +34,55 @@ from contextlib import asynccontextmanager
 logger = logging.getLogger("strike-api")
 
 
+# ── Security Headers Middleware ─────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
+# ── Rate Limiting ───────────────────────────────────────────────────────
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 30
+_rate_store: dict = {}
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        key = f"{client_ip}:{path}"
+        now = time.time()
+
+        if key not in _rate_store:
+            _rate_store[key] = []
+
+        _rate_store[key] = [t for t in _rate_store[key] if now - t < RATE_LIMIT_WINDOW]
+
+        if len(_rate_store[key]) >= RATE_LIMIT_MAX:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+
+        _rate_store[key].append(now)
+        return await call_next(request)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start background tasks on server startup, clean up on shutdown."""
     from core_agent.core.log_setup import configure_file_logging
     configure_file_logging()
 
     ollama_host = ModelConfig.ollama_host()
     logger.info("Ollama configured host: %s", ollama_host)
 
-    # Initialize cache in app state from shared snapshot cache
     from core_agent.core.snapshot_cache import get_snapshot, ensure_populated
     app.state.snapshot_cache = get_snapshot()
     try:
@@ -51,7 +91,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Snapshot populate fallback failed: %s", e)
 
-    # Clear stale alert conditions that may have been superseded by code defaults
     try:
         import os as _os, json as _json
         from core_agent.config.paths import DATA_DIR as _DATA_DIR
@@ -68,13 +107,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Alert condition cleanup skipped: {e}")
 
-    # Start AdaptiveOddsMonitor as background task
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
     monitor = AdaptiveOddsMonitor()
     bg_task = asyncio.create_task(monitor.run())
     logger.info("AdaptiveOddsMonitor started as background task")
 
-    # Background tasks from former on_event startup
     async def start_task_worker():
         from core_agent.core.task_worker import run_worker_loop
         logger.info("Starting background task worker...")
@@ -106,7 +143,6 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(refresh_snapshot())
 
-    # Ollama keepalive
     async def keepalive_model(ollama_ready: bool):
         import httpx
 
@@ -200,6 +236,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Strike Bot API", lifespan=lifespan)
 
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -209,12 +247,11 @@ app.add_middleware(
         "https://strike-tips-hud.vercel.app",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "X-API-KEY", "X-Request-ID", "Authorization"],
 )
 
 
-# Mount MCP
 try:
     if hasattr(mcp, "app"):
         app.mount("/mcp", mcp.app)
@@ -223,7 +260,6 @@ try:
 except Exception as e:
     print(f"[WARN] Could not mount MCP: {e}")
 
-# Register routes
 app.include_router(agent.router)
 app.include_router(betting.router, prefix="/api/betting")
 app.include_router(racing.router)
@@ -245,7 +281,6 @@ app.include_router(tasks.router)
     include_in_schema=False,
 )
 async def redirect_legacy_bets_routes(path: str = ""):
-    """Redirect legacy /api/bets routes to the canonical /api/betting prefix."""
     suffix = f"/{path}" if path else ""
     return RedirectResponse(url=f"/api/betting{suffix}", status_code=307)
 
@@ -257,7 +292,6 @@ async def root():
 
 @app.get("/agent/memory")
 async def agent_memory_root(query: str = "betting preferences, favourite tracks, risk tolerance", user_id: str = ""):
-    """Direct-access alias for /api/agent/memory (handles missing /api prefix)."""
     from fastapi.responses import RedirectResponse
     from urllib.parse import quote
     params = f"query={quote(query)}"
@@ -273,5 +307,4 @@ async def mcp_home():
         "message": "Strike Tips MCP Hub",
         "status": "ready",
         "protocol": "Model Context Protocol",
-        "documentation": "Connect via SSE at http://localhost:8000/mcp/sse",
     }

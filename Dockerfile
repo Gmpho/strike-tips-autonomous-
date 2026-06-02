@@ -21,8 +21,15 @@ RUN playwright install chromium
 # Copy project files
 COPY . .
 
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /app /root/.cache
+
 # Expose port
 EXPOSE 8000
+
+# Switch to non-root user
+USER appuser
 
 # Run FastAPI
 CMD ["uvicorn", "core_agent.api:app", "--host", "0.0.0.0", "--port", "8000"]

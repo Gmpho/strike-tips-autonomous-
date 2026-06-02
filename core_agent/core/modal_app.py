@@ -59,6 +59,7 @@ secrets = [modal.Secret.from_name("strike-tips-secrets")]
     env={"OLLAMA_HOST": "https://gmpho--strike-tips-racing-ollama-server.modal.run"},
     scaledown_window=300,
     startup_timeout=120,
+    min_containers=1,
 )
 @modal.asgi_app()
 def serve_api():
