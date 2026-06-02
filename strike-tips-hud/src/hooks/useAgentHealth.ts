@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiFetch } from '../lib/api-fetch';
 
 type HealthStatus = {
   orchestrator: string;
@@ -23,7 +24,7 @@ const syncHealth = async () => {
 
   inFlight = (async () => {
     try {
-      const res = await fetch('/api/agent/health');
+      const res = await apiFetch('/api/agent/health');
       const data = await res.json();
       const ollamaRaw = data.ollama ?? 'error';
       healthState = {

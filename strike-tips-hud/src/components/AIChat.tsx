@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bot, User, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { apiFetch } from '../lib/api-fetch';
 
 const STORAGE_KEY = 'strike_chat_messages';
 
@@ -57,7 +58,7 @@ export const AIChat: React.FC = () => {
     setMessages(prev => [...prev, { role: 'ai', content: '', timestamp: now }]);
 
     try {
-      const res = await fetch('/api/agent/chat', {
+      const res = await apiFetch('/api/agent/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

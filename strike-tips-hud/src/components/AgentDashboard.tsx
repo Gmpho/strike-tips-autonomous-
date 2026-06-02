@@ -3,6 +3,7 @@ import { Play, RotateCcw, Activity } from 'lucide-react';
 import { AIChat } from './AIChat';
 import { useAgentHealth } from '../hooks/useAgentHealth';
 import { motion } from 'framer-motion';
+import { apiFetch } from '../lib/api-fetch';
 
 interface Agent {
   name: string;
@@ -16,7 +17,7 @@ export const AgentDashboard: React.FC = () => {
 
   const fetchAgents = async () => {
     try {
-      const modelsRes = await fetch('/api/agent/models');
+      const modelsRes = await apiFetch('/api/agent/models');
       const modelsData = await modelsRes.json();
       const ollamaOnline = health.ollama === 'connected';
 

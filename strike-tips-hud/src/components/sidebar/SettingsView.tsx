@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon, FlaskConical, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { apiFetch } from '../../lib/api-fetch';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -26,7 +27,7 @@ export const SettingsView: React.FC = () => {
 
   // Load persisted settings from backend on mount
   useEffect(() => {
-    fetch('/api/config')
+    apiFetch('/api/config')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return;
@@ -69,7 +70,7 @@ export const SettingsView: React.FC = () => {
   const save = async () => {
     setSaveState('saving');
     try {
-      const res = await fetch('/api/config', {
+      const res = await apiFetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -92,7 +93,7 @@ export const SettingsView: React.FC = () => {
 
   const testTelegram = async () => {
     try {
-      await fetch('/api/config/test_telegram', { method: 'POST' });
+      await apiFetch('/api/config/test_telegram', { method: 'POST' });
       alert('Test message sent! Check your Telegram.');
     } catch {
       alert('Failed to send test message');

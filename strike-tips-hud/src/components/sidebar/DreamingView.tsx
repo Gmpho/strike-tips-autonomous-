@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Brain, CloudMoon, Zap, RefreshCcw } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
 import { DreamOrb } from '../visualizer/DreamOrb';
+import { apiFetch } from '../../lib/api-fetch';
 
 interface Dream {
   id: string;
@@ -19,7 +20,7 @@ export const DreamingView: React.FC = () => {
 
   const fetchDreams = async () => {
     try {
-      const res = await fetch(`/api/dreaming/logs`);
+      const res = await apiFetch(`/api/dreaming/logs`);
       const data = await res.json();
       setDreams(data);
     } catch (e) {
@@ -30,7 +31,7 @@ export const DreamingView: React.FC = () => {
   const triggerPulse = async () => {
     setIsPulsing(true);
     try {
-      await fetch(`/api/dreaming/pulse`, { method: 'POST' });
+      await apiFetch(`/api/dreaming/pulse`, { method: 'POST' });
       await fetchDreams();
     } catch (e) {
       console.error(e);

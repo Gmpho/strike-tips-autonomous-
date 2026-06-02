@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Power, AlertTriangle, Cpu, Activity, Database } from 'lucide-react';
 import { useAgentHealth } from '../../hooks/useAgentHealth';
 import { motion } from 'framer-motion';
+import { apiFetch } from '../../lib/api-fetch';
 
 export const AgentStatus: React.FC = () => {
   const { health } = useAgentHealth();
@@ -9,7 +10,7 @@ export const AgentStatus: React.FC = () => {
 
   const toggleLock = async () => {
     const endpoint = isLocked ? '/api/agent/reset' : '/api/agent/kill';
-    await fetch(endpoint, { method: 'POST' });
+    await apiFetch(endpoint, { method: 'POST' });
     setIsLocked(!isLocked);
   };
 

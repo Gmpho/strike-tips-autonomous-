@@ -1,6 +1,7 @@
 import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone } from './audio';
+import { apiFetch } from '../lib/api-fetch';
 
 const FAST_INTERVAL = 5000;
 const SLOW_INTERVAL = 30000;
@@ -45,10 +46,10 @@ export class DataBridge {
     const start = performance.now();
     try {
       const [snapshotRes, healthRes, bankrollRes, betsRes] = await Promise.all([
-        fetch('/api/monitoring/snapshot'),
-        fetch('/api/system/health'),
-        fetch(BETTING_ENDPOINTS.accountSummary),
-        fetch(BETTING_ENDPOINTS.open),
+        apiFetch('/api/monitoring/snapshot'),
+        apiFetch('/api/system/health'),
+        apiFetch(BETTING_ENDPOINTS.accountSummary),
+        apiFetch(BETTING_ENDPOINTS.open),
       ]);
 
       if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
@@ -92,15 +93,15 @@ export class DataBridge {
   private async syncSlow() {
     try {
       const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
-        fetch(BETTING_ENDPOINTS.history),
-        fetch(BETTING_ENDPOINTS.stats),
-        fetch('/api/betting/learning/roi-by-track'),
-        fetch('/api/logs?tail=100'),
-        fetch('/api/healing/activity'),
-        fetch('/api/healing/selectors'),
-        fetch('/api/system/vitals'),
-        fetch('/api/betting/bankroll-history'),
-        fetch('/api/agent/memory'),
+        apiFetch(BETTING_ENDPOINTS.history),
+        apiFetch(BETTING_ENDPOINTS.stats),
+        apiFetch('/api/betting/learning/roi-by-track'),
+        apiFetch('/api/logs?tail=100'),
+        apiFetch('/api/healing/activity'),
+        apiFetch('/api/healing/selectors'),
+        apiFetch('/api/system/vitals'),
+        apiFetch('/api/betting/bankroll-history'),
+        apiFetch('/api/agent/memory'),
       ]);
 
       const history = historyRes.ok ? await historyRes.json() : { bets: [] };

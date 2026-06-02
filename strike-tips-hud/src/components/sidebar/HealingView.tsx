@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Activity, ShieldCheck, Zap, GitBranch, Terminal } from 'lucide-react';
 import { useHUD } from '../../hooks/useHUD';
+import { apiFetch } from '../../lib/api-fetch';
 
 export const HealingView: React.FC = () => {
   const { healing } = useHUD();
@@ -25,7 +26,7 @@ export const HealingView: React.FC = () => {
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => fetch('/api/healing/pulse', { method: 'POST' })}
+          onClick={() => apiFetch('/api/healing/pulse', { method: 'POST' })}
           className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors shadow-[0_0_15px_rgba(16,185,129,0.1)]"
         >
           <Zap className="w-5 h-5 fill-current" />
