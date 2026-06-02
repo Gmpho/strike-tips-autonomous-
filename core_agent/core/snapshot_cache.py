@@ -106,4 +106,4 @@ async def subscribe_snapshot(redis_client) -> None:
                 # Ignore any errors during cleanup
                 pass
             finally:
-                _redis_pubsub = Nonediff --git a/docs/idea.md b/docs/idea.md
+                _redis_pubsub = None

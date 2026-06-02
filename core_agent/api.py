@@ -3,7 +3,7 @@ Strike Bot API Entry Point
 """
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from core_agent.routes import (
     agent,
     betting,
@@ -15,9 +15,8 @@ from core_agent.routes import (
     tasks,
 )
 from core_agent.core.mcp_server import mcp
-from core_agent.core.security import AuthMiddleware
+from core_agent.core.security import auth_middleware
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 import asyncio
 import json
 import os
@@ -34,16 +33,15 @@ from contextlib import asynccontextmanager
 logger = logging.getLogger("strike-api")
 
 
-# ── Security Headers Middleware ─────────────────────────────────────────
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        return response
+# ── Security Headers ────────────────────────────────────────────────────
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 
 # ── Rate Limiting ───────────────────────────────────────────────────────
@@ -52,27 +50,26 @@ RATE_LIMIT_MAX = 30
 _rate_store: dict = {}
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
 
-        if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
-            return await call_next(request)
-
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"{client_ip}:{path}"
-        now = time.time()
-
-        if key not in _rate_store:
-            _rate_store[key] = []
-
-        _rate_store[key] = [t for t in _rate_store[key] if now - t < RATE_LIMIT_WINDOW]
-
-        if len(_rate_store[key]) >= RATE_LIMIT_MAX:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
-
-        _rate_store[key].append(now)
+    if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
         return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"{client_ip}:{path}"
+    now = time.time()
+
+    if key not in _rate_store:
+        _rate_store[key] = []
+
+    _rate_store[key] = [t for t in _rate_store[key] if now - t < RATE_LIMIT_WINDOW]
+
+    if len(_rate_store[key]) >= RATE_LIMIT_MAX:
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again later."})
+
+    _rate_store[key].append(now)
+    return await call_next(request)
 
 
 @asynccontextmanager
@@ -235,9 +232,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Strike Bot API", lifespan=lifespan)
 
-app.add_middleware(AuthMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(SecurityHeadersMiddleware)
+app.middleware("http")(auth_middleware)
+app.middleware("http")(rate_limit_middleware)
+app.middleware("http")(security_headers_middleware)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,7 +1,6 @@
 import os
-import time
-from fastapi import Request, HTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 API_KEY = os.getenv("STRIKE_TIPS_API_KEY")
 
@@ -14,17 +13,18 @@ SAFE_PATHS = {
 }
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
 
-        if path in SAFE_PATHS or path.startswith("/mcp"):
-            return await call_next(request)
-
-        if path.startswith("/api/"):
-            key = request.headers.get("X-API-KEY")
-            if not key or key != API_KEY:
-                raise HTTPException(
-                    status_code=401, detail="Unauthorized: Invalid or missing API key"
-                )
+    if path in SAFE_PATHS or path.startswith("/mcp"):
         return await call_next(request)
+
+    if path.startswith("/api/"):
+        key = request.headers.get("X-API-KEY")
+        if not key or key != API_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized: Invalid or missing API key"},
+            )
+
+    return await call_next(request)
