@@ -27,24 +27,32 @@ html.light {
   --bg-primary: #f8fafc;
   --bg-secondary: #ffffff;
   --bg-panel: rgba(255, 255, 255, 0.95);
-  --text-primary: #0f172a; /* Maximum contrast for dashboard legibility */
+  --text-primary: #0f172a;
   --text-secondary: #334155;
   --text-muted: #64748b;
   --border-color: rgba(15, 23, 42, 0.1);
   --accent-glow: rgba(168, 85, 247, 0.05);
 
-  /* Override dark mode specific accent colors to be readable in light mode */
-  --color-emerald-400: #059669; /* emerald-600 */
-  --color-cyan-400: #0891b2; /* cyan-600 */
-  --color-amber-400: #d97706; /* amber-600 */
-  --color-slate-400: #475569; /* slate-600 */
-  --color-purple-400: #9333ea; /* purple-600 */
-  --color-emerald-500: #047857; /* emerald-700 */
-  --color-cyan-500: #0e7490; /* cyan-700 */
-  --color-amber-500: #b45309; /* amber-700 */
+  --color-emerald-400: #059669;
+  --color-cyan-400: #0891b2;
+  --color-amber-400: #d97706;
+  --color-slate-400: #475569;
+  --color-purple-400: #9333ea;
+  --color-emerald-500: #047857;
+  --color-cyan-500: #0e7490;
+  --color-amber-500: #b45309;
 }
 
-/* Global Styles */
+/* ── CSS Variables fallback (browsers without var() support) ── */
+html, body {
+  background-color: #000 !important;
+  color: #fff !important;
+}
+html.light, html.light body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
 html, body {
   background-color: var(--bg-primary) !important;
   color: var(--text-primary) !important;
@@ -74,8 +82,16 @@ body {
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  transform: perspective(1000px) rotateX(1deg);
-  transform-style: preserve-3d;
+}
+
+@supports (transform-style: preserve-3d) {
+  .hud-card {
+    transform: perspective(1000px) rotateX(1deg);
+    transform-style: preserve-3d;
+  }
+  .hud-card:hover {
+    transform: perspective(1000px) rotateX(0deg) scale(1.02) translateZ(10px);
+  }
 }
 
 @supports not (backdrop-filter: blur(1px)) {
@@ -90,7 +106,6 @@ body {
 .hud-card:hover {
   border-color: var(--color-purple-500);
   background: var(--accent-glow);
-  transform: perspective(1000px) rotateX(0deg) scale(1.02) translateZ(10px);
   box-shadow: 0 20px 50px var(--accent-glow);
 }
 
@@ -115,14 +130,25 @@ body {
   animation: pulse-slow 3s infinite ease-in-out;
 }
 
+/* ── CSS Grid fallback ── */
+@supports not (display: grid) {
+  .grid {
+    display: flex !important;
+    flex-wrap: wrap !important;
+  }
+  .grid > * {
+    width: 100% !important;
+  }
+}
+
 /* Mobile optimizations */
 @media (max-width: 767px) {
   .hud-card {
     border-radius: 1rem;
-    transform: none;
+    transform: none !important;
   }
   .hud-card:hover {
-    transform: none;
+    transform: none !important;
   }
   .custom-scrollbar::-webkit-scrollbar {
     width: 2px;
@@ -155,5 +181,3 @@ html {
     justify-content: center;
   }
 }
-
-

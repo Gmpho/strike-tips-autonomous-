@@ -59,7 +59,14 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <noscript>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:2rem;text-align:center;font-family:system-ui,sans-serif;background:#000;color:#fff;">
+          <p style="font-size:1.25rem;color:#a855f7;font-weight:700;margin-bottom:0.5rem;">Strike Tips HUD</p>
+          <p style="color:rgba(255,255,255,0.6);font-size:0.875rem;">JavaScript is required. Please enable it or use a modern browser.</p>
+        </div>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

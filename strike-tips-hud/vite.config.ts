@@ -14,7 +14,17 @@ export default defineConfig({
     tsconfigPaths: true
   },
   build: {
-    target: 'es2020'
+    target: 'es2015',
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) return 'vendor-react'
+          if (id.includes('node_modules/framer-motion')) return 'vendor-framer'
+          if (id.includes('node_modules/three') || id.includes('node_modules/@react-three')) return 'vendor-three'
+          if (id.includes('node_modules/lucide-react')) return 'vendor-icons'
+        },
+      },
+    },
   },
   server: {
     port: 5173,
