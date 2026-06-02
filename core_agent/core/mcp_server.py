@@ -5,6 +5,7 @@ Target: Senior L7 AI DevOps standard (High Reliability)
 """
 
 import asyncio
+import os
 from fastmcp import FastMCP
 from typing import List, Optional, Dict
 from core_agent.core.strike_brain import brain
@@ -21,9 +22,13 @@ mcp = FastMCP("StrikeTips")
     name="bridge_to_redis", description="Execute Redis MCP operations via bridge."
 )
 async def bridge_to_redis(tool_name: str, arguments: dict) -> dict:
+    redis_url = os.getenv(
+        "REDIS_URL",
+        f"redis://:{os.getenv('REDIS_PASSWORD', '')}@localhost:6379/0"
+    )
     server_params = StdioServerParameters(
         command="uvx",
-        args=["redis-mcp-server@latest", "--url", "redis://localhost:6379/0"],
+        args=["redis-mcp-server@latest", "--url", redis_url],
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
