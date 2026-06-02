@@ -32,7 +32,7 @@ async def get_redis() -> aioredis.Redis:
             _task_redis = aioredis.from_url(
                 url, 
                 decode_responses=True,
-                max_connections=5, 
+                max_connections=3, 
                 socket_connect_timeout=5
             )
         return _task_redis
