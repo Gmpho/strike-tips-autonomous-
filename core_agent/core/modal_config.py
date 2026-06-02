@@ -31,7 +31,7 @@ secrets = [
             "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_CHAT_ID",
         ],
-    )
+    ),
 ]
 
 # Optional AI provider secrets (at least one recommended)

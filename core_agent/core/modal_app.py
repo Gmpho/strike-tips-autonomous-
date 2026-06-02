@@ -61,6 +61,7 @@ secrets = [modal.Secret.from_name("strike-tips-secrets")]
     startup_timeout=120,
     min_containers=1,
 )
+@modal.concurrent(max_inputs=20)
 @modal.asgi_app()
 def serve_api():
     """Mount core_agent.api FastAPI app + inject /telegram-webhook route."""
@@ -260,6 +261,7 @@ def serve_api():
         return {"ok": True}
 
     # ── Auto-register webhook on boot ────────────────────────────────
+    import os
     import httpx
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     webhook_url = "https://gmpho--strike-tips-racing-serve-api.modal.run/telegram-webhook"

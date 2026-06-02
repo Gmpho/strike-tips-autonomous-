@@ -7,9 +7,11 @@ type HealthStatus = {
 };
 
 const POLL_INTERVAL_MS = 25000;
+const MAX_BACKOFF_MS = 120000;
 
 let healthState: HealthStatus = { orchestrator: 'pending', ollama: 'pending' };
-let poller: number | null = null;
+let pollTimer: number | null = null;
+let backoffMs = POLL_INTERVAL_MS;
 let inFlight: Promise<void> | null = null;
 const listeners = new Set<(state: HealthStatus) => void>();
 
@@ -18,9 +20,7 @@ const notify = () => {
 };
 
 const syncHealth = async () => {
-  if (inFlight) {
-    return inFlight;
-  }
+  if (inFlight) return inFlight;
 
   inFlight = (async () => {
     try {
@@ -31,8 +31,10 @@ const syncHealth = async () => {
         orchestrator: data.orchestrator ?? 'error',
         ollama: ollamaRaw === 'error' ? 'offline' : ollamaRaw,
       };
+      backoffMs = POLL_INTERVAL_MS;
     } catch {
       healthState = { orchestrator: 'error', ollama: 'offline' };
+      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     } finally {
       notify();
       inFlight = null;
@@ -42,24 +44,22 @@ const syncHealth = async () => {
   return inFlight;
 };
 
-const ensurePoller = () => {
-  if (poller !== null) {
-    return;
-  }
-
-  void syncHealth();
-  poller = window.setInterval(() => {
-    void syncHealth();
-  }, POLL_INTERVAL_MS);
+const scheduleNext = () => {
+  if (pollTimer !== null) clearTimeout(pollTimer);
+  pollTimer = window.setTimeout(() => {
+    syncHealth().finally(scheduleNext);
+  }, backoffMs);
 };
 
-const cleanupPoller = () => {
-  if (listeners.size > 0 || poller === null) {
-    return;
-  }
+const startPoller = () => {
+  syncHealth().finally(scheduleNext);
+};
 
-  window.clearInterval(poller);
-  poller = null;
+const stopPoller = () => {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
 };
 
 export const useAgentHealth = () => {
@@ -67,12 +67,12 @@ export const useAgentHealth = () => {
 
   useEffect(() => {
     listeners.add(setHealth);
-    ensurePoller();
+    if (pollTimer === null) startPoller();
     setHealth(healthState);
 
     return () => {
       listeners.delete(setHealth);
-      cleanupPoller();
+      if (listeners.size === 0) stopPoller();
     };
   }, []);
 

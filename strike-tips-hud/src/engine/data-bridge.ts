@@ -5,23 +5,33 @@ import { apiFetch } from '../lib/api-fetch';
 
 const FAST_INTERVAL = 5000;
 const SLOW_INTERVAL = 30000;
+const MAX_FAST_BACKOFF = 60000;
+const MAX_SLOW_BACKOFF = 120000;
 
 export class DataBridge {
-  private fastInterval: number | null = null;
-  private slowInterval: number | null = null;
+  private fastTimer: number | null = null;
+  private slowTimer: number | null = null;
   private prevEventCount = 0;
   private prevBetCount = 0;
+  private fastBackoffMs = FAST_INTERVAL;
+  private slowBackoffMs = SLOW_INTERVAL;
 
   start() {
-    this.syncFast();
-    this.syncSlow();
-    this.fastInterval = window.setInterval(() => this.syncFast(), FAST_INTERVAL);
-    this.slowInterval = window.setInterval(() => this.syncSlow(), SLOW_INTERVAL);
+    this.scheduleFast();
+    this.scheduleSlow();
   }
 
   stop() {
-    if (this.fastInterval) clearInterval(this.fastInterval);
-    if (this.slowInterval) clearInterval(this.slowInterval);
+    if (this.fastTimer) clearTimeout(this.fastTimer);
+    if (this.slowTimer) clearTimeout(this.slowTimer);
+  }
+
+  private scheduleFast() {
+    this.fastTimer = window.setTimeout(() => this.runFast(), this.fastBackoffMs);
+  }
+
+  private scheduleSlow() {
+    this.slowTimer = window.setTimeout(() => this.runSlow(), this.slowBackoffMs);
   }
 
   private playSoundsForChanges(snapshot: any, _bankroll: any, history: any) {
@@ -42,7 +52,7 @@ export class DataBridge {
     this.prevBetCount = settledCount;
   }
 
-  private async syncFast() {
+  private async runFast() {
     const start = performance.now();
     try {
       const [snapshotRes, healthRes, bankrollRes, betsRes] = await Promise.all([
@@ -79,6 +89,8 @@ export class DataBridge {
       });
 
       this.playSoundsForChanges(snapshot, bankroll, { bets: hudStore.getState().betHistory });
+
+      this.fastBackoffMs = FAST_INTERVAL;
     } catch {
       hudStore.updateState({
         systemHealth: {
@@ -87,10 +99,13 @@ export class DataBridge {
           latency: 0,
         },
       });
+      this.fastBackoffMs = Math.min(this.fastBackoffMs * 2, MAX_FAST_BACKOFF);
+    } finally {
+      this.scheduleFast();
     }
   }
 
-  private async syncSlow() {
+  private async runSlow() {
     try {
       const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
         apiFetch(BETTING_ENDPOINTS.history),
@@ -142,8 +157,12 @@ export class DataBridge {
           docker: vitals.vitals || [],
         },
       });
+
+      this.slowBackoffMs = SLOW_INTERVAL;
     } catch {
-      // Silent — non-critical data, keep previous state
+      this.slowBackoffMs = Math.min(this.slowBackoffMs * 2, MAX_SLOW_BACKOFF);
+    } finally {
+      this.scheduleSlow();
     }
   }
 }
