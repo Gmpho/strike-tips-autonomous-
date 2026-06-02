@@ -259,10 +259,27 @@ def serve_api():
                 pass
         return {"ok": True}
 
+    # ── Auto-register webhook on boot ────────────────────────────────
+    import httpx
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    webhook_url = "https://gmpho--strike-tips-racing-serve-api.modal.run/telegram-webhook"
+    try:
+        r = httpx.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url, "allowed_updates": ["message"]},
+            timeout=10,
+        )
+        if r.json().get("ok"):
+            logger.info("Telegram webhook auto-registered → %s", webhook_url)
+        else:
+            logger.error("Webhook auto-registration failed: %s", r.json())
+    except Exception as exc:
+        logger.error("Webhook auto-registration error: %s", exc)
+
     return fastapi_app
 
 
-# ── Register Telegram Webhook ─────────────────────────────────────────
+# ── Register Telegram Webhook (manual) ────────────────────────────────
 @app.function(
     image=image,
     secrets=secrets,
