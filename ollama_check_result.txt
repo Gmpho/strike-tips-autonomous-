@@ -1,5 +1,0 @@
-Ollama SDK version: unknown
-Has web_search: True
-Has chat: True
-Has embed: True
-Ollama dir: ['AsyncClient', 'ChatResponse', 'Client', 'EmbedResponse', 'EmbeddingsResponse', 'GenerateResponse', 'Image', 'ListResponse', 'Message', 'Options', 'ProcessResponse', 'ProgressResponse', 'RequestError', 'ResponseError', 'ShowResponse', 'StatusResponse', 'Tool', 'WebFetchResponse', 'WebSearchResponse', '__all__', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', '_client', '_types', '_utils', 'chat', 'copy', 'create', 'delete', 'embed', 'embeddings', 'generate', 'list', 'ps', 'pull', 'push', 'show', 'web_fetch', 'web_search']
