@@ -6370,15 +6370,253 @@
 
 
 
-python3: can't open file '/app/core_agent/core/adaptive_odds_monitor.py': [Errno 2] No such file or directory
+server.py
 
-NFO:betway-api:🔄 Using fresh market snapshot from 2026-04-28T23:09:50.155461
+"""
+This is a simple FastAPI server that can be used to test the sandbox server.
 
-INFO:L7-Monitor:✅ Fusion Sync: Updated market snapshot with OC data.
+This file is read in by the sandbox server and executed in the sandbox.
+"""
 
-WARNING:L7-Monitor:⚠️ Flicker (Recovering): 'list' object has no attribute 'keys'
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
+
+fastapi_app = FastAPI()
+
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-docker exec -it strike-bot-new python3 -c "from core_agent.tools.maf_tool_registry import search_racing_data; query =
-'Latest odds for Turffontein racecard'; print(f'Triggering research for: {query}'); result =
-search_racing_data(query=query); [print(f'- {r}') for r in result['results'][:3]]" 
+def is_component_valid(component: str) -> bool:
+    return "export default" in component
+
+
+class EditRequest(BaseModel):
+    component: str
+
+
+@fastapi_app.post("/edit")
+async def edit_text(request: EditRequest):
+    global display_html
+    llm_react_app = request.component
+    if not is_component_valid(llm_react_app):
+        print(f"Invalid component: {llm_react_app}")
+        return {"status": "error", "message": "Invalid component"}
+
+    print(f"Existing component: {llm_react_app}")
+    with open("/root/vite-app/src/LLMComponent.tsx", "w+") as f:
+        f.write(llm_react_app)
+    print(f"Component edited to: {llm_react_app}")
+    return {"status": "ok"}
+
+
+@fastapi_app.get("/heartbeat")
+async def heartbeat():
+    print("Heartbeat received")
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+start_sandbox.py
+
+import modal
+
+SANDBOX_TIMEOUT = 86400  # 24 hours
+
+async def run_sandbox_server_with_tunnel(app: modal.App, image: modal.Image):
+    """Create and run a sandbox with an HTTP server exposed via tunnel"""
+    print("🚀 Creating sandbox...")
+    sb = await modal.Sandbox.create.aio(
+        "/bin/bash",
+        "/root/startup.sh",
+        image=image,
+        app=app,
+        timeout=SANDBOX_TIMEOUT,
+        encrypted_ports=[8000, 5173],
+    )
+    print(f"📋 Created sandbox with ID: {sb.object_id}")
+
+    print("⏳ Waiting for tunnels to establish...")    
+    tunnels = await sb.tunnels.aio()
+    main_tunnel = tunnels[8000]
+    user_tunnel = tunnels[5173]
+    print("\n🚀 Creating HTTP Server with tunnel!")
+    print(f"🌐 Public URL: {main_tunnel.url}")
+    print(f"🔒 TLS Socket: {main_tunnel.tls_socket}")
+    print("\n📡 Available endpoints:")
+    print(f"  POST {main_tunnel.url}/edit - Update display text")
+    print(f"  GET  {main_tunnel.url}/heartbeat - Health check")
+    print("\n💡 You can now access these endpoints from anywhere on the internet!")
+
+    print()
+    print(f"🌐 Frontend URL: {user_tunnel.url} <-- Open this in your browser!")
+    print(f"🔒 TLS Socket: {user_tunnel.tls_socket}")
+
+    print("Sandbox server with tunnel running")
+    return main_tunnel.url, user_tunnel.url, sb.object_id
+
+
+
+
+
+
+startup sh.py  
+
+#!/bin/bash
+set -e
+
+echo "🚀 Starting sandbox services..."
+
+# Start FastAPI server in background with logs
+echo "📦 Starting FastAPI server..."
+python /root/server.py > /tmp/fastapi.log 2>&1 &
+FASTAPI_PID=$!
+echo "FastAPI started with PID: $FASTAPI_PID"
+
+# Start Vite dev server in background with logs
+echo "⚡ Starting Vite dev server..."
+cd /root/vite-app
+# Try pnpm with explicit command
+pnpm exec vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
+VITE_PID=$!
+echo "Vite started with PID: $VITE_PID"
+
+# Give services a moment to start
+sleep 3
+
+# Check if processes are still running
+echo "Checking if services are running..."
+if ps -p $FASTAPI_PID > /dev/null; then
+    echo "✅ FastAPI process is running"
+else
+    echo "❌ FastAPI process died! Log:"
+    cat /tmp/fastapi.log
+    exit 1
+fi
+
+if ps -p $VITE_PID > /dev/null; then
+    echo "✅ Vite process is running"
+else
+    echo "❌ Vite process died! Log:"
+    cat /tmp/vite.log
+    exit 1
+fi
+
+# Simple health check - just see if ports are open
+echo "⏳ Waiting for services to be ready..."
+for i in {1..30}; do
+    # Check FastAPI
+    if curl -s http://localhost:8000/heartbeat > /dev/null 2>&1; then
+        echo "✅ FastAPI is ready!"
+        FASTAPI_READY=true
+    fi
+    
+    # Check Vite
+    if curl -s http://localhost:5173 > /dev/null 2>&1; then
+        echo "✅ Vite is ready!"
+        VITE_READY=true
+    fi
+    
+    # Both ready?
+    if [ "$FASTAPI_READY" = "true" ] && [ "$VITE_READY" = "true" ]; then
+        echo "🎉 All services started successfully!"
+        break
+    fi
+    
+    if [ $i -eq 30 ]; then
+        echo "❌ Services failed to start after 30 attempts"
+        echo "FastAPI log:"
+        cat /tmp/fastapi.log
+        echo "Vite log:"
+        cat /tmp/vite.log
+        exit 1
+    fi
+    
+    echo "Attempt $i/30: Waiting for services..."
+    sleep 2
+done
+
+# Keep the script running
+echo "Services are running. Keeping container alive..."
+wait $FASTAPI_PID $VITE_PID
+
+
+
+vite.config 
+
+// https://vite.dev/config/
+export default defineConfig({
+  server: {
+    allowedHosts: ['.modal.host'],
+    headers: {
+      'X-Frame-Options': 'ALLOWALL',
+    },
+
+
+
+vite-env.d.ts 
+
+/// <reference types="vite/client" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Registering notification handlers for server 'visualization'. Capabilities: { tools: {} }
+Server 'visualization' has tools but did not declare 'listChanged' capability. Listening anyway for robustness...
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+MCP context refresh complete.
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+MCP context refresh complete.
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+MCP context refresh complete.
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+MCP context refresh complete.
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+MCP context refresh complete.

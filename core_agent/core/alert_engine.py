@@ -40,12 +40,17 @@ class AlertEngine:
 
         self.alerts_cache: Dict[str, AlertCondition] = {}
         self.last_trigger_times: Dict[str, datetime] = {}
+        self.last_alerted_odds: Dict[str, float] = {}  # Track last odds we alerted on for each key
+        # Per-race cooldown to prevent alert bursts from same race
+        self.last_race_alert_time: Dict[str, datetime] = {}
+        self.race_cooldown_minutes = 10  # Minimum minutes between alerts for same race
 
         self.stats = {
             "total_evaluations": 0,
             "alerts_triggered": 0,
             "notifications_sent": 0,
             "cooldown_prevents": 0,
+            "race_cooldown_prevents": 0,
         }
 
     async def initialize(self):
@@ -133,13 +138,39 @@ class AlertEngine:
     async def _evaluate_condition(
         self, alert: AlertCondition, horse: Dict, race_data: Dict, cache=None
     ) -> bool:
-        """Core math evaluation logic."""
+        """Core math evaluation logic with race status awareness and odds-change threshold."""
         try:
+            # Skip if race is not upcoming (prevents alerts on finished races)
+            status = race_data.get("status", race_data.get("race_status", "")).lower()
+            # Expanded list of statuses that indicate race is not available for betting
+            finished_statuses = [
+                "in progress", "finished", "result", "result", "completed", "off",
+                "closed", "settled", "voided", "non-runner", "withdrawn",
+                "race completed", "race off", "postponed", "cancelled", "void"
+            ]
+            if status in finished_statuses:
+                return False
+                
+            # Create unique key for this alert condition
+            key = f"{alert.id}_{race_data.get('course', 'Unknown')}_{horse.get('name', 'Unknown')}"
             current_odds_str = str(horse.get("odds", "1/1"))
+            
             # Skip SP — no real price yet
             if current_odds_str.upper() == "SP":
                 return False
             current_odds = self._parse_odds(current_odds_str)
+            
+            # ODDS-CHANGE THRESHOLD: Require meaningful change before re-alerting
+            # Only apply to odds-based alerts (odds_drop, odds_rise, threshold)
+            if alert.condition_type in ["odds_drop", "odds_rise", "threshold"]:
+                last_alerted = self.last_alerted_odds.get(key)
+                if last_alerted is not None:
+                    # Require at least 5% change in odds or 0.5 minimum absolute change
+                    odds_change_pct = abs(current_odds - last_alerted) / last_alerted if last_alerted > 0 else float('inf')
+                    odds_change_abs = abs(current_odds - last_alerted)
+                    if odds_change_pct < 0.05 and odds_change_abs < 0.5:
+                        # Odds haven't changed enough to warrant re-alerting
+                        return False
             val = alert.condition_value
 
             # GLOBAL GUARD: Check if race has placeholder odds (all odds equal)
@@ -194,8 +225,15 @@ class AlertEngine:
         course = race_data.get("course", "Unknown")
         name = horse.get("name", "Unknown")
         key = f"{alert.id}_{course}_{name}"
+        race_key = f"{course}"
 
         now = datetime.now()
+        # Per-race cooldown to prevent alert bursts from same race
+        last_race = self.last_race_alert_time.get(race_key)
+        if last_race and (now - last_race) < timedelta(minutes=self.race_cooldown_minutes):
+            self.stats["race_cooldown_prevents"] += 1
+            return
+
         last = self.last_trigger_times.get(key)
 
         if last and (now - last) < timedelta(minutes=alert.cooldown_minutes):
@@ -203,7 +241,18 @@ class AlertEngine:
             return
 
         self.last_trigger_times[key] = now
+        self.last_race_alert_time[race_key] = now
         self.stats["alerts_triggered"] += 1
+        
+        # Track the odds at which we triggered this alert for change-threshold logic
+        if alert.condition_type in ["odds_drop", "odds_rise", "threshold"]:
+            current_odds_str = str(horse.get("odds", "1/1"))
+            if current_odds_str.upper() != "SP":
+                try:
+                    current_odds = self._parse_odds(current_odds_str)
+                    self.last_alerted_odds[key] = current_odds
+                except (ValueError, ZeroDivisionError):
+                    pass  # Keep existing value if parsing fails
 
         msg = {
             "alert_id": alert.id,
@@ -229,8 +278,15 @@ class AlertEngine:
         await self._log_history(msg)
 
     async def _log_history(self, msg: Dict):
-        """Write to rolling JSONL history log."""
+        """Write to rolling JSONL history log with size-based rotation."""
         try:
+            MAX_HISTORY_SIZE = 5 * 1024 * 1024
+            if os.path.exists(self.history_file):
+                if os.path.getsize(self.history_file) >= MAX_HISTORY_SIZE:
+                    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    rotated_file = f"{self.history_file}.{timestamp}"
+                    os.rename(self.history_file, rotated_file)
+                    logger.info(f"Rotated alert history to {rotated_file}")
             with open(self.history_file, "a") as f:
                 f.write(json.dumps(msg) + "\n")
         except Exception as e:

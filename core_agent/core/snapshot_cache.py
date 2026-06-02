@@ -3,6 +3,7 @@ Shared in-memory snapshot cache with Redis pub/sub for push-based updates.
 Replaces disk polling with push-based in-memory updates.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -92,6 +93,17 @@ async def subscribe_snapshot(redis_client) -> None:
         logger.warning("Redis subscriber stopped: %s", e)
     finally:
         if _redis_pubsub:
-            await _redis_pubsub.unsubscribe(REDIS_CHANNEL)
-            await _redis_pubsub.close()
-            _redis_pubsub = None
+            try:
+                # Attempt to unsubscribe and close only if event loop is still running
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    await _redis_pubsub.unsubscribe(REDIS_CHANNEL)
+                    await _redis_pubsub.close()
+                else:
+                    # Loop is closed; just discard the pubsub object
+                    pass
+            except Exception:
+                # Ignore any errors during cleanup
+                pass
+            finally:
+                _redis_pubsub = Nonediff --git a/docs/idea.md b/docs/idea.md

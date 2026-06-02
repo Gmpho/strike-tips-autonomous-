@@ -281,4 +281,20 @@ END — Strike Tips Multi-Model Architecture Plan v1.0  (2026-03-13)
    4. Gemini-3-Flash (Cloud): Our reliable fallback and primary orchestrator.
 
 
-   
+
+racingsa.co.za
+- sportingpost.co.za
+- tabonline.co.za
+- news24.com
+- timeslive.co.za
+- espn.com (or espn.co.uk)
+- sport24.co.za
+- sabra.co.za
+- skyracing.com
+- sportinglife.com (horse racing)
+- racingpost.com
+- at-the-racks.co.za
+- goldcircle.co.za
+- bloodhorse.com
+- thoroughbredracing.com
+- equinews.com
