@@ -2,6 +2,8 @@
 
 **South African Horse Racing Intelligence System**
 
+<img src="screenshots/hud-screenshot.png" width="100%" alt="Strike Tips Dashboard" />
+
 A modular, AI-powered betting assistant that identifies value bets in South African horse racing using probability edge analysis and disciplined bankroll management.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
