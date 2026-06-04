@@ -65,7 +65,7 @@ TELEGRAM_CHAT_ID=123456789
 |-----------|---------|------|---------|
 | `strike-bot` | FastAPI | 8000 | Backend API |
 | `ollama` | Local LLM | 11434 | AI models |
-| `odds-monitor` | Playwright | - | Live odds scraper |
+| `odds-monitor` | Playwright | - | Live odds scraper + ATR data (Market Movers, Predictor, Results) |
 
 ### Common Docker Commands
 
@@ -164,6 +164,19 @@ curl http://localhost:8000
 curl http://localhost:8000/api/agent/health
 ```
 
+### Test ATR Data Endpoints (New in v2.0)
+
+```bash
+# ATR Market Movers (523+ items)
+curl http://localhost:8000/api/racing/market-movers
+
+# ATR Predictor (39+ predictions)
+curl http://localhost:8000/api/racing/predictor
+
+# ATR Results (579+ results)
+curl http://localhost:8000/api/racing/results
+```
+
 ### Test 3: Telegram
 
 ```bash
@@ -173,6 +186,18 @@ from core_agent.skills.notifications.telegram_bot import TelegramNotifier
 notifier = TelegramNotifier()
 notifier.send_message('Test from Strike Tips!')
 "
+```
+
+### Test MAF Tools (15 tools available)
+
+```bash
+# List all tools
+curl http://localhost:8000/api/agent/tools
+
+# Test ATR tools
+curl -X POST http://localhost:8000/api/agent/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me ATR market movers"}'
 ```
 
 ---

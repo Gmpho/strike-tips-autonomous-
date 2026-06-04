@@ -29,12 +29,12 @@ graph TD
 ```
 
 ### Container Details & Resource Allocation
-
-| Container | Image/Service | Ports | Purpose | Resource Allocations |
-| :--- | :--- | :--- | :--- | :--- |
-| **`strike-bot`** | Python 3.9 / FastAPI | `8000:8000` | Main backend API, task scheduling, agent execution, bankroll gating. | `CPU: 1.0` \| `RAM: 2.0GB` |
-| **`ollama`** | Ollama local runner | `11434:11434` | Manages and serves local specialized LLMs under GPU acceleration. | `CPU: 1.5` \| `RAM: 2.5GB` |
-| **`odds-monitor`** | Playwright Node | *Internal* | Real-time stealth Playwright scraper pulling live odds from bookmakers. | `CPU: 0.8` \| `RAM: 1.5GB` |
+ 
+ | Container | Image/Service | Ports | Purpose | Resource Allocations |
+ | :--- | :--- | :--- | :--- | :--- |
+ | **`strike-bot`** | Python 3.9 / FastAPI | `8000:8000` | Main backend API, task scheduling, agent execution, bankroll gating. | `CPU: 1.0` \| `RAM: 2.0GB` |
+ | **`ollama`** | Ollama local runner | `11434:11434` | Manages and serves local specialized LLMs under GPU acceleration. | `CPU: 1.5` \| `RAM: 2.5GB` |
+ | **`odds-monitor`** | Playwright Node | *Internal* | Real-time stealth Playwright scraper pulling live odds from bookmakers + ATR data (Market Movers, Predictor, Results). | `CPU: 0.8` \| `RAM: 1.5GB` |
 
 ---
 
@@ -44,15 +44,15 @@ The intelligence layer is decoupled from dependencies like Pydantic AI, using di
 
 ### 🔀 Unified Orchestrator & Specialist Swarm
 
-Requests are classified by the `IntentClassifier` using predefined keywords mapping to **11 gambling-free tool intents**, then assigned to one of the resident specialists:
+Requests are classified by the `IntentClassifier` using predefined keywords mapping to **15 gambling-free tool intents** (updated June 2026), then assigned to one of the resident specialists:
 
 ```
 User Prompt ──> IntentClassifier (~0ms)
                     │
                     ├──> analyst ──> evaluate_race / calculate_probability_edge
-                    ├──> scanner ──> run_daily_analysis / get_odds_snapshot
-                    ├──> bankroll ─> place_bet / settle_bet / get_account_summary
-                    └──> search ───> search_racing_data
+                    ├──> scanner ──> run_daily_analysis / get_odds_snapshot / get_atr_market_movers / get_atr_predictor / get_atr_results
+                    ├──> bankroll ─> record_selection / update_race_result / get_account_summary / calculate_max_position
+                    └──> search ───> search_racing_data / search_past_races / verify_race_exists / get_dream_context
 ```
 
 ### ⬇️ LLM Fallback & Parallel Chain
@@ -156,15 +156,18 @@ The Vite-powered dashboard (`strike-tips-hud/`) features a high-fidelity visual 
  │  🛸 Header (System Status, Latency, API Connected, Ollama Health)                           │
  ├──────────────────────────┬──────────────────────────────────────────────────────────────────┤
  │                          │                                                                  │
- │ 🏁 Sidebar               │  🏁 Dashboard: Race Cards Grid (Turffontein, Greyville, etc.)    │
- │   • Dashboard            │     - Runners list, jockey, trainer, weight                      │
- │   • AI Chat Command      │     - Live implied odds vs estimated AI odds                     │
- │   • Bankroll Governor    │     - Bold visual value indicators (>5% Edge)                    │
- │   • Analytics / P&L      │                                                                  │
- │   • Healing Swarm        ├──────────────────────────────────────────────────────────────────┤
- │   • System Vitals        │  💬 AI Chat Command (With session logs, model selector dropdown)  │
- │   • Dreaming View        │     - Shows real-time agent activities during search/analysis    │
- │                          │                                                                  │
+  │ 🏁 Sidebar               │  🏁 Dashboard: Race Cards Grid (Turffontein, Greyville, etc.)    │
+  │   • Dashboard            │     - Runners list, jockey, trainer, weight                      │
+  │   • AI Chat Command      │     - Live implied odds vs estimated AI odds                     │
+  │   • Bankroll Governor    │     - Bold visual value indicators (>5% Edge)                    │
+  │   • Analytics / P&L      │                                                                  │
+  │   • Healing Swarm        ├──────────────────────────────────────────────────────────────────┤
+  │   • System Vitals        │  💬 AI Chat Command (With session logs, model selector dropdown)  │
+  │   • Dreaming View        │     - Shows real-time agent activities during search/analysis    │
+  │   • ATR Market Movers    │     - 523 horses with significant odds movement                  │
+  │   • ATR Predictor        │     - 39 AI-powered race predictions                             │
+  │   • ATR Results          │     - 579 yesterday's race results                               │
+  │                          │                                                                  │
  └──────────────────────────┴──────────────────────────────────────────────────────────────────┘
 ```
  

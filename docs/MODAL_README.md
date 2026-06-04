@@ -107,6 +107,12 @@ core_agent/
 ```
 
 > **Note:** In v2.0, we use Docker via `docker compose up -d` instead of Modal.
+> 
+> **New in v2.0 (June 2026):**
+> - ATR data flow (Market Movers, Predictor, Results) with resilient fetching
+> - 15 MAF tools including 4 new ATR/dream tools
+> - Self-healing parsers with adaptive selectors
+> - TTL cleanup (7 days) and staleness alerts (3-hour threshold)
 
 ---
 

@@ -11,7 +11,7 @@
 Successfully integrated the **Microsoft Agent Framework (MAF)** pattern with Strike Tips racing bot, replacing the cloud-based L7Orchestrator with a local-first MAF agent using Ollama models.
 
 ### Key Results
-- ✅ Created 11 MAF-compatible tools
+- ✅ Created 15 MAF-compatible tools (was 11, added 3 ATR + 1 dream)
 - ✅ Built MAF-style agent (`maf_agent.py`)
 - ✅ Integrated with FastAPI backend
 - ✅ Removed cloud dependency (Gemini API)
@@ -61,7 +61,7 @@ User → API → MAF Agent → Ollama (local) → skills/
 |------|---------|
 | `routes/agent.py` | Replaced L7Orchestrator with MAF Agent |
 
-### 3. Tool Registry (11 Tools)
+### 3. Tool Registry (15 Tools)
 
 ```
 📦 Available Tools (Gambling-Free Names):
@@ -75,7 +75,11 @@ User → API → MAF Agent → Ollama (local) → skills/
   • search_racing_data         - Web search
   • verify_race_exists         - Verify race
   • run_daily_analysis         - Scan races
-  • get_odds_snapshot         - Get odds
+  • get_odds_snapshot         - Get odds (Betway primary)
+  • get_atr_market_movers     - ATR market movers
+  • get_atr_predictor         - ATR AI predictions
+  • get_atr_results           - ATR race results
+  • get_dream_context         - Agent's background reasoning
 ```
 
 ### 4. Ollama Models
@@ -169,7 +173,7 @@ Response:
   "success": true,
   "ollama": "connected",  // or "not_running"
   "primary_model": "ds_racing",
-  "tools_count": 11
+  "tools_count": 15
 }
 ```
 
@@ -180,8 +184,8 @@ GET /api/agent/maf/tools
 Response:
 {
   "success": true,
-  "tools": ["analyze_race", "calculate_edge", ...],
-  "count": 11
+  "tools": ["evaluate_race", "calculate_probability_edge", "get_account_summary", "record_selection", "update_race_result", "calculate_max_position", "search_past_races", "search_racing_data", "verify_race_exists", "run_daily_analysis", "get_odds_snapshot", "get_atr_market_movers", "get_atr_predictor", "get_atr_results", "get_dream_context"],
+  "count": 15
 }
 ```
 
@@ -216,10 +220,22 @@ async def agent_chat(request: AgentRequest):
 Simple dictionary mapping - no complex decorators:
 ```python
 TOOL_REGISTRY = {
-    "analyze_race": analyze_race,
-    "calculate_edge": calculate_edge,
-    "get_bankroll_status": get_bankroll_status,
-    # ... 11 tools total
+    "evaluate_race": evaluate_race,
+    "calculate_probability_edge": calculate_probability_edge,
+    "get_account_summary": get_account_summary,
+    "record_selection": record_selection,
+    "update_race_result": update_race_result,
+    "calculate_max_position": calculate_max_position,
+    "search_past_races": search_past_races,
+    "search_racing_data": search_racing_data,
+    "verify_race_exists": verify_race_exists,
+    "run_daily_analysis": run_daily_analysis,
+    "get_odds_snapshot": get_odds_snapshot,
+    "get_atr_market_movers": get_atr_market_movers,
+    "get_atr_predictor": get_atr_predictor,
+    "get_atr_results": get_atr_results,
+    "get_dream_context": get_dream_context,
+    # 15 tools total
 }
 ```
 
@@ -295,7 +311,7 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/agent/chat' -Method Post -Body
 
 ```
 core_agent/
-├── tools/maf_tool_registry.py  # UPDATED - 11 tools
+├── tools/maf_tool_registry.py  # UPDATED - 15 tools (was 11, +4 ATR/dream)
 ├── agents/ai_pydantic.py       # UPDATED - ModelPipeline (no Pydantic AI)
 ├── core/message_gateway.py     # Security gateway
 └── routes/
@@ -329,7 +345,7 @@ Successfully integrated MAF pattern with Strike Tips:
 - ✅ **Local privacy** - All processing done locally
 - ✅ **Free to use** - No API costs
 - ✅ **Works offline** - With Ollama running locally
-- ✅ **11 tools** - Full skill coverage
+- ✅ **15 tools** - Full skill coverage (11 original + 3 ATR + 1 dream)
 
 The system is now ready for deployment with Ollama models!
 
