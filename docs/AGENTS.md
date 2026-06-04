@@ -173,7 +173,7 @@ core_agent/                          # Python backend (refactored April 2026)
 │   ├── learning/                  # Learning engine (ROI tracking)
 │   └── notifications/            # Telegram notifier
 ├── tools/                         # MAF Tool Registry
-│   └── maf_tool_registry.py      # 11 gambling-free tools
+│   └── maf_tool_registry.py      # 15 gambling-free tools (incl. ATR + dreams)
 ├── routes/                        # FastAPI routes
 │   ├── agent.py                  # /api/agent endpoints
 │   ├── betting.py                # /api/betting
@@ -288,7 +288,7 @@ graph TD
 
 ---
 
-## 11 MAF Tools (Gambling-Free Names)
+## 15 MAF Tools (Gambling-Free Names)
 
 All tools use gambling-free naming to avoid model content filters:
 
@@ -304,7 +304,11 @@ All tools use gambling-free naming to avoid model content filters:
 | `search_racing_data` | Web search for racing info | racing_llama |
 | `verify_race_exists` | Check if race is scheduled | racing_qwen |
 | `run_daily_analysis` | Scan all tracks for races | lfm_racing |
-| `get_odds_snapshot` | Get current odds | racing_qwen |
+| `get_odds_snapshot` | Get current odds (Betway primary) | racing_qwen |
+| `get_atr_market_movers` | ATR horses with significant odds movement | racing_qwen |
+| `get_atr_predictor` | ATR AI predictions for upcoming races | racing_qwen |
+| `get_atr_results` | ATR race results from yesterday | racing_qwen |
+| `get_dream_context` | Agent's background reasoning/dreams | racing_qwen |
 
 ---
 

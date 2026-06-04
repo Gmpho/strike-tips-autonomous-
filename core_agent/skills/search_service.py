@@ -4,19 +4,12 @@ Fast search — DDGS + httpx fetch. No duplicate of Betway/Schedule (already in 
 
 import asyncio
 import logging
-import random
 import re
 from typing import Dict, List
 
-import httpx
+from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("search-service")
-
-_UA = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-]
 
 _BLOCKED = (
     "youtube.com", "facebook.com", "instagram.com", "tiktok.com",
@@ -46,10 +39,10 @@ def _clean(text: str, max_chars: int = 1500) -> str:
 
 async def _fetch(url: str, timeout: int = 5) -> str:
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": random.choice(_UA)})
-            if r.status_code == 200 and len(r.text) > 100:
-                return _clean(r.text)
+        client = get_async_client(timeout=timeout)
+        r = await client.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
+        if r.status_code == 200 and len(r.text) > 100:
+            return _clean(r.text)
     except Exception:
         pass
     return ""

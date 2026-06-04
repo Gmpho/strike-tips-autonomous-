@@ -1,7 +1,8 @@
 import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
-  BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight 
+  BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
+  TrendingUp, Eye, Flag
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 
@@ -31,6 +32,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const adminItems = [
     { icon: ShieldCheck, label: 'Healing Cloud', id: 'healing' },
     { icon: Activity, label: 'System Vitals', id: 'vitals' },
+  ];
+
+  const racingItems = [
+    { icon: TrendingUp, label: 'Market Movers', id: 'market-movers' },
+    { icon: Sparkles, label: 'Predictor', id: 'predictor' },
+    { icon: Flag, label: 'Results', id: 'results' },
   ];
 
   return (
@@ -63,6 +70,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
             } ${isCollapsed ? 'justify-center px-0' : ''}`}
           >
             <item.icon className={`w-5 h-5 transition-colors ${activeView === item.id ? 'text-purple-400' : 'group-hover:text-purple-500'}`} />
+            {!isCollapsed && (
+              <span className="text-sm font-bold tracking-wide animate-in fade-in slide-in-from-left-1">
+                {item.label}
+              </span>
+            )}
+          </button>
+        ))}
+
+        <div className={`mt-6 mb-2 px-3 shrink-0 ${isCollapsed ? 'flex justify-center' : ''}`}>
+          {!isCollapsed ? (
+            <h2 className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Racing Intelligence</h2>
+          ) : (
+            <div className="w-4 h-px bg-theme-secondary opacity-20" />
+          )}
+        </div>
+
+        {racingItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => setActiveView(item.id)}
+            title={isCollapsed ? item.label : ""}
+            className={`flex items-center gap-4 px-3 py-2.5 rounded-xl transition-all group shrink-0 ${
+              activeView === item.id 
+                ? 'text-theme-primary bg-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)] border border-amber-500/30' 
+                : 'text-theme-secondary hover:text-theme-primary hover:bg-theme-secondary'
+            } ${isCollapsed ? 'justify-center px-0' : ''}`}
+          >
+            <item.icon className={`w-5 h-5 transition-colors ${activeView === item.id ? 'text-amber-400' : 'group-hover:text-amber-500'}`} />
             {!isCollapsed && (
               <span className="text-sm font-bold tracking-wide animate-in fade-in slide-in-from-left-1">
                 {item.label}

@@ -112,11 +112,39 @@ TOOL_INFO: Dict[str, Dict] = {
         "use_case": "Is Race 5 at Vaal happening today?",
     },
     "get_odds_snapshot": {
-        "description": "Return the latest odds snapshot for one or all tracks.",
+        "description": "Return the latest odds snapshot for one or all tracks (Betway as primary source).",
         "specialist": "racing_qwen",
         "category": "data",
         "speed": "~1-2s",
         "use_case": "What are the current odds at Kenilworth?",
+    },
+    "get_atr_market_movers": {
+        "description": "Return ATR market movers - horses with significant odds movement.",
+        "specialist": "racing_qwen",
+        "category": "data",
+        "speed": "~1-2s",
+        "use_case": "Show me today's ATR market movers",
+    },
+    "get_atr_predictor": {
+        "description": "Return ATR AI predictions for upcoming races.",
+        "specialist": "racing_qwen",
+        "category": "data",
+        "speed": "~1-2s",
+        "use_case": "What are the ATR predictor tips for today?",
+    },
+    "get_atr_results": {
+        "description": "Return ATR race results from yesterday.",
+        "specialist": "racing_qwen",
+        "category": "data",
+        "speed": "~1-2s",
+        "use_case": "Show me yesterday's ATR race results",
+    },
+    "get_dream_context": {
+        "description": "Return recent AI dreams/insights generated from live race data (background reasoning).",
+        "specialist": "racing_qwen",
+        "category": "data",
+        "speed": "~1-2s",
+        "use_case": "What has the agent been dreaming about lately?",
     },
 }
 
@@ -323,7 +351,7 @@ async def verify_race_exists(track: str, race_number: int, strike=None, **kwargs
 
 
 async def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) -> Dict:
-    """Return the latest odds snapshot for a track or all tracks."""
+    """Return the latest odds snapshot for a track or all tracks (Betway as primary source)."""
     if strike:
         try:
             return await strike.get_odds_snapshot(track=track)
@@ -337,6 +365,62 @@ async def get_odds_snapshot(track: Optional[str] = None, strike=None, **kwargs) 
         filtered = {k: v for k, v in events.items() if track_lower in v.get("course", "").lower() or track_lower in v.get("en", "").lower()}
         return {"events": filtered, "count": len(filtered), "track": track}
     return snap
+
+
+async def get_atr_market_movers(strike=None, **kwargs) -> Dict:
+    """Return ATR market movers from disk snapshot."""
+    from core_agent.config.paths import ATR_MOVERS_PATH
+    import json
+    if ATR_MOVERS_PATH.exists():
+        data = json.loads(ATR_MOVERS_PATH.read_text())
+        movers = data.get("movers", [])
+        return {"movers": movers, "count": len(movers), "source": "ATR", "last_update": data.get("last_update")}
+    return {"movers": [], "count": 0, "source": "ATR", "error": "No snapshot available"}
+
+
+async def get_atr_predictor(strike=None, **kwargs) -> Dict:
+    """Return ATR AI predictions from disk snapshot."""
+    from core_agent.config.paths import ATR_PREDICTOR_PATH
+    import json
+    if ATR_PREDICTOR_PATH.exists():
+        data = json.loads(ATR_PREDICTOR_PATH.read_text())
+        predictions = data.get("predictions", [])
+        return {"predictions": predictions, "count": len(predictions), "source": "ATR", "last_update": data.get("last_update")}
+    return {"predictions": [], "count": 0, "source": "ATR", "error": "No snapshot available"}
+
+
+async def get_atr_results(strike=None, **kwargs) -> Dict:
+    """Return ATR race results from disk snapshot."""
+    from core_agent.config.paths import ATR_RESULTS_PATH
+    import json
+    if ATR_RESULTS_PATH.exists():
+        data = json.loads(ATR_RESULTS_PATH.read_text())
+        results = data.get("results", [])
+        return {"results": results, "count": len(results), "source": "ATR", "last_update": data.get("last_update")}
+    return {"results": [], "count": 0, "source": "ATR", "error": "No snapshot available"}
+
+
+async def get_dream_context(strike=None, **kwargs) -> Dict:
+    """Return recent AI dreams/insights from background reasoning engine."""
+    try:
+        from core_agent.skills.memory.honcho_memory import dream_honcho
+        dream_context = dream_honcho.get_dream_context()
+        if dream_context:
+            return {"dream_context": dream_context, "source": "honcho_dream_memory"}
+    except Exception as e:
+        pass
+    # Fallback to local dream memory
+    try:
+        from core_agent.core.dream_memory import read_memories
+        dreams = read_memories("dreams", limit=5)
+        if dreams:
+            return {
+                "dream_context": " | ".join(d.get("body", "") for d in dreams if d.get("body")),
+                "source": "local_dream_memory"
+            }
+    except Exception:
+        pass
+    return {"dream_context": "", "source": "none", "error": "No dreams available"}
 
 
 async def evaluate_race(
@@ -377,6 +461,10 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "search_racing_data": search_racing_data,
     "verify_race_exists": verify_race_exists,
     "get_odds_snapshot": get_odds_snapshot,
+    "get_atr_market_movers": get_atr_market_movers,
+    "get_atr_predictor": get_atr_predictor,
+    "get_atr_results": get_atr_results,
+    "get_dream_context": get_dream_context,
 }
 
 

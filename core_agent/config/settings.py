@@ -123,6 +123,9 @@ class ScraperConfig:
     data_sources: List[str] = field(
         default_factory=lambda: ["tab4racing", "racing_post", "sa_racing"]
     )
+    proxies: str = field(
+        default_factory=lambda: os.getenv("SCRAPER_PROXIES", "")
+    )
 
 
 # Global config instances

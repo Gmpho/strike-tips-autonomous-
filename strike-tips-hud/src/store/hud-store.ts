@@ -2,6 +2,9 @@ import { HUDState } from '../types';
 
 type Listener = (state: HUDState) => void;
 
+const STORAGE_VERSION = 3;
+const STORAGE_VERSION_KEY = 'strike_hud_version';
+
 class HUDStore {
   private state: HUDState = {
     events: {},
@@ -22,6 +25,7 @@ class HUDStore {
       roi: 0
     },
     logs: [],
+    alerts: [],
     learning: {
       totalRoi: 0,
       samples: 0,
@@ -44,47 +48,51 @@ class HUDStore {
     vitals: {
       docker: []
     },
+    marketMovers: [],
+    predictions: [],
+    results: [],
     lastUpdate: Date.now()
   };
 
   private listeners: Set<Listener> = new Set();
+  private version = 0;
+  private cachedSnapshot: HUDState | null = null;
 
   constructor() {
-    // Load from localStorage if available
+    const savedVersion = localStorage.getItem(STORAGE_VERSION_KEY);
+    if (savedVersion !== String(STORAGE_VERSION)) {
+      localStorage.removeItem('strike_hud_state');
+    }
+    localStorage.setItem(STORAGE_VERSION_KEY, String(STORAGE_VERSION));
+
     const saved = localStorage.getItem('strike_hud_state');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Ensure we merge with defaults in case schema changed
         this.state = { ...this.state, ...parsed };
       } catch (e) {
         console.error('Failed to load HUD state:', e);
       }
     }
-
-    this.state = new Proxy(this.state, {
-      set: (target, prop, value) => {
-        (target as any)[prop] = value;
-        this.notify();
-        return true;
-      }
-    });
   }
 
   getState() {
-    return this.state;
+    if (!this.cachedSnapshot) {
+      this.cachedSnapshot = { ...this.state };
+    }
+    return this.cachedSnapshot;
   }
 
   updateState(newState: Partial<HUDState>) {
     Object.assign(this.state, newState);
     this.state.lastUpdate = Date.now();
-    
-    // Persist to localStorage
+    this.version++;
+    this.cachedSnapshot = null;
     try {
       localStorage.setItem('strike_hud_state', JSON.stringify(this.state));
     } catch (e) {
-      // Silently fail if storage full
     }
+    this.notify();
   }
 
   subscribe(listener: Listener) {

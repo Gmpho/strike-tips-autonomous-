@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.50.0-jammy
+FROM strike-tips-base:latest
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -11,25 +11,19 @@ WORKDIR /app
 
 # Install Python requirements (no --no-cache-dir: pip cache survives rebuilds, ~10x faster)
 COPY requirements.txt .
-RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-
-# Pre-install browsers (included in base, but ensuring for current version)
-RUN playwright install chromium
+# Install Playwright system dependencies (libglib2.0, libnss3, etc.)
+RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"
 
 # Copy project files
 COPY . .
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
-    chown -R appuser:appuser /app /root/.cache
-
 # Expose port
 EXPOSE 8000
 
-# Switch to non-root user
-USER appuser
+# Run as root for host-mounted volume compatibility
+USER root
 
-# Run FastAPI
-CMD ["uvicorn", "core_agent.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Install browsers at runtime (CDN is reachable from containers but not Docker build daemon)
+CMD playwright install chromium 2>&1 || true && uvicorn core_agent.api:app --host 0.0.0.0 --port 8000

@@ -7,8 +7,10 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from core_agent.services.racing_service import RacingService
 from core_agent.config.settings import TRACKS
+from core_agent.config.paths import ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
 from core_agent.core.strike_brain import brain
 from datetime import date, timedelta
+import json
 
 router = APIRouter(prefix="/api", tags=["racing"])
 racing_service = RacingService()
@@ -110,3 +112,33 @@ async def analyze_specific_race(track: str, race_number: int):
         return {"success": True, "result": result}
     except Exception as e:
         return {"success": False, "error": "Failed to analyze race"}
+
+
+@router.get("/racing/market-movers")
+async def get_market_movers():
+    """Return latest market movers from ATR disk snapshot."""
+    p = ATR_MOVERS_PATH
+    if p.exists():
+        data = json.loads(p.read_text())
+        return data.get("movers", [])
+    return []
+
+
+@router.get("/racing/predictor")
+async def get_predictor():
+    """Return latest AI predictions from ATR disk snapshot."""
+    p = ATR_PREDICTOR_PATH
+    if p.exists():
+        data = json.loads(p.read_text())
+        return data.get("predictions", [])
+    return []
+
+
+@router.get("/racing/results")
+async def get_results():
+    """Return latest race results from ATR disk snapshot."""
+    p = ATR_RESULTS_PATH
+    if p.exists():
+        data = json.loads(p.read_text())
+        return data.get("results", [])
+    return []

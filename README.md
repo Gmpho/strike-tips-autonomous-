@@ -108,6 +108,7 @@ graph TB
         BETWAY["Betway SA<br/>(Odds)"]
         ODDCHECK["Oddschecker<br/>(Best Odds)"]
         PDF["PDF Scraper<br/>(Form Guides)"]
+        ATR["AtTheRaces<br/>(Market Movers, Predictor, Results)"]
     end
     style DATA fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
 
@@ -131,6 +132,7 @@ graph TB
     TAB --> STRIKE_BRAIN
     BETWAY --> MONITOR
     ODDCHECK --> MONITOR
+    ATR --> MONITOR
     MONITOR --> ALERT
     PDF --> STRIKE_BRAIN
     ALERT --> TG
@@ -452,7 +454,7 @@ core_agent/                          # Python backend (refactored)
 │   ├── learning/                   # Learning engine
 │   └── notifications/              # Telegram bot
 ├── tools/                          # MAF tools
-│   └── maf_tool_registry.py       # 11 gambling-free tools
+│   └── maf_tool_registry.py       # 15 gambling-free tools (incl. ATR + dreams)
 ├── routes/                         # API endpoints
 │   ├── agent.py, betting.py, racing.py
 ├── ollama_configs/                 # 5 racing Modelfiles

@@ -16,15 +16,15 @@ from typing import List, Optional, Dict
 logger = logging.getLogger("tab4racing-scraper")
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+from core_agent.core.http_client import get_async_client
 
 try:
-    import httpx
     from bs4 import BeautifulSoup
 
     HAS_SCRAPER_DEPS = True
 except ImportError:
     HAS_SCRAPER_DEPS = False
-    logger.warning("httpx/bs4 not installed - scraper in stub mode")
+    logger.warning("bs4 not installed - scraper in stub mode")
 
 
 @dataclass
@@ -125,29 +125,14 @@ class TAB4RacingScraper:
         },
     }
 
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-ZA,en;q=0.9",
-    }
-
     def __init__(self, timeout: int = 30, retries: int = 3):
         self.timeout = timeout
         self.retries = retries
-        self._client: Optional["httpx.AsyncClient"] = None
+        self._client = None
 
-    async def _get_client(self) -> "httpx.AsyncClient":
-        if self._client is None or self._client.is_closed:
-            import httpx
-
-            self._client = httpx.AsyncClient(
-                headers=self.HEADERS,
-                timeout=self.timeout,
-                follow_redirects=True,
-            )
+    async def _get_client(self):
+        if self._client is None:
+            self._client = get_async_client(timeout=self.timeout)
         return self._client
 
     def get_active_tracks(self) -> List[str]:
@@ -182,7 +167,11 @@ class TAB4RacingScraper:
         if url:
             try:
                 client = await self._get_client()
-                resp = await client.get(url)
+                headers = {
+                    "Accept-Language": "en-ZA,en;q=0.9",
+                    "Referer": "https://www.tabonline.co.za/"
+                }
+                resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
                     races = self._parse_response(track, resp.text)
                     if races:
@@ -210,10 +199,14 @@ class TAB4RacingScraper:
         """Helper to fetch from the 4RACINGWEB_TAB API."""
         url = "https://totex-vasx.4racing.com/PRODUCTS/webservice/phumelelaV4/get/GamePlayRequest/horseracing/4RACINGWEB_TAB"
         params = {"msisdn": "0000", "game": "horseracing", "selectionType": "0"}
+        headers = {
+            "Accept-Language": "en-ZA,en;q=0.9",
+            "Referer": "https://www.tabonline.co.za/"
+        }
 
         try:
             client = await self._get_client()
-            response = await client.get(url, params=params)
+            response = await client.get(url, params=params, headers=headers)
             if response.status_code != 200:
                 return []
 

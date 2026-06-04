@@ -316,6 +316,13 @@ What would you like to do?"""
             logger.error(f"Telegram Exception: {context.error}", exc_info=context.error)
 
     def run(self):
+        mode = os.getenv("TELEGRAM_MODE", "polling")
+        if mode == "webhook":
+            logger.info("TELEGRAM_MODE=webhook — skipping polling, Modal handles Telegram updates")
+            import time
+            while True:
+                time.sleep(3600)
+
         brain.initialize()
 
         application = ApplicationBuilder().token(self.bot_token).build()

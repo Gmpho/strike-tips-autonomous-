@@ -17,6 +17,7 @@ services:
     volumes:
       - .:/app
       - chroma_cache:/root/.cache/chroma
+      - playwright_cache:/root/.cache/ms-playwright
     ports:
       - "8000:8000"
     dns:
@@ -46,6 +47,7 @@ services:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile
       - chroma_cache:/root/.cache/chroma
+      - playwright_cache:/root/.cache/ms-playwright
     ipc: host
     shm_size: 2gb
     init: true
@@ -54,7 +56,7 @@ services:
       - 8.8.8.8
     security_opt:
       - seccomp:seccomp_profile.json
-    command: python3 core_agent/core/adaptive_odds_monitor.py
+    command: /bin/sh -c "playwright install chromium 2>&1 || true && python3 core_agent/core/adaptive_odds_monitor.py"
     deploy:
       resources:
         limits:
@@ -79,6 +81,7 @@ services:
     restart: always
     volumes:
       - .:/app
+      - playwright_cache:/root/.cache/ms-playwright
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -132,3 +135,4 @@ volumes:
   redisinsight_data:
   redis_data:
   chroma_cache:
+  playwright_cache:

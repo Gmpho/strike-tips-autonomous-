@@ -1,20 +1,142 @@
 import asyncio
+import difflib
+import glob
 import json
 import logging
 import os
 import sys
-import difflib
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, Dict
 
-from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR
+from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR, ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
 from core_agent.core.alert_engine import AlertEngine
 from core_agent.core.alert_digester import AlertDigester
 from core_agent.skills.parsers.betway_api import BetwayAPI
-from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
+try:
+    from core_agent.skills.parsers.racing_odds_api import RacingOddsAPI, _normalise
+    _HAS_RACING_ODDS = True
+except ImportError:
+    _HAS_RACING_ODDS = False
+
+    def _normalise(name: str) -> str:
+        import re
+        return re.sub(r"[^a-zA-Z0-9]", "", name).lower()
+
+    class RacingOddsAPI:
+        async def get_snapshot_format(self, target_date=None):
+            return {"events": {}, "count": 0}
+
+try:
+    from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+    _HAS_ATR = True
+except ImportError:
+    _HAS_ATR = False
+
+    class AtTheRacesAPI:
+        async def get_results(self, date): return []
+        async def get_market_movers(self): return []
+        async def get_predictor(self): return []
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
 HEALING_EVENTS_PATH = os.path.join("data", "healing_events.json")
+
+
+def _norm_time(t: str) -> str:
+    """Normalise race time to HH:MM format."""
+    return t.replace("-", ":").replace(".", ":").strip()
+
+
+def _norm_course(c: str) -> str:
+    """Normalise course name for cross-source matching."""
+    n = c.lower().strip()
+    n = n.replace(" racecourse", "").replace(" park", "").strip()
+    # Also normalise hyphens: "Lingfield Park" vs "lingfield-park"
+    n = n.replace("-", " ").replace("_", " ").strip()
+    return _normalise(n)
+
+
+def _merge_ro_into(betway_state: dict, ro_snapshot: dict):
+    """Inject racing-odds.com data into matching Betway events/runners.
+
+    Matches by (date, course, time) with fuzzy fallbacks for
+    date offsets (±1 day), course name variations, and horse name
+    variations via difflib.
+    """
+    ro_events = ro_snapshot.get("events", {})
+    if not ro_events:
+        logger.info("Racing-Odds returned no events -- skipping merge")
+        return
+
+    # Build lookup keyed by (date, course)
+    ro_lookup: Dict[str, Dict] = {}
+    for e in ro_events.values():
+        date = e.get("date", "")
+        key = f"{date}|{_norm_course(e.get('course',''))}|{_norm_time(e.get('t',''))}"
+        ro_lookup[key] = {
+            "horses": {_normalise(r["name"]): r for r in e.get("runners", [])},
+            "horse_names": [_normalise(r["name"]) for r in e.get("runners", [])],
+            "original_horses": {_normalise(r["name"]): r["name"] for r in e.get("runners", [])},
+        }
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    # Also try yesterday / tomorrow for date-offset matching
+    date_candidates = [today_str]
+    try:
+        dt = datetime.strptime(today_str, "%Y-%m-%d")
+        date_candidates.append((dt - timedelta(days=1)).strftime("%Y-%m-%d"))
+        date_candidates.append((dt + timedelta(days=1)).strftime("%Y-%m-%d"))
+    except ValueError:
+        pass
+
+    merged_races = 0
+    fuzzy_horse_matches = 0
+    for event in betway_state.get("events", {}).values():
+        bw_course = _norm_course(event.get("course", ""))
+        bw_time = _norm_time(event.get("t", ""))
+        ro_match = None
+
+        # Try exact match across candidate dates
+        for d in date_candidates:
+            key = f"{d}|{bw_course}|{bw_time}"
+            ro_match = ro_lookup.get(key)
+            if ro_match:
+                break
+
+        # Fallback: try fuzzy course matching (strip more aggressively)
+        if not ro_match:
+            bw_course_stripped = bw_course.replace("park", "").replace("racecourse", "").replace(" ", "").strip()
+            for d in date_candidates:
+                for rok, rov in ro_lookup.items():
+                    rok_course = _norm_course(rok.split("|")[1]) if "|" in rok else ""
+                    rok_stripped = rok_course.replace("park", "").replace("racecourse", "").replace(" ", "").strip()
+                    if rok_stripped == bw_course_stripped and rok.endswith(f"|{bw_time}"):
+                        ro_match = rov
+                        break
+                if ro_match:
+                    break
+
+        if not ro_match:
+            continue
+
+        merged_races += 1
+        for runner in event.get("runners", []):
+            rn = _normalise(runner.get("name", ""))
+            ro_horse = ro_match["horses"].get(rn)
+            if not ro_horse:
+                # Fuzzy horse name matching
+                matches = difflib.get_close_matches(rn, ro_match["horse_names"], n=1, cutoff=0.6)
+                if matches:
+                    ro_horse = ro_match["horses"].get(matches[0])
+                    fuzzy_horse_matches += 1
+            if ro_horse:
+                runner["ro_odds"] = ro_horse.get("odds")
+                runner["ro_bookmakers"] = ro_horse.get("ro_bookmakers", {})
+
+    logger.info(
+        "Racing-Odds merged into %d/%d Betway races (fuzzy horse matches: %d)",
+        merged_races, len(betway_state.get("events", {})), fuzzy_horse_matches,
+    )
 
 
 def _write_healing_event(action: str, details: str, agent: str = "OddsMonitor", status: str = "SUCCESS"):
@@ -66,10 +188,10 @@ class AdaptiveOddsMonitor:
             notification_callback=self._on_alert
         )
         self.betway = BetwayAPI()
-        self.oc_scraper = OddscheckerScraper()
+        self.racing_odds = RacingOddsAPI()
+        self.at_races = AtTheRacesAPI()
 
         self.monitoring_active = True
-        self.oc_state = {"odds": {}}
         self._last_alert_ts: float = 0
         self._alert_cooldown: float = 120.0
 
@@ -99,23 +221,10 @@ class AdaptiveOddsMonitor:
         await self.alert_engine.initialize()
         self.events_cache = self.intel_cache.rehydrate()
 
-    async def _fetch_oc_odds_loop(self):
-        """Fetch Oddschecker best odds periodically (lightweight httpx, no browser)."""
-        while self.monitoring_active:
-            try:
-                odds = await self.oc_scraper.get_latest_odds()
-                if odds:
-                    self.oc_state["odds"] = odds
-            except Exception as e:
-                logger.warning(f"⚠️ OC fetch error: {e}")
-            await asyncio.sleep(300)
-
     async def run(self):
         await self.initialize()
         if self._digester:
             await self._digester.start_async()
-        # Start Oddschecker in background
-        asyncio.create_task(self._fetch_oc_odds_loop())
 
         # Start heartbeat loop — generates dreams + saves to ChromaDB every 5min
         from core_agent.core.heartbeat import run_heartbeat_loop
@@ -127,44 +236,17 @@ class AdaptiveOddsMonitor:
 
         while self.monitoring_active:
             try:
-                # 1. Fetch Betway Snapshot (using TrackRacing/TAB API)
-                state = await self.betway.get_snapshot_format()
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                # 1. Fetch Betway + Racing-Odds in parallel
+                bw_task = asyncio.create_task(self.betway.get_snapshot_format())
+                ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
+                state = await bw_task
+                ro_snapshot = await ro_task
 
-                # 2. Merge Oddschecker odds for value analysis
-                oc_odds = self.oc_state.get("odds", {})
-                if oc_odds:
-                    # Flatten OC odds for easier matching
-                    flat_oc_odds = {}
-                    for oc_race, oc_horses in oc_odds.items():
-                        flat_oc_odds.update(oc_horses)
+                # 1b. Merge Racing-Odds data into Betway events where race/horse match
+                _merge_ro_into(state, ro_snapshot)
 
-                    for eid, e in state.get("events", {}).items():
-                        for r in e.get("runners", []):
-                            horse_name = r.get("name", "")
-                            # Try exact match
-                            if horse_name in flat_oc_odds:
-                                r["odds"] = flat_oc_odds[horse_name]
-                            else:
-                                # Try fuzzy match
-                                matches = difflib.get_close_matches(
-                                    horse_name.lower(),
-                                    [h.lower() for h in flat_oc_odds.keys()],
-                                    n=1,
-                                    cutoff=0.8,
-                                )
-                                if matches:
-                                    matched_key = next(
-                                        (
-                                            k
-                                            for k in flat_oc_odds.keys()
-                                            if k.lower() == matches[0]
-                                        ),
-                                        None,
-                                    )
-                                    if matched_key:
-                                        r["odds"] = flat_oc_odds[matched_key]
-
-                # 3. Persistence & Pruning
+                # 2. Persistence & Pruning
                 # Remove finished races and normalize names
                 state["events"] = {
                     eid: {**e, "en": " ".join(e.get("en", "").split())}
@@ -184,6 +266,37 @@ class AdaptiveOddsMonitor:
                     await publish_snapshot(redis_client, state)
                 except Exception:
                     pass
+
+                # 1c. Fetch ATR data (results, movers, predictor) into separate snapshots
+                try:
+                    atr_results = await self.at_races.get_results("yesterday")
+                    if atr_results:
+                        with open(ATR_RESULTS_PATH, "w") as f:
+                            json.dump({"results": atr_results, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                except Exception as e:
+                    logger.debug("ATR results fetch skipped: %s", e)
+
+                try:
+                    atr_movers = await self.at_races.get_market_movers()
+                    if atr_movers:
+                        with open(ATR_MOVERS_PATH, "w") as f:
+                            json.dump({"movers": atr_movers, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                except Exception as e:
+                    logger.debug("ATR movers fetch skipped: %s", e)
+
+                try:
+                    atr_predictions = await self.at_races.get_predictor()
+                    if atr_predictions:
+                        with open(ATR_PREDICTOR_PATH, "w") as f:
+                            json.dump({"predictions": atr_predictions, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                except Exception as e:
+                    logger.debug("ATR predictor fetch skipped: %s", e)
+
+                # Check ATR snapshot staleness and alert if needed
+                await self._check_atr_staleness()
+
+                # TTL-based cleanup of old ATR snapshots (keep last 7 days)
+                await self._cleanup_atr_snapshots()
 
                 active_ids = list(state["events"].keys())
 
@@ -220,6 +333,73 @@ class AdaptiveOddsMonitor:
                 logger.debug(traceback.format_exc())
 
             await asyncio.sleep(45)
+
+    async def _check_atr_staleness(self, max_age_hours: int = 3) -> None:
+        """Alert if ATR snapshots haven't been updated within max_age_hours."""
+        from core_agent.config.paths import ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
+        import json
+        now = datetime.now()
+        stale_alerts = []
+        for path, name in [
+            (ATR_RESULTS_PATH, "ATR Results"),
+            (ATR_MOVERS_PATH, "ATR Market Movers"),
+            (ATR_PREDICTOR_PATH, "ATR Predictor"),
+        ]:
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text())
+                    ts_str = data.get("timestamp")
+                    if ts_str:
+                        ts = datetime.fromisoformat(ts_str)
+                        age_hours = (now - ts).total_seconds() / 3600
+                        if age_hours > max_age_hours:
+                            stale_alerts.append(f"{name} stale ({age_hours:.1f}h old, last: {ts_str[:19]})")
+                    else:
+                        stale_alerts.append(f"{name} missing timestamp")
+                except Exception:
+                    stale_alerts.append(f"{name} unreadable")
+            else:
+                stale_alerts.append(f"{name} missing file")
+        if stale_alerts:
+            msg = " | ".join(stale_alerts)
+            logger.warning(f"🚨 ATR STALENESS: {msg}")
+            try:
+                from core_agent.core.alert_engine import AlertEngine
+                if not hasattr(self, "_staleness_alerted"):
+                    self._staleness_alerted = set()
+                alert_key = f"atr_staleness_{hash(msg)}"
+                if alert_key not in self._staleness_alerted:
+                    self._staleness_alerted.add(alert_key)
+                    # Fire a one-time alert via alert engine (non-blocking)
+                    from core_agent.core.alert_engine import AlertEngine
+                    alert_engine = AlertEngine()
+                    await alert_engine._fire_async(
+                        "atr_staleness", msg, {"max_age_hours": max_age_hours, "details": stale_alerts}
+                    )
+            except Exception:
+                pass
+
+    async def _cleanup_atr_snapshots(self, ttl_days: int = 7) -> None:
+        """Remove ATR snapshot files older than ttl_days (keeps latest, removes backup copies if any)."""
+        from core_agent.config.paths import DATA_DIR
+        import glob
+        from datetime import datetime
+        now = datetime.now()
+        for pattern in ["atr_*_snapshot.json", "atr_*_snapshot.json.*"]:
+            for path_str in glob.glob(str(DATA_DIR / pattern)):
+                try:
+                    path = Path(path_str)
+                    # Keep the main snapshot files
+                    if path.name in ["atr_results_snapshot.json", "atr_movers_snapshot.json", "atr_predictor_snapshot.json"]:
+                        continue
+                    # Remove backup/old copies older than TTL
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime)
+                    age_days = (now - mtime).days
+                    if age_days > ttl_days:
+                        path.unlink()
+                        logger.info(f"🧹 Cleaned up old ATR snapshot: {path.name} ({age_days}d old)")
+                except Exception as e:
+                    logger.debug(f"ATR cleanup skipped {path_str}: {e}")
 
     async def close(self):
         """Clean up resources (digester, etc.)."""

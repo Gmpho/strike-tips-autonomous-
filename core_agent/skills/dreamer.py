@@ -57,7 +57,7 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
             scenario_clean = scenario.replace(f" at {course}", "").replace(f" on {course}", "")
             scenario_clean = re.sub(r"Race \d+", "", scenario_clean).strip().rstrip("?,.")
             key_terms = scenario_clean[:25]
-            result = search_racing_data(f"{course} horse racing {key_terms}", limit=2)
+            result = await search_racing_data(f"{course} horse racing {key_terms}", limit=2)
             snippets = [r.get("snippet", "") for r in result.get("results", [])]
             if snippets:
                 search_context = "\nReal-world context: " + " | ".join(s[:120] for s in snippets if s)

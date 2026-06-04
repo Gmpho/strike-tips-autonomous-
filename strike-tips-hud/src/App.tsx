@@ -13,6 +13,9 @@ import { AnalyticsView } from './components/sidebar/AnalyticsView';
 import { HealingView } from './components/sidebar/HealingView';
 import { SystemVitalsView } from './components/sidebar/SystemVitalsView';
 import { DreamingView } from './components/sidebar/DreamingView';
+import { MarketMoversView } from './components/sidebar/MarketMoversView';
+import { PredictorView } from './components/sidebar/PredictorView';
+import { ResultsView } from './components/sidebar/ResultsView';
 import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
@@ -21,11 +24,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState(() => {
+    const saved = localStorage.getItem('strike_active_view');
+    return saved && saved !== 'undefined' ? saved : 'dashboard';
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const state = useHUD();
   useTelegram();
+
+  useEffect(() => {
+    localStorage.setItem('strike_active_view', activeView);
+  }, [activeView]);
 
   useEffect(() => {
     if (state.systemHealth.cpu > 60) {
@@ -77,6 +87,12 @@ export const App: React.FC = () => {
         return <SystemVitalsView key="vitals-view" />;
       case 'dreaming':
         return <DreamingView key="dreaming-view" />;
+      case 'market-movers':
+        return <MarketMoversView key="market-movers-view" />;
+      case 'predictor':
+        return <PredictorView key="predictor-view" />;
+      case 'results':
+        return <ResultsView key="results-view" />;
       default:
         return <div key="default-view" className="text-white p-12">Select a module</div>;
     }

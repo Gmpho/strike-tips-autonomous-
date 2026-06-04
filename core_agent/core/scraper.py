@@ -11,8 +11,8 @@ import logging
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
-from error_handler import retry_on_error, ScraperError
-from config.model_config import ModelConfig
+from core_agent.core.error_handler import retry_on_error, ScraperError
+from core_agent.config.model_config import ModelConfig
 
 logger = logging.getLogger("strike-scraper")
 

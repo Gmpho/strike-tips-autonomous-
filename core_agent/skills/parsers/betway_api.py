@@ -1,4 +1,3 @@
-import httpx
 import logging
 import asyncio
 import re
@@ -6,85 +5,77 @@ import random
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .tab4racing import ScrapedRace, ScrapedRunner
+from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("betway-api")
 
 
 class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
-    _USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    ]
-
-    @property
-    def HEADERS(self):
-        return {
-            "User-Agent": random.choice(self._USER_AGENTS),
-            "Referer": "https://www.betway.co.za/sport/horse-racing",
-            "Origin": "https://www.betway.co.za",
-        }
 
     async def fetch_racing_data(self) -> Dict[str, Any]:
         """Fetch raw racing data from Betway's TrackRacing (TAB) API."""
-        async with httpx.AsyncClient(headers=self.HEADERS, timeout=30.0) as client:
-            for attempt in range(3):
-                try:
-                    daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
-                    daily_resp = await client.get(daily_url)
-                    daily_resp.raise_for_status()
-                    data = daily_resp.json()
+        client = get_async_client(timeout=30.0, resolve_hosts={"www.betway.co.za"})
+        bw_headers = {
+            "Referer": "https://www.betway.co.za/sport/horse-racing",
+            "Origin": "https://www.betway.co.za",
+        }
+        for attempt in range(3):
+            try:
+                daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
+                daily_resp = await client.get(daily_url, headers=bw_headers)
+                daily_resp.raise_for_status()
+                data = daily_resp.json()
 
-                    event_ids = []
-                    # Allowed regions to filter noise
-                    ALLOWED = [
-                        "South Africa",
-                        "UK and Ireland",
-                        "Australia",
-                        "New Zealand",
-                        "USA",
-                        "Hong Kong",
-                        "Japan",
-                        "France",
-                    ]
+                event_ids = []
+                ALLOWED = [
+                    "South Africa",
+                    "UK and Ireland",
+                    "Australia",
+                    "New Zealand",
+                    "USA",
+                    "Hong Kong",
+                    "Japan",
+                    "France",
+                ]
 
-                    for reg in data.get("regions", []):
-                        if not any(a in reg.get("name", "") for a in ALLOWED):
-                            continue
-                        for e in reg.get("sportEvents", []):
-                            if not e.get("isFinished", True):
-                                event_ids.append(
-                                    (e["eventId"], reg.get("name"), (e.get("league") or "").strip())
-                                )
+                for reg in data.get("regions", []):
+                    if not any(a in reg.get("name", "") for a in ALLOWED):
+                        continue
+                    for e in reg.get("sportEvents", []):
+                        if not e.get("isFinished", True):
+                            event_ids.append(
+                                (e["eventId"], reg.get("name"), (e.get("league") or "").strip())
+                            )
 
-                    # Fetch all unfinished event details with concurrency limit (reduces CPU burst)
-                    sem = asyncio.Semaphore(10)
-                    tasks = [
-                        self._fetch_event_safe(client, eid, reg_name, league, sem)
-                        for eid, reg_name, league in event_ids
-                    ]
+                sem = asyncio.Semaphore(10)
+                tasks = [
+                    self._fetch_event_safe(client, eid, reg_name, league, sem)
+                    for eid, reg_name, league in event_ids
+                ]
 
-                    events_details = await asyncio.gather(*tasks)
-                    # Filter out None values from failed fetches
-                    events_details = [e for e in events_details if e]
+                events_details = await asyncio.gather(*tasks)
+                events_details = [e for e in events_details if e]
 
-                    return {"status": "success", "details": events_details}
-                except Exception as e:
-                    logger.warning(f"Betway fetch attempt {attempt+1} failed: {e}")
-                    await asyncio.sleep(2**attempt)
-            return {"status": "error", "error": "Max retries reached"}
+                return {"status": "success", "details": events_details}
+            except Exception as e:
+                logger.warning(f"Betway fetch attempt {attempt+1} failed: {e}")
+                await asyncio.sleep(2**attempt)
+        return {"status": "error", "error": "Max retries reached"}
 
     async def _fetch_event_safe(self, client, eid, reg_name, league, sem=None) -> Optional[Dict]:
         try:
             url = f"{self.BASE_URL}/GetEvent?eventIds={eid}&marketGroupName=&countryCode=ZA"
+            bw_headers = {
+                "Referer": "https://www.betway.co.za/sport/horse-racing",
+                "Origin": "https://www.betway.co.za",
+            }
             if sem:
                 async with sem:
-                    await asyncio.sleep(random.uniform(0.05, 0.3))  # jitter
-                    resp = await client.get(url)
+                    await asyncio.sleep(random.uniform(0.05, 0.3))
+                    resp = await client.get(url, headers=bw_headers)
             else:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=bw_headers)
             if resp.status_code == 200:
                 data = resp.json()
                 data["eventId"] = eid

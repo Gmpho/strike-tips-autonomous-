@@ -139,11 +139,6 @@ class StrikeTips:
         self.bankroll = BankrollGovernor(data_dir=self.data_dir)
         self.scraper = TAB4RacingScraper()
         self.betway = BetwayAPI()
-        try:
-            from core_agent.skills.parsers.oddschecker_scraper import OddscheckerScraper
-            self.oddschecker = OddscheckerScraper()
-        except Exception:
-            self.oddschecker = None
         self.parser = SelfHealingParser()
         self.ai = AIProvider()
         self.learning = AdaptiveAnalyzer(data_dir=self.data_dir)

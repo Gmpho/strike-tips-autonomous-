@@ -15,15 +15,22 @@ export class DataBridge {
   private prevBetCount = 0;
   private fastBackoffMs = FAST_INTERVAL;
   private slowBackoffMs = SLOW_INTERVAL;
+  private refCount = 0;
 
   start() {
+    this.refCount++;
+    if (this.refCount > 1) return;
     this.scheduleFast();
     this.scheduleSlow();
   }
 
   stop() {
+    this.refCount--;
+    if (this.refCount > 0) return;
     if (this.fastTimer) clearTimeout(this.fastTimer);
     if (this.slowTimer) clearTimeout(this.slowTimer);
+    this.fastTimer = null;
+    this.slowTimer = null;
   }
 
   private scheduleFast() {
@@ -73,6 +80,7 @@ export class DataBridge {
 
       hudStore.updateState({
         events: snapshot.events || {},
+        alerts: snapshot.alerts || [],
         systemHealth: {
           cpu: health.cpu_usage_percent || 0,
           memory: health.memory_usage_percent || 0,
@@ -107,7 +115,7 @@ export class DataBridge {
 
   private async runSlow() {
     try {
-      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
+      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes, moversRes, predRes, resultsRes] = await Promise.all([
         apiFetch(BETTING_ENDPOINTS.history),
         apiFetch(BETTING_ENDPOINTS.stats),
         apiFetch('/api/betting/learning/roi-by-track'),
@@ -117,6 +125,9 @@ export class DataBridge {
         apiFetch('/api/system/vitals'),
         apiFetch('/api/betting/bankroll-history'),
         apiFetch('/api/agent/memory'),
+        apiFetch('/api/racing/market-movers'),
+        apiFetch('/api/racing/predictor'),
+        apiFetch('/api/racing/results'),
       ]);
 
       const history = historyRes.ok ? await historyRes.json() : { bets: [] };
@@ -156,6 +167,9 @@ export class DataBridge {
         vitals: {
           docker: vitals.vitals || [],
         },
+        marketMovers: moversRes.ok ? await moversRes.json() : [],
+        predictions: predRes.ok ? await predRes.json() : [],
+        results: resultsRes.ok ? await resultsRes.json() : [],
       });
 
       this.slowBackoffMs = SLOW_INTERVAL;

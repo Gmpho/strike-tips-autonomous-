@@ -1,6 +1,6 @@
 import logging
-import httpx
 from typing import Optional
+from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("pdf-discovery")
 
@@ -19,26 +19,21 @@ class PDFDiscoveryService:
         today = date_str or date.today().isoformat()
 
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    cls.API_URL,
-                    params={
-                        "sub_action": "getComputaform",
-                        "tag": "ComputaformSA",
-                        "date": today,
-                    },
-                    headers={
-                        "Accept": "application/json, text/plain, */*",
-                        "Referer": "https://www.tab.co.za/",
-                        "User-Agent": (
-                            "Mozilla/5.0 (X11; Linux x86_64) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/148.0.0.0 Safari/537.36"
-                        ),
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            client = get_async_client(timeout=15)
+            resp = await client.get(
+                cls.API_URL,
+                params={
+                    "sub_action": "getComputaform",
+                    "tag": "ComputaformSA",
+                    "date": today,
+                },
+                headers={
+                    "Accept": "application/json, text/plain, */*",
+                    "Referer": "https://www.tab.co.za/",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
             pdfs = (data.get("data", {}) or {}).get("ComputaformSA", [])
             track_lower = track.lower()

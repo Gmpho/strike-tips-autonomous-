@@ -85,12 +85,44 @@ export interface BetStats {
   roi: number;
 }
 
+export interface MarketMover {
+  horse: string;
+  course: string;
+  time: string;
+  current_odds: string;
+  first_show: string;
+  movement: string;
+}
+
+export interface Predictor {
+  horse: string;
+  raw: string;
+  prediction: string;
+}
+
+export interface ResultRunner {
+  name: string;
+  position: string;
+  odds: string;
+  odds_decimal: number | null;
+  form: string;
+}
+
+export interface ResultRace {
+  course: string;
+  date: string;
+  time: string;
+  title: string;
+  runners: ResultRunner[];
+}
+
 export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
   betHistory: BetRecord[];
   betStats: BetStats | null;
   logs: string[];
+  alerts: any[];
   learning: LearningState | null;
   bankrollHistory: Array<{ t: string; balance: number }>;
   honcho: { status: string; context: string; dreamContext: string } | null;
@@ -108,5 +140,8 @@ export interface HUDState {
   vitals: {
     docker: DockerVital[];
   };
+  marketMovers: MarketMover[];
+  predictions: Predictor[];
+  results: ResultRace[];
   lastUpdate: number;
 }

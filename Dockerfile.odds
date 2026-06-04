@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+FROM strike-tips-base:latest
 
 # 1. Static Setup
 WORKDIR /app
@@ -9,13 +9,18 @@ RUN mkdir -p /app/data/browser_profile /app/data/cache
 COPY requirements.txt .
 RUN pip install -r requirements.txt beautifulsoup4 lxml aiohttp
 
-# 3. Source Code Layer
-COPY . .
+# Install Playwright system dependencies (libglib2.0, libnss3, etc.)
+RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"
 
-# Running as root to ensure full access to host-mounted volumes
+# 3. User config — must be root for host-mounted volume write access
 USER root
 
-# Ensure browser is ready
-RUN playwright install chromium
+# 4. Source Code Layer
+COPY . .
 
-CMD ["python", "core_agent/core/adaptive_odds_monitor.py"]
+# Persist Scrapling cache under host-mounted volume
+RUN mkdir -p /app/data/.scrapling && ln -sfn /app/data/.scrapling /root/.scrapling
+
+
+# Install browsers at runtime (CDN is reachable from containers but not Docker build daemon)
+CMD playwright install chromium 2>&1 || true && python core_agent/core/adaptive_odds_monitor.py
