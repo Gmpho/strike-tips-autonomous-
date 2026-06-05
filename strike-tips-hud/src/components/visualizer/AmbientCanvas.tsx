@@ -8,27 +8,24 @@ const AmbientGrid = () => {
   const meshRef = useRef<THREE.Mesh>(null);
   const state = useHUD();
 
-  useFrame((root, delta) => {
-    // Dynamic Throttle: Only skip frames if CPU is actually peaking right now
-    const currentCpu = state.systemHealth.cpu;
-    if (currentCpu > 80 && root.clock.elapsedTime % 0.06 < delta) return;
-
+  useFrame((root) => {
     if (meshRef.current) {
-      meshRef.current.rotation.x = Math.PI / 2;
       meshRef.current.position.z = (root.clock.elapsedTime * 0.4) % 1;
     }
   });
 
+  const isHighLoad = state.systemHealth.cpu > 75;
+
   return (
-    <mesh ref={meshRef} position={[0, -2, 0]}>
+    <mesh ref={meshRef} position={[0, -2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[100, 100, 16, 16]} />
       <meshStandardMaterial 
-        color={state.systemHealth.cpu > 75 ? "#ff0044" : "#6b21a8"} 
+        color={isHighLoad ? "#ff0044" : "#6b21a8"} 
         wireframe 
         transparent 
-        opacity={0.3} 
-        emissive={state.systemHealth.cpu > 75 ? "#550011" : "#220044"}
-        emissiveIntensity={3}
+        opacity={0.2} 
+        emissive={isHighLoad ? "#550011" : "#220044"}
+        emissiveIntensity={isHighLoad ? 1 : 2}
       />
     </mesh>
   );
@@ -36,14 +33,14 @@ const AmbientGrid = () => {
 
 const DataParticles = () => {
   const state = useHUD();
-  const particleCount = Object.keys(state.events).length * 5 + 30; // Reduced particle count
+  const particleCount = useMemo(() => Object.keys(state.events).length * 5 + 30, [state.events]);
   
   const [positions, speeds] = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
     const spd = new Float32Array(particleCount);
     for (let i = 0; i < particleCount; i++) {
       pos[i * 3] = (Math.random() - 0.5) * 20;
-      pos[i * 3 + 1] = Math.random() * 10;
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 10;
       pos[i * 3 + 2] = (Math.random() - 0.5) * 20;
       spd[i] = Math.random() * 0.02 + 0.01;
     }
@@ -51,40 +48,60 @@ const DataParticles = () => {
   }, [particleCount]);
 
   const pointsRef = useRef<THREE.Points>(null);
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
 
-  useFrame((root, delta) => {
-    // Throttle: Cap at 30fps during load
-    if (state.systemHealth.cpu > 50 && root.clock.elapsedTime % 0.06 < delta) return;
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color("#10b981") },
+    uOpacity: { value: 0.6 }
+  }), []);
 
-    if (pointsRef.current) {
-      const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
-      for (let i = 0; i < particleCount; i++) {
-        positions[i * 3 + 1] += speeds[i] * (state.systemHealth.cpu > 50 ? 1.2 : 1);
-        if (positions[i * 3 + 1] > 10) {
-          positions[i * 3 + 1] = 0;
-        }
-      }
-      pointsRef.current.geometry.attributes.position.needsUpdate = true;
+  useFrame((root) => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.uTime.value = root.clock.elapsedTime;
+      materialRef.current.uniforms.uColor.value.set(state.systemHealth.status === 'ONLINE' ? "#10b981" : "#f59e0b");
     }
   });
 
   return (
     <points ref={pointsRef}>
       <bufferGeometry>
-        {/* @ts-ignore */}
         <bufferAttribute
           attach="attributes-position"
-          count={particleCount}
-          array={positions}
-          itemSize={3}
+          args={[positions, 3]}
+        />
+        <bufferAttribute
+          attach="attributes-speed"
+          args={[speeds, 1]}
         />
       </bufferGeometry>
-      <pointsMaterial 
-        size={0.05} 
-        color={state.systemHealth.status === 'ONLINE' ? "#10b981" : "#f59e0b"} 
-        transparent 
-        opacity={0.6}
+      <shaderMaterial
+        ref={materialRef}
+        transparent
         blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        uniforms={uniforms}
+        vertexShader={`
+          uniform float uTime;
+          attribute float speed;
+          varying float vOpacity;
+          void main() {
+            vec3 pos = position;
+            pos.y = mod(pos.y + uTime * speed * 2.0 + 5.0, 10.0) - 5.0;
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            gl_PointSize = 6.0 * (1.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+            vOpacity = 1.0 - abs(pos.y / 5.0);
+          }
+        `}
+        fragmentShader={`
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          varying float vOpacity;
+          void main() {
+            gl_FragColor = vec4(uColor, vOpacity * uOpacity);
+          }
+        `}
       />
     </points>
   );
@@ -119,31 +136,33 @@ export const AmbientCanvas: React.FC = () => {
     <div className="absolute inset-0 pointer-events-none z-0">
       <Canvas 
         camera={{ position: [0, 2, 5], fov: 60 }} 
-        dpr={[1, 1.5]} 
+        dpr={[1, 2]} // High-DPI support for Retina displays
         gl={{ 
           powerPreference: 'low-power', 
           antialias: false, 
           stencil: false, 
           depth: true,
-          alpha: true
+          alpha: true,
+          preserveDrawingBuffer: false
         }}
         onCreated={(state) => {
-          if (!state.gl.capabilities.isWebGL2) {
-            console.warn('[WebGL] Only WebGL1 available, 3D effects may be limited');
-          }
           state.gl.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
+            console.warn('[WebGL] Context lost. Attempting restoration...');
+          });
+          state.gl.domElement.addEventListener('webglcontextrestored', () => {
+            console.log('[WebGL] Context restored.');
           });
         }}
       >
         <fog attach="fog" args={[isLight ? '#f8fafc' : '#000000', 2, 15]} />
         <ambientLight intensity={isLight ? 0.8 : 0.5} />
-        <pointLight position={[10, 10, 10]} intensity={1} color={isLight ? "#a855f7" : "#a855f7"} />
-        <Float speed={1.5} rotationIntensity={0.4} floatIntensity={0.4}>
+        <pointLight position={[10, 10, 10]} intensity={1} color="#a855f7" />
+        <Float speed={1.2} rotationIntensity={0.3} floatIntensity={0.3}>
           <AmbientGrid />
         </Float>
         <DataParticles />
-        <Stars radius={100} depth={50} count={isLight ? 200 : 1000} factor={4} saturation={0} speed={1} />
+        <Stars radius={100} depth={50} count={isLight ? 200 : 800} factor={4} saturation={0} speed={1} />
       </Canvas>
     </div>
   );
