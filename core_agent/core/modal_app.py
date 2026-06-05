@@ -24,7 +24,7 @@ app = modal.App("strike-tips-racing")
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
 ollama_volume = modal.Volume.from_name("ollama-models", create_if_missing=True)
 
-secrets = [modal.Secret.from_name("strike-tips-secrets")]
+secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key")]
 
 
 # ── Persistent Ollama Server (GPU-backed) ────

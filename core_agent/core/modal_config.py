@@ -32,6 +32,7 @@ secrets = [
             "TELEGRAM_CHAT_ID",
         ],
     ),
+    modal.Secret.from_name("strike-tips-api-key"),
 ]
 
 # Optional AI provider secrets (at least one recommended)

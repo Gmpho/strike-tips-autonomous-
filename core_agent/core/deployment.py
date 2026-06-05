@@ -29,13 +29,7 @@ data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
 # 3. Secrets
 secrets = [
     modal.Secret.from_name("strike-tips-secrets"),
-    modal.Secret.from_dict(
-        {
-            "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY", ""),
-            "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
-            "OLLAMA_HOST": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-        }
-    ),
+    modal.Secret.from_name("strike-tips-api-key"),
 ]
 
 
@@ -68,7 +62,7 @@ def run_scan():
     return {"status": "complete"}
 
 
-@app.function(**get_shared_args(), ports={8000: 8000})
+@app.function(**get_shared_args())
 @modal.asgi_app()
 def serve_api():
     """Host the FastAPI backend on Modal."""
