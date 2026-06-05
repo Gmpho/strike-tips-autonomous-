@@ -1,4 +1,4 @@
-FROM strike-tips-base:latest
+FROM python:3.10-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
