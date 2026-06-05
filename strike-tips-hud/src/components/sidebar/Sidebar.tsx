@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
   BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
-  TrendingUp, Eye, Flag
+  TrendingUp, Flag
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 

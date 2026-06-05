@@ -245,7 +245,7 @@ export const LogsView: React.FC = () => {
       {viewMode === 'timeline' && (
         <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar shrink-0">
           {[
-            { id: 'ALL', label: 'All Operations', color: 'border-white/10 text-white' },
+            { id: 'ALL', label: 'All Operations', color: 'border-white/10 text-theme-primary' },
             { id: 'BET', label: '💰 Betting Logs', color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
             { id: 'ALERT', label: '🚨 Alerts Triggered', color: 'border-red-500/20 text-red-400 bg-red-500/5' },
             { id: 'SYSTEM', label: '⚙️ Sync & Healing', color: 'border-indigo-500/20 text-indigo-400 bg-indigo-500/5' },
@@ -297,7 +297,7 @@ export const LogsView: React.FC = () => {
                         {ev.category}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-white tracking-tight leading-snug break-words">
+                        <p className="text-xs font-semibold text-theme-primary tracking-tight leading-snug break-words">
                           {ev.message}
                         </p>
                         <p className="text-[9px] text-slate-500 uppercase font-black tracking-wider mt-1">

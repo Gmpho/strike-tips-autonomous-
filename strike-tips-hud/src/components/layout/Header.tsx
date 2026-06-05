@@ -27,11 +27,15 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           <div className="absolute -inset-2 bg-linear-to-r from-purple-600 to-emerald-600 rounded-2xl opacity-20 blur group-hover:opacity-40 transition-all duration-500" />
           <div className="relative bg-theme-panel border border-theme rounded-2xl p-1.5 md:p-2.5 backdrop-blur-xl">
              <div className="w-8 h-8 md:w-12 md:h-12 bg-purple-500/20 rounded-xl flex items-center justify-center overflow-hidden border border-purple-500/30">
-               <img
-                 src="/strike_tips_premium_logo.png"
-                 alt="Strike Tips Logo"
-                 className="w-full h-full object-cover"
-               />
+               <picture>
+                  <source srcSet="/logo.webp" type="image/webp" />
+                  <img
+                    src="/logo-128.png"
+                    alt="Strike Tips Logo"
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                </picture>
              </div>
           </div>
         </div>

@@ -3,6 +3,7 @@ import { Flag, ChevronDown, ChevronUp, Medal, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import type { ResultRace } from '../../types';
+import { getFullCourseName } from '../../lib/course-names';
 
 function PositionBadge({ position }: { position: string }) {
   const pos = position?.toLowerCase() || '';
@@ -25,7 +26,7 @@ function RaceCard({ race }: { race: ResultRace }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl overflow-hidden">
+    <div className="rounded-2xl bg-theme-panel border border-theme sidebar-card overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between p-4 hover:bg-theme-secondary/20 transition-colors"
@@ -33,8 +34,8 @@ function RaceCard({ race }: { race: ResultRace }) {
         <div className="flex items-center gap-3">
           <Flag className="w-4 h-4 text-emerald-500 shrink-0" />
           <div className="text-left">
-            <div className="text-sm font-bold text-theme-primary">{race.title || `${race.course} - ${race.time}`}</div>
-            <div className="text-[10px] text-theme-secondary font-bold uppercase tracking-wider">{race.course}</div>
+            <div className="text-sm font-bold text-theme-primary">{race.title || `${getFullCourseName(race.course)} - ${race.time}`}</div>
+            <div className="text-[10px] text-theme-secondary font-bold uppercase tracking-wider">{getFullCourseName(race.course)}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -98,46 +99,60 @@ export const ResultsView: React.FC = () => {
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="p-6 space-y-6"
+      className="p-6 space-y-6 h-full flex flex-col"
     >
-      <div>
-        <h2 className="text-2xl font-bold bg-linear-to-r from-emerald-400 to-teal-500 bg-clip-text text-transparent">
-          Race Results
-        </h2>
-        <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
-          Latest finished races with positions
-        </p>
+      {/* ── Header ── */}
+      <div className="shrink-0 space-y-3">
+        <div>
+          <h2 className="text-2xl font-bold bg-linear-to-r from-emerald-400 to-teal-500 bg-clip-text text-transparent">
+            Race Results
+          </h2>
+          <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
+            Latest finished races with positions
+          </p>
+        </div>
+
+        {results.length > 0 && (
+          <div className="flex items-center gap-2 text-[10px] text-theme-secondary font-bold">
+            <Users className="w-3 h-3" />
+            {results.reduce((sum, r) => sum + r.runners.length, 0)} runners across {results.length} races
+          </div>
+        )}
       </div>
 
       {results.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-theme-secondary">
+        <div className="flex-1 flex flex-col items-center justify-center text-theme-secondary">
           <Flag className="w-8 h-8 mb-3 opacity-50" />
           <p className="text-sm font-bold">No results yet</p>
           <p className="text-xs opacity-70 mt-1">Data refreshes every 30s</p>
         </div>
       ) : (
-        <div className="space-y-8">
-          {courseNames.map(course => (
-            <div key={course}>
-              <div className="flex items-center gap-3 mb-4">
-                <Medal className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">{course}</h3>
-                <span className="text-[10px] text-theme-secondary font-bold">{groupedByCourse[course].length} races</span>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1">
+          <div className="space-y-8 pb-2">
+            {courseNames.map(course => (
+              <div key={course}>
+                <div className="flex items-center gap-3 mb-4">
+                  <Medal className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">{getFullCourseName(course)}</h3>
+                  <span className="text-[10px] text-theme-secondary font-bold">{groupedByCourse[course].length} races</span>
+                </div>
+                <div className="space-y-3">
+                  {groupedByCourse[course].map((race, idx) => (
+                    <RaceCard key={`${race.course}-${race.time}-${idx}`} race={race} />
+                  ))}
+                </div>
               </div>
-              <div className="space-y-3">
-                {groupedByCourse[course].map((race, idx) => (
-                  <RaceCard key={`${race.course}-${race.time}-${idx}`} race={race} />
-                ))}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
+      {/* Footer */}
       {results.length > 0 && (
-        <div className="flex items-center gap-2 text-[10px] text-theme-secondary font-bold opacity-60">
-          <Users className="w-3 h-3" />
-          {results.reduce((sum, r) => sum + r.runners.length, 0)} runners across {results.length} races
+        <div className="shrink-0 pt-3 border-t border-theme">
+          <p className="text-[10px] text-theme-secondary font-semibold">
+            Results sourced from ATR — updated every 30s
+          </p>
         </div>
       )}
     </motion.div>
