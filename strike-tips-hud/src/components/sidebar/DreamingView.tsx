@@ -50,7 +50,14 @@ export const DreamingView: React.FC = () => {
       {/* Simulation Visualizer */}
       <div className="flex-1 min-h-[400px] bg-theme-panel border border-theme rounded-3xl relative overflow-hidden group">
         <div className="absolute inset-0 z-0">
-          <Canvas camera={{ position: [0, 0, 8] }}>
+          <Canvas
+            camera={{ position: [0, 0, 8] }}
+            onCreated={(state) => {
+              state.gl.domElement.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault();
+              });
+            }}
+          >
             <ambientLight intensity={0.5} />
             <pointLight position={[10, 10, 10]} intensity={1.5} color="#a855f7" />
             <DreamOrb />

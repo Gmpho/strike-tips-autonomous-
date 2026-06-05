@@ -131,6 +131,9 @@ export const AmbientCanvas: React.FC = () => {
           if (!state.gl.capabilities.isWebGL2) {
             console.warn('[WebGL] Only WebGL1 available, 3D effects may be limited');
           }
+          state.gl.domElement.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+          });
         }}
       >
         <fog attach="fog" args={[isLight ? '#f8fafc' : '#000000', 2, 15]} />

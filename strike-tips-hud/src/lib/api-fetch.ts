@@ -1,5 +1,3 @@
-const API_KEY = import.meta.env.VITE_STRIKE_TIPS_API_KEY || ''
-
 const inFlight = new Map<string, Promise<Response>>()
 const MAX_RETRIES = 2
 const RETRY_DELAYS = [1000, 2000]
@@ -12,7 +10,6 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   if (existing) return existing.then(r => r.clone())
 
   const headers = new Headers(init?.headers)
-  if (API_KEY) headers.set('X-API-KEY', API_KEY)
 
   const execute = async (attempt: number): Promise<Response> => {
     const res = await fetch(input, { ...init, headers })
