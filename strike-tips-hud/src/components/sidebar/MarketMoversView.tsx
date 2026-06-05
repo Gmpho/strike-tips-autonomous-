@@ -259,7 +259,7 @@ export const MarketMoversView: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1 space-y-6">
 
           {/* Shortened / Backed */}
           {shortened.length > 0 && (

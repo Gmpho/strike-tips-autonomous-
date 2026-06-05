@@ -168,11 +168,12 @@ export const App: React.FC = () => {
           </div>
 
           {/* Main Content */}
-          <div className="px-4 md:px-8 lg:px-12 py-4 md:py-8 flex-1">
-            <div className="w-full">
+          <div className="px-4 md:px-8 lg:px-12 py-4 md:py-8 flex-1 flex flex-col min-h-0">
+            <div className="w-full flex-1 flex flex-col min-h-0">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeView}
+                  className="flex-1 flex flex-col min-h-0"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
