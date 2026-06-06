@@ -4,16 +4,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// Load env for dev proxy headers — Vite's envDir picks up ../.env at build time,
-// but for proxy config we need process.env at dev server start.
 import { loadEnv } from 'vite';
-
-function getApiKeyHeader(): Record<string, string> {
-  // Use VITE_STRIKE_TIPS_API_KEY if set (for convenience), else STRIKE_TIPS_API_KEY
-  const key = process.env.STRIKE_TIPS_API_KEY || process.env.VITE_STRIKE_TIPS_API_KEY || '';
-  if (!key) return {};
-  return { 'X-API-KEY': key };
-}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd() + '/..', '');

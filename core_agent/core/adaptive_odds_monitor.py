@@ -233,8 +233,12 @@ class AdaptiveOddsMonitor:
         asyncio.create_task(run_heartbeat_loop(_memory))
 
         logger.info("🚀 L7 Monitor Active (Refactored: Pure Python Mode)")
+        self._atr_cycle = 0
+
+        active_count = 0
 
         while self.monitoring_active:
+            self._atr_cycle += 1
             try:
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 # 1. Fetch Betway + Racing-Odds in parallel
@@ -255,6 +259,8 @@ class AdaptiveOddsMonitor:
                 }
                 state["count"] = len(state["events"])
                 state["timestamp"] = datetime.now().isoformat()
+                active_ids = list(state["events"].keys())
+                active_count = len(active_ids)
 
                 with open(MARKET_SNAPSHOT_PATH, "w") as f:
                     json.dump(state, f, indent=2)
@@ -267,38 +273,39 @@ class AdaptiveOddsMonitor:
                 except Exception:
                     pass
 
-                # 1c. Fetch ATR data (results, movers, predictor) into separate snapshots
-                try:
-                    atr_results = await self.at_races.get_results("yesterday")
-                    if atr_results:
-                        with open(ATR_RESULTS_PATH, "w") as f:
-                            json.dump({"results": atr_results, "timestamp": datetime.now().isoformat()}, f, indent=2)
-                except Exception as e:
-                    logger.debug("ATR results fetch skipped: %s", e)
+                # 1c. ATR data — only fetch every 3rd cycle, skip entirely when no active races
+                if active_count > 0 or self._atr_cycle % 3 == 0:
+                    try:
+                        atr_results = await self.at_races.get_results("yesterday")
+                        if atr_results:
+                            with open(ATR_RESULTS_PATH, "w") as f:
+                                json.dump({"results": atr_results, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                    except Exception as e:
+                        logger.debug("ATR results fetch skipped: %s", e)
 
-                try:
-                    atr_movers = await self.at_races.get_market_movers()
-                    if atr_movers:
-                        with open(ATR_MOVERS_PATH, "w") as f:
-                            json.dump({"movers": atr_movers, "timestamp": datetime.now().isoformat()}, f, indent=2)
-                except Exception as e:
-                    logger.debug("ATR movers fetch skipped: %s", e)
+                    try:
+                        atr_movers = await self.at_races.get_market_movers()
+                        if atr_movers:
+                            with open(ATR_MOVERS_PATH, "w") as f:
+                                json.dump({"movers": atr_movers, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                    except Exception as e:
+                        logger.debug("ATR movers fetch skipped: %s", e)
 
-                try:
-                    atr_predictions = await self.at_races.get_predictor()
-                    if atr_predictions:
-                        with open(ATR_PREDICTOR_PATH, "w") as f:
-                            json.dump({"predictions": atr_predictions, "timestamp": datetime.now().isoformat()}, f, indent=2)
-                except Exception as e:
-                    logger.debug("ATR predictor fetch skipped: %s", e)
+                    try:
+                        atr_predictions = await self.at_races.get_predictor()
+                        if atr_predictions:
+                            with open(ATR_PREDICTOR_PATH, "w") as f:
+                                json.dump({"predictions": atr_predictions, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                    except Exception as e:
+                        logger.debug("ATR predictor fetch skipped: %s", e)
+                else:
+                    logger.debug("Skipping ATR fetches (no active races, cycle %d)", self._atr_cycle)
 
                 # Check ATR snapshot staleness and alert if needed
                 await self._check_atr_staleness()
 
                 # TTL-based cleanup of old ATR snapshots (keep last 7 days)
                 await self._cleanup_atr_snapshots()
-
-                active_ids = list(state["events"].keys())
 
                 # Update Intelligence Cache for AlertEngine baselines
                 for event_id in active_ids:
@@ -332,7 +339,10 @@ class AdaptiveOddsMonitor:
 
                 logger.debug(traceback.format_exc())
 
-            await asyncio.sleep(45)
+            # Dynamic sleep — poll aggressively when races are live, back off when idle
+            sleep_secs = 45 if active_count > 0 else 300
+            logger.debug("Monitor sleep %ds (active_races=%d)", sleep_secs, active_count)
+            await asyncio.sleep(sleep_secs)
 
     async def _check_atr_staleness(self, max_age_hours: int = 3) -> None:
         """Alert if ATR snapshots haven't been updated within max_age_hours."""

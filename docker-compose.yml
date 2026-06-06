@@ -23,6 +23,11 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
     restart: unless-stopped
     depends_on:
       - ollama

@@ -3,10 +3,10 @@ import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone } from './audio';
 import { apiFetch } from '../lib/api-fetch';
 
-const FAST_INTERVAL = 5000;
-const SLOW_INTERVAL = 30000;
-const MAX_FAST_BACKOFF = 60000;
-const MAX_SLOW_BACKOFF = 120000;
+const FAST_INTERVAL = 15000;
+const SLOW_INTERVAL = 60000;
+const MAX_FAST_BACKOFF = 120000;
+const MAX_SLOW_BACKOFF = 300000;
 
 export class DataBridge {
   private fastTimer: number | null = null;
