@@ -47,11 +47,15 @@ export const AIChat: React.FC = () => {
     setLoading(true);
 
     const activities = getActivities(userMsg);
-    let actIdx = 0;
     setCurrentActivity(activities[0]);
+    let actIdx = 1;
     const actInterval = setInterval(() => {
-      actIdx = (actIdx + 1) % activities.length;
-      setCurrentActivity(activities[actIdx]);
+      if (actIdx < activities.length) {
+        setCurrentActivity(activities[actIdx]);
+        actIdx++;
+      } else {
+        clearInterval(actInterval);
+      }
     }, 2000);
 
     // Add empty AI message that we'll stream into
@@ -186,14 +190,11 @@ export const AIChat: React.FC = () => {
               className="bg-theme-panel border border-white/10 rounded-xl px-3 py-2.5 text-white text-[11px] font-bold focus:outline-none focus:border-purple-500 w-full sm:w-auto"
             >
               <option value="auto" className="bg-black">⚡ Auto Router</option>
+              <option value="groq:llama-3.1-8b-instant" className="bg-black">Groq Llama 3.1 8B (Fast)</option>
+              <option value="groq:llama-3.3-70b-versatile" className="bg-black">Groq Llama 3.3 70B (Tools)</option>
               <option value="gemini:gemini-2.5-flash-lite" className="bg-black">Gemini Flash Lite</option>
               <option value="gemini:gemini-2.5-flash" className="bg-black">Gemini Flash</option>
               <option value="gemini:gemini-2.5-pro" className="bg-black">Gemini Pro</option>
-              <option value="racing_llama" className="bg-black">racing_llama (Local)</option>
-              <option value="racing_qwen" className="bg-black">racing_qwen (Local)</option>
-              <option value="func_gemma" className="bg-black">func_gemma (Local)</option>
-              <option value="lfm_racing" className="bg-black">lfm_racing (Local)</option>
-              <option value="ds_racing" className="bg-black">ds_racing (Local)</option>
             </select>
             <div className="flex gap-2 flex-1 w-full min-w-0">
               <input 
