@@ -66,6 +66,6 @@ def run_scan():
 @modal.asgi_app()
 def serve_api():
     """Host the FastAPI backend on Modal."""
-    from core_agent.api import app as fastapi_app
+    from core_agent.api_pkg import app as fastapi_app
 
     return fastapi_app

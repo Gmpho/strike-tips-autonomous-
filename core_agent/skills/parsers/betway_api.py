@@ -15,11 +15,12 @@ class BetwayAPI:
 
     async def fetch_racing_data(self) -> Dict[str, Any]:
         """Fetch raw racing data from Betway's TrackRacing (TAB) API."""
-        client = get_async_client(timeout=30.0, resolve_hosts={"www.betway.co.za"})
+        client = get_async_client(timeout=90.0, resolve_hosts={"www.betway.co.za"})
         bw_headers = {
             "Referer": "https://www.betway.co.za/sport/horse-racing",
             "Origin": "https://www.betway.co.za",
         }
+        backoff = [5, 15, 30]
         for attempt in range(3):
             try:
                 daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
@@ -60,7 +61,7 @@ class BetwayAPI:
                 return {"status": "success", "details": events_details}
             except Exception as e:
                 logger.warning(f"Betway fetch attempt {attempt+1} failed: {e}")
-                await asyncio.sleep(2**attempt)
+                await asyncio.sleep(backoff[attempt])
         return {"status": "error", "error": "Max retries reached"}
 
     async def _fetch_event_safe(self, client, eid, reg_name, league, sem=None) -> Optional[Dict]:
@@ -85,6 +86,9 @@ class BetwayAPI:
         except Exception as e:
             logger.debug(f"Failed to fetch event {eid}: {e}")
         return None
+
+    def _count_priced(self, runners: list) -> int:
+        return sum(1 for r in runners if isinstance(r.get("odds"), (int, float)) and r["odds"] > 0)
 
     async def get_snapshot_format(self) -> Dict[str, Any]:
         """Returns racing data in the flat 'market_snapshot' format used by the HUD and AlertEngine."""
@@ -126,17 +130,16 @@ class BetwayAPI:
 
                 # --- Prices map: outcomeId (str) -> priceDecimal ---
                 price_map = {
-                    str(p["outcomeId"]): float(p.get("priceDecimal", 5.0))
+                    str(p["outcomeId"]): float(p.get("priceDecimal", 0))
                     for p in res.get("prices", [])
                     if isinstance(p, dict) and "outcomeId" in p
                 }
 
-                # --- Name-keyed price map for SA-style events where racer outcomeIds
-                #     don't match price outcomeIds (prices belong to a different market's outcomes) ---
-                # Build: horse_name (lower) -> best price from Race Winner market outcomes
+                # --- Find the Win market ID (varies by region: "Race Winner", "To Win", "Win") ---
+                _win_keywords = ("Race Winner", "Win Only", "To Win", "Winner", "Win")
                 winner_market_id = next(
                     (str(mkt["marketId"]) for mkt in res.get("markets", [])
-                     if "Race Winner" in mkt.get("name", "") or "Win Only" in mkt.get("name", "")),
+                     if any(k in mkt.get("name", "") for k in _win_keywords)),
                     None
                 )
                 name_price_map: dict = {}
@@ -160,11 +163,10 @@ class BetwayAPI:
                     runners = []
                     for r in racers:
                         outcome_id = str((r.get("outcomeIds") or [None])[0] or "")
-                        # Try outcomeId first, then name-based lookup (SA-style events)
                         odds = price_map.get(outcome_id)
                         if odds is None:
                             horse_name_key = (r.get("outcomeName") or r.get("name") or "").lower()
-                            odds = name_price_map.get(horse_name_key, 5.0)
+                            odds = name_price_map.get(horse_name_key, "SP")
                         runners.append({
                             "outcomeId": outcome_id,
                             "name": r.get("outcomeName") or r.get("name") or "Unknown",
@@ -201,6 +203,7 @@ class BetwayAPI:
                         seen.add(name)
                         outcome_id = str(outcome.get("outcomeId") or "")
                         info = outcome.get("additionalInfo") or {}
+                        odds = price_map.get(outcome_id, "SP")
                         runners.append({
                             "outcomeId": outcome_id,
                             "name": name,
@@ -215,11 +218,15 @@ class BetwayAPI:
                             "timeForm": info.get("TimeForm") or "",
                             "imageLocation": info.get("ImageLocation") or "",
                             "starRating": int(info.get("StarRating") or 0),
-                            "odds": price_map.get(outcome_id, 5.0),
+                            "odds": odds,
                         })
 
                 if not runners:
                     continue
+
+                priced = self._count_priced(runners)
+                if priced < len(runners):
+                    logger.info("Betway %s R%d: %d/%d runners have odds (rest SP)", league, race_num, priced, len(runners))
 
                 name_text = event_obj.get("name") or event_obj.get("displayName") or ""
 

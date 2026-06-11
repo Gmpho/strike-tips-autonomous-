@@ -35,6 +35,7 @@ python-dotenv==1.2.2
 psutil>=7.2.2
 aiohttp>=3.13.3
 schedule>=1.2.2
+apscheduler>=3.11.0
 
 # Testing & Linting
 pytest>=7.0.0

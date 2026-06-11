@@ -11,10 +11,17 @@ WORKDIR /app
 
 # Install Python requirements (no --no-cache-dir: pip cache survives rebuilds, ~10x faster)
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --timeout=300 --retries=5 --default-timeout=300 -r requirements.txt
 
-# Install Playwright system dependencies (libglib2.0, libnss3, etc.)
-RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"
+# Install Playwright system dependencies
+RUN playwright install-deps chromium 2>&1 || echo "System deps install failed"
+
+# Pre-download Playwright browsers at build time (CDN is reachable from buildkit now)
+RUN playwright install chromium 2>&1 || echo "Playwright browsers pre-download failed — will retry at runtime"
+
+# Pre-download ChromaDB ONNX embedding model (all-MiniLM-L6-v2, ~79MB)
+COPY prewarm_chroma.py .
+RUN python prewarm_chroma.py 2>&1 || echo "Chroma ONNX pre-download failed — will download at startup"
 
 # Copy project files
 COPY . .
@@ -25,5 +32,4 @@ EXPOSE 8000
 # Run as root for host-mounted volume compatibility
 USER root
 
-# Install browsers at runtime (CDN is reachable from containers but not Docker build daemon)
-CMD playwright install chromium 2>&1 || true && uvicorn core_agent.api:app --host 0.0.0.0 --port 8000
+CMD uvicorn core_agent.api_pkg:app --host 0.0.0.0 --port 8000

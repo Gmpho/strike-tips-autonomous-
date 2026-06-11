@@ -64,10 +64,29 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
         except Exception:
             pass
 
+    # Load ChromaDB form_insights (PDF official tips, past dreams) for this track
+    chroma_context = ""
+    try:
+        from core_agent.core.strike_brain import brain
+        if brain and brain.memory and brain.memory._is_ready:
+            results = brain.memory.search_form_insights(
+                f"{course} horse racing official tips", n_results=2
+            )
+            if results:
+                snippets = [
+                    r.get("content", "")[:160]
+                    for r in results
+                    if r.get("content")
+                ]
+                if snippets:
+                    chroma_context = "\nPast data: " + " | ".join(snippets)
+    except Exception:
+        pass
+
     prompt = (
         f"Horse racing analyst. Scenario: {scenario}\n"
         f"Race: {race.get('course','?')} R{race.get('raceNumber','?')}. "
-        f"Runners: {runner_summary}.{search_context}\n"
+        f"Runners: {runner_summary}.{search_context}{chroma_context}\n"
         f"Give one concise insight (1-2 sentences) on how this affects value/probability."
     )
     try:

@@ -14,18 +14,17 @@ interface Agent {
 export const AgentDashboard: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeTab, setActiveTab] = useState<'chat' | 'swarm'>('chat');
-  const { health, refreshHealth } = useAgentHealth();
+  const { refreshHealth } = useAgentHealth();
 
   const fetchAgents = async () => {
     try {
       const modelsRes = await apiFetch('/api/agent/models');
       const modelsData = await modelsRes.json();
-      const ollamaOnline = health.ollama === 'connected';
 
       if (modelsData.models) {
-        setAgents(modelsData.models.map((m: { name?: string; id?: string; type?: string }) => ({
+        setAgents(modelsData.models.map((m: { name?: string; id?: string; type?: string; is_available?: boolean }) => ({
           name: m.name || m.id || 'Unknown',
-          status: m.type === 'local' ? (ollamaOnline ? 'online' : 'offline') : 'cloud',
+          status: m.is_available ? 'online' : 'offline',
           model: m.id || 'N/A',
         })));
       }
@@ -38,7 +37,7 @@ export const AgentDashboard: React.FC = () => {
     void fetchAgents();
     const interval = setInterval(fetchAgents, 25000);
     return () => clearInterval(interval);
-  }, [health.ollama]);
+  }, []);
 
   return (
     <motion.div 

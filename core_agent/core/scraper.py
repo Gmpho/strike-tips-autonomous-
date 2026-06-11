@@ -12,7 +12,6 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 from core_agent.core.error_handler import retry_on_error, ScraperError
-from core_agent.config.model_config import ModelConfig
 
 logger = logging.getLogger("strike-scraper")
 
@@ -69,39 +68,6 @@ def scrape_racecard(track: str) -> List[Dict]:
             pass
 
     return races
-
-
-def _llm_extract_runners(raw_content: str, track: str) -> List[Dict]:
-    """
-    Tier 8 Fallback: Use Llama 3.2 1B to extract structured runners from messy text.
-    """
-    try:
-        from ollama import chat
-
-        print(f"[MAF] LLM extraction for {track}...")
-
-        prompt = (
-            f"Extract horse racing runners from the content below as a structured JSON array.\n"
-            f"Track: {track}\n"
-            f"Content:\n{raw_content[:4000]}\n\n"
-            f"Return ONLY a JSON array: [{{'name': '...', 'number': '...', 'odds': '...', 'jockey': '...', 'trainer': '...', 'form': '...'}}]"
-        )
-
-        res = chat(
-            model=ModelConfig.SCRAPER,
-            messages=[{"role": "user", "content": prompt}],
-            options=ModelConfig.ollama_options(),
-        )
-
-        # Extract JSON block
-        text = res.message.content
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        return []
-    except Exception as e:
-        logger.error(f"[ERR] LLM extraction failed: {e}")
-        return []
 
 
 def _fetch_program_races(program_code: str, track_name: str) -> List[Dict]:

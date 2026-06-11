@@ -74,22 +74,38 @@ def deploy():
     """Deploy to Modal"""
     print("\n[START] Deploying Strike Tips to Modal...")
 
-    # Create volume for data persistence
+    # Create volumes
     print("\n[PKG] Creating data volume...")
     subprocess.run(
         ["modal", "volume", "create", "strike-tips-data"], capture_output=True
     )
+    print("\n[PKG] Creating Ollama models volume...")
+    subprocess.run(
+        ["modal", "volume", "create", "ollama-models"], capture_output=True
+    )
 
     # Deploy the app
     print("\n[START] Deploying application...")
-    result = subprocess.run(["modal", "deploy", "modal_app.py"], capture_output=False)
+    result = subprocess.run(["modal", "deploy", "core_agent.core.modal_app"], capture_output=False)
 
     if result.returncode == 0:
         print("\n[OK] Deployment successful!")
+        
+        # Pull models after deploy
+        print("\n[MODEL] Pulling Ollama models (functiongemma:270m, qwen:1.8b, embeddinggemma:300m)...")
+        pull_result = subprocess.run(
+            ["modal", "run", "core_agent.core.modal_app::pull_ollama_models"], 
+            capture_output=False
+        )
+        if pull_result.returncode == 0:
+            print("[OK] Models pulled successfully")
+        else:
+            print("[WARN] Model pull had issues - check logs")
+        
         print("\n[LIST] Next steps:")
-        print("  1. Test the deployment: modal run modal_app.py::daily_racing_scan")
-        print("  2. Check logs: modal app logs strike-tips")
-        print("  3. Manual scan: curl -X POST <web_endpoint_url>")
+        print("  1. Test the deployment: modal run core_agent.core.modal_app::run_scan")
+        print("  2. Check logs: modal app logs strike-tips-racing")
+        print("  3. Check Ollama: curl https://gmpho--strike-tips-racing-ollama-server.modal.run/api/tags")
     else:
         print("\n[ERR] Deployment failed")
 

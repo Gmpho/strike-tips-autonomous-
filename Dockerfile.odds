@@ -7,7 +7,7 @@ RUN mkdir -p /app/data/browser_profile /app/data/cache
 
 # 2. Dependency Layer
 COPY requirements.txt .
-RUN pip install -r requirements.txt beautifulsoup4 lxml aiohttp
+RUN pip install --timeout=300 --retries=5 --default-timeout=300 -r requirements.txt beautifulsoup4 lxml aiohttp
 
 # Install Playwright system dependencies (libglib2.0, libnss3, etc.)
 RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"

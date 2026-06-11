@@ -61,7 +61,7 @@ class PDFHarvester:
         from core_agent.core.http_client import get_async_client
         client = get_async_client(timeout=15)
         try:
-            response = await client.get(url, follow_redirects=True)
+            response = await client.get(url, allow_redirects=True)
 
             if response.status_code == 404:
                 logger.info(
@@ -71,7 +71,7 @@ class PDFHarvester:
                 if discovered_url:
                     logger.info(f"[PDF] Discovery successful: {discovered_url}")
                     response = await client.get(
-                        discovered_url, follow_redirects=True
+                        discovered_url, allow_redirects=True
                     )
 
             if response.status_code == 200:
@@ -96,48 +96,216 @@ class PDFHarvester:
 
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            num_pages = len(doc)
             raw_text = "\n".join(page.get_text() or "" for page in doc)
             doc.close()
         except Exception as e:
             logger.error(f"Failed to parse PDF for {track}: {e}")
             return self._stub_intelligence(track, today)
 
-        tips = []
+        runners = []
         current_race = None
-        in_runner_block = False
-        for line in raw_text.split("\n"):
-            line = line.strip()
-            if not line:
+        in_horse_table = False
+        race_header_count = 0
+        table_count = 0
+        races = {}
+
+        current_horse = None
+        awaiting = "IDLE"
+
+        lines = raw_text.split("\n")
+        for i, raw_line in enumerate(lines):
+            line = raw_line.strip()
+            if not line and awaiting != "COMMENT":
                 continue
-            race_match = re.search(r"(?:RACE|R)\s*(\d+)", line, re.IGNORECASE)
+
+            race_match = re.search(r"RACE\s+(\d+)\s*@", line, re.IGNORECASE)
             if race_match:
                 current_race = int(race_match.group(1))
-                in_runner_block = False
+                race_header_count += 1
+                in_horse_table = False
                 continue
-            if "NO- DR" in line and "HORSE" in line:
-                in_runner_block = True
+
+            if line.startswith("HORSE") and "NET WGT" in line:
+                in_horse_table = True
+                table_count += 1
                 continue
-            if in_runner_block and current_race:
-                runner_match = re.search(
-                    r"^\d+\s*[-]?\s*\d+\s+([A-Z\s\'’]+?)(?=\s+\d+|$)", line
-                )
-                if runner_match:
-                    name = runner_match.group(1).strip()
-                    tips.append(
-                        {
-                            "race_number": current_race,
-                            "selections": name,
-                            "source": intelligence_type,
-                        }
+
+            if "COMPUTAFORM RATINGS" in line or "SPEED RATINGS" in line:
+                in_horse_table = False
+                if current_horse and current_horse.get("name"):
+                    runners.append(current_horse)
+                current_horse = None
+                awaiting = "IDLE"
+                continue
+
+            inline_race = re.match(r"^(\d+)$", line)
+            if inline_race and not in_horse_table:
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r"\d+:\d+\s*-\s*R\d", next_line):
+                        rn = int(inline_race.group(1))
+                        current_race = rn
+                        race_header_count += 1
+                        if rn not in races:
+                            races[rn] = {}
+                        detail_line = next_line
+                        j = i + 2
+                        while j < len(lines):
+                            nxt = lines[j].strip()
+                            if not nxt:
+                                j += 1
+                                continue
+                            if re.match(r"\d+:\d+\s*-\s*R\d", nxt):
+                                break
+                            if "NO-" in nxt or "COMPUTAFORM" in nxt or "SPEED" in nxt:
+                                break
+                            if re.search(r"\d+m\s+\w+$", nxt):
+                                detail_line += " " + nxt
+                                break
+                            detail_line += " " + nxt
+                            j += 1
+                        det = re.match(
+                            r"(\d+:\d+)\s*-\s*(R[\d ,]+)\s+(.+?)\s+(\d+m)\s+(\w+)",
+                            detail_line,
+                        )
+                        if det:
+                            clean_name = re.sub(
+                                r"\s*FOR HOSPITALITY BOOKINGS?\s+CALL\s+[\d\s]+\s*",
+                                " ",
+                                det.group(3).strip(),
+                            ).strip()
+                            races[rn].update(
+                                {
+                                    "time": det.group(1),
+                                    "prize": det.group(2),
+                                    "race_name": clean_name,
+                                    "distance_m": int(
+                                        re.sub(r"[^\d]", "", det.group(4))
+                                    ),
+                                    "surface": det.group(5),
+                                }
+                            )
+                        st = lines[i + 2].strip() if i + 2 < len(lines) else ""
+                        if "Same Trainer" in st:
+                            races[rn]["same_trainer"] = st
+                        elif re.search(
+                            r"(BIPOT|PICK6|JACKPOT|PA|SWINGER)\s+LEG", st
+                        ):
+                            races[rn]["leg_info"] = st
+                        continue
+
+            if not in_horse_table:
+                continue
+
+            horse_start = re.match(r"^(\d+)\s*-\s*(\d+)\s*(.*)", line)
+            if horse_start:
+                if current_horse and current_horse.get("name"):
+                    runners.append(current_horse)
+
+                current_horse = {
+                    "race_number": current_race,
+                    "horse_number": int(horse_start.group(1)),
+                    "draw": int(horse_start.group(2)),
+                }
+                rest = horse_start.group(3).strip()
+                if rest:
+                    nm = re.match(
+                        r"([A-Z][A-Z\s\'’\-\.\(\)/]+)\s+(\d+\.?\d*)\s*$", rest
                     )
+                    if nm and len(nm.group(1).strip()) > 2:
+                        current_horse["name"] = nm.group(1).strip()
+                        current_horse["weight_kg"] = float(nm.group(2))
+                        awaiting = "FORM"
+                    else:
+                        awaiting = "NAME"
+                else:
+                    awaiting = "NAME"
+                continue
+
+            if awaiting == "NAME" and current_horse and "name" not in current_horse:
+                nm = re.match(r"([A-Z][A-Z\s\'’\-\.\(\)/]+)\s+(\d+\.?\d*)\s*$", line)
+                if nm and len(nm.group(1).strip()) > 2:
+                    current_horse["name"] = nm.group(1).strip()
+                    current_horse["weight_kg"] = float(nm.group(2))
+                    awaiting = "FORM"
+                else:
+                    awaiting = "IDLE"
+                continue
+
+            if awaiting == "FORM":
+                current_horse["form_flag"] = ""
+                if line.startswith("XX"):
+                    current_horse["form_flag"] = "XX"
+                elif line.startswith("X") and (len(line) == 1 or line[1] in ' \t'):
+                    current_horse["form_flag"] = "X"
+                rest = re.sub(r"^X{0,2}\s*", "", line).strip()
+                if rest:
+                    current_horse["comment"] = rest
+                    current_horse["has_won"] = current_horse["form_flag"] in ("X", "XX")
+                    awaiting = "ODDS"
+                else:
+                    awaiting = "COMMENT"
+                continue
+
+            if awaiting == "COMMENT":
+                current_horse["comment"] = line if line else ""
+                current_horse["has_won"] = current_horse.get("form_flag", "") in ("X", "XX")
+                awaiting = "ODDS"
+                continue
+
+            if awaiting == "ODDS":
+                om = re.match(r"^(\d+)/(\d+)", line)
+                if om:
+                    num, den = int(om.group(1)), int(om.group(2))
+                    current_horse["odds"] = om.group(0)
+                    current_horse["odds_decimal"] = round((num / den) + 1, 2) if den > 0 else None
+                runners.append(current_horse)
+                current_horse = None
+                awaiting = "IDLE"
+                continue
+
+        self_check = {
+            "pages": num_pages,
+            "races_found": race_header_count,
+            "tables_detected": table_count,
+            "runners_parsed": len(runners),
+            "parser_ok": (len(runners) > 0 or table_count == 0),
+        }
+
+        if table_count > 0 and len(runners) == 0:
+            logger.warning(
+                f"SELF-CHECK FAILED: {table_count} tables but 0 runners "
+                f"({num_pages} pages, {race_header_count} races)"
+            )
+        elif race_header_count > 0 and table_count == 0:
+            logger.warning(
+                f"SELF-CHECK: {race_header_count} races but no horse tables "
+                f"({num_pages} pages)"
+            )
+        elif len(runners) > 0:
+            logger.info(
+                f"PDF OK: {num_pages}pgs, {race_header_count}R, "
+                f"{table_count}T, {len(runners)} runners"
+            )
+        else:
+            logger.info(
+                f"PDF: {num_pages}pgs, no race data (off-day or non-standard PDF)"
+            )
 
         result = {
             "source": intelligence_type,
             "track": track,
             "date": today,
-            "parsed_tips": tips,
-            "raw_text": raw_text[:50000],
+            "runners": runners,
+            "races": races,
+            "parsed_tips": [
+                {"race_number": r["race_number"], "selections": r["name"]}
+                for r in runners
+            ],
+            "raw_text": raw_text,
             "cached": False,
+            "self_check": self_check,
         }
         with open(cache_file, "w") as f:
             json.dump(result, f, indent=2)

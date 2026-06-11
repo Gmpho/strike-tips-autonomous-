@@ -70,6 +70,36 @@ class AdaptiveAnalyzer:
         """Proxy to learning engine - record a settled bet result"""
         self.engine.record_result(track, distance, odds, stake, won, actual_return)
 
+    def analyze_recent_results(self) -> Dict:
+        """Analyze recent betting results, compute segment ROI, and return summary.
+
+        Called daily by scheduler.update_learning_job() to keep
+        probability adjustments current.
+        """
+        stats = {}
+        # Load raw stats from engine for summary
+        try:
+            if hasattr(self.engine, '_stats'):
+                stats = self.engine._stats
+        except Exception:
+            pass
+
+        total_bets = sum(s.get("bets", 0) for s in stats.values())
+        total_wins = sum(s.get("wins", 0) for s in stats.values())
+        segments_with_data = sum(1 for s in stats.values() if s.get("bets", 0) >= 5)
+
+        print(
+            f"[LEARN] Analyzed {total_bets} bets, {total_wins} wins "
+            f"across {len(stats)} segments ({segments_with_data} with enough data)"
+        )
+        return {
+            "total_bets": total_bets,
+            "total_wins": total_wins,
+            "segments": len(stats),
+            "segments_with_data": segments_with_data,
+            "roi_by_track": self.engine.get_roi_by_track(),
+        }
+
     def get_roi_summary(self) -> Dict[str, float]:
         """Return ROI by track from the learning engine"""
         return self.engine.get_roi_by_track()

@@ -24,12 +24,11 @@ const syncHealth = async () => {
 
   inFlight = (async () => {
     try {
-      const res = await apiFetch('/api/agent/health');
+      const res = await apiFetch('/v1/health');
       const data = await res.json();
-      const ollamaRaw = data.ollama ?? 'error';
       healthState = {
-        orchestrator: data.orchestrator ?? 'error',
-        ollama: ollamaRaw === 'error' ? 'offline' : ollamaRaw,
+        orchestrator: data.orchestrator ?? 'ready',
+        ollama: data.ollama ?? 'offline',
       };
       backoffMs = POLL_INTERVAL_MS;
     } catch {

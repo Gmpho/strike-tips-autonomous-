@@ -27,26 +27,64 @@ ollama_volume = modal.Volume.from_name("ollama-models", create_if_missing=True)
 secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key")]
 
 
-# ── Persistent Ollama Server (GPU-backed) ────
-# DISABLED: Ollama models volume disk issue causes crash loop (~$0.40/hr wasted).
-# Re-enable after verifying ollama-models volume has sufficient free space:
-#   modal volume ls ollama-models
-#   modal volume rm ollama-models <stale-file>  # free up space
-#
-# @app.function(
-#     image=modal.Image.debian_slim().run_commands(
-#         "apt-get update && apt-get install -y curl zstd",
-#         "curl -fsSL https://ollama.com/install.sh | sh",
-#     ),
-#     volumes={"/root/.ollama": ollama_volume},
-#     gpu="t4",
-#     scaledown_window=60,
-#     container_idle_timeout=300,
-#     allow_concurrent_inputs=False,
-# )
-# @modal.web_server(11434, startup_timeout=120)
-# def ollama_server():
-#     pass
+# ── Ollama Model Puller (run once at deploy) ────────────────────────────
+@app.function(
+    image=modal.Image.debian_slim().run_commands(
+        "apt-get update && apt-get install -y curl zstd",
+        "curl -fsSL https://ollama.com/install.sh | sh",
+    ),
+    volumes={"/root/.ollama": ollama_volume},
+    secrets=[modal.Secret.from_name("strike-tips-secrets")],
+    timeout=600,
+    cpu=2.0,
+    memory=4096,
+)
+def pull_ollama_models():
+    """Pre-pull tiny models into volume at deploy time."""
+    import subprocess
+    import time
+
+    # Start Ollama in background
+    proc = subprocess.Popen(["ollama", "serve"])
+    time.sleep(5)  # wait for server to start
+
+    models = [
+        "functiongemma:270m",    # 270M - function calling
+        "qwen:1.8b",             # 1.8B - chat + tools
+        "embeddinggemma:300m",   # 300M - embeddings
+    ]
+    for m in models:
+        logger.info(f"Pulling {m}...")
+        result = subprocess.run(["ollama", "pull", m], capture_output=True, text=True, timeout=300)
+        if result.returncode == 0:
+            logger.info(f"✅ Pulled {m}")
+        else:
+            logger.error(f"❌ Failed to pull {m}: {result.stderr}")
+
+    proc.terminate()
+    logger.info("Model pull complete")
+
+
+# ── Ollama Server (CPU-only, Scale-to-Zero) ─────────────────────────────
+@app.function(
+    image=modal.Image.debian_slim().run_commands(
+        "apt-get update && apt-get install -y curl zstd",
+        "curl -fsSL https://ollama.com/install.sh | sh",
+    ),
+    volumes={"/root/.ollama": ollama_volume},
+    secrets=[modal.Secret.from_name("strike-tips-secrets")],
+    cpu=2.0,
+    memory=4096,
+    min_containers=0,          # scale to zero when idle
+    scaledown_window=300,      # 5 min idle before scale down
+    container_idle_timeout=180,
+    max_containers=2,
+)
+@modal.web_server(11434, startup_timeout=60)
+def ollama_server():
+    """Persistent Ollama instance - CPU only for tiny models."""
+    import subprocess
+    subprocess.Popen(["ollama", "serve"])
 
 
 # ── ASGI: FastAPI + Telegram webhook ──────────────────────────────────
@@ -64,8 +102,8 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
 def serve_api():
-    """Mount core_agent.api FastAPI app + inject /telegram-webhook route."""
-    from core_agent.api import app as fastapi_app
+    """Mount core_agent.api_pkg FastAPI app + inject /telegram-webhook route."""
+    from core_agent.api_pkg import app as fastapi_app
     from fastapi import Request
 
     @fastapi_app.post("/telegram-webhook")

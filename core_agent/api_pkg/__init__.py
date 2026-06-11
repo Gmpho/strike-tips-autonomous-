@@ -2,7 +2,7 @@
 Strike Bot API Entry Point
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, Query
 from fastapi.responses import RedirectResponse, JSONResponse
 from core_agent.routes import (
     agent,
@@ -21,19 +21,15 @@ import asyncio
 import json
 import os
 import logging
-import random
 import time
-from threading import Thread
-from core_agent.config.paths import MARKET_SNAPSHOT_PATH, DATA_DIR
+from core_agent.config.paths import DATA_DIR
 from core_agent.core.strike_brain import brain
-from core_agent.config.model_config import ModelConfig
 from core_agent.core.scheduler import StrikeTipsScheduler
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger("strike-api")
 
 
-# ── Security Headers ────────────────────────────────────────────────────
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -44,7 +40,6 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-# ── Rate Limiting ───────────────────────────────────────────────────────
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
 _rate_store: dict = {}
@@ -76,9 +71,6 @@ async def rate_limit_middleware(request: Request, call_next):
 async def lifespan(app: FastAPI):
     from core_agent.core.log_setup import configure_file_logging
     configure_file_logging()
-
-    ollama_host = ModelConfig.ollama_host()
-    logger.info("Ollama configured host: %s", ollama_host)
 
     from core_agent.core.snapshot_cache import get_snapshot, ensure_populated
     app.state.snapshot_cache = get_snapshot()
@@ -119,15 +111,6 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(start_task_worker())
 
-    async def prewarm_pipeline():
-        try:
-            from core_agent.agents import pipeline
-            logger.info("Agent pipeline pre-warmed")
-        except Exception as e:
-            logger.warning(f"Pipeline pre-warm failed: {e}")
-
-    asyncio.create_task(prewarm_pipeline())
-
     async def refresh_snapshot():
         try:
             from core_agent.core.task_queue import get_redis
@@ -140,82 +123,50 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(refresh_snapshot())
 
-    async def keepalive_model(ollama_ready: bool):
-        import httpx
-
-        model_name = "racing_qwen"
-        chat_url = ModelConfig.ollama_native_url("/api/chat")
-        ps_url = ModelConfig.ollama_native_url("/api/ps")
-        warmup_timeout_sec = float(os.getenv("OLLAMA_KEEPALIVE_TIMEOUT_SEC", "45"))
-        base_interval_sec = float(os.getenv("OLLAMA_KEEPALIVE_INTERVAL_SEC", "240"))
-        jitter_sec = float(os.getenv("OLLAMA_KEEPALIVE_JITTER_SEC", "25"))
-
-        async def _ollama_busy_or_loading(client: httpx.AsyncClient) -> bool:
-            started = time.monotonic()
-            try:
-                response = await client.get(ps_url, timeout=8)
-                elapsed = time.monotonic() - started
-                if response.status_code != 200:
-                    return False
-                payload = response.json()
-                models = payload.get("models", []) if isinstance(payload, dict) else []
-                busy_markers = ("loading", "busy", "generating", "pulling")
-                for model in models:
-                    if not isinstance(model, dict):
-                        continue
-                    state_blob = " ".join(str(model.get(key, "")).lower() for key in ("status", "state"))
-                    if any(marker in state_blob for marker in busy_markers):
-                        return True
-                return False
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
-                return False
-
-        if not ollama_ready:
-            logger.warning("keepalive_disabled model=%s reason=initial_self_check_failed", model_name)
-            return
-
-        await asyncio.sleep(15)
-        while True:
-            sleep_for = max(30.0, base_interval_sec + random.uniform(-jitter_sec, jitter_sec))
-            try:
-                from core_agent.core.http_client import get_async_client
-                client = get_async_client(timeout=warmup_timeout_sec)
-                if await _ollama_busy_or_loading(client):
-                    await asyncio.sleep(sleep_for)
-                    continue
-                await client.post(chat_url, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "stream": False, "options": {"num_predict": 1}})
-            except (httpx.HTTPError, ValueError, TypeError):
-                pass
-            await asyncio.sleep(sleep_for)
-
-    async def ollama_startup_self_check() -> bool:
-        from core_agent.core.http_client import get_async_client
-        tags_url = ModelConfig.ollama_native_url("/api/tags")
-        try:
-            client = get_async_client(timeout=6)
-            response = await client.get(tags_url)
-            logger.info("Ollama self-check: status=%s", response.status_code)
-            return response.status_code == 200
-        except Exception:
-            return False
-
-    ollama_ready = await ollama_startup_self_check()
-    asyncio.create_task(keepalive_model(ollama_ready))
-
     brain.initialize()
+
+    # New bus-based chat architecture
+    from core_agent.bus.queue import MessageBus
+    from core_agent.agent.loop import AgentLoop
+
+    bus = MessageBus()
+    loop = AgentLoop(bus)
+
+    async def processor(msg):
+        await loop.process(msg)
+
+    bus_task = asyncio.create_task(bus.worker_loop(processor))
+
+    app.state.bus = bus
+    app.state.bus_task = bus_task
 
     def start_scheduler():
         try:
             sched = StrikeTipsScheduler(data_dir=str(DATA_DIR))
-            sched.running = True
-            sched.setup_schedule()
-            sched.scheduler_thread = Thread(target=sched.run_pending, daemon=True)
-            sched.scheduler_thread.start()
-            logger.info("StrikeTipsScheduler started")
+            sched.scheduler.start()
+            app.state.scheduler = sched
+            job_count = len(sched.scheduler.get_jobs())
+            logger.info("StrikeTipsScheduler started with %d jobs (APScheduler SAST)", job_count)
         except Exception as e:
             logger.warning("Scheduler startup failed: %s", e)
 
     start_scheduler()
+
+    async def warmup_context():
+        try:
+            from core_agent.agent.context import ContextBuilder
+            cb = ContextBuilder()
+            await cb.build("_warmup", "warmup", [], None)
+            logger.info("ContextBuilder warmup complete")
+        except Exception as e:
+            logger.debug("ContextBuilder warmup skipped: %s", e)
+
+    asyncio.create_task(warmup_context())
+
+    from core_agent.channels.telegram import TelegramChannel
+    tg_channel = TelegramChannel(bus)
+    await tg_channel.start()
+    logger.info("Telegram channel registered")
 
     logger.info("Strike Tips Bot fully initialized")
     try:
@@ -226,8 +177,19 @@ async def lifespan(app: FastAPI):
             await bg_task
         except asyncio.CancelledError:
             pass
+        if hasattr(app.state, "bus_task"):
+            app.state.bus_task.cancel()
+            try:
+                await app.state.bus_task
+            except asyncio.CancelledError:
+                pass
         await monitor.close()
         logger.info("AdaptiveOddsMonitor stopped")
+        try:
+            await tg_channel.stop()
+            logger.info("Telegram channel stopped")
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Strike Bot API", lifespan=lifespan)
@@ -265,6 +227,25 @@ app.include_router(monitoring.router)
 app.include_router(healing.router)
 app.include_router(dreaming.router)
 app.include_router(tasks.router)
+
+from core_agent.api_pkg.openai import handle_chat_completions, handle_models, handle_health
+from core_agent.api_pkg.websocket import handle_websocket
+
+@app.post("/v1/chat/completions")
+async def v1_chat_completions(request: Request):
+    return await handle_chat_completions(request)
+
+@app.get("/v1/models")
+async def v1_models(request: Request):
+    return await handle_models(request)
+
+@app.get("/v1/health")
+async def v1_health(request: Request):
+    return await handle_health(request)
+
+@app.websocket("/ws/chat")
+async def ws_chat(websocket: WebSocket, session_id: str = Query(default="ws:default")):
+    await handle_websocket(websocket, session_id)
 
 
 @app.api_route(

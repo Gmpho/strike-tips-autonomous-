@@ -35,8 +35,6 @@ class StrikeBrain:
         self.memory: Optional[RacingMemory] = None
         self.tools: Optional[AgentTools] = None
         self.ai: Optional[AIProvider] = None
-        self.orchestrator: Optional[UnifiedOrchestrator] = None
-        self.pipeline: Optional[ModelPipeline] = None
         self.emergency_stop = False
 
         self._is_initialized = False
@@ -64,7 +62,6 @@ class StrikeBrain:
         from core_agent.core.strike_tips import StrikeTips
         from core_agent.skills.memory.chroma_memory import RacingMemory
         from core_agent.tools.maf_tool_registry import TOOL_REGISTRY as AgentTools
-        from core_agent.agents.ai_pydantic import UnifiedOrchestrator, ModelPipeline
 
         # 1. Initialize Strike Tips (Orchestrator for Bankroll, Scraper, Analyzer)
         self.strike = StrikeTips(data_dir=self.data_dir, enable_telegram=True)
@@ -74,10 +71,6 @@ class StrikeBrain:
 
         # 3. Initialize Agent Tools (Functional capability layer)
         self.tools = AgentTools
-
-        # 4. Initialize Unified Orchestrator + MAF Pipeline
-        self.orchestrator = UnifiedOrchestrator(self.strike)
-        self.pipeline = ModelPipeline(self.strike)
 
         self._is_initialized = True
         logger.info("[MAF] Strike Brain initialized with 11 MAF tools")

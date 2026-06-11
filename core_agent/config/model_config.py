@@ -1,11 +1,8 @@
 """
 Strike Tips - Centralized Model Configuration
-Based on OpenClaw/MAF verified patterns.
-Uses native Ollama API (no /v1) and strictly defined provider blocks.
 """
 
 import os
-from typing import Dict, List
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -14,92 +11,19 @@ load_dotenv()
 
 
 class ModelConfig:
-    # ── HARDWARE GUARD (Optimized for 8GB RAM)
-    LOCAL_THREADS = int(os.getenv("LOCAL_THREADS", "3"))
-    LOCAL_GPU = int(os.getenv("LOCAL_GPU", "0"))
-    LOCAL_CTX = int(os.getenv("MAX_LOCAL_CTX", "32768"))
-
-    # ── MODEL REGISTRY
-    # We define providers explicitly to stop the container from guessing.
-    # Native Ollama API: Use the persistent Modal Ollama server
+    # Ollama host — kept for ChromaDB embedding (falls through to Gemini when down)
     OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-racing-ollama-server.modal.run")
-
-    # Local Specialist Swarm (The "Resident" Trio)
-    # These stay loaded in RAM thanks to OLLAMA_MAX_LOADED_MODELS=3
-    LOCAL_MODELS = [
-        {"id": "func_gemma", "name": "func_gemma", "input": ["text"]},
-        {"id": "lfm_racing", "name": "lfm_racing", "input": ["text"]},
-        {"id": "racing_llama", "name": "racing_llama", "input": ["text"]},
-    ]
-
-    # Cloud Proxy Swarm (Accessed via Host's Ollama Sign-in)
-    # These are manifest-only pointers; they use no local space.
-    CLOUD_MODELS = [
-        {
-            "id": "gemini-3-flash-preview:cloud",
-            "name": "gemini-3-flash-preview:cloud",
-            "input": ["text", "image"],
-        },
-        {"id": "gemma4:31b-cloud", "name": "gemma4:31b-cloud", "input": ["text"]},
-        {"id": "qwen3.5:397b-cloud", "name": "qwen3.5:397b-cloud", "input": ["text"]},
-        {
-            "id": "nemotron-3-nano:30b-cloud",
-            "name": "nemotron-3-nano:30b-cloud",
-            "input": ["text"],
-        },
-        {"id": "glm-4.7:cloud", "name": "glm-4.7:cloud", "input": ["text"]},
-    ]
-
-    # Fallback chains (use correct available models from Gemini API)
-    PARALLEL = "gemini-2.5-flash-lite"
-    CLOUD_FALLBACK = "gemini-2.5-flash-lite"
-    GEMINI_CHAIN = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
-
-    # Groq model aliases
-    ORCHESTRATOR = "llama-3.3-70b-versatile"  # Better tool calling than 8b
-    SCRAPER = "racing_llama"
-    FUNC_CALL = "func_gemma"
-    FAST_LOCAL = "llama3.2:1b"
     EMBEDDER = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
 
-    @classmethod
-    def get_provider_config(cls) -> Dict:
-        """Returns OpenClaw-verified provider configuration."""
-        return {
-            "models": {
-                "providers": {
-                    "ollama": {
-                        "baseUrl": cls.OLLAMA_BASE_URL,
-                        "apiKey": "ollama-local",
-                        "api": "ollama",  # Native API mode
-                        "timeoutSeconds": 300,
-                        "contextWindow": cls.LOCAL_CTX,
-                        "models": cls.LOCAL_MODELS + cls.CLOUD_MODELS,
-                    }
-                }
-            }
-        }
+    # Fallback chains — latest Gemini models (GA as of May 2026)
+    PARALLEL = "gemini-3.5-flash"
+    CLOUD_FALLBACK = "gemini-3.5-flash"
+    GEMINI_CHAIN = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash"]
+
+    # Groq model alias
+    ORCHESTRATOR = "llama-3.3-70b-versatile"  # Better tool calling than 8b
 
     @classmethod
     def groq_available(cls) -> bool:
         """Check if Groq API key is configured."""
         return bool(os.getenv("GROQ_API_KEY"))
-
-    @classmethod
-    def ollama_host(cls) -> str:
-        """Return the base URL of the Ollama host."""
-        return cls.OLLAMA_BASE_URL
-
-    @classmethod
-    def ollama_native_url(cls, path: str) -> str:
-        """Native Ollama API endpoint builder (/api/*)."""
-        clean_path = path if path.startswith("/") else f"/{path}"
-        return f"{cls.ollama_host()}{clean_path}"
-
-    @classmethod
-    def summary(cls) -> str:
-        return f"=== Strike Tips Config ===\nHost: {cls.OLLAMA_BASE_URL}\nSwarm Size: {len(cls.LOCAL_MODELS) + len(cls.CLOUD_MODELS)}"
-
-
-if __name__ == "__main__":
-    print(ModelConfig.summary())

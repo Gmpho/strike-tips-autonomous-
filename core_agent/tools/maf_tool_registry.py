@@ -146,6 +146,27 @@ TOOL_INFO: Dict[str, Dict] = {
         "speed": "~1-2s",
         "use_case": "What has the agent been dreaming about lately?",
     },
+    "search_racing_keywords": {
+        "description": "Keyword search over indexed race data using BM25 full-text search. Supports exact phrases, OR, and prefix matching. Better for exact horse/track names than semantic search.",
+        "specialist": "racing_qwen",
+        "category": "search",
+        "speed": "~1s",
+        "use_case": "Find all indexed data mentioning 'Winter Mountain' or 'Turffontein 1600m'",
+    },
+    "search_hybrid": {
+        "description": "Hybrid search combining BM25 keyword search + semantic vector search. Best for finding relevant racing info when you're not sure of exact terms. Weights: 60% keyword, 40% semantic.",
+        "specialist": "racing_qwen",
+        "category": "search",
+        "speed": "~2s",
+        "use_case": "Find anything about Turffontein 1600m form — exact or similar",
+    },
+    "save_learned_insight": {
+        "description": "Save a learned analysis pattern after a multi-step tool chain (5+ calls). Captures the winning approach for future reuse.",
+        "specialist": "racing_qwen",
+        "category": "learning",
+        "speed": "~1s",
+        "use_case": "Save the Turffontein rail bias analysis pattern after 5 tool calls",
+    },
 }
 
 
@@ -218,6 +239,7 @@ def record_selection(
     position_size: float,
     edge_percent: float,
     confidence: str,
+    distance: Optional[int] = None,
     strike=None,
     **kwargs,
 ) -> Dict:
@@ -242,6 +264,7 @@ def record_selection(
             stake=position_size,
             edge_percent=edge_percent,
             confidence=confidence,
+            distance=distance,
         )
         if bet:
             return {"status": "RECORDED", "bet_id": bet.bet_id, "stake": bet.stake}
@@ -261,8 +284,9 @@ def update_race_result(
         return {"status": "ERROR", "reason": "StrikeTips not initialized"}
     try:
         won = result.upper() in ("WON", "WIN", "W")
-        success = strike.bankroll.settle_bet(selection_id, won=won, notes=notes)
-        if success:
+        # Use strike.settle_bet() which wires to LearningEngine
+        settle_result = strike.settle_bet(selection_id, won=won, notes=notes)
+        if settle_result and settle_result.get("settled"):
             return {
                 "status": "SETTLED",
                 "selection_id": selection_id,
@@ -426,11 +450,24 @@ async def get_dream_context(strike=None, **kwargs) -> Dict:
 async def evaluate_race(
     track: str, race_number: int = 1, strike=None, **kwargs
 ) -> Dict:
-    """Evaluate a specific race for value opportunities."""
+    """Evaluate a specific race for value opportunities — with Redis racecard cache."""
+    from core_agent.core.redis_cache import get_cache, set_cache
+    from datetime import date
+
     if not strike:
         return {"status": "ERROR", "reason": "StrikeTips not initialized"}
+
+    cache_key = f"racecard:{track.lower()}:{date.today().isoformat()}"
+    cached = await get_cache(cache_key)
+    if cached:
+        logger.info(f"[MAF] Racecard cache HIT: {cache_key}")
+        return cached
+
     try:
-        return await strike.evaluate_race(track, race_number)
+        result = await strike.evaluate_race(track, race_number)
+        await set_cache(cache_key, result, ttl=900)
+        logger.info(f"[MAF] Racecard cache SET: {cache_key}")
+        return result
     except Exception as e:
         return {"status": "ERROR", "reason": str(e)}
 
@@ -443,6 +480,94 @@ async def run_daily_analysis(
         return {"status": "ERROR", "reason": "StrikeTips not initialized"}
     try:
         return await strike.run_daily_scan(tracks=tracks)
+    except Exception as e:
+        return {"status": "ERROR", "reason": str(e)}
+
+
+async def search_racing_keywords(query: str, n: int = 10, source_type: Optional[str] = None, **kwargs) -> Dict:
+    """BM25 full-text keyword search over indexed race data (FTS5)."""
+    try:
+        from core_agent.skills.search.fts5_search import FTS5Search
+        searcher = FTS5Search()
+        results = searcher.search(query, n=n, source_type=source_type)
+        return {
+            "query": query,
+            "results": [
+                {
+                    "content": r["content"],
+                    "source_type": r["source_type"],
+                    "score": r["score"],
+                    "method": r["method"],
+                }
+                for r in results
+            ],
+            "count": len(results),
+        }
+    except Exception as e:
+        return {"query": query, "error": str(e), "results": [], "count": 0}
+
+
+async def search_hybrid(
+    query: str, n: int = 10, source_type: Optional[str] = None,
+    keyword_weight: float = 0.6, semantic_weight: float = 0.4, **kwargs
+) -> Dict:
+    """Hybrid search: BM25 keyword + ChromaDB semantic (60/40 weighting)."""
+    try:
+        from core_agent.skills.search.fts5_search import FTS5Search
+        searcher = FTS5Search()
+        results = searcher.hybrid_search(
+            query, n=n, source_type=source_type,
+            keyword_weight=keyword_weight, semantic_weight=semantic_weight
+        )
+        return {
+            "query": query,
+            "results": [
+                {
+                    "content": r["content"],
+                    "source_type": r["source_type"],
+                    "hybrid_score": r["hybrid_score"],
+                    "keyword_score": r["keyword_score"],
+                    "semantic_score": r["semantic_score"],
+                    "method": r["method"],
+                }
+                for r in results
+            ],
+            "count": len(results),
+        }
+    except Exception as e:
+        return {"query": query, "error": str(e), "results": [], "count": 0}
+
+
+async def save_learned_insight(
+    pattern_name: str,
+    description: str,
+    tool_sequence: list,
+    key_insight: str,
+    strike=None,
+    **kwargs
+) -> Dict:
+    """Save a learned analysis pattern as a ChromaDB insight (type=learned_insight)."""
+    if not strike or not hasattr(strike, "memory") or not strike.memory._is_ready:
+        return {"status": "ERROR", "reason": "Memory not available"}
+
+    try:
+        content = (
+            f"=== LEARNED INSIGHT: {pattern_name} ===\n"
+            f"Description: {description}\n"
+            f"Tool sequence: {' → '.join(tool_sequence)}\n"
+            f"Key insight: {key_insight}\n"
+        )
+
+        from core_agent.core.strike_brain import brain
+        if brain and brain.memory and brain.memory._is_ready:
+            success = brain.memory.add_form_insight(
+                horse=pattern_name,
+                insight=content,
+                metadata={"type": "learned_insight", "pattern_name": pattern_name}
+            )
+            if success:
+                return {"status": "SAVED", "pattern": pattern_name}
+        return {"status": "ERROR", "reason": "Failed to save"}
     except Exception as e:
         return {"status": "ERROR", "reason": str(e)}
 
@@ -465,6 +590,9 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "get_atr_predictor": get_atr_predictor,
     "get_atr_results": get_atr_results,
     "get_dream_context": get_dream_context,
+    "search_racing_keywords": search_racing_keywords,
+    "search_hybrid": search_hybrid,
+    "save_learned_insight": save_learned_insight,
 }
 
 

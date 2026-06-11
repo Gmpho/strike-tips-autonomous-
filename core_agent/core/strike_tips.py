@@ -301,6 +301,7 @@ class StrikeTips:
             if not horse:
                 continue
             if horse in valid_horses:
+                vb["horse"] = horse
                 validated.append(vb)
                 continue
             matches = difflib.get_close_matches(horse, valid_horses, n=1, cutoff=0.6)
@@ -353,6 +354,16 @@ class StrikeTips:
             probability_estimates[sr.horse_name] = est_prob
             reasoning_map[sr.horse_name] = reasoning
 
+        # Apply LearningEngine adjustments to probability estimates
+        if hasattr(self, 'learning') and self.learning:
+            odds_map = {sr.horse_name: sr.odds_decimal for sr in scraped_race.runners}
+            probability_estimates = self.learning.adjust_probabilities(
+                probability_estimates,
+                track=scraped_race.track,
+                distance=scraped_race.distance,
+                odds_map=odds_map,
+            )
+
         race_card = RaceCard(
             track=scraped_race.track,
             race_number=scraped_race.race_number,
@@ -395,6 +406,7 @@ class StrikeTips:
         edge_percent: float,
         confidence: str,
         override_stake: Optional[float] = None,
+        distance: Optional[int] = None,
     ) -> Optional[Dict]:
         """
         Place a bet through the bankroll governor
@@ -419,6 +431,7 @@ class StrikeTips:
             stake=stake,
             edge_percent=edge_percent,
             confidence=confidence,
+            distance=distance,
         )
 
         if bet:
@@ -450,7 +463,7 @@ class StrikeTips:
             # Wire to learning engine so ROI-by-track is populated from real results
             self.learning.record_result(
                 track=bet.track,
-                distance=None,
+                distance=bet.distance,
                 odds=bet.odds,
                 stake=bet.stake,
                 won=won,
@@ -472,7 +485,9 @@ class StrikeTips:
                     profit_loss=profit_loss,
                 ))
 
-        return self.get_bankroll_status()
+        status = self.get_bankroll_status()
+        status["settled"] = success
+        return status
 
     def get_bankroll_status(self) -> Dict:
         """Get current bankroll status"""
@@ -640,14 +655,21 @@ class StrikeTips:
                             if not isinstance(race, dict):
                                 continue
                             for vb in race.get("value_bets", []):
-                                edge = float(vb.get("edge_percent", 0))
+                                horse = vb.get("horse") or ""
+                                if not horse:
+                                    continue
+                                raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("estimated_edge") or 0
+                                edge = float(raw_edge)
+                                if 0 < edge < 1:
+                                    edge *= 100
                                 if edge < min_edge:
                                     continue
+                                raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
                                 self.place_bet(
-                                    horse=vb.get("horse", "Unknown"),
+                                    horse=horse,
                                     track=track,
                                     race_number=race.get("race_number", 0),
-                                    odds=float(vb.get("odds_decimal", 2.0)),
+                                    odds=float(raw_odds),
                                     edge_percent=edge,
                                     confidence="AUTO",
                                 )

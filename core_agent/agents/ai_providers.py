@@ -24,25 +24,8 @@ class AIResponse:
 
 class AIProvider:
     ALLOWED_MODELS = {
-        "ollama": [
-            "racing_llama",
-            "racing_qwen",
-            "func_gemma",
-            "lfm_racing",
-            "ds_racing",
-            "llama3.2:1b",
-        ],
-        "ollama_cloud": [
-            "nemotron-3-nano:30b",
-            "glm-4.7",
-            "kimi-k2-thinking",
-            "kimi-k2.5",
-            "qwen3.5:397b",
-            "gemini-3-flash-preview",
-            "gemma4:31b",
-        ],
-        "groq": ["llama-3.3-70b-versatile"],
-        "gemini": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-3-flash-preview"],
+        "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+        "gemini": ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash-lite"],
     }
 
     def __init__(self):
@@ -52,7 +35,7 @@ class AIProvider:
         return model in self.ALLOWED_MODELS.get(provider, [])
 
     async def direct_chat(
-        self, prompt: str, model_name: str = "ollama:llama3.2:1b"
+        self, prompt: str, model_name: str = "groq:llama-3.1-8b-instant"
     ) -> AIResponse:
         from core_agent.config.model_factory import get_client
 
@@ -62,11 +45,6 @@ class AIProvider:
             )
 
         provider, model = model_name.split(":", 1)
-        if provider == "local":
-            provider = "ollama"
-        elif provider == "cloud" or model_name.endswith(":cloud"):
-            provider = "ollama_cloud"
-            model = model.replace(":cloud", "")
 
         try:
             client = get_client(f"{provider}:{model}")

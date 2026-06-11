@@ -59,10 +59,15 @@ class RacingOddsAPI:
 
     def _fetch(self, path: str) -> Optional[bytes]:
         url = f"{self.BASE_URL}{path}"
-        page = Fetcher.get(url, impersonate="chrome131")
+        if not _SCRAPLING_AVAILABLE:
+            logger.warning("Racing-odds scrapling not installed — using stub fallback, will return empty")
+        page = Fetcher.get(url, impersonate="chrome131", timeout=30)
         if page.status != 200:
             logger.warning("Racing-odds %s -> %s", path, page.status)
             return None
+        body_len = len(page.body) if page.body else 0
+        if body_len < 500:
+            logger.warning("Racing-odds %s suspiciously small body (%d bytes) — possible blocking", path, body_len)
         return page.body
 
     # ------------------------------------------------------------------

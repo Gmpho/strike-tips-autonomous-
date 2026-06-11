@@ -2,18 +2,22 @@
 Strike Tips - Scheduler
 Automated daily race scanning and notifications
 Uses dynamic track discovery via RaceScheduleService.
+APScheduler with timezone support (Africa/Johannesburg).
 """
 
-import schedule
-import time
 import sys
 import os
 import json
 from core_agent.core.market_watcher import MarketWatcher
 import asyncio
 from datetime import datetime, date, timedelta
-from threading import Thread
+from threading import Thread, Event
 from typing import List, Dict
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.jobstores.memory import MemoryJobStore
+from apscheduler.executors.pool import ThreadPoolExecutor
 
 from core_agent.core.strike_tips import StrikeTips
 from core_agent.config.settings import TRACKS, NOTIFICATIONS
@@ -80,23 +84,67 @@ class StrikeTipsScheduler:
         self.data_dir = data_dir
         self.strike = None
         self.running = False
-        self.scheduler_thread = None
+        self._shutdown = Event()
+        self.scheduler = None
 
-    async def _get_todays_tracks(self) -> list:
-        from core_agent.skills.race_schedule import RaceScheduleService
+        # Parse scan_time (format "HH:MM" in SAST)
+        hour, minute = map(int, scan_time.split(":"))
 
-        service = RaceScheduleService()
-        tracks = await service.get_todays_tracks()
-        return tracks
+        # APScheduler with SAST timezone
+        jobstores = {"default": MemoryJobStore()}
+        executors = {"default": ThreadPoolExecutor(max_workers=3)}
+        job_defaults = {"coalesce": True, "max_instances": 1, "misfire_grace_time": 300}
 
-    def setup_schedule(self):
-        schedule.every().day.at(self.scan_time).do(self.daily_scan_job)
-        schedule.every().day.at("06:00").do(self.run_daily_grounding_job)
-        schedule.every().day.at("20:00").do(self.pre_warm_tomorrow_job)
-        schedule.every(15).minutes.do(self.continuous_scan_job).tag("continuous_scan")
-        schedule.every(5).minutes.do(self.check_race_results_job)
-        schedule.every().day.at("20:00").do(self._end_of_day_report)
-        schedule.every().day.at("21:00").do(self.update_learning_job)
+        self.scheduler = BackgroundScheduler(
+            jobstores=jobstores,
+            executors=executors,
+            job_defaults=job_defaults,
+            timezone="Africa/Johannesburg",
+        )
+
+        # Schedule jobs in SAST
+        self.scheduler.add_job(
+            self.daily_scan_job,
+            CronTrigger(hour=hour, minute=minute, timezone="Africa/Johannesburg"),
+            id="daily_scan",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.run_daily_grounding_job,
+            CronTrigger(hour=6, minute=0, timezone="Africa/Johannesburg"),
+            id="daily_grounding",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.pre_warm_tomorrow_job,
+            CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
+            id="pre_warm_tomorrow",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.continuous_scan_job,
+            IntervalTrigger(minutes=15, timezone="Africa/Johannesburg"),
+            id="continuous_scan",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.check_race_results_job,
+            IntervalTrigger(minutes=5, timezone="Africa/Johannesburg"),
+            id="check_results",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self._end_of_day_report,
+            CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
+            id="end_of_day_report",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.update_learning_job,
+            CronTrigger(hour=21, minute=0, timezone="Africa/Johannesburg"),
+            id="update_learning",
+            replace_existing=True,
+        )
 
     def run_daily_grounding_job(self):
         """Syncs all track PDFs into memory via strike_tips.py."""
@@ -147,10 +195,9 @@ class StrikeTipsScheduler:
             print(f"[ERR] Daily scan failed: {e}")
 
     async def _daily_scan_async(self):
-        tracks = await self._get_todays_tracks()
         self.strike = StrikeTips(data_dir=self.data_dir)
         try:
-            return await self.strike.run_daily_scan(tracks=tracks or None)
+            return await self.strike.run_daily_scan()
         finally:
             await self.strike.close()
 
@@ -215,6 +262,12 @@ class StrikeTipsScheduler:
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self._continuous_scan_async(brain))
             self._scan_failures = 0  # reset on success
+            # Reset to 15min interval on success
+            if self.scheduler and self.scheduler.get_job("continuous_scan"):
+                self.scheduler.reschedule_job(
+                    "continuous_scan",
+                    trigger=IntervalTrigger(minutes=15, timezone="Africa/Johannesburg"),
+                )
         except Exception as e:
             self._scan_failures += 1
             delay = 15  # minutes — default
@@ -223,9 +276,12 @@ class StrikeTipsScheduler:
             elif self._scan_failures > 3:
                 delay = 60  # 1 hour
             print(f"[ERR] Continuous scan #{self._scan_failures} failed: {e} (next in {delay}min)")
-            # Reschedule with backoff by re-adding the job at a longer interval
-            schedule.clear("continuous_scan")
-            schedule.every(delay).minutes.do(self.continuous_scan_job).tag("continuous_scan")
+            # Reschedule with backoff using APScheduler
+            if self.scheduler and self.scheduler.get_job("continuous_scan"):
+                self.scheduler.reschedule_job(
+                    "continuous_scan",
+                    trigger=IntervalTrigger(minutes=delay, timezone="Africa/Johannesburg"),
+                )
 
     async def _continuous_scan_async(self, brain):
         """Fetch Betway snapshot and check for value opportunities."""
@@ -295,28 +351,22 @@ class StrikeTipsScheduler:
         except Exception as e:
             print(f"[ERR] End-of-day report failed: {e}")
 
-    def run_pending(self):
-        while self.running:
-            schedule.run_pending()
-            time.sleep(10)
-
     def start(self):
         self.running = True
-        self.setup_schedule()
-        self.scheduler_thread = Thread(target=self.run_pending)
-        self.scheduler_thread.daemon = True
-        self.scheduler_thread.start()
-        print("[RUN] Strike Tips Scheduler Started")
+        self._shutdown.clear()
+        self.scheduler.start()
+        print("[RUN] Strike Tips Scheduler Started (SAST timezone)")
         try:
-            while self.running:
-                time.sleep(1)
+            self._shutdown.wait()
         except KeyboardInterrupt:
             self.stop()
 
     def stop(self):
         self.running = False
-        if self.scheduler_thread:
-            self.scheduler_thread.join()
+        self._shutdown.set()
+        if self.scheduler:
+            self.scheduler.shutdown(wait=True)
+        print("[STOP] Strike Tips Scheduler Stopped")
 
 
 async def run_immediate_scan_async():

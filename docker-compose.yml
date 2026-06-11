@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: strike-tips-base:latest
     container_name: strike-bot-new
+    command: /bin/sh -c "uvicorn core_agent.api_pkg:app --host 0.0.0.0 --port 8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -12,7 +13,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - DATA_DIR=/app/data
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://ollama:11434
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - .:/app
@@ -27,7 +28,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 512M
+          memory: 1G
     restart: unless-stopped
     depends_on:
       - ollama
@@ -45,7 +46,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - DATA_DIR=/app/data
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_HOST=http://ollama:11434
       - MAX_CONCURRENT_PAGES=2
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
@@ -68,28 +69,6 @@ services:
           cpus: '0.8'
           memory: 1.5G
     restart: unless-stopped
-    depends_on:
-      - ollama
-      - redis
-
-  telegram-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: telegram-agent-new
-    environment:
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-    env_file:
-      - .env
-    command: python3 core_agent/agents/telegram_agent_loop.py
-    restart: always
-    volumes:
-      - .:/app
-      - playwright_cache:/root/.cache/ms-playwright
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
     depends_on:
       - ollama
       - redis

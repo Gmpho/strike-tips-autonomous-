@@ -44,9 +44,10 @@ class BetRecord:
     odds: float
     stake: float
     potential_return: float
-    status: str  # PENDING, WON, LOST
+    status: str
     edge_percent: float
     confidence: str
+    distance: Optional[int] = None
     actual_return: Optional[float] = None
     profit_loss: Optional[float] = None
     notes: str = ""
@@ -235,6 +236,7 @@ class BankrollGovernor:
         stake: float,
         edge_percent: float,
         confidence: str,
+        distance: Optional[int] = None,
     ) -> Optional[BetRecord]:
         """Record a new bet after passing all governor checks (Atomic)"""
         with self._atomic_transaction():
@@ -276,6 +278,7 @@ class BankrollGovernor:
                 horse=horse,
                 odds=odds,
                 stake=stake,
+                distance=distance,
                 potential_return=round(stake * odds, 2),
                 status="PENDING",
                 edge_percent=edge_percent,

@@ -244,10 +244,14 @@ export const SettingsView: React.FC = () => {
                   onChange={e => set('ai', 'preferredModel', e.target.value)}
                   className="w-full bg-theme-secondary/50 border border-theme rounded-2xl px-5 py-4 text-theme-primary font-black focus:outline-none focus:border-blue-500/50 transition-colors appearance-none"
                 >
-                  <option value="groq-llama">Groq Cloud (Llama 3.3)</option>
-                  <option value="ollama-racing">Ollama Local (Fast)</option>
-                  <option value="ollama-ds">Ollama Local (DeepSeek)</option>
-                  <option value="gemini">Gemini Pro</option>
+                  <optgroup label="☁️ Cloud">
+                    <option value="groq-llama">Groq Cloud (Llama 3.3)</option>
+                    <option value="gemini">Gemini Flash</option>
+                  </optgroup>
+                  <optgroup label="💻 Local (Ollama)">
+                    <option value="functiongemma:270m">FunctionGemma 270M (Tools)</option>
+                    <option value="qwen:1.8b">Qwen 1.8B (Chat + Tools)</option>
+                  </optgroup>
                 </select>
               </div>
               <div className="flex items-center justify-between p-5 bg-theme-secondary/30 rounded-2xl border border-theme">
