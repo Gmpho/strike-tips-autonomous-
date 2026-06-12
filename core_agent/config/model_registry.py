@@ -1,6 +1,6 @@
 """
 Strike Tips - Model Registry
-Complete model registry with capabilities for business logic.
+Complete model registry with semantic task types (Google AI Edge style).
 """
 
 import os
@@ -13,9 +13,22 @@ load_dotenv()
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
+# ── Semantic Task Types ────────────────────────────────────────────────────────
+# LLM-oriented naming following Google AI Edge Gallery conventions.
+
+TASK_CHAT = "llm_chat"
+TASK_TOOLS = "llm_tools"  # General tool calling / function execution
+TASK_RACING = "llm_racing"  # Racing domain knowledge (form, tracks, odds)
+TASK_ANALYSIS = "llm_analysis"  # Deep analysis, probability edges
+TASK_FAST_ANALYSIS = "llm_fast_analysis"  # Lightweight quick predictions
+TASK_TRANSACTION = "llm_transaction_write"  # Record/settle bets (write ops)
+TASK_EMBEDDING = "llm_embedding"  # Vector embeddings only
+TASK_MULTIMODAL = "llm_multimodal"  # Image/audio input
+
+
 @dataclass
 class ModelInfo:
-    """Model metadata with full capabilities"""
+    """Model metadata with semantic task types (Google AI Edge style)."""
 
     id: str
     name: str
@@ -23,13 +36,12 @@ class ModelInfo:
     provider: str  # Groq, Google, Ollama
     description: str  # Business description
 
-    # Capabilities
-    supports_tools: bool  # Can use get_bankroll, search_racecard, etc.
-    is_orchestrator: bool  # Primary orchestration model
-    is_reasoning: bool  # Does thinking/reasoning
-    is_fast: bool  # Fast response
-    is_free: bool  # Always free (local models)
-    rate_limit_risk: str  # "none", "low", "medium", "high"
+    taskTypes: List[str]  # Semantic task types this model can handle
+    bestForTaskTypes: List[str]  # Task types this model is best for
+    defaultConfig: Dict  # Generation defaults: temperature, maxTokens, topK
+
+    api_format: str = "chat"  # "chat" for /api/chat, "generate" for /api/generate
+    frontend_visible: bool = True  # Show in Agent Dashboard / dropdown
 
 
 # Complete Model Registry
@@ -43,25 +55,77 @@ MODEL_REGISTRY: List[ModelInfo] = [
         type="local",
         provider="Ollama",
         description="Tool calling specialist - best for function execution.",
-        supports_tools=True,
-        is_orchestrator=False,
-        is_reasoning=False,
-        is_fast=True,
-        is_free=True,
-        rate_limit_risk="none",
+        taskTypes=[TASK_TOOLS, TASK_TRANSACTION],
+        bestForTaskTypes=[TASK_TOOLS],
+        defaultConfig={"temperature": 0.0, "maxTokens": 1024, "topK": 64},
     ),
     ModelInfo(
-        id="qwen:1.8b",
-        name="Qwen 1.8B",
+        id="qwen3.5:0.8b",
+        name="Qwen3.5 0.8B",
         type="local",
         provider="Ollama",
         description="Fast extraction and chat - quick data retrieval.",
-        supports_tools=True,
-        is_orchestrator=True,
-        is_reasoning=False,
-        is_fast=True,
-        is_free=True,
-        rate_limit_risk="none",
+        taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_RACING],
+        bestForTaskTypes=[TASK_CHAT],
+        defaultConfig={"temperature": 0.3, "maxTokens": 4096, "topK": 20},
+    ),
+    ModelInfo(
+        id="racing_qwen:latest",
+        name="Racing Qwen",
+        type="local",
+        provider="Ollama",
+        description="Racing analysis specialist (Llama 3.2 1B base) — form analysis, racecards, general chat.",
+        taskTypes=[TASK_RACING, TASK_ANALYSIS, TASK_CHAT],
+        bestForTaskTypes=[TASK_RACING, TASK_ANALYSIS],
+        defaultConfig={"temperature": 0.1, "maxTokens": 512, "topK": 40},
+        api_format="generate",
+    ),
+    ModelInfo(
+        id="lfm_racing:latest",
+        name="LFM Racing (Thinking)",
+        type="local",
+        provider="Ollama",
+        description="LFM 2.5 Thinking model — deep step-by-step reasoning for race evaluation and analysis.",
+        taskTypes=[TASK_ANALYSIS],
+        bestForTaskTypes=[TASK_ANALYSIS],
+        defaultConfig={"temperature": 0.2, "maxTokens": 256, "topK": 40},
+        api_format="generate",
+    ),
+    ModelInfo(
+        id="func_gemma:latest",
+        name="Func Gemma",
+        type="local",
+        provider="Ollama",
+        description="Tool-aware specialist (FunctionGemma 270M) — transaction operations and structured data tasks.",
+        taskTypes=[TASK_TRANSACTION, TASK_TOOLS],
+        bestForTaskTypes=[TASK_TRANSACTION],
+        defaultConfig={"temperature": 0.0, "maxTokens": 512, "topK": 64},
+        api_format="generate",
+        frontend_visible=False,
+    ),
+    ModelInfo(
+        id="racing_llama:latest",
+        name="Racing Llama",
+        type="local",
+        provider="Ollama",
+        description="Search results summarizer (Llama 3.2 1B) — summarizes web search results for racing queries.",
+        taskTypes=[TASK_RACING],
+        bestForTaskTypes=[TASK_RACING],
+        defaultConfig={"temperature": 0.1, "maxTokens": 384, "topK": 40},
+        api_format="generate",
+        frontend_visible=False,
+    ),
+    ModelInfo(
+        id="ds_racing:latest",
+        name="DS Racing (DeepSeek R1)",
+        type="local",
+        provider="Ollama",
+        description="DeepSeek R1 1.5B — deep structured reasoning for complex racing analysis.",
+        taskTypes=[TASK_ANALYSIS],
+        bestForTaskTypes=[TASK_ANALYSIS],
+        defaultConfig={"temperature": 0.3, "maxTokens": 512, "topK": 40},
+        api_format="generate",
+        frontend_visible=False,
     ),
     ModelInfo(
         id="embeddinggemma:300m",
@@ -69,12 +133,10 @@ MODEL_REGISTRY: List[ModelInfo] = [
         type="local",
         provider="Ollama",
         description="Embeddings specialist - for vector search tasks.",
-        supports_tools=False,
-        is_orchestrator=False,
-        is_reasoning=False,
-        is_fast=True,
-        is_free=True,
-        rate_limit_risk="none",
+        taskTypes=[TASK_EMBEDDING],
+        bestForTaskTypes=[TASK_EMBEDDING],
+        defaultConfig={"temperature": 0.0, "maxTokens": 1},
+        frontend_visible=False,
     ),
     # ═══════════════════════════════════════════════════════════
     # CLOUD MODELS - May Have Limits
@@ -85,12 +147,9 @@ MODEL_REGISTRY: List[ModelInfo] = [
         type="cloud",
         provider="Groq",
         description="Fast cloud model - primary cloud orchestrator.",
-        supports_tools=True,
-        is_orchestrator=True,
-        is_reasoning=False,
-        is_fast=True,
-        is_free=False,
-        rate_limit_risk="medium",
+        taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_ANALYSIS],
+        bestForTaskTypes=[TASK_CHAT, TASK_ANALYSIS],
+        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 20},
     ),
     ModelInfo(
         id="gemini-3.5-flash",
@@ -98,25 +157,23 @@ MODEL_REGISTRY: List[ModelInfo] = [
         type="cloud",
         provider="Google",
         description="Google AI flagship - multimodal, function calling.",
-        supports_tools=True,
-        is_orchestrator=True,
-        is_reasoning=False,
-        is_fast=True,
-        is_free=False,
-        rate_limit_risk="medium",
+        taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_MULTIMODAL],
+        bestForTaskTypes=[TASK_MULTIMODAL],
+        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 64},
     ),
 ]
 
 
-def get_all_models() -> List[Dict[str, Any]]:
-    """Get ALL models (no health checks - just return all)"""
+def get_all_models(frontend_only: bool = True) -> List[Dict[str, Any]]:
+    """Get models (no health checks - just return all)."""
+    registry = [m for m in MODEL_REGISTRY if m.frontend_visible] if frontend_only else MODEL_REGISTRY
     return [
         {
             **asdict(model),
-            "is_available": True,  # Assume available, let user try
+            "is_available": True,
             "status_reason": "Ready to try",
         }
-        for model in MODEL_REGISTRY
+        for model in registry
     ]
 
 
@@ -129,86 +186,76 @@ def get_model_by_id(model_id: str) -> Optional[ModelInfo]:
 
 
 def get_fallback_order(
-    preferred: Optional[str] = None, prefer_local: bool = True
+    preferred: Optional[str] = None,
+    prefer_local: bool = True,
+    task_type: Optional[str] = None,
 ) -> List[str]:
     """
-    Get model fallback order.
+    Get model fallback order, optionally filtered by task type.
 
     Args:
         preferred: User's preferred model ID (try first)
         prefer_local: Put local models first (free, reliable)
+        task_type: If set, only include models that support this task type
 
     Returns:
         List of model IDs in fallback order
     """
+    candidates = MODEL_REGISTRY
+    if task_type:
+        candidates = [m for m in candidates if task_type in m.taskTypes]
+
     order = []
 
-    # Add preferred first
     if preferred:
         order.append(preferred)
 
     if prefer_local:
-        # Local models first (free, always work)
-        for model in MODEL_REGISTRY:
+        for model in candidates:
             if model.type == "local" and model.id not in order:
                 order.append(model.id)
-        # Then cloud models
-        for model in MODEL_REGISTRY:
+        for model in candidates:
             if model.type == "cloud" and model.id not in order:
                 order.append(model.id)
     else:
-        # Cloud first then local
-        for model in MODEL_REGISTRY:
+        for model in candidates:
             if model.type == "cloud" and model.id not in order:
                 order.append(model.id)
-        for model in MODEL_REGISTRY:
+        for model in candidates:
             if model.type == "local" and model.id not in order:
                 order.append(model.id)
 
     return order
 
 
-def get_models_by_capability(
-    has_tools: Optional[bool] = None,
-    is_orchestrator: Optional[bool] = None,
-    is_reasoning: Optional[bool] = None,
-    is_free: Optional[bool] = None,
-) -> List[ModelInfo]:
-    """Filter models by capability"""
-    results = []
-    for model in MODEL_REGISTRY:
-        if has_tools is not None and model.supports_tools != has_tools:
-            continue
-        if is_orchestrator is not None and model.is_orchestrator != is_orchestrator:
-            continue
-        if is_reasoning is not None and model.is_reasoning != is_reasoning:
-            continue
-        if is_free is not None and model.is_free != is_free:
-            continue
-        results.append(model)
-    return results
-
-
-# Convenience functions for business logic
-def get_best_local_model() -> Optional[ModelInfo]:
-    """Get the best local model for tool calling"""
-    return get_model_by_id("racing_llama")
+def get_models_by_task_type(task_type: str) -> List[ModelInfo]:
+    """Filter models by semantic task type."""
+    return [m for m in MODEL_REGISTRY if task_type in m.taskTypes]
 
 
 def get_best_orchestrator() -> Optional[ModelInfo]:
-    """Get the best orchestrator model"""
-    # Prefer local if available
-    local = get_model_by_id("racing_llama")
+    """Get the best general-purpose orchestrator model."""
+    local = get_model_by_id("qwen3.5:0.8b")
     if local:
         return local
     return get_model_by_id("llama-3.3-70b-versatile")
 
 
-def get_free_models() -> List[ModelInfo]:
-    """Get all free (local) models"""
-    return get_models_by_capability(is_free=True)
+def get_best_tool_model() -> Optional[ModelInfo]:
+    """Get the best model for tool calling (functiongemma)."""
+    return get_model_by_id("functiongemma:270m")
 
 
-def get_tool_models() -> List[ModelInfo]:
-    """Get all models that support tools"""
-    return get_models_by_capability(has_tools=True)
+def get_best_racing_analysis_model() -> Optional[ModelInfo]:
+    """Get the best model for deep racing analysis (racing_qwen)."""
+    return get_model_by_id("racing_qwen:latest")
+
+
+def get_best_fast_analysis_model() -> Optional[ModelInfo]:
+    """Get the best lightweight model for quick predictions (lfm_racing)."""
+    return get_model_by_id("lfm_racing:latest")
+
+
+def get_embedding_model() -> Optional[ModelInfo]:
+    """Get the embedding model."""
+    return get_model_by_id("embeddinggemma:300m")

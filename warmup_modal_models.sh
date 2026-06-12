@@ -7,7 +7,7 @@ OLLAMA_HOST="${OLLAMA_HOST:-https://gmpho--strike-tips-racing-ollama-server.moda
 
 echo "⏳ Warming up Modal Ollama models at $OLLAMA_HOST..."
 
-for model in functiongemma:270m qwen:1.8b embeddinggemma:300m; do
+for model in functiongemma:270m qwen3.5:0.8b embeddinggemma:300m; do
   echo -n "→ $model: "
   result=$(curl -s -X POST "$OLLAMA_HOST/api/chat" \
     -H "Content-Type: application/json" \

@@ -59,10 +59,10 @@ class GroqProvider:
         if needs_tools:
             payload["tools"] = self._get_tools()
 
-        client = get_async_client(timeout=120.0)
+        client = get_async_client(timeout=15.0)
         async def _do_post():
             return await client.post(self.URL, headers=headers, json=payload)
-        resp = await retry_on_429(_do_post, max_retries=3, base_delay=2.0)
+        resp = await retry_on_429(_do_post, max_retries=1, base_delay=1.0)
         resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]

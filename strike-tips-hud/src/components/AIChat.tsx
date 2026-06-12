@@ -198,7 +198,9 @@ export const AIChat: React.FC = () => {
                 </optgroup>
                 <optgroup label="💻 Local (Ollama)">
                   <option value="functiongemma:270m" className="bg-black">FunctionGemma 270M (Tools)</option>
-                  <option value="qwen:1.8b" className="bg-black">Qwen 1.8B (Chat + Tools)</option>
+                  <option value="qwen3.5:0.8b" className="bg-black">Qwen3.5 0.8B (Chat + Tools)</option>
+                  <option value="racing_qwen:latest" className="bg-black">Racing Qwen (Domain Specialist)</option>
+                  <option value="lfm_racing:latest" className="bg-black">LFM Racing (Lightweight)</option>
                 </optgroup>
               </select>
             <div className="flex gap-2 flex-1 w-full min-w-0">

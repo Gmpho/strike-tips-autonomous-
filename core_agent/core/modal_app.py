@@ -50,7 +50,7 @@ def pull_ollama_models():
 
     models = [
         "functiongemma:270m",    # 270M - function calling
-        "qwen:1.8b",             # 1.8B - chat + tools
+        "qwen3.5:0.8b",           # 0.8B - chat + tools
         "embeddinggemma:300m",   # 300M - embeddings
     ]
     for m in models:

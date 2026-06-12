@@ -35,7 +35,7 @@ def _make_embedding_fn():
             for text in input:
                 try:
                     from core_agent.core.http_client import get_sync_client
-                    client = get_sync_client(timeout=15.0)
+                    client = get_sync_client(timeout=60.0)
                     r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
                     results.append(r.json().get("embedding", []))
                 except Exception:

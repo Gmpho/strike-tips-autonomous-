@@ -2,9 +2,42 @@ from __future__ import annotations
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 import asyncio
+import re
 import uuid
 import json
+import logging
 from core_agent.bus.events import InboundMessage
+
+logger = logging.getLogger("openai-handler")
+
+# ── Fast-path for casual chat ──────────────────────────────────────────────────
+# Detect greetings, thanks, goodbyes — skip bus/AgentLoop entirely.
+_CASUAL_PATTERNS = re.compile(
+    r"^(hey|hello|hi|howdy|sup|yo|good\s*(morning|afternoon|evening|day)|"
+    r"thanks|thank\s*(?:you|s)|thx|ty|"
+    r"ok(?:ay)?|k+|"
+    r"yes|yeah|yep|sure|no|nope|nah|"
+    r"(?:lol|lmao|nice|cool|great|awesome|perfect)"
+    r"|what'?s\s*up|how'?s\s*it\s*going|how\s+(?:are|r)\s*(?:you|u)|"
+    r"bye|goodbye|cya|see\s*(?:ya|you|later)|good\s*night)"
+    r"[\s!?.]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_casual(text: str) -> bool:
+    return bool(_CASUAL_PATTERNS.match(text.strip()))
+
+
+def _casual_reply(text: str) -> str:
+    t = text.strip().lower()
+    bye_words = {"bye", "goodbye", "cya", "see ya", "see you", "see later", "goodnight", "good night"}
+    thanks_words = {"thanks", "thank you", "thank u", "thanks!", "thank you!", "thx", "ty"}
+    if any(w in t for w in bye_words):
+        return "Goodbye! Come back anytime to check on your races."
+    if any(w in t for w in thanks_words):
+        return "You're welcome! Let me know if you need anything else — race analysis, odds, or account updates."
+    return "Hey there! I'm Strike Tips. Ask me about today's races, odds, or your account."
 
 
 async def handle_chat_completions(request: Request):
@@ -21,18 +54,45 @@ async def handle_chat_completions(request: Request):
     if not last_user:
         raise HTTPException(400, "No user message")
 
+    user_text = last_user["content"].strip()
     stream = body.get("stream", False)
     session_id = body.get("session_id", "api:default")
-    bus = request.app.state.bus
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
+    # ── FAST PATH ────────────────────────────────────────────────────────────
+    # Greetings, thanks, goodbyes — respond instantly, skip bus/AgentLoop
+    if _is_casual(user_text):
+        reply = _casual_reply(user_text)
+        logger.info("[FAST_PATH] casual chat: '%s' → '%s'", user_text[:20], reply[:30])
+        if stream:
+            async def _single_chunk():
+                yield _sse_chunk(reply, "strike-tips", chunk_id)
+                yield _sse_chunk("", "strike-tips", chunk_id, finish_reason="stop")
+                yield b"data: [DONE]\n\n"
+            return StreamingResponse(
+                _single_chunk(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            )
+        return JSONResponse({
+            "id": chunk_id,
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+            "model": "strike-tips",
+        })
+
+    # ── NORMAL PATH: bus-based AgentLoop ─────────────────────────────────────
+    bus = request.app.state.bus
     msg = InboundMessage(
         session_key=f"api:{session_id}",
         channel="rest",
         chat_id=session_id,
-        content=last_user["content"],
+        content=user_text,
     )
-
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     if stream:
         return StreamingResponse(
@@ -44,13 +104,19 @@ async def handle_chat_completions(request: Request):
     sub = bus.subscribe()
     try:
         await bus.publish(msg)
+        content = ""
         while True:
             out = await sub.get()
+            if out.content:
+                content = out.content
             if out.done:
                 break
-        content = out.content
     finally:
         bus.unsubscribe(sub)
+
+    # ── SAFETY NET: never return empty ───────────────────────────────────────
+    if not content:
+        content = "I'm sorry, I couldn't process that request. Try asking about today's races, odds, or your account."
 
     return JSONResponse({
         "id": chunk_id,

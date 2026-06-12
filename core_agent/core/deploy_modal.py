@@ -92,7 +92,7 @@ def deploy():
         print("\n[OK] Deployment successful!")
         
         # Pull models after deploy
-        print("\n[MODEL] Pulling Ollama models (functiongemma:270m, qwen:1.8b, embeddinggemma:300m)...")
+        print("\n[MODEL] Pulling Ollama models (functiongemma:270m, qwen3.5:0.8b, embeddinggemma:300m)...")
         pull_result = subprocess.run(
             ["modal", "run", "core_agent.core.modal_app::pull_ollama_models"], 
             capture_output=False

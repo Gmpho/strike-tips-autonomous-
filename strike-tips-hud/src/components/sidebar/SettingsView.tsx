@@ -250,7 +250,9 @@ export const SettingsView: React.FC = () => {
                   </optgroup>
                   <optgroup label="💻 Local (Ollama)">
                     <option value="functiongemma:270m">FunctionGemma 270M (Tools)</option>
-                    <option value="qwen:1.8b">Qwen 1.8B (Chat + Tools)</option>
+                    <option value="qwen3.5:0.8b">Qwen3.5 0.8B (Chat + Tools)</option>
+                    <option value="racing_qwen:latest">Racing Qwen (Domain Specialist)</option>
+                    <option value="lfm_racing:latest">LFM Racing (Lightweight)</option>
                   </optgroup>
                 </select>
               </div>

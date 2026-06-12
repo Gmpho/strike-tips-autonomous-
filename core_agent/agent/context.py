@@ -1,14 +1,28 @@
 from __future__ import annotations
 import asyncio
-import json
+import re
 from core_agent.core.strike_brain import brain
 
-
 MAX_CONTEXT_CHARS = 12000
+
+# Trivial patterns — skip heavy context assembly for greetings/filler
+_TRIVIAL_PATTERNS = re.compile(
+    r"^(hey|hello|hi|howdy|sup|thanks|thank\s*(?:you|s)|ok(?:ay)?|yes|yeah|yep|no|nope|nah|"
+    r"bye|goodbye|lol|lmao|nice|cool|great|awesome|"
+    r"what'?s\s*up|how'?s\s*it\s*going|how\s+(?:are|r)\s*(?:you|u)|"
+    r"good\s*(?:morning|afternoon|evening|day))"
+    r"[\s!?.]*$",
+    re.IGNORECASE,
+)
 
 
 class ContextBuilder:
     async def build(self, session_key: str, user_message: str, history: list[dict], intent: str | None) -> str:
+        # FAST PATH: trivial/filler messages — skip heavy lookups
+        msg = user_message.strip()
+        if len(msg) < 30 and _TRIVIAL_PATTERNS.match(msg):
+            return f"[QUERY]\n{user_message[:2000]}"
+
         parts = []
 
         try:

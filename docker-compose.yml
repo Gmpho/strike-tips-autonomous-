@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     image: strike-tips-base:latest
     container_name: strike-bot-new
-    command: /bin/sh -c "uvicorn core_agent.api_pkg:app --host 0.0.0.0 --port 8000"
+    command: /bin/sh -c "exec /app/start.sh"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -90,8 +90,9 @@ services:
     container_name: ollama
     expose:
       - "11434"
+    cpu_shares: 512
     environment:
-      - OLLAMA_KEEP_ALIVE=0
+      - OLLAMA_KEEP_ALIVE=300
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_FLASH_ATTENTION=1

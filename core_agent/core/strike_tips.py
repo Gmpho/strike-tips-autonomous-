@@ -550,34 +550,7 @@ class StrikeTips:
                 )
             print(f"  📜 {len(pdf_tips)} official PDF tips grounded in memory.")
 
-        # 2. Try MAF Workflow if agents are initialized
-        agents = getattr(getattr(brain, "pipeline", None), "_agents", None)
-        if agents:
-            try:
-                from core_agent.agents.workflow import build_race_scan_workflow
-
-                workflow = build_race_scan_workflow(self, agents)
-                events = await workflow.run(tracks)
-                outputs = events.get_outputs() or []
-                total_value_bets = sum(
-                    1
-                    for item in outputs
-                    if isinstance(item, dict)
-                    and "RECORD" in str(item.get("decision", "")).upper()
-                )
-                print(
-                    f"\n[OK] MAF Workflow scan complete! {total_value_bets} selections flagged."
-                )
-                return {
-                    "date": date.today().isoformat(),
-                    "tracks_scanned": len(tracks),
-                    "total_value_bets": total_value_bets,
-                    "results": outputs,
-                }
-            except Exception as e:
-                print(f"[WARN] MAF Workflow failed ({e}), falling back to legacy scan.")
-
-        # 3. Legacy fallback
+        # 2. Legacy fallback
         all_results = {}
         total_value_bets = 0
         for track in tracks:
@@ -867,25 +840,29 @@ async def main_async():
             print(strike.generate_report())
 
         elif args.command == "chat":
-            print("\n[MAF] Strike Tips AI - Interactive Mode")
+            print("\n Strike Tips AI - Interactive Mode")
             print("=" * 50)
             print("Type 'exit' or 'quit' to end session.")
 
-            from core_agent.agents.ai_pydantic import UnifiedOrchestrator
-
-            orchestrator = UnifiedOrchestrator(strike)
+            from core_agent.agent.providers.task_router import TaskRouter
+            router = TaskRouter()
 
             while True:
                 try:
-                    # Check for prompt input
                     user_input = input("\n> ").strip()
                     if user_input.lower() in ["exit", "quit"]:
                         break
                     if not user_input:
                         continue
 
-                    result = await orchestrator.chat(user_input)
-                    print(f"\n[AI] {result.summary}")
+                    messages = [
+                        {"role": "system", "content": "You are Strike Tips AI, expert horse racing analyst."},
+                        {"role": "user", "content": user_input},
+                    ]
+                    print("\n[AI] ", end="", flush=True)
+                    async for chunk in router.stream(messages, None, None):
+                        print(chunk, end="", flush=True)
+                    print()
                 except KeyboardInterrupt:
                     break
                 except Exception as e:

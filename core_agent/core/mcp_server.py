@@ -1,138 +1,153 @@
 """
 Strike Tips - MCP Server
 Implements Model Context Protocol (MCP) using FastMCP
-Target: Senior L7 AI DevOps standard (High Reliability)
 """
 
 import asyncio
-import os
+import logging
+from typing import Optional
 from fastmcp import FastMCP
-from typing import List, Optional, Dict
-from core_agent.core.strike_brain import brain
 from starlette.responses import JSONResponse
+from core_agent.core.strike_brain import brain
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+logger = logging.getLogger("mcp-server")
 
-# Create the MCP Server instance
 mcp = FastMCP("StrikeTips")
 
 
-@mcp.tool(
-    name="bridge_to_redis", description="Execute Redis MCP operations via bridge."
-)
-async def bridge_to_redis(tool_name: str, arguments: dict) -> dict:
-    redis_url = os.getenv(
-        "REDIS_URL",
-        f"redis://:{os.getenv('REDIS_PASSWORD', '')}@localhost:6379/0"
-    )
-    server_params = StdioServerParameters(
-        command="uvx",
-        args=["redis-mcp-server@latest", "--url", redis_url],
-    )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments=arguments)
-            return {"result": result.content}
+@mcp.tool(name="chat", description="General chat with the Strike Tips AI assistant.")
+async def chat_tool(query: str) -> str:
+    if not query:
+        return "Please provide a query."
+    try:
+        from core_agent.agent.providers.task_router import TaskRouter
+        router = TaskRouter()
+        messages = [
+            {"role": "system", "content": "You are Strike Tips AI, expert in horse racing analysis."},
+            {"role": "user", "content": query},
+        ]
+        chunks = []
+        async for chunk in router.stream(messages, None, None):
+            chunks.append(chunk)
+        return "".join(chunks) or "No response."
+    except Exception as e:
+        logger.error("MCP chat error: %s", e)
+        return f"Error: {e}"
 
 
-@mcp.custom_route("/mcp", methods=["GET"])
-async def mcp_root(request):
-    """Provides protocol information for browser-based discovery"""
-    return JSONResponse(
-        {
-            "status": "ready",
-            "protocol": "Model Context Protocol (MCP)",
-            "transport": "SSE",
-            "endpoints": {"handshake": "/mcp/sse", "messages": "/mcp/messages"},
-            "server": "Strike Tips AI Hub",
-        }
-    )
+@mcp.tool(name="get_account_summary", description="Return current bankroll balance, P&L, and performance stats.")
+async def mcp_get_account_summary() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_account_summary as tool_fn
+        result = tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-from core_agent.tools.maf_tool_registry import TOOL_REGISTRY, TOOL_INFO
-
-# Dynamically register all tools from the registry
-for tool_name, tool_fn in TOOL_REGISTRY.items():
-    tool_meta = TOOL_INFO.get(tool_name, {})
-
-    def create_wrapper(name, fn, meta):
-        if asyncio.iscoroutinefunction(fn):
-            @mcp.tool(name=name, description=meta.get("description", "No description"))
-            async def dynamic_tool(query: str = "") -> str:
-                return str(await fn(query=query, strike=brain.strike))
-            return dynamic_tool
-        else:
-            @mcp.tool(name=name, description=meta.get("description", "No description"))
-            def dynamic_tool(query: str = "") -> str:
-                return str(fn(query=query, strike=brain.strike))
-            return dynamic_tool
-
-    create_wrapper(tool_name, tool_fn, tool_meta)
+@mcp.tool(name="get_odds_snapshot", description="Return the latest odds snapshot for a track or all tracks.")
+async def mcp_get_odds_snapshot(track: Optional[str] = None) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_odds_snapshot as tool_fn
+        result = await tool_fn(track=track, strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-# ── MAF Agent chat tools ──────────────────────────────────────────────────────
+@mcp.tool(name="get_atr_market_movers", description="Return ATR market movers - horses with significant odds movement.")
+async def mcp_get_atr_market_movers() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_atr_market_movers as tool_fn
+        result = await tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-def _get_agent(name: str):
-    pipeline = getattr(brain, "pipeline", None)
-    if not pipeline:
-        return None
-    return (
-        pipeline._get_agent(name)
-        if hasattr(pipeline, "_get_agent")
-        else (getattr(pipeline, "_agents", None) or {}).get(name)
-    )
+@mcp.tool(name="get_atr_predictor", description="Return ATR AI predictions for upcoming races.")
+async def mcp_get_atr_predictor() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_atr_predictor as tool_fn
+        result = await tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-@mcp.tool(
-    name="analyst_chat",
-    description="Ask the Race Analyst agent to evaluate a race or calculate edge.",
-)
-async def analyst_chat(query: str) -> str:
-    agent = _get_agent("analyst")
-    if not agent:
-        return '{"error": "Analyst agent not initialized"}'
-    result = await agent.run(query, session=agent.create_session())
-    return result.text if hasattr(result, "text") else str(result)
+@mcp.tool(name="get_atr_results", description="Return ATR race results from yesterday.")
+async def mcp_get_atr_results() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_atr_results as tool_fn
+        result = await tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-@mcp.tool(
-    name="bankroll_chat",
-    description="Ask the Bankroll Governor to check balance, size a stake, or record a selection.",
-)
-async def bankroll_chat(query: str) -> str:
-    agent = _get_agent("bankroll")
-    if not agent:
-        return '{"error": "Bankroll agent not initialized"}'
-    result = await agent.run(query, session=agent.create_session())
-    return result.text if hasattr(result, "text") else str(result)
+@mcp.tool(name="get_dream_context", description="Return recent AI dreams/insights from background reasoning.")
+async def mcp_get_dream_context() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import get_dream_context as tool_fn
+        result = await tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
-@mcp.tool(
-    name="scanner_chat",
-    description="Ask the Race Scanner to scan today's SA tracks for value opportunities.",
-)
-async def scanner_chat(query: str) -> str:
-    agent = _get_agent("scanner")
-    if not agent:
-        return '{"error": "Scanner agent not initialized"}'
-    result = await agent.run(query, session=agent.create_session())
-    return result.text if hasattr(result, "text") else str(result)
+@mcp.tool(name="search_racing_data", description="Search for racing information via web search.")
+async def mcp_search_racing_data(query: str, limit: int = 3) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import search_racing_data as tool_fn
+        result = await tool_fn(query=query, limit=limit)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
+
+
+@mcp.tool(name="evaluate_race", description="Evaluate a specific race for value opportunities.")
+async def mcp_evaluate_race(track: str, race_number: int = 1) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import evaluate_race as tool_fn
+        result = await tool_fn(track=track, race_number=race_number, strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
+
+
+@mcp.tool(name="run_daily_analysis", description="Run a full daily scan across all tracks and return value selections.")
+async def mcp_run_daily_analysis() -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import run_daily_analysis as tool_fn
+        result = await tool_fn(strike=brain.strike)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
 
 
 @mcp.resource("racing://current-config")
 def get_config_resource() -> str:
-    """Provides the current betting configuration and L7 Governor settings."""
-    from config.settings import BANKROLL, TRACKS
+    try:
+        from core_agent.config.settings import BANKROLL, TRACKS
+        config = {
+            "bankroll": {
+                "max_bet_percent": BANKROLL.max_bet_percent,
+                "daily_loss_limit": BANKROLL.daily_loss_limit,
+                "min_edge_threshold": BANKROLL.min_edge_threshold,
+            },
+            "supported_tracks": list(TRACKS.keys()),
+        }
+        return str(config)
+    except Exception as e:
+        return f'{{"error": "Config not available: {e}"}}'
 
-    config = {
-        "bankroll": {
-            "max_bet_percent": BANKROLL.max_bet_percent,
-            "daily_loss_limit": BANKROLL.daily_loss_limit,
-            "min_edge_threshold": BANKROLL.min_edge_threshold,
-        },
-        "supported_tracks": TRACKS,
-    }
-    return str(config)
+
+@mcp.custom_route("/mcp", methods=["GET"])
+async def mcp_root(request):
+    return JSONResponse({
+        "status": "ready",
+        "protocol": "Model Context Protocol (MCP)",
+        "transport": "SSE",
+        "endpoints": {"handshake": "/mcp/sse", "messages": "/mcp/messages"},
+        "server": "Strike Tips AI Hub",
+    })

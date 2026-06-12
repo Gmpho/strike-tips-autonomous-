@@ -4,7 +4,7 @@ from core_agent.bus.events import InboundMessage, OutboundMessage, TurnState
 from core_agent.agent.session import SessionManager
 from core_agent.agent.context import ContextBuilder
 from core_agent.agent.runner import AgentRunner
-from core_agent.agent.providers.router import ProviderRouter
+from core_agent.agent.providers.task_router import TaskRouter
 from core_agent.core.strike_brain import brain
 
 
@@ -13,7 +13,7 @@ class AgentLoop:
         self.bus = bus
         self.session_mgr = SessionManager()
         self.context_builder = ContextBuilder()
-        self.runner = AgentRunner(ProviderRouter())
+        self.runner = AgentRunner(TaskRouter())
 
     async def process(self, msg: InboundMessage) -> None:
         session = self.session_mgr.get(msg.session_key)

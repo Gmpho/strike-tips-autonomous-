@@ -1,8 +1,8 @@
 """
 Strike Brain - Central State Management
-Unified provider for Racing Memory, Strike Tips, and Agent Tools.
-Ensures singleton access across REST API and MCP interfaces.
 """
+
+from __future__ import annotations
 
 import os
 import logging
@@ -73,7 +73,7 @@ class StrikeBrain:
         self.tools = AgentTools
 
         self._is_initialized = True
-        logger.info("[MAF] Strike Brain initialized with 11 MAF tools")
+        logger.info("[MAF] Strike Brain initialized with %d MAF tools", len(self.tools) if self.tools else 0)
 
     async def shutdown(self):
         """Graceful cleanup of resources"""
