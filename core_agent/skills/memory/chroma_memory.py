@@ -34,21 +34,20 @@ def _make_embedding_fn():
             results = []
             for text in input:
                 try:
-                    from core_agent.core.http_client import get_sync_client
-                    client = get_sync_client(timeout=60.0)
-                    r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
-                    results.append(r.json().get("embedding", []))
+                    with httpx.Client(timeout=30.0) as client:
+                        r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
+                        results.append(r.json().get("embedding", []))
                 except Exception:
                     results.append([])
             return results
 
-    # Try Ollama first
+    # Try Ollama first (non-blocking ping, don't wait for model load)
     try:
-        fn = OllamaEmbeddingFn()
-        # Quick health check
-        test = fn(["test"])
-        if test and test[0]:
-            logger.info("[MEMORY] Embedding: embeddinggemma:300m (Ollama)")
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{ModelConfig.OLLAMA_BASE_URL}/api/tags")
+        if r.status_code == 200:
+            fn = OllamaEmbeddingFn()
+            logger.info("[MEMORY] Embedding: embeddinggemma:300m (Ollama) — deferred")
             return fn
     except Exception:
         pass
