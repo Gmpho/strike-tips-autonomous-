@@ -105,7 +105,7 @@ def deploy():
         print("\n[LIST] Next steps:")
         print("  1. Test the deployment: modal run core_agent.core.modal_app::run_scan")
         print("  2. Check logs: modal app logs strike-tips-racing")
-        print("  3. Check Ollama: curl https://gmpho--strike-tips-racing-ollama-server.modal.run/api/tags")
+        print("  3. Check Ollama: curl https://gmpho--strike-tips-ollama-cloud-ollama.modal.run/api/tags")
     else:
         print("\n[ERR] Deployment failed")
 

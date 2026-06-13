@@ -154,7 +154,11 @@ class AtTheRacesAPI:
 
     async def get_results(self, date: str = "yesterday") -> List[Dict]:
         """Scrape race results via Scrapling with self-healing selectors."""
-        html = await asyncio.to_thread(self._fetch, f"/results/{date}")
+        try:
+            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("ATR results fetch timed out after 60s: %s", date)
+            return []
         if not html:
             return []
 
@@ -210,7 +214,11 @@ class AtTheRacesAPI:
 
     async def get_market_movers(self) -> List[Dict]:
         """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov."""
-        html = await asyncio.to_thread(self._fetch, "/market-movers")
+        try:
+            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/market-movers"), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("ATR market movers fetch timed out after 60s")
+            return []
         if not html:
             return []
 
@@ -251,7 +259,11 @@ class AtTheRacesAPI:
 
     async def get_predictor(self) -> List[Dict]:
         """Scrape /predictor for AI predictions (table-based)."""
-        html = await asyncio.to_thread(self._fetch, "/predictor")
+        try:
+            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/predictor"), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("ATR predictor fetch timed out after 60s")
+            return []
         if not html:
             return []
 

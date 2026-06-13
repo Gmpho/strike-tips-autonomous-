@@ -77,9 +77,18 @@ class ContextBuilder:
         if not events:
             return None
         lines = [f"Today's races ({len(events)} events):"]
-        for eid, ev in list(events.items())[:8]:
+        seen = set()
+        for ev in list(events.values())[:8]:
+            eid = ev.get("id", ev.get("en", "?"))
             name = ev.get("en", "?")
-            venue = ev.get("venue_name", ev.get("venue", ""))
-            time = ev.get("start_time", ev.get("time", ""))
-            lines.append(f"  #{eid}: {name} @ {venue} {time}")
+            course = ev.get("course", ev.get("venue", ""))
+            t = ev.get("start_time", ev.get("time", ""))
+            race_num = ev.get("raceNumber", "")
+            lines.append(f"  Race {race_num}: {course} {t} ({eid})")
+            runners = ev.get("runners", [])
+            for r in runners[:5]:
+                lines.append(
+                    f"    {r.get('name','?')} | J:{r.get('jockeyName','?')} "
+                    f"T:{r.get('trainerName','?')} W:{r.get('weight','?')} O:{r.get('outcomeName','?')}"
+                )
         return "\n".join(lines)

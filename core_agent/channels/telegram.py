@@ -25,6 +25,12 @@ class TelegramChannel:
         if not self._enabled:
             logger.info("Telegram channel disabled (TELEGRAM_BOT_TOKEN not set)")
             return
+
+        mode = os.getenv("TELEGRAM_MODE", "polling")
+        if mode == "webhook":
+            logger.info("Telegram channel: TELEGRAM_MODE=webhook, skipping polling (webhook handles inbound directly)")
+            return
+
         try:
             import telegram
             self._bot = telegram.Bot(token=self.token)

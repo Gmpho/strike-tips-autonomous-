@@ -107,20 +107,25 @@ class OllamaProvider(LLMProvider):
         async with httpx.AsyncClient(timeout=600.0) as client:
             async with client.stream("POST", url, json=payload) as response:
                 async for line in response.aiter_lines():
-                    if line:
+                    if not line:
+                        continue
+                    try:
                         data = json.loads(line)
-                        if fmt == "generate":
-                            content = data.get("response", "")
-                        elif "message" in data:
-                            content = data["message"].get("content", "")
-                        else:
-                            content = ""
-                        if content:
-                            cleaned, in_think = _strip_think(content, in_think)
-                            if cleaned:
-                                yield cleaned
-                        if data.get("done"):
-                            break
+                    except json.JSONDecodeError:
+                        logger.warning("[OLLAMA] non-JSON response from %s: %r", url, line[:80])
+                        continue
+                    if fmt == "generate":
+                        content = data.get("response", "")
+                    elif "message" in data:
+                        content = data["message"].get("content", "")
+                    else:
+                        content = ""
+                    if content:
+                        cleaned, in_think = _strip_think(content, in_think)
+                        if cleaned:
+                            yield cleaned
+                    if data.get("done"):
+                        break
 
     async def complete(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> str:
         chunks = []

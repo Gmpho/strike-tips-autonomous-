@@ -19,7 +19,9 @@ class GeminiProvider:
             "bet", "place", "stake", "record", "selection", "settle", "value", "edge",
             "tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture",
             "evaluate", "analyse", "analyze", "scan", "account", "balance", "bankroll", "profit",
-            "wager", "lay", "tip", "recommend"
+            "wager", "lay", "tip", "recommend", "odds",
+            "market", "mover", "predictor", "prediction", "probability", "stake", "bank",
+            "race", "runner", "horse", "jockey", "trainer",
         )
 
     def _needs_tools(self, message: str, intent: str | None) -> bool:
@@ -37,14 +39,19 @@ class GeminiProvider:
             ]
         }]
 
-    async def _execute_tool(self, name: str, args: dict) -> dict:
+    async def _execute_tool(self, name: str, args: dict | None) -> dict:
         fn = TOOL_REGISTRY.get(name)
         if not fn:
             return {"error": f"Tool '{name}' not found"}
         try:
-            result = fn(**args)
-            import inspect
-            if inspect.iscoroutine(result):
+            kwargs = dict(args or {})
+            if "strike" in inspect.signature(fn).parameters:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.strike:
+                    kwargs["strike"] = brain.strike
+            result = fn(**kwargs)
+            import inspect as _inspect
+            if _inspect.iscoroutine(result):
                 result = await result
             return result
         except Exception as e:

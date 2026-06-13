@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://gmpho--strike-tips-racing-serve-api.modal.run/api/:path*"
+    },
+    {
+      "source": "/v1/:path*",
+      "destination": "https://gmpho--strike-tips-racing-serve-api.modal.run/v1/:path*"
     }
   ]
 }

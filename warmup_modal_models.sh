@@ -3,7 +3,7 @@
 # Run: modal run core_agent.core.modal_app::pull_ollama_models
 # Then run this to verify they're ready
 
-OLLAMA_HOST="${OLLAMA_HOST:-https://gmpho--strike-tips-racing-ollama-server.modal.run}"
+OLLAMA_HOST="${OLLAMA_HOST:-https://gmpho--strike-tips-ollama-cloud-ollama.modal.run}"
 
 echo "⏳ Warming up Modal Ollama models at $OLLAMA_HOST..."
 

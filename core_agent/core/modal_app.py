@@ -5,10 +5,8 @@ Entry points:
   serve_api:         FastAPI ASGI app + Telegram webhook (always-on)
   run_scan:          One-shot daily scan (manual or cron)
   run_odds_monitor:  Continuous odds monitoring (runs until stopped)
-  ollama_server:     Persistent Ollama instance
 
 Usage:
-  modal deploy core_agent.core.modal_app        # deploy everything
   modal run core_agent.core.modal_app:run_scan   # one-off scan
 """
 
@@ -22,69 +20,8 @@ image = modal.Image.from_dockerfile("Dockerfile")
 app = modal.App("strike-tips-racing")
 
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
-ollama_volume = modal.Volume.from_name("ollama-models", create_if_missing=True)
 
 secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key")]
-
-
-# ── Ollama Model Puller (run once at deploy) ────────────────────────────
-@app.function(
-    image=modal.Image.debian_slim().run_commands(
-        "apt-get update && apt-get install -y curl zstd",
-        "curl -fsSL https://ollama.com/install.sh | sh",
-    ),
-    volumes={"/root/.ollama": ollama_volume},
-    secrets=[modal.Secret.from_name("strike-tips-secrets")],
-    timeout=600,
-    cpu=2.0,
-    memory=4096,
-)
-def pull_ollama_models():
-    """Pre-pull tiny models into volume at deploy time."""
-    import subprocess
-    import time
-
-    # Start Ollama in background
-    proc = subprocess.Popen(["ollama", "serve"])
-    time.sleep(5)  # wait for server to start
-
-    models = [
-        "functiongemma:270m",    # 270M - function calling
-        "qwen3.5:0.8b",           # 0.8B - chat + tools
-        "embeddinggemma:300m",   # 300M - embeddings
-    ]
-    for m in models:
-        logger.info(f"Pulling {m}...")
-        result = subprocess.run(["ollama", "pull", m], capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            logger.info(f"✅ Pulled {m}")
-        else:
-            logger.error(f"❌ Failed to pull {m}: {result.stderr}")
-
-    proc.terminate()
-    logger.info("Model pull complete")
-
-
-# ── Ollama Server (CPU-only, Scale-to-Zero) ─────────────────────────────
-@app.function(
-    image=modal.Image.debian_slim().run_commands(
-        "apt-get update && apt-get install -y curl zstd",
-        "curl -fsSL https://ollama.com/install.sh | sh",
-    ),
-    volumes={"/root/.ollama": ollama_volume},
-    secrets=[modal.Secret.from_name("strike-tips-secrets")],
-    cpu=2.0,
-    memory=4096,
-    min_containers=0,          # scale to zero when idle
-    scaledown_window=300,      # 5 min idle before scale down
-    container_idle_timeout=180,
-    max_containers=2,
-)
-@modal.web_server(11434, startup_timeout=60)
-def ollama_server():
-    """Persistent Ollama instance - CPU only for tiny models."""
-    import subprocess
-    subprocess.Popen(["ollama", "serve"])
 
 
 # ── ASGI: FastAPI + Telegram webhook ──────────────────────────────────
@@ -94,7 +31,7 @@ def ollama_server():
     volumes={"/app/data": data_volume},
     memory=1024,
     timeout=3600,
-    env={"OLLAMA_HOST": "https://gmpho--strike-tips-racing-ollama-server.modal.run"},
+    env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"},
     scaledown_window=300,
     startup_timeout=120,
     min_containers=1,
@@ -108,6 +45,7 @@ def serve_api():
 
     @fastapi_app.post("/telegram-webhook")
     async def telegram_webhook(request: Request):
+        import asyncio
         import os
         import re
         import telegram
@@ -276,12 +214,36 @@ def serve_api():
                     return {"ok": True}
 
                 if cmd == "/clear":
-                    brain.orchestrator.clear_history()
                     await bot.send_message(chat_id=chat_id, text="🧹 *Conversation history cleared.*", parse_mode="Markdown")
                     return {"ok": True}
 
-            # ── AI pipeline (non-command) ───────────────────────────
-            reply = (await brain.pipeline.chat(text)).summary
+            # ── AI pipeline (non-command): bus-based chat ─────────
+            from core_agent.bus.events import InboundMessage, OutboundMessage
+
+            inbound = InboundMessage(
+                session_key=f"tg:{chat_id}",
+                channel="telegram",
+                chat_id=str(chat_id),
+                content=text,
+                user_id=msg.get("from", {}).get("id"),
+            )
+            bus = request.app.state.bus
+            sub = bus.subscribe()
+            await bus.publish(inbound)
+
+            reply = ""
+            try:
+                while True:
+                    out = await asyncio.wait_for(sub.get(), timeout=180.0)
+                    if out.channel == "telegram" and str(out.chat_id) == str(chat_id):
+                        if out.done:
+                            reply = out.content or ""
+                            break
+            except asyncio.TimeoutError:
+                reply = "⏳ I'm still thinking. Please try a simpler question or check back later."
+            finally:
+                bus.unsubscribe(sub)
+
             reply = _clean(reply)
             MAX_LENGTH = 4000
             if len(reply) > MAX_LENGTH:
@@ -405,7 +367,7 @@ def run_scan():
     memory=1024,
     timeout=43200,
     min_containers=1,
-    env={"OLLAMA_HOST": "https://gmpho--strike-tips-racing-ollama-server.modal.run"}
+    env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"}
 )
 async def run_odds_monitor():
     """Continuous odds monitoring (12h timeout, auto-restart on crash, min_containers keeps it alive)."""

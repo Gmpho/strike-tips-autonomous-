@@ -1,12 +1,17 @@
 from __future__ import annotations
 import os
 import json
+import inspect
+import logging
 from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.agent.providers.retry import retry_on_429
 from core_agent.agent.prompts import build_system_prompt
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 from core_agent.core.http_client import get_async_client
+from core_agent.core.strike_brain import brain
+
+logger = logging.getLogger("groq-provider")
 
 
 class GroqProvider:
@@ -19,7 +24,9 @@ class GroqProvider:
             "bet", "place", "stake", "record", "selection", "settle", "value", "edge",
             "tomorrow", "yesterday", "result", "search", "find", "news", "latest", "recent", "fixture",
             "evaluate", "analyse", "analyze", "scan", "account", "balance", "bankroll", "profit",
-            "wager", "lay", "tip", "recommend"
+            "wager", "lay", "tip", "recommend", "odds",
+            "market", "mover", "predictor", "prediction", "probability", "stake", "bank",
+            "race", "runner", "horse", "jockey", "trainer",
         )
 
     def _needs_tools(self, message: str, intent: str | None) -> bool:
@@ -30,19 +37,51 @@ class GroqProvider:
         )
 
     def _get_tools(self) -> list[dict]:
+        def _schema(fn):
+            sig = inspect.signature(fn)
+            props = {}
+            required = []
+            for pname, param in sig.parameters.items():
+                if pname in ("strike", "kwargs", "args"):
+                    continue
+                ptype = "string"
+                anno = param.annotation
+                origin = getattr(anno, "__origin__", None)
+                if origin is list:
+                    ptype = "array"
+                elif origin is dict:
+                    ptype = "object"
+                else:
+                    if anno in (int, float):
+                        ptype = "number"
+                    elif anno is bool:
+                        ptype = "boolean"
+                entry = {"type": ptype, "description": pname.replace("_", " ")}
+                if param.default is not inspect.Parameter.empty:
+                    entry["default"] = None if param.default is None else str(param.default)
+                else:
+                    required.append(pname)
+                props[pname] = entry
+            return {"type": "object", "properties": props, "required": required}
+
         return [
-            {"type": "function", "function": {"name": name, "description": fn.__doc__ or "", "parameters": {"type": "object", "properties": {}, "required": []}}}
+            {"type": "function", "function": {"name": name, "description": fn.__doc__ or "", "parameters": _schema(fn)}}
             for name, fn in TOOL_REGISTRY.items()
         ]
 
-    async def _execute_tool(self, name: str, args: dict) -> dict:
+    async def _execute_tool(self, name: str, args: dict | None) -> dict:
         fn = TOOL_REGISTRY.get(name)
         if not fn:
             return {"error": f"Tool '{name}' not found"}
         try:
-            result = fn(**args)
-            import inspect
-            if inspect.iscoroutine(result):
+            kwargs = dict(args or {})
+            if "strike" in inspect.signature(fn).parameters:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.strike:
+                    kwargs["strike"] = brain.strike
+            result = fn(**kwargs)
+            import inspect as _inspect
+            if _inspect.iscoroutine(result):
                 result = await result
             return result
         except Exception as e:
@@ -53,13 +92,13 @@ class GroqProvider:
         payload = {
             "model": model,
             "messages": [{"role": "system", "content": build_system_prompt()}] + messages,
-            "max_tokens": 400,
+            "max_tokens": 800,
             "temperature": 0.3,
         }
         if needs_tools:
             payload["tools"] = self._get_tools()
 
-        client = get_async_client(timeout=15.0)
+        client = get_async_client(timeout=30.0)
         async def _do_post():
             return await client.post(self.URL, headers=headers, json=payload)
         resp = await retry_on_429(_do_post, max_retries=1, base_delay=1.0)
@@ -97,7 +136,7 @@ class GroqProvider:
             for tc in tool_calls:
                 if tc.get("name") and tc.get("args"):
                     try:
-                        args = json.loads(tc["args"])
+                        args = json.loads(tc["args"]) or {}
                     except Exception:
                         args = {}
                     result = await self._execute_tool(tc["name"], args)

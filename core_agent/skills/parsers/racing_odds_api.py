@@ -99,7 +99,11 @@ class RacingOddsAPI:
         return races
 
     async def fetch_daily_meetings(self) -> List[Dict]:
-        html = await asyncio.to_thread(self._fetch, "/daily")
+        try:
+            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/daily"), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("Racing-odds daily fetch timed out after 60s")
+            return []
         if not html:
             return []
         return self._parse_daily(html)
@@ -151,7 +155,11 @@ class RacingOddsAPI:
         return horses
 
     async def fetch_race_detail(self, detail_url: str) -> List[Dict]:
-        html = await asyncio.to_thread(self._fetch, detail_url)
+        try:
+            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, detail_url), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("Racing-odds race detail timed out after 60s: %s", detail_url)
+            return []
         if not html:
             return []
         return self._parse_race_detail(html)

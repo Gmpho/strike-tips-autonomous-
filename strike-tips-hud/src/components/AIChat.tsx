@@ -63,6 +63,7 @@ export const AIChat: React.FC = () => {
 
     try {
       const modelVal = selectedModel !== 'auto' ? selectedModel : undefined;
+      const modelUsed = modelVal || 'strike-tips';
       const res = await apiFetch('/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -71,23 +72,53 @@ export const AIChat: React.FC = () => {
         body: JSON.stringify({
           messages: [{ role: 'user', content: userMsg }],
           model: modelVal,
-          stream: false,
+          stream: true,
         }),
       });
 
-      const data = await res.json();
-      clearInterval(actInterval);
-      setCurrentActivity(null);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
-      const text = data.choices?.[0]?.message?.content || 'No response received.';
-      const modelUsed = data.model || '';
-      if (modelUsed) setLastModelUsed(modelUsed);
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body');
 
-      setMessages(prev => prev.map((m, i) =>
-        i === prev.length - 1 && m.role === 'ai'
-          ? { ...m, content: text, activity: modelUsed }
-          : m
-      ));
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const readLoop = async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) { clearInterval(actInterval); setCurrentActivity(null); break; }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6).trim();
+            if (payload === '[DONE]') { clearInterval(actInterval); setCurrentActivity(null); continue; }
+            try {
+              const parsed = JSON.parse(payload);
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              const finish = parsed.choices?.[0]?.finish_reason;
+              if (delta) {
+                setMessages(prev => prev.map((m, i) =>
+                  i === prev.length - 1 && m.role === 'ai'
+                    ? { ...m, content: m.content + delta, activity: modelUsed }
+                    : m
+                ));
+              }
+              if (finish === 'stop') {
+                const modelName = parsed.model || modelUsed;
+                setLastModelUsed(modelName);
+                clearInterval(actInterval);
+                setCurrentActivity(null);
+              }
+            } catch {}
+          }
+        }
+      };
+      await readLoop();
     } catch {
       clearInterval(actInterval);
       setMessages(prev => prev.map((m, i) =>

@@ -12,7 +12,7 @@ load_dotenv()
 
 class ModelConfig:
     # Ollama host — kept for ChromaDB embedding (falls through to Gemini when down)
-    OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-racing-ollama-server.modal.run")
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")
     EMBEDDER = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
 
     # Fallback chains — latest Gemini models (GA as of May 2026)

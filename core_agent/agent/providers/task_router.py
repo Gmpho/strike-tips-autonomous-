@@ -20,7 +20,10 @@ from typing import Dict, Optional
 from core_agent.agent.providers.groq import GroqProvider
 from core_agent.agent.providers.gemini import GeminiProvider
 from core_agent.agent.providers.ollama import OllamaProvider
-from core_agent.tools.maf_tool_registry import TOOL_INFO
+from core_agent.tools.maf_tool_registry import TOOL_INFO, TOOL_REGISTRY
+from core_agent.config.paths import (
+    MARKET_SNAPSHOT_PATH, ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH,
+)
 
 logger = logging.getLogger("task-router")
 
@@ -38,6 +41,8 @@ TOOL_KEYWORDS = {
     "account", "balance", "bankroll", "profit", "odds", "tip",
     "predict", "result", "selection", "market", "mover",
     "dream", "insight", "learned",
+    "race", "runner", "horse", "jockey", "trainer", "probability",
+    "position", "summary", "today", "show", "list", "give", "what",
 }
 
 
@@ -87,10 +92,9 @@ class TaskRouter:
             logger.info("[TASK_ROUTER] explicit intent=%s → specialist=%s", intent, SPECIALIST_MAP[intent])
             return SPECIALIST_MAP[intent]
 
-        last_msg = messages[-1]["content"] if messages else ""
-        msg_lower = last_msg.lower()
+        msg_lower = self._extract_user_query(messages)
         for keyword, tool_name in KEYWORD_TO_TOOL.items():
-            if re.search(rf'\b{re.escape(keyword)}\b', msg_lower):
+            if re.search(rf'\b{re.escape(keyword)}[a-z]*', msg_lower):
                 specialist = SPECIALIST_MAP.get(tool_name)
                 if specialist:
                     logger.info("[TASK_ROUTER] keyword='%s' → tool='%s' → specialist='%s'", keyword, tool_name, specialist)
@@ -100,9 +104,8 @@ class TaskRouter:
     def _needs_tools(self, messages: list[dict], intent: str | None) -> bool:
         if intent:
             return True
-        last_msg = messages[-1]["content"] if messages else ""
-        msg_lower = last_msg.lower()
-        return any(re.search(rf'\b{re.escape(kw)}\b', msg_lower) for kw in TOOL_KEYWORDS)
+        msg_lower = self._extract_user_query(messages)
+        return any(re.search(rf'\b{re.escape(kw)}[a-z]*', msg_lower) for kw in TOOL_KEYWORDS)
 
     async def _try_cloud_concurrent(self, messages: list[dict], intent: str | None) -> str | None:
         """Try all cloud providers concurrently with a timeout. Returns first complete response or None."""
@@ -131,6 +134,102 @@ class TaskRouter:
                 pass
         return None
 
+    # ── Snapshot answer (no model needed) ─────────────────────────────────────
+
+    @staticmethod
+    def _extract_user_query(messages: list[dict]) -> str:
+        raw = messages[-1]["content"].lower() if messages else ""
+        idx = raw.rfind("[query]")
+        if idx != -1:
+            after = raw[idx + len("[query]"):].strip()
+            return after
+        return raw
+
+    async def _try_snapshot_answer(self, messages: list[dict]) -> str | None:
+        """Answer data-retrieval queries directly from local JSON snapshots."""
+        last_msg = self._extract_user_query(messages)
+
+        try:
+            import json
+
+            # Market movers
+            if "market mover" in last_msg or "odds movement" in last_msg:
+                if ATR_MOVERS_PATH.exists():
+                    fn = TOOL_REGISTRY.get("get_atr_market_movers")
+                    if fn:
+                        result = await fn() if asyncio.iscoroutinefunction(fn) else fn()
+                        movers = result.get("movers", [])
+                        if movers:
+                            lines = ["**Market Movers for Today:**"]
+                            for m in movers[:15]:
+                                lines.append(f"- {m.get('horse','?')} at {m.get('course','?')} {m.get('time','?')} — {m.get('current_odds','?')} (from {m.get('first_show','?')}, {m.get('movement','?')} move)")
+                            return "\n".join(lines)
+                        return "No market movers found in today's data."
+
+            # ATR Predictions
+            if "predictor" in last_msg or "predict" in last_msg:
+                if ATR_PREDICTOR_PATH.exists():
+                    fn = TOOL_REGISTRY.get("get_atr_predictor")
+                    if fn:
+                        result = await fn() if asyncio.iscoroutinefunction(fn) else fn()
+                        predictions = result.get("predictions", [])
+                        if predictions:
+                            lines = ["**ATR Predictor Tips for Today:**"]
+                            for p in predictions[:10]:
+                                lines.append(f"- {p.get('horse','?')}: {p.get('prediction','?')}")
+                            return "\n".join(lines)
+                        return "No ATR predictor data available."
+
+            # Recent results
+            if "result" in last_msg:
+                if ATR_RESULTS_PATH.exists():
+                    fn = TOOL_REGISTRY.get("get_atr_results")
+                    if fn:
+                        result = await fn() if asyncio.iscoroutinefunction(fn) else fn()
+                        results = result.get("results", [])
+                        course = "greyville" if "greyville" in last_msg else None
+                        if course:
+                            results = [r for r in results if course.lower() in r.get("course","").lower()]
+                        if results:
+                            lines = [f"**Recent{' Greyville' if course else ''} Results:**"]
+                            for r in results[:10]:
+                                course_str = r.get("course", "?")
+                                ts = r.get("date", "?")
+                                lines.append(f"\n{course_str} {ts} {r.get('time','?')}")
+                                lines.append(f"  {r.get('title','').strip()[:80]}")
+                                for h in r.get("runners", [])[:3]:
+                                    lines.append(f"  • {h.get('name','?')} — {h.get('position','?')} ({h.get('odds','?')})")
+                            return "\n".join(lines)
+                        return f"No results found{f' for Greyville' if course else ''}."
+
+            # Odds snapshot
+            if "odds" in last_msg or "race" in last_msg:
+                track = None
+                for t in ["greyville", "bath", "kempton", "southwell", "utoxeter"]:
+                    if t in last_msg:
+                        track = t
+                        break
+                if not track:
+                    track = "greyville" if re.search(r"\brace\b", last_msg) or "today" in last_msg else None
+                if track:
+                    fn = TOOL_REGISTRY.get("get_odds_snapshot")
+                    if fn:
+                        result = await fn(track=track) if asyncio.iscoroutinefunction(fn) else fn(track=track)
+                        events = result.get("events", {})
+                        if events:
+                            lines = [f"**Races at {track.title()}:**"]
+                            for eid, ev in list(events.items())[:8]:
+                                runners = ev.get("runners", [])
+                                lines.append(f"\n{ev.get('name','?')} ({ev.get('time','?')}) — {len(runners)} runners")
+                                for h in runners[:5]:
+                                    lines.append(f"  • {h.get('name','?')} — W:{h.get('weight','?')} O:{h.get('outcomeName','?')}")
+                                if len(runners) > 5:
+                                    lines.append(f"  ... and {len(runners)-5} more")
+                            return "\n".join(lines)
+        except Exception as e:
+            logger.debug("[TASK_ROUTER] snapshot answer failed: %s", e)
+        return None
+
     # ── Main route ────────────────────────────────────────────────────────────
 
     async def stream(
@@ -139,12 +238,24 @@ class TaskRouter:
         tools: list[dict] | None,
         intent: str | None,
     ) -> AsyncIterator[str]:
+        # Phase 0: Answer from local snapshot data (no model call needed)
+        snap = await self._try_snapshot_answer(messages)
+        if snap:
+            yield snap
+            return
+
         specialist = self._detect_specialist(messages, intent)
         if specialist:
             logger.info("[TASK_ROUTER] specialist route → %s", specialist)
-            async for chunk in self.ollama.stream(messages, None, intent, model_override=specialist):
-                yield chunk
-            return
+            try:
+                yielded = False
+                async for chunk in self.ollama.stream(messages, None, intent, model_override=specialist):
+                    yielded = True
+                    yield chunk
+                if yielded:
+                    return
+            except Exception as e:
+                logger.warning("[TASK_ROUTER] specialist %s failed: %s", specialist, e)
 
         needs_tools = self._needs_tools(messages, intent)
         logger.info("[TASK_ROUTER] no specialist, trying cloud (needs_tools=%s)", needs_tools)

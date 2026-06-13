@@ -106,7 +106,11 @@ async def handle_chat_completions(request: Request):
         await bus.publish(msg)
         content = ""
         while True:
-            out = await sub.get()
+            try:
+                out = await asyncio.wait_for(sub.get(), timeout=25.0)
+            except asyncio.TimeoutError:
+                content = "I'm sorry, the AI system is still warming up. Try asking about bankroll, odds, or a simpler question."
+                break
             if out.content:
                 content = out.content
             if out.done:
@@ -135,7 +139,13 @@ async def _stream_generator(bus, msg: InboundMessage, chunk_id: str):
     try:
         await bus.publish(msg)
         while True:
-            out = await sub.get()
+            try:
+                out = await asyncio.wait_for(sub.get(), timeout=25.0)
+            except asyncio.TimeoutError:
+                yield _sse_chunk("I'm sorry, the AI system is still warming up. Try asking about bankroll, odds, or a simpler question.", "strike-tips", chunk_id)
+                yield _sse_chunk("", "strike-tips", chunk_id, finish_reason="stop")
+                yield b"data: [DONE]\n\n"
+                return
             if out.delta and out.content:
                 yield _sse_chunk(out.content, "strike-tips", chunk_id)
             if out.done:
