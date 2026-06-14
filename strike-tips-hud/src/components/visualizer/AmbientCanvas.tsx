@@ -4,6 +4,17 @@ import { Float, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { useHUD } from '../../hooks/useHUD';
 
+// Suppress unhandled Three.js/WebGL promise rejections globally
+if (typeof window !== 'undefined' && !(window as any).__threeRejectionHandlerAttached) {
+  (window as any).__threeRejectionHandlerAttached = true;
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const msg = String(e.reason ?? '');
+    if (msg.includes('three') || msg.includes('WebGL') || msg.includes('webgl')) {
+      e.preventDefault();
+    }
+  });
+}
+
 const AmbientGrid = () => {
   const meshRef = useRef<THREE.Mesh>(null);
   const state = useHUD();
@@ -143,7 +154,8 @@ export const AmbientCanvas: React.FC = () => {
           stencil: false, 
           depth: true,
           alpha: true,
-          preserveDrawingBuffer: false
+          preserveDrawingBuffer: false,
+          failIfMajorPerformanceCaveat: false
         }}
         onCreated={(state) => {
           state.gl.domElement.addEventListener('webglcontextlost', (e) => {

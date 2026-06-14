@@ -65,8 +65,11 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         <div className="relative hidden xl:flex items-center group">
           <Search className="absolute left-4 w-4 h-4 text-theme-secondary opacity-60 group-focus-within:text-purple-400 transition-colors" />
           <input
+            id="search-intelligence"
+            name="search"
             type="text"
             placeholder="Search Intelligence..."
+            aria-label="Search intelligence data"
             className="bg-theme-secondary border border-theme rounded-2xl pl-12 pr-6 py-3.5 text-sm font-bold w-64 focus:outline-hidden focus:border-purple-500/50 focus:bg-purple-500/5 transition-all text-theme-primary"
           />
         </div>

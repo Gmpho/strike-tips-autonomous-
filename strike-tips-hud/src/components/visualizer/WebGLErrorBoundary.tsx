@@ -6,17 +6,27 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  retryCount: number;
 }
 
-export class WebGLErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+const MAX_RETRIES = 3;
 
-  static getDerivedStateFromError(): State {
+export class WebGLErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false, retryCount: 0 };
+
+  static getDerivedStateFromError(): Partial<State> {
     return { hasError: true };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.warn('[WebGL] 3D rendering disabled:', error.message, info.componentStack);
+    const next = this.state.retryCount + 1;
+    if (next < MAX_RETRIES) {
+      const delay = Math.min(500 * Math.pow(2, next), 2000);
+      console.warn(`[WebGL] Render failed (attempt ${next}/${MAX_RETRIES}), retrying in ${delay}ms:`, error.message);
+      setTimeout(() => this.setState({ hasError: false, retryCount: next }), delay);
+    } else {
+      console.warn(`[WebGL] 3D rendering disabled after ${MAX_RETRIES} attempts:`, error.message, info.componentStack);
+    }
   }
 
   render() {
