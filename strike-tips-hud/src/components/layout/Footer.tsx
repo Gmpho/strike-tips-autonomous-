@@ -1,15 +1,16 @@
 import React from 'react';
-import { ShieldCheck, Info, FileText, Lock, LifeBuoy, MessageSquare } from 'lucide-react';
+import { ShieldCheck, Info, FileText, Lock, LifeBuoy, MessageSquare, FileText as FileTextIcon } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   const links = [
-    { label: 'How To Bet', icon: Info },
-    { label: 'FAQ', icon: MessageSquare },
-    { label: 'Betting Rules', icon: FileText },
-    { label: 'T&Cs', icon: ShieldCheck },
-    { label: 'Privacy', icon: Lock },
-    { label: 'Responsible', icon: LifeBuoy },
-    { label: 'Contact', icon: MessageSquare },
+    { label: 'How To Bet', icon: Info, href: '/how-to-bet' },
+    { label: 'FAQ', icon: MessageSquare, href: '/faq' },
+    { label: 'Betting Rules', icon: FileText, href: '/betting-rules' },
+    { label: 'T&Cs', icon: ShieldCheck, href: '/terms' },
+    { label: 'Privacy', icon: Lock, href: '/privacy' },
+    { label: 'Disclaimer', icon: FileTextIcon, href: '/disclaimer' },
+    { label: 'Responsible', icon: LifeBuoy, href: '/responsible' },
+    { label: 'Contact', icon: MessageSquare, href: '/contact' },
   ];
 
   return (
@@ -18,7 +19,13 @@ export const Footer: React.FC = () => {
         {/* Links */}
         <div className="flex flex-wrap justify-center gap-2 md:gap-4 lg:gap-8 mb-4 md:mb-8">
           {links.map((link, idx) => (
-            <a key={idx} href="#" className="flex items-center gap-1.5 md:gap-2 group transition-all">
+            <a
+              key={idx}
+              href={link.href}
+              className="flex items-center gap-1.5 md:gap-2 group transition-all"
+              target={link.href.startsWith('/') ? undefined : '_blank'}
+              rel={link.href.startsWith('/') ? undefined : 'noopener noreferrer'}
+            >
               <div className="w-6 h-6 md:w-8 md:h-8 rounded-lg bg-theme-secondary flex items-center justify-center group-hover:bg-purple-500/20 group-hover:text-purple-400 transition-colors border border-theme group-hover:border-purple-500/30">
                 <link.icon className="w-3 h-3 md:w-4 md:h-4 opacity-60 group-hover:opacity-100" />
               </div>

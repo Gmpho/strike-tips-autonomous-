@@ -128,8 +128,25 @@ class ScraperConfig:
     )
 
 
+@dataclass
+class ComplianceConfig:
+    """Legal compliance settings - Paper trading only"""
+
+    paper_trading: bool = field(
+        default_factory=lambda: os.getenv("PAPER_TRADING", "true").lower() == "true"
+    )
+    # Single source of truth - all components check this flag
+    # MUST remain True - no real money is ever wagered
+    jurisdiction: str = "ZA"  # South Africa
+    popia_compliant: bool = True
+    responsible_gambling_number: str = "0800 006 008"
+    responsible_gambling_whatsapp: str = "076 675 0710"
+    regulator: str = "Mpumalanga Economic Regulator"
+
+
 # Global config instances
 BANKROLL = BankrollConfig()
 TRACKS = SARacingTracks().TRACKS
 NOTIFICATIONS = NotificationConfig()
 SCRAPER = ScraperConfig()
+COMPLIANCE = ComplianceConfig()

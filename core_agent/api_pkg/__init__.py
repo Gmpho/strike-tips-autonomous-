@@ -13,6 +13,7 @@ from core_agent.routes import (
     healing,
     dreaming,
     tasks,
+    legal,
 )
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import auth_middleware
@@ -227,6 +228,7 @@ app.include_router(monitoring.router)
 app.include_router(healing.router)
 app.include_router(dreaming.router)
 app.include_router(tasks.router)
+app.include_router(legal.router)
 
 from core_agent.api_pkg.openai import handle_chat_completions, handle_models, handle_health
 from core_agent.api_pkg.websocket import handle_websocket

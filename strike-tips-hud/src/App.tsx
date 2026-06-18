@@ -20,14 +20,37 @@ import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
+import { LegalPage } from './components/LegalPage';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 
+const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible'];
+const VALID_VIEWS = [
+  'dashboard', 'agents', 'bankroll', 'analytics', 'logs', 'settings',
+  'healing', 'vitals', 'dreaming', 'market-movers', 'predictor', 'results',
+  ...LEGAL_VIEWS
+];
+
+function getViewFromPath(): string {
+  const path = window.location.pathname.slice(1); // remove leading /
+  return VALID_VIEWS.includes(path) ? path : 'dashboard';
+}
+
 export const App: React.FC = () => {
-  const [activeView, setActiveView] = useState(() => {
-    const saved = localStorage.getItem('strike_active_view');
-    return saved && saved !== 'undefined' ? saved : 'dashboard';
-  });
+  const [activeView, setActiveView] = useState(() => getViewFromPath());
+
+  // Sync URL with activeView
+  useEffect(() => {
+    const handlePopState = () => setActiveView(getViewFromPath());
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigate = (view: string) => {
+    setActiveView(view);
+    window.history.pushState(null, '', `/${view}`);
+    localStorage.setItem('strike_active_view', view);
+  };
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const state = useHUD();
@@ -46,7 +69,7 @@ export const App: React.FC = () => {
   }, [state.systemHealth.cpu]);
 
   const handleMobileNav = (view: string) => {
-    setActiveView(view);
+    navigate(view);
     setIsMobileMenuOpen(false);
   };
 
@@ -93,6 +116,20 @@ export const App: React.FC = () => {
         return <PredictorView key="predictor-view" />;
       case 'results':
         return <ResultsView key="results-view" />;
+      case 'privacy':
+        return <LegalPage key="privacy-view" docId="privacy" title="Privacy Policy" />;
+      case 'terms':
+        return <LegalPage key="terms-view" docId="terms" title="Terms of Service" />;
+      case 'disclaimer':
+        return <LegalPage key="disclaimer-view" docId="disclaimer" title="Disclaimer" />;
+      case 'how-to-bet':
+        return <LegalPage key="how-to-bet-view" docId="how-to-bet" title="How to Bet" />;
+      case 'faq':
+        return <LegalPage key="faq-view" docId="faq" title="FAQ" />;
+      case 'betting-rules':
+        return <LegalPage key="betting-rules-view" docId="betting-rules" title="Betting Rules" />;
+      case 'responsible':
+        return <LegalPage key="responsible-view" docId="responsible" title="Responsible Gambling" />;
       default:
         return <div key="default-view" className="text-white p-12">Select a module</div>;
     }

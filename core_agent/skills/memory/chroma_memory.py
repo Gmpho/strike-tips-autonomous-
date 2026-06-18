@@ -28,14 +28,19 @@ def _make_embedding_fn():
     import httpx
 
     class OllamaEmbeddingFn(EmbeddingFunction):
+        def __init__(self):
+            self._host = ModelConfig.OLLAMA_BASE_URL
+            self._model = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
+
+        def name(self) -> str:
+            return f"ollama_{self._model.replace(':', '_').replace('/', '_')}"
+
         def __call__(self, input: list) -> list:
-            host = ModelConfig.OLLAMA_BASE_URL
-            model = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
             results = []
             for text in input:
                 try:
                     with httpx.Client(timeout=30.0) as client:
-                        r = client.post(f"{host}/api/embeddings", json={"model": model, "prompt": text})
+                        r = client.post(f"{self._host}/api/embeddings", json={"model": self._model, "prompt": text})
                         results.append(r.json().get("embedding", []))
                 except Exception:
                     results.append([])

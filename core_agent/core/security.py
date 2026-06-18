@@ -16,6 +16,14 @@ SAFE_PATHS = {
     "/api/agent/tools",
     "/api/agent/models",
     "/api/agent/history",
+    "/api/legal/privacy",
+    "/api/legal/terms",
+    "/api/legal/disclaimer",
+    "/api/legal/how-to-bet",
+    "/api/legal/faq",
+    "/api/legal/betting-rules",
+    "/api/legal/responsible",
+    "/api/legal/",
 }
 
 

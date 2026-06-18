@@ -5,10 +5,12 @@ import os
 
 from core_agent.bus.events import InboundMessage, OutboundMessage
 from core_agent.bus.queue import MessageBus
+from core_agent.config.settings import COMPLIANCE
 
 logger = logging.getLogger("telegram-channel")
 
 POLL_INTERVAL = 1.0
+PAPER_MODE_PREFIX = "[PAPER MODE] " if COMPLIANCE.paper_trading else ""
 
 
 class TelegramChannel:
@@ -94,9 +96,10 @@ class TelegramChannel:
                 if out.done and not out.content:
                     continue
                 try:
+                    prefixed_content = f"{PAPER_MODE_PREFIX}{out.content}"
                     await self._bot.send_message(
                         chat_id=out.chat_id,
-                        text=out.content,
+                        text=prefixed_content,
                         parse_mode=out.parse_mode or "Markdown",
                     )
                 except Exception as e:
