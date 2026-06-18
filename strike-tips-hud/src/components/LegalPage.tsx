@@ -7,7 +7,7 @@ import { ArrowLeft, FileText } from 'lucide-react';
 const fetcher = (url: string) => fetch(url).then(res => res.text());
 
 interface LegalPageProps {
-  docId: 'privacy' | 'terms' | 'disclaimer';
+  docId: 'privacy' | 'terms' | 'disclaimer' | 'how-to-bet' | 'faq' | 'betting-rules' | 'responsible';
   title: string;
 }
 
