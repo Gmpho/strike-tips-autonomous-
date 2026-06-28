@@ -1,8 +1,8 @@
 [
   {
-    "bet_id": "20260525022042_HOR",
-    "timestamp": "2026-05-25T02:20:42.504398",
-    "date": "2026-05-25",
+    "bet_id": "20260627162726_HOR",
+    "timestamp": "2026-06-27T16:27:26.062660",
+    "date": "2026-06-27",
     "track": "ReproTrack",
     "race_number": 1,
     "horse": "Horse A",
@@ -12,14 +12,15 @@
     "status": "PENDING",
     "edge_percent": 10.0,
     "confidence": "HIGH",
+    "distance": null,
     "actual_return": null,
     "profit_loss": null,
     "notes": ""
   },
   {
-    "bet_id": "20260525022042_HOR",
-    "timestamp": "2026-05-25T02:20:42.509086",
-    "date": "2026-05-25",
+    "bet_id": "20260627162726_HOR",
+    "timestamp": "2026-06-27T16:27:26.069818",
+    "date": "2026-06-27",
     "track": "ReproTrack",
     "race_number": 1,
     "horse": "Horse B",
@@ -29,6 +30,7 @@
     "status": "PENDING",
     "edge_percent": 10.0,
     "confidence": "HIGH",
+    "distance": null,
     "actual_return": null,
     "profit_loss": null,
     "notes": ""

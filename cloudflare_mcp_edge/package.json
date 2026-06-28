@@ -1,0 +1,20 @@
+{
+  "name": "striketips-mcp",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "build:knowledge": "node scripts/build-knowledge.js",
+    "predeploy": "node scripts/build-knowledge.js",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260627.1",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
+  }
+}

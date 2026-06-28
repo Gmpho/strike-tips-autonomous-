@@ -51,6 +51,8 @@ services:
       - MAX_CONCURRENT_PAGES=2
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - PAPER_TRADING=true
+      - CLOUDFLARE_MCP_URL=${CLOUDFLARE_MCP_URL}
+      - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
     volumes:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile
@@ -60,8 +62,8 @@ services:
     shm_size: 2gb
     init: true
     dns:
-      - 1.1.1.1
       - 8.8.8.8
+      - 8.8.4.4
     security_opt:
       - seccomp:seccomp_profile.json
     command: /bin/sh -c "playwright install chromium 2>&1 || true && python3 core_agent/core/adaptive_odds_monitor.py"

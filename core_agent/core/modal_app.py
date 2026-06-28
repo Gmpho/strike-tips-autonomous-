@@ -29,14 +29,14 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=1024,
+    memory=512,
     timeout=3600,
     env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"},
-    scaledown_window=300,
+    scaledown_window=120,
     startup_timeout=120,
-    min_containers=1,
+    min_containers=0,
 )
-@modal.concurrent(max_inputs=20)
+@modal.concurrent(max_inputs=10)
 @modal.asgi_app()
 def serve_api():
     """Mount core_agent.api_pkg FastAPI app + inject /telegram-webhook route."""
@@ -359,18 +359,19 @@ def run_scan():
     return {"status": "complete"}
 
 
-# ── Odds Monitor (continuous) ─────────────────────────────────────────
+# ── Odds Monitor (now runs via Docker, pushes to Cloudflare KV) ─────────
 @app.function(
     image=image,
-    secrets=secrets,
+    secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
     volumes={"/app/data": data_volume},
-    memory=1024,
+    memory=512,
     timeout=43200,
-    min_containers=1,
+    min_containers=0,
+    container_idle_timeout=120,
     env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"}
 )
 async def run_odds_monitor():
-    """Continuous odds monitoring (12h timeout, auto-restart on crash, min_containers keeps it alive)."""
+    """Continuous odds monitoring (fallback — Docker handles now)."""
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()

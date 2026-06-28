@@ -6,9 +6,11 @@ This document provides guidelines for AI agents working in this repository.
 
 ## Project Overview
 
-**South African Horse Racing Intelligence System**
-- **Python Backend** (`core_agent/`): Core betting logic, scrapers, analysis engine
-- **Next.js Frontend** (`strike-tips-frontend/`): React UI for the betting system
+**South African Horse Racing Intelligence System — 3-Layer Architecture**
+
+- **Cloudflare MCP Edge** (`cloudflare_mcp_edge/`): Always-free edge worker with 16 MCP tools, OKF knowledge bundle, REST API, D1 + KV
+- **Modal Backend** (`core_agent/`): Serverless Python backend for AI analysis, scrapers, Telegram bot
+- **Vercel HUD** (`strike-tips-hud/`): Vite + React + Three.js frontend with middleware routing
 
 ---
 
@@ -52,11 +54,30 @@ docker logs -f strike-bot
 docker exec -it strike-bot pytest
 ```
 
-### Next.js Frontend
+### Cloudflare Worker (cloudflare_mcp_edge/)
 
 ```bash
-# Install dependencies
-cd strike-tips-hud && npm install
+cd cloudflare_mcp_edge
+
+# Build OKF knowledge bundle (markdown → TypeScript)
+node scripts/build-knowledge.js
+
+# Deploy worker (runs predeploy → wrangler deploy)
+npm run deploy
+
+# Dev server
+npm run dev
+
+# Set secrets
+npx wrangler secret put BACKEND_API_URL
+npx wrangler secret put BACKEND_API_KEY
+npx wrangler secret put SEARCH_API_KEY   # optional
+```
+
+### Vite Frontend (strike-tips-hud/)
+
+```bash
+cd strike-tips-hud
 
 # Development server
 npm run dev
@@ -64,8 +85,11 @@ npm run dev
 # Production build
 npm run build
 
-# Lint code
-npm run lint
+# Deploy to Vercel (preview)
+vercel
+
+# Deploy to Vercel (production, fresh build)
+vercel deploy --prod -y --force
 ```
 
 ---
@@ -130,14 +154,22 @@ class Runner:
 
 ---
 
-### Next.js Frontend
+### Cloudflare Worker
 
-- TypeScript for all files (`.ts` / `.tsx`)
-- Functional components with hooks
-- Tailwind CSS for styling
-- Use Next.js App Router
-- Avoid `any` type
-- Run `npm run lint` before committing
+- TypeScript for all files (`.ts`)
+- `@modelcontextprotocol/sdk` v1.29.0 for MCP server
+- `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` (stateless)
+- Zod for input validation in MCP tools
+- Always include `Accept: application/json, text/event-stream` header for MCP endpoint
+- Auth via `x-api-key` header
+
+### Vite Frontend (strike-tips-hud/)
+
+- TypeScript + React 19 + Three.js
+- Tailwind CSS v4 for styling
+- Framer Motion for animations
+- Middleware (`middleware.ts`) routes API calls to Cloudflare or Modal
+- `vercel.json` has SPA rewrite only — no API rewrites (middleware handles routing)
 
 ---
 
@@ -190,12 +222,63 @@ core_agent/                          # Python backend (refactored April 2026)
 ├── services/                      # Business services
 └── requirements.txt
 
-strike-tips-hud/              # Vite frontend
+cloudflare_mcp_edge/              # Cloudflare Worker (always-free edge)
 ├── src/
-│   ├── app/                      # UI Components
-│   └── lib/api.ts               # API utilities
+│   ├── index.ts                  # Worker entry (REST + MCP + OKF, 564 lines)
+│   └── generated/
+│       └── racing-knowledge.ts   # Auto-generated OKF bundle (34 KB, 12 entries)
+├── knowledge/racing/             # OKF markdown source (12 files)
+│   ├── index.md
+│   ├── conditions/going.md
+│   ├── strategies/{kelly-criterion,value-betting}.md
+│   └── tracks/{7 tracks}.md
+├── scripts/
+│   └── build-knowledge.js        # Build script (markdown → TypeScript)
+├── package.json                  # @modelcontextprotocol/sdk v1.29.0
+└── wrangler.jsonc                # D1 + KV bindings
+
+strike-tips-hud/                  # Vite + React frontend (Vercel)
+├── src/
+│   ├── app/                      # UI components
+│   └── lib/                      # API utilities
+├── middleware.ts                 # Routing: Cloudflare vs Modal
+├── vercel.json                   # SPA rewrite only
 └── package.json
 ```
+
+---
+
+## 3-Layer Architecture
+
+### Layer Routing
+
+```
+User → strike-tips-hud.vercel.app
+         │
+         ▼ middleware.ts
+         │
+         ├── Cloudflare endpoints → striketips-mcp.gmphorg379.workers.dev
+         │    (/api/health, /api/knowledge/*, /api/racing/*, /mcp, etc.)
+         │
+         └── Modal endpoints → gmpho--strike-tips-racing-serve-api.modal.run
+              (/api/agent, /api/betting, /v1/*, etc.)
+```
+
+### Cloudflare Endpoints (13 REST + 16 MCP)
+
+Cloudflare handles all compute-light operations at zero cost:
+- 12 knowledge paths (OKF bundle) with search, lookup, list
+- 11 original MCP tools + 4 OKF tools + 1 web search tool = 16 total
+- D1 database for form insights (244 seeded records)
+- KV cache for live odds (odds monitor pushes via POST /api/ingest-snapshot)
+
+### OKF Knowledge Bundle
+
+12 curated markdown files about SA horse racing, compiled to TypeScript at build time:
+- 7 tracks with real data (Kenilworth 1881, Durbanville 1922, etc.)
+- Going/conditions guide
+- Value betting + Kelly Criterion strategies
+- Search ranks by keyword match (10× title/tags, 5× body, + per-occurrence)
 
 ---
 
@@ -421,8 +504,13 @@ pytest core_agent/tests/test_analyzer.py -v
 3. **Centralized Config**: All model config is in `core_agent/config/model_config.py`
 4. **ChromaDB Cloud**: Memory uses hosted ChromaDB (api.trychroma.com) with local Ollama embedding (embeddinggemma:300m) and Gemini cloud fallback
 5. **Keep Tools Gambling-Free**: Always use tool names like `record_selection` not `place_bet`
+6. **Cloudflare Workers Free Tier**: 100k req/day, 10k AI Neurons/day — use for compute-light operations only
+7. **OKF Compiles at Build Time**: Run `node scripts/build-knowledge.js` before `wrangler deploy` (auto-runs via `predeploy`)
+8. **MCP Stateless Transport**: `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` — fresh transport per request, required for Workers
+9. **Middleware Routes API**: `strike-tips-hud/middleware.ts` decides Cloudflare vs Modal per path — Cloudflare for knowledge/odds/form, Modal for AI/analysis
+10. **Fresh Vercel Builds**: Use `vercel deploy --prod -y --force` to bypass build cache
 
 ---
 
-*Last Updated: April 2026*
-*Architecture Version: 2.0*
+*Last Updated: June 2026*
+*Architecture Version: 2.1*

@@ -1,0 +1,18 @@
+{
+  "name": "striketips-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BACKEND_API_URL": ""
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "strike-tips-racing",
+    "database_id": "e28bece6-9c1a-4662-9225-b6373bbf23a6"
+  }],
+  "kv_namespaces": [{
+    "binding": "ODDS_KV",
+    "id": "3e60752804c4489c9542a6e211ea549d"
+  }]
+}

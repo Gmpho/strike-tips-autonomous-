@@ -273,6 +273,25 @@ class AdaptiveOddsMonitor:
                 except Exception:
                     pass
 
+                # Push snapshot to Cloudflare KV (free, always-on reads for HUD/Telegram)
+                try:
+                    import httpx
+                    cf_url = os.environ.get("CLOUDFLARE_MCP_URL", "")
+                    cf_key = os.environ.get("CLOUDFLARE_API_KEY", "")
+                    if cf_url and cf_key:
+                        async with httpx.AsyncClient(timeout=15) as client:
+                            resp = await client.post(
+                                f"{cf_url.rstrip('/')}/api/ingest-snapshot",
+                                headers={"x-api-key": cf_key, "content-type": "application/json"},
+                                json=state,
+                            )
+                            if resp.status_code not in (200, 201):
+                                logger.warning("Cloudflare push returned %d: %.100s", resp.status_code, resp.text)
+                            else:
+                                logger.debug("Cloudflare snapshot pushed (%d events)", state.get("count", 0))
+                except Exception as exc:
+                    logger.debug("Cloudflare push skipped: %s", exc)
+
                 # 1c. ATR data — only fetch every 3rd cycle, skip entirely when no active races
                 if active_count > 0 or self._atr_cycle % 3 == 0:
                     try:

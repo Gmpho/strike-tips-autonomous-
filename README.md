@@ -6,6 +6,8 @@
 
 A modular, AI-powered betting assistant that identifies value bets in South African horse racing using probability edge analysis and disciplined bankroll management.
 
+**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
+
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Production-green.svg)
@@ -29,121 +31,93 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 
 ## 🏛️ Architecture
 
-```mermaid
-%%{
-  init: {
-    'theme': 'base',
-    'themeVariables': {
-      'primaryColor': '#1E3A5F',
-      'primaryTextColor': '#FFF',
-      'primaryBorderColor': '#2563EB',
-      'lineColor': '#94A3B8',
-      'secondaryColor': '#0F172A',
-      'tertiaryColor': '#1E293B'
-    }
-  }
-}%%
-graph TB
-    subgraph TITLE["🏇 STRIKE TIPS — South African Racing Intelligence v2.0 (April 2026)"]
-        direction LR
-    end
+## 3-Layer Architecture (v2.1)
 
-    style TITLE fill:#1E3A5F,stroke:#2563EB,stroke-width:3px,color:#FFD700,font-size:18px
-
-    %% ─── USER LAYER ───
-    subgraph USERS["📱 User Layer"]
-        TG["Telegram Bot"]
-        WEB["Web HUD (Vite/Vanilla TS)<br/>Port: 5173"]
-    end
-    style USERS fill:#1E3A5F,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
-
-    %% ─── API LAYER ───
-    subgraph API["🖥️ Backend API"]
-        FASTAPI["FastAPI Server<br/>Port: 8000"]
-        STRIKE_BRAIN["🧠 Strike Brain<br/>(Singleton State Manager)"]
-    end
-    style API fill:#064E3B,stroke:#10B981,stroke-width:2px,color:#D1FAE5
-
-    %% ─── AI SWARM ───
-    subgraph SWARM["🤖 AI Swarm — Model Pipeline"]
-        INTENT["⚡ Intent Classifier<br/>(Regex ~0ms)"]
-        DT["🔧 Direct Tools<br/>(Python ~1-2s)"]
-        LLM["🧠 LLM Specialists<br/>(Fallback Chain)"]
-        MEM["📚 Memory Layer<br/>(ChromaDB + Honcho)"]
-        INTENT --> DT & LLM & MEM
-    end
-    style SWARM fill:#4C1D95,stroke:#8B5CF6,stroke-width:2px,color:#EDE9FE
-
-    %% ─── LLM FALLBACK ───
-    subgraph LLM_CHAIN["⬇️ LLM Fallback Chain"]
-        GROQ["Groq Cloud<br/>llama-3.3-70b"]
-        GEMINI["Gemini Cloud<br/>2.0-flash → 2.5-pro"]
-        OLLAMA["Ollama Local<br/>racing_llama + 4 specialists"]
-    end
-    style LLM_CHAIN fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF
-    LLM --> GROQ --> GEMINI --> OLLAMA
-
-    %% ─── DREAM ENGINE ───
-    subgraph DREAM["💭 Dream Engine"]
-        HEARTBEAT["Heartbeat Loop<br/>(Every 5 min)"]
-        SEARCH["Web Search<br/>(DuckDuckGo)"]
-        SIM["Simulation<br/>(Groq llama-3.1-8b)"]
-        HEARTBEAT --> SEARCH --> SIM
-    end
-    style DREAM fill:#78350F,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
-
-    %% ─── MEMORY ───
-    subgraph MEM_SYS["💾 Memory Systems"]
-        CHROMA["ChromaDB<br/>(Cloud / Local)"]
-        HONCHO["Honcho<br/>(User Memory)"]
-        EMBED["Embedding: Ollama → Gemini → Default"]
-    end
-    style MEM_SYS fill:#164E63,stroke:#06B6D4,stroke-width:2px,color:#CFFAFE
-    MEM --> CHROMA & HONCHO
-    CHROMA --- EMBED
-
-    %% ─── DATA LAYER ───
-    subgraph DATA["🗄️ Data Sources & Scrapers"]
-        TAB["TAB4Racing<br/>(Racecards)"]
-        BETWAY["Betway SA<br/>(Odds)"]
-        ODDCHECK["Oddschecker<br/>(Best Odds)"]
-        PDF["PDF Scraper<br/>(Form Guides)"]
-        ATR["AtTheRaces<br/>(Market Movers, Predictor, Results)"]
-    end
-    style DATA fill:#1F2937,stroke:#6B7280,stroke-width:2px,color:#F3F4F6
-
-    %% ─── BACKGROUND ───
-    subgraph BG["⏰ Background Services"]
-        SCHED["Scheduler<br/>(APScheduler)"]
-        MONITOR["Odds Monitor<br/>(Live Tracking)"]
-        ALERT["Alert Engine<br/>(Value Detection)"]
-        LEARN["Learning Engine<br/>(Bayesian Calibration)"]
-        RESULT["Result Tracker<br/>(Auto-Settle)"]
-    end
-    style BG fill:#374151,stroke:#9CA3AF,stroke-width:2px,color:#F9FAFB
-
-    %% ─── CONNECTIONS ───
-    TG --> FASTAPI
-    WEB --> FASTAPI
-    FASTAPI --> STRIKE_BRAIN
-    STRIKE_BRAIN --> INTENT
-    DT --> LEARN & RESULT
-    SIM --> CHROMA
-    TAB --> STRIKE_BRAIN
-    BETWAY --> MONITOR
-    ODDCHECK --> MONITOR
-    ATR --> MONITOR
-    MONITOR --> ALERT
-    PDF --> STRIKE_BRAIN
-    ALERT --> TG
-    SCHED --> STRIKE_BRAIN
 ```
+                    ┌─────────────────────────────────────┐
+                    │     VERCEL HUD (Frontend)           │
+                    │  https://strike-tips-hud.vercel.app  │
+                    │                                     │
+                    │  Vite + React 19 + Three.js         │
+                    │  middleware.ts routes API calls      │
+                    └──────────────┬──────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────────────┐
+                    │           MIDDLEWARE.TS              │
+                    │  Cloudflare paths → CF Worker        │
+                    │  All other paths → Modal             │
+                    └──────┬──────────────────────┬────────┘
+                           │                      │
+              ┌────────────▼────────┐    ┌────────▼───────────────────┐
+              │  CLOUDFLARE EDGE    │    │  MODAL BACKEND             │
+              │  (Always Free)      │    │  (Serverless, ~$30/mo)     │
+              │                     │    │                            │
+              │  ● 16 MCP tools     │    │  ● FastAPI (serve-api)     │
+              │  ● 13 REST endpoints│    │  ● Telegram bot            │
+              │  ● OKF knowledge    │    │  ● AI analysis (Gemini)    │
+              │  ● D1 database      │    │  ● Dream engine            │
+              │  ● KV odds cache    │    │  ● ChromaDB memory         │
+              │  ● Web search tool  │    │  ● Odds processing         │
+              └─────────────────────┘    └────────────────────────────┘
+```
+
+---
+
+---
+
+## ☁️ Cloudflare Edge Layer
+
+The Cloudflare Worker (`cloudflare_mcp_edge/`) handles all compute-light operations at zero cost:
+
+### OKF Knowledge Bundle
+12 curated SA racing knowledge files compiled to TypeScript at build time:
+
+| Category | Files | Contents |
+|----------|-------|----------|
+| **Tracks** | 7 files | Kenilworth, Durbanville, Fairview, Turffontein, Vaal, Scottsville, Greyville — real data (founded, features, draw bias) |
+| **Conditions** | 1 file | Going & track conditions explained |
+| **Strategies** | 2 files | Value betting & Kelly Criterion with SA context |
+
+Search ranks by keyword match (10x title/tags, 5x body, + per-occurrence).
+
+### MCP Tools (16 total)
+
+| Category | Tools |
+|----------|-------|
+| **Original** (11) | probability edge, Kelly staking, circuit breakers, Bayesian calibration, keyword scan, race evaluation, card verification, HTML patch, form search, dream sim, odds fetch |
+| **OKF** (4) | search, list, get by path, get track by name |
+| **Web** (1) | web search (requires `SEARCH_API_KEY` secret) |
+
+### REST Endpoints (13)
+`/api/health`, `/api/edge`, `/api/kelly`, `/api/circuit`, `/api/bayesian`, `/api/keywords`, `/api/evaluate`, `/api/verify-card`, `/api/patch-html`, `/api/racing/form`, `/api/racing/odds`, `/api/knowledge`, `/api/knowledge/search`, `/api/knowledge/tracks`
+
+### Data Layer
+- **D1 Database**: 244 form insights, parameterized queries
+- **KV Cache**: Live odds pushed by Docker odds-monitor (TTL 300s)
+- **Ingestion**: `POST /api/ingest-snapshot` for odds, `POST /api/ingest-insight` for form
+
+See [`docs/CLOUDFLARE_MCP_EDGE.md`](docs/CLOUDFLARE_MCP_EDGE.md) for full details.
 
 ---
 
 ## 🚀 Quick Start
 
-### Option A: Docker (Recommended)
+### Option A: Deploy Cloudflare Worker + Vercel HUD (Cloud-Native)
+
+```bash
+# 1. Deploy Cloudflare Worker (always-free edge)
+cd cloudflare_mcp_edge
+node scripts/build-knowledge.js
+npm run deploy
+
+# 2. Deploy Vercel HUD (frontend)
+cd ../strike-tips-hud
+vercel deploy --prod -y --force
+
+# 3. Visit https://strike-tips-hud.vercel.app
+```
+
+### Option B: Docker (Local Development)
 
 ```bash
 # 1. Clone the repository
@@ -567,6 +541,21 @@ MIT License - see [LICENSE](LICENSE) file
 - Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
 - HUD: [https://strike-tips-hud.vercel.app/](https://strike-tips-hud.vercel.app/)
+- MCP: `POST https://striketips-mcp.gmphorg379.workers.dev/mcp` (requires `x-api-key` + `Accept: application/json, text/event-stream`)
+
+---
+
+## 📚 Documentation
+
+| Document | Contents |
+|----------|----------|
+| [`docs/CLOUDFLARE_MCP_EDGE.md`](docs/CLOUDFLARE_MCP_EDGE.md) | 3-layer architecture, OKF bundle, MCP tools, REST endpoints |
+| [`docs/AGENTS.md`](docs/AGENTS.md) | Agent coding guidelines, build commands, project structure |
+| [`docs/MCP_INTEGRATION_GUIDE.md`](docs/MCP_INTEGRATION_GUIDE.md) | MCP protocol, n8n integration, Claude Desktop setup |
+| [`docs/MODAL_README.md`](docs/MODAL_README.md) | Modal serverless deployment |
+| [`docs/PRIVACY.md`](docs/PRIVACY.md) | Privacy policy |
+| [`docs/TERMS.md`](docs/TERMS.md) | Terms of service |
+| [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md) | Legal disclaimer |
 
 ---
 
