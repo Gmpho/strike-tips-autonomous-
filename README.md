@@ -404,41 +404,55 @@ element = parser.find_element(soup, "horse_name")
 
 ---
 
-## 📁 Project Structure (April 2026 - v2.0)
+## 📁 Project Structure (June 2026 - v2.1)
 
 ```
-core_agent/                          # Python backend (refactored)
-├── agents/                         # AI orchestration layer
-│   ├── ai_pydantic.py              # ModelPipeline + UnifiedOrchestrator
-│   ├── ai_providers.py             # AI provider routing
-│   └── intent_classifier.py        # Regex-based intent detection
-├── config/                         # Configuration
-│   ├── model_config.py             # Centralized model config
-│   └── settings.py                 # Bankroll settings
-├── core/                           # Core business logic
-│   ├── strike_tips.py              # Main orchestrator
-│   ├── strike_brain.py             # Central state manager
-│   ├── engine.py                   # Execution engine
-│   └── api.py                      # FastAPI entry point
-├── skills/                         # Domain skills
-│   ├── race_analysis/              # Value bet engine
-│   ├── bankroll_manager/           # Bankroll governor
-│   ├── parsers/                    # Tab4, PDF scrapers
-│   ├── memory/                     # ChromaDB memory
-│   ├── learning/                   # Learning engine
-│   └── notifications/              # Telegram bot
-├── tools/                          # MAF tools
-│   └── maf_tool_registry.py       # 15 gambling-free tools (incl. ATR + dreams)
-├── routes/                         # API endpoints
+core_agent/                                # Modal backend (Python FastAPI)
+├── agents/                               # AI orchestration layer
+│   ├── ai_pydantic.py                    # ModelPipeline + UnifiedOrchestrator
+│   ├── ai_providers.py                   # AI provider routing
+│   └── intent_classifier.py              # Regex-based intent detection
+├── config/                               # Configuration
+│   ├── model_config.py                   # Centralized model config
+│   └── settings.py                       # Bankroll settings
+├── core/                                 # Core business logic
+│   ├── strike_tips.py                    # Main orchestrator
+│   ├── strike_brain.py                   # Central state manager
+│   ├── engine.py                         # Execution engine
+│   ├── adaptive_odds_monitor.py          # Live odds monitoring
+│   └── api.py                            # FastAPI entry point
+├── skills/                               # Domain skills
+│   ├── race_analysis/                    # Value bet engine
+│   ├── bankroll_manager/                 # Bankroll governor
+│   ├── parsers/                          # Tab4, PDF scrapers
+│   ├── memory/                           # ChromaDB memory
+│   ├── learning/                         # Learning engine
+│   └── notifications/                    # Telegram bot
+├── tools/                                # MAF tools
+│   └── maf_tool_registry.py             # 15 gambling-free tools
+├── routes/                               # API endpoints
 │   ├── agent.py, betting.py, racing.py
-├── ollama_configs/                 # 5 racing Modelfiles
+├── ollama_configs/                       # 5 racing Modelfiles
 └── requirements.txt
 
-strike-tips-frontend/               # Next.js frontend (unchanged)
+cloudflare_mcp_edge/                      # Cloudflare Worker (always-free edge)
 ├── src/
-│   ├── app/                       # App router pages
-│   ├── components/               # React components
-│   └── lib/api.ts                # API utilities
+│   ├── index.ts                          # Worker entry (REST + MCP, 564 lines)
+│   └── generated/
+│       └── racing-knowledge.ts           # Auto-generated OKF bundle (12 entries)
+├── knowledge/racing/                     # OKF markdown source
+│   ├── index.md                          # 1 bundle index
+│   ├── conditions/going.md               # Going conditions
+│   ├── strategies/                       # Value betting, Kelly Criterion
+│   └── tracks/                           # 7 SA tracks with real data
+├── scripts/build-knowledge.js            # Markdown → TypeScript compiler
+├── package.json                          # @modelcontextprotocol/sdk v1.29.0
+└── wrangler.jsonc                        # D1 + KV bindings
+
+strike-tips-hud/                          # Vite + React + Three.js frontend (Vercel)
+├── src/                                  # UI components
+├── middleware.ts                         # Routes API calls: Cloudflare vs Modal
+├── vercel.json                           # SPA rewrites only
 └── package.json
 ```
 
