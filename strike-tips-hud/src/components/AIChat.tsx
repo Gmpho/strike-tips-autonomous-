@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bot, User, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
+import { checkWebGPUSupport, getWebLLMEngine } from '../lib/webllm';
 
 const STORAGE_KEY = 'strike_chat_messages';
 
@@ -21,7 +22,14 @@ export const AIChat: React.FC = () => {
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
+  const [webGpuSupported, setWebGpuSupported] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    checkWebGPUSupport().then(supported => {
+      setWebGpuSupported(supported);
+    });
+  }, []);
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -60,6 +68,100 @@ export const AIChat: React.FC = () => {
 
     // Add empty AI message that we'll stream into
     setMessages(prev => [...prev, { role: 'ai', content: '', timestamp: now }]);
+
+    if (selectedModel.startsWith('webllm-')) {
+      try {
+        // Fetch config to hydrate system prompt context
+        let balanceInfo = '1000';
+        let tracksList = 'None';
+        try {
+          const configRes = await apiFetch('/api/config');
+          if (configRes.ok) {
+            const config = await configRes.json();
+            balanceInfo = config.bankroll?.total_bankroll?.toString() || '1000';
+            tracksList = config.tracks?.join(', ') || 'None';
+          }
+        } catch (e) {
+          console.warn('[WebLLM Context Fetch Failed]', e);
+        }
+
+        const systemPrompt = `You are Strike Tips Racing AI, a helpful, private on-device assistant. Answer concisely and accurately.
+Today's Balance: R${balanceInfo}.
+Active tracks today: ${tracksList}.
+Rules:
+1. ALWAYS base your answers on this live snapshot balance and tracks list.
+2. Answer in a clean, professional, and concise betting format.`;
+
+        // Update activity to download
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'ai'
+            ? { ...m, content: 'Initializing GPU / Loading model...' }
+            : m
+        ));
+
+        // Get the engine and run
+        const engine = await getWebLLMEngine(selectedModel, (p) => {
+          setMessages(prev => prev.map((m, i) =>
+            i === prev.length - 1 && m.role === 'ai'
+              ? { ...m, content: `Loading: ${p.text} (${Math.round(p.progress * 100)}%)` }
+              : m
+          ));
+        });
+
+        clearInterval(actInterval);
+        setCurrentActivity('🧠 Local GPU Processing...');
+
+        // Clear the loading progress text so we can stream into it
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'ai'
+            ? { ...m, content: '', activity: selectedModel }
+            : m
+        ));
+
+        const chatHistory = messages.map(m => ({
+          role: (m.role === 'ai' ? 'assistant' : 'user') as 'assistant' | 'user',
+          content: m.content
+        }));
+        // Prepend system prompt
+        const chatMessages = [
+          { role: 'system' as const, content: systemPrompt },
+          ...chatHistory,
+          { role: 'user' as const, content: userMsg }
+        ];
+
+        const chatCompletion = await engine.chat.completions.create({
+          messages: chatMessages,
+          stream: true,
+        });
+
+        for await (const chunk of chatCompletion) {
+          const delta = chunk.choices[0]?.delta?.content || '';
+          if (delta) {
+            setMessages(prev => prev.map((m, i) =>
+              i === prev.length - 1 && m.role === 'ai'
+                ? { ...m, content: m.content + delta }
+                : m
+            ));
+          }
+        }
+
+        setLastModelUsed(selectedModel);
+
+      } catch (err: any) {
+        console.error('[WebLLM Error]', err);
+        clearInterval(actInterval);
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'ai'
+            ? { ...m, content: `WebLLM Error: ${err.message || err}` }
+            : m
+        ));
+      } finally {
+        clearInterval(actInterval);
+        setLoading(false);
+        setCurrentActivity(null);
+      }
+      return;
+    }
 
     try {
       const modelVal = selectedModel !== 'auto' ? selectedModel : undefined;
@@ -227,11 +329,16 @@ export const AIChat: React.FC = () => {
                   <option value="groq" className="bg-black">Groq Llama 70B</option>
                   <option value="gemini" className="bg-black">Gemini Flash</option>
                 </optgroup>
-                <optgroup label="💻 Local (Ollama)">
-                  <option value="functiongemma:270m" className="bg-black">FunctionGemma 270M (Tools)</option>
-                  <option value="qwen3.5:0.8b" className="bg-black">Qwen3.5 0.8B (Chat + Tools)</option>
-                  <option value="racing_qwen:latest" className="bg-black">Racing Qwen (Domain Specialist)</option>
-                  <option value="lfm_racing:latest" className="bg-black">LFM Racing (Lightweight)</option>
+                <optgroup label="🌐 Browser Local (WebGPU)">
+                  <option value="webllm-qwen-0.5b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                    Qwen 2.5 0.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  </option>
+                  <option value="webllm-llama-1b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                    Llama 3.2 1B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  </option>
+                  <option value="webllm-qwen-1.5b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                    Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  </option>
                 </optgroup>
               </select>
             <div className="flex gap-2 flex-1 w-full min-w-0">

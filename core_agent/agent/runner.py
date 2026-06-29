@@ -7,12 +7,12 @@ class AgentRunner:
     def __init__(self, router: TaskRouter) -> None:
         self.router = router
 
-    async def run_stream(self, messages: list[dict], intent: str | None) -> AsyncIterator[str]:
-        async for chunk in self.router.stream(messages, None, intent):
+    async def run_stream(self, messages: list[dict], intent: str | None, model_override: str | None = None) -> AsyncIterator[str]:
+        async for chunk in self.router.stream(messages, None, intent, model_override=model_override):
             yield chunk
 
-    async def run_complete(self, messages: list[dict], intent: str | None) -> str:
+    async def run_complete(self, messages: list[dict], intent: str | None, model_override: str | None = None) -> str:
         chunks = []
-        async for chunk in self.router.stream(messages, None, None):
+        async for chunk in self.router.stream(messages, None, None, model_override=model_override):
             chunks.append(chunk)
         return "".join(chunks)

@@ -5,6 +5,7 @@ from core_agent.agent.session import SessionManager
 from core_agent.agent.context import ContextBuilder
 from core_agent.agent.runner import AgentRunner
 from core_agent.agent.providers.task_router import TaskRouter
+from core_agent.agent.prompts import build_system_prompt
 from core_agent.core.strike_brain import brain
 
 
@@ -38,7 +39,7 @@ class AgentLoop:
                     msg.session_key, msg.content, session.history, None
                 )
                 messages = [
-                    {"role": "system", "content": "You are Strike Tips AI, expert in horse racing analysis."},
+                    {"role": "system", "content": build_system_prompt()},
                     *session.history,
                     {"role": "user", "content": context},
                 ]
@@ -47,7 +48,8 @@ class AgentLoop:
 
             elif state == TurnState.RUN:
                 full_response = ""
-                async for chunk in self.runner.run_stream(session.messages, None):
+                model_override = getattr(msg, "model", None)
+                async for chunk in self.runner.run_stream(session.messages, None, model_override=model_override):
                     full_response += chunk
                     await self.bus.publish_outbound(OutboundMessage(
                         session_key=msg.session_key,

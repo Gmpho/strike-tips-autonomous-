@@ -39,6 +39,7 @@ class InboundMessage:
     media: List[Media] = field(default_factory=list)
     session_key_override: str | None = None
     user_id: int | None = None
+    model: str | None = None
 
 
 @dataclass

@@ -1,6 +1,24 @@
-
 import asyncio
-from skills.parsers.duckduckgo import DuckDuckGoRacingParser
+from core_agent.skills.search_service import search_racing
+
+class DuckDuckGoRacingParser:
+    async def find_horse_form(self, horse_name: str) -> str:
+        res = await search_racing(f"{horse_name} horse racing form record history South Africa")
+        results = res.get("results", [])
+        return "\n".join(r.get("snippet", "") for r in results)
+
+    async def get_todays_races(self, track: str, country: str = "South Africa") -> list:
+        res = await search_racing(f"{track} today's racecard {country} horse racing")
+        return res.get("results", [])
+
+    async def search(self, query: str, max_results: int = 3) -> list:
+        res = await search_racing(query, limit=max_results)
+        return res.get("results", [])
+
+    async def verify_race_event(self, track: str, race_number: int, date_str: str, country: str) -> str:
+        res = await search_racing(f"{track} Race {race_number} result {date_str} {country}")
+        results = res.get("results", [])
+        return "\n".join(r.get("snippet", "") for r in results)
 
 async def test_grounded_search():
     parser = DuckDuckGoRacingParser()
@@ -8,7 +26,7 @@ async def test_grounded_search():
     print("\n--- Test 1: Horse Form Deep Search ---")
     print("Querying for: Splittheeights (Turffontein runner)")
     report1 = await parser.find_horse_form("Splittheeights")
-    print("\n[RESULT 1]:\n", report1)
+    print("\n[RESULT 1]:\n", report1[:300] + "..." if report1 else "No form details found.")
     
     print("\n--- Test 2: Today's Racecard Target ---")
     print("Querying for: Turffontein today's racecard")
@@ -43,7 +61,7 @@ async def test_grounded_search():
     print("\n--- Test 6: International Race Verification (UAE) ---")
     print("Querying for: Meydan race 1 UAE 2026-03-14")
     report6 = await parser.verify_race_event("Meydan", 1, date_str="2026-03-14", country="UAE")
-    print("\n[RESULT 6]:\n", report6)
+    print("\n[RESULT 6]:\n", report6[:300] + "..." if report6 else "No race details found.")
 
 if __name__ == "__main__":
-    asyncio.run(test_grounded_search()) 
+    asyncio.run(test_grounded_search())

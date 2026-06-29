@@ -26,6 +26,10 @@ export const PredictorView: React.FC = () => {
   const predictions = Array.isArray(store.predictions) ? store.predictions : [];
   const [expandAll, setExpandAll] = useState(false);
   const [selectedPrediction, setSelectedPrediction] = useState<Predictor | null>(null);
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [confidenceFilter, setConfidenceFilter] = useState<'ALL' | 'HIGH' | 'MEDIUM' | 'SPECULATIVE' | 'AI_PICK'>('ALL');
+  const [limit, setLimit] = useState(15);
 
   const openDetail = (pred: Predictor) => {
     setSelectedPrediction(pred);
@@ -34,6 +38,25 @@ export const PredictorView: React.FC = () => {
   const closeDetail = () => {
     setSelectedPrediction(null);
   };
+
+  const filteredPredictions = predictions.filter((pred) => {
+    const matchesSearch = pred.horse.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    if (!matchesSearch) return false;
+    if (confidenceFilter === 'ALL') return true;
+    
+    const conf = extractConfidence(pred.prediction || pred.raw || '');
+    if (!conf) return confidenceFilter === 'AI_PICK';
+    
+    const label = conf.label;
+    if (confidenceFilter === 'HIGH') return label === 'High Confidence';
+    if (confidenceFilter === 'MEDIUM') return label === 'Medium Confidence';
+    if (confidenceFilter === 'SPECULATIVE') return label === 'Speculative';
+    if (confidenceFilter === 'AI_PICK') return label === 'AI Pick';
+    return true;
+  });
+
+  const displayedPredictions = filteredPredictions.slice(0, limit);
 
   return (
     <motion.div
@@ -80,6 +103,56 @@ export const PredictorView: React.FC = () => {
             </p>
           </div>
         )}
+
+        {/* Search & Filter Controls */}
+        {predictions.length > 0 && (
+          <div className="space-y-2">
+            {/* Search Input */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search horse..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all font-semibold"
+              />
+            </div>
+            
+            {/* Confidence Filter Row */}
+            <div className="flex flex-wrap gap-1">
+              {(['ALL', 'HIGH', 'MEDIUM', 'SPECULATIVE', 'AI_PICK'] as const).map((filter) => {
+                const label = 
+                  filter === 'ALL' ? 'All' :
+                  filter === 'HIGH' ? 'High' :
+                  filter === 'MEDIUM' ? 'Medium' :
+                  filter === 'SPECULATIVE' ? 'Speculative' : 'AI Pick';
+                
+                const activeClass = 
+                  filter === 'ALL' ? 'bg-white/10 text-white border-white/20' :
+                  filter === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+                  filter === 'MEDIUM' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+                  filter === 'SPECULATIVE' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                  'bg-purple-500/20 text-purple-400 border-purple-500/30';
+
+                const inactiveClass = 'bg-white/5 text-slate-400 border-white/5 hover:bg-white/10 hover:text-slate-200';
+                
+                const isSelected = confidenceFilter === filter;
+                
+                return (
+                  <button
+                    key={filter}
+                    onClick={() => setConfidenceFilter(filter)}
+                    className={`px-2.5 py-1.5 rounded-lg border text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      isSelected ? activeClass : inactiveClass
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Content ── */}
@@ -98,11 +171,23 @@ export const PredictorView: React.FC = () => {
             </div>
           </div>
         </div>
+      ) : filteredPredictions.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-theme-secondary">
+          <div className="p-6 rounded-3xl bg-white/5 border border-white/10 flex flex-col items-center gap-4">
+            <Sparkles className="w-10 h-10 opacity-30" />
+            <div className="text-center space-y-1">
+              <p className="text-sm font-bold text-theme-primary/60">No Predictions Match Filters</p>
+              <p className="text-xs text-theme-secondary">
+                Try adjusting your search query or confidence filter
+              </p>
+            </div>
+          </div>
+        </div>
       ) : (
         /* Scrollable card list */
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1">
           <div className="space-y-3 pb-2">
-            {predictions.map((pred, i) => (
+            {displayedPredictions.map((pred, i) => (
               <PredictionCardWrapper
                 key={`${pred.horse}-${i}`}
                 pred={pred}
@@ -111,6 +196,14 @@ export const PredictorView: React.FC = () => {
                 onOpenDetail={openDetail}
               />
             ))}
+            {filteredPredictions.length > limit && (
+              <button
+                onClick={() => setLimit(prev => prev + 25)}
+                className="w-full py-2.5 text-[10px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/5 hover:bg-purple-500/10 border border-purple-500/20 rounded-xl transition-all cursor-pointer mt-3"
+              >
+                Show More (+{Math.min(25, filteredPredictions.length - limit)})
+              </button>
+            )}
           </div>
         </div>
       )}

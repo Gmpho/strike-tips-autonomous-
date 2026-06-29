@@ -588,6 +588,60 @@ class StrikeTips:
             except Exception as e:
                 print(f"[ERR] Failed to send daily summary: {e}")
 
+            # Send individual value bet notifications via Telegram based on settings
+            try:
+                settings_path = os.path.join(self.data_dir, "settings.json")
+                telegram_enabled = True
+                priority_only = False
+
+                if os.path.exists(settings_path):
+                    with open(settings_path) as f:
+                        settings = json.load(f)
+                    telegram_enabled = settings.get("telegramEnabled", True)
+                    priority_only = settings.get("valueBetAlerts", False)
+
+                if telegram_enabled:
+                    for track, races in all_results.items():
+                        for race in races:
+                            if not isinstance(race, dict):
+                                continue
+                            for vb in race.get("value_bets", []):
+                                horse = vb.get("horse") or ""
+                                if not horse:
+                                    continue
+                                raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("estimated_edge") or 0
+                                edge = float(raw_edge)
+                                if 0 < edge < 1:
+                                    edge *= 100
+
+                                # Filter for priority alerts (edge >= 15.0%) if configured
+                                if priority_only and edge < 15.0:
+                                    continue
+
+                                raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
+                                odds = float(raw_odds)
+
+                                # Calculate advised stake using Half-Kelly for the notification
+                                max_stake = self.bankroll.calculate_max_stake(edge)
+                                advised_stake = min(max_stake, BANKROLL.total_bankroll * 0.05)
+
+                                # Determine confidence category
+                                confidence = "STRONG_VALUE" if edge >= 15.0 else "VALUE" if edge >= 8.0 else "MARGINAL"
+
+                                await self.telegram.send_value_bet(
+                                    horse=horse,
+                                    track=track,
+                                    race_number=race.get("race_number", 0),
+                                    race_time=race.get("race_time", "TBD"),
+                                    odds=odds,
+                                    edge_percent=edge,
+                                    stake=advised_stake,
+                                    confidence=confidence,
+                                    reasoning=vb.get("reasoning", "Value detected by AI model analysis."),
+                                )
+            except Exception as e:
+                print(f"[ERR] Failed to send individual value bet alerts: {e}")
+
         output_file = os.path.join(
             self.data_dir, f"daily_scan_{date.today().isoformat()}.json"
         )

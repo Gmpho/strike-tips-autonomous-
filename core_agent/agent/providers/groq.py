@@ -89,9 +89,23 @@ class GroqProvider:
 
     async def _post_and_parse(self, messages: list[dict], needs_tools: bool, model: str) -> tuple[str, list[dict]]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        
+        # Build a clean message list for the API call to avoid system prompt duplication
+        api_messages = []
+        for i, m in enumerate(messages):
+            if i == 0 and m.get("role") == "system":
+                # Override the system prompt with the cloud-clean one
+                api_messages.append({"role": "system", "content": build_system_prompt(for_cloud=True)})
+            else:
+                api_messages.append(m)
+                
+        # If no system prompt was present at all, prepend it
+        if not api_messages or api_messages[0].get("role") != "system":
+            api_messages.insert(0, {"role": "system", "content": build_system_prompt(for_cloud=True)})
+
         payload = {
             "model": model,
-            "messages": [{"role": "system", "content": build_system_prompt()}] + messages,
+            "messages": api_messages,
             "max_tokens": 800,
             "temperature": 0.3,
         }
@@ -123,8 +137,9 @@ class GroqProvider:
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not set")
 
-        last_msg = messages[-1]["content"] if messages else ""
-        needs_tools = self._needs_tools(last_msg, intent)
+        from core_agent.agent.providers.task_router import TaskRouter
+        raw_msg = TaskRouter._extract_user_query(messages)
+        needs_tools = self._needs_tools(raw_msg, intent)
         model = "llama-3.1-8b-instant" if not needs_tools else "llama-3.3-70b-versatile"
 
         content, tool_calls = await self._post_and_parse(messages, needs_tools, model)

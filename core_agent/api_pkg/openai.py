@@ -87,11 +87,13 @@ async def handle_chat_completions(request: Request):
 
     # ── NORMAL PATH: bus-based AgentLoop ─────────────────────────────────────
     bus = request.app.state.bus
+    model = body.get("model")
     msg = InboundMessage(
         session_key=f"api:{session_id}",
         channel="rest",
         chat_id=session_id,
         content=user_text,
+        model=model,
     )
 
     if stream:
@@ -107,7 +109,7 @@ async def handle_chat_completions(request: Request):
         content = ""
         while True:
             try:
-                out = await asyncio.wait_for(sub.get(), timeout=25.0)
+                out = await asyncio.wait_for(sub.get(), timeout=180.0)
             except asyncio.TimeoutError:
                 content = "I'm sorry, the AI system is still warming up. Try asking about bankroll, odds, or a simpler question."
                 break
@@ -140,7 +142,7 @@ async def _stream_generator(bus, msg: InboundMessage, chunk_id: str):
         await bus.publish(msg)
         while True:
             try:
-                out = await asyncio.wait_for(sub.get(), timeout=25.0)
+                out = await asyncio.wait_for(sub.get(), timeout=180.0)
             except asyncio.TimeoutError:
                 yield _sse_chunk("I'm sorry, the AI system is still warming up. Try asking about bankroll, odds, or a simpler question.", "strike-tips", chunk_id)
                 yield _sse_chunk("", "strike-tips", chunk_id, finish_reason="stop")

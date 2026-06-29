@@ -1,16 +1,20 @@
 from __future__ import annotations
-import os
+import asyncio
+import inspect
 import json
+import os
 import re
 import httpx
 from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.config.model_registry import get_model_by_id
+from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 import logging
 
 logger = logging.getLogger("ollama-provider")
 
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
+_TOOL_RE = re.compile(r'^\s*TOOL:\s*(\w+)\((\{.*?\})\)\s*$', re.MULTILINE)
 
 def _strip_think(chunk: str, in_think: bool) -> tuple[str, bool]:
     if not chunk:
@@ -94,6 +98,10 @@ class OllamaProvider(LLMProvider):
                 "model": model,
                 "prompt": prompt,
                 "stream": True,
+                "options": {
+                    "num_ctx": 2048,
+                    "temperature": 0.2
+                }
             }
         else:
             url = f"{self.host}/api/chat"
@@ -101,11 +109,16 @@ class OllamaProvider(LLMProvider):
                 "model": model,
                 "messages": messages,
                 "stream": True,
+                "options": {
+                    "num_ctx": 2048,
+                    "temperature": 0.2
+                }
             }
 
         in_think = False
         async with httpx.AsyncClient(timeout=600.0) as client:
             async with client.stream("POST", url, json=payload) as response:
+                buffer = ""
                 async for line in response.aiter_lines():
                     if not line:
                         continue
@@ -123,9 +136,45 @@ class OllamaProvider(LLMProvider):
                     if content:
                         cleaned, in_think = _strip_think(content, in_think)
                         if cleaned:
-                            yield cleaned
+                            buffer += cleaned
                     if data.get("done"):
                         break
+
+        # ── TOOL: interceptor ──────────────────────────────────────────────────
+        tool_match = _TOOL_RE.search(buffer)
+        if tool_match:
+            tool_name = tool_match.group(1)
+            try:
+                tool_args = json.loads(tool_match.group(2))
+            except json.JSONDecodeError:
+                tool_args = {}
+
+            fn = TOOL_REGISTRY.get(tool_name)
+            if fn:
+                try:
+                    kwargs = dict(tool_args)
+                    if "strike" in inspect.signature(fn).parameters:
+                        from core_agent.core.strike_brain import brain
+                        if brain and brain.strike:
+                            kwargs["strike"] = brain.strike
+                    if asyncio.iscoroutinefunction(fn):
+                        result = await fn(**kwargs)
+                    else:
+                        result = fn(**kwargs)
+                    result_text = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+                    logger.info("[OLLAMA] TOOL: %s executed successfully", tool_name)
+                    pre_tool = buffer[:tool_match.start()].strip()
+                    yield (pre_tool + "\n\n" if pre_tool else "") + f"**{tool_name} result:**\n```\n{result_text}\n```"
+                    return
+                except Exception as e:
+                    logger.warning("[OLLAMA] TOOL: %s failed: %s", tool_name, e)
+                    yield buffer + f"\n\n*(Tool {tool_name} failed: {e})*"
+                    return
+            else:
+                logger.warning("[OLLAMA] TOOL: unknown tool '%s'", tool_name)
+
+        if buffer:
+            yield buffer
 
     async def complete(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> str:
         chunks = []

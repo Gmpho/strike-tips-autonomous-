@@ -169,25 +169,34 @@ class BankrollGovernor:
                 self._bets = []
 
     def _save_state(self):
-        """Persist bankroll state and bet history"""
+        """Persist bankroll state and bet history atomically"""
         try:
-            with open(self._state_file, "w") as f:
-                json.dump(
-                    {
-                        "current_bankroll": self.current_bankroll,
-                        "peak_bankroll": self.peak_bankroll,
-                        "total_profit_loss": self.total_profit_loss,
-                        "paper_balance": self.paper_balance,
-                        "last_updated": datetime.now().isoformat(),
-                    },
-                    f,
-                    indent=2,
-                )
+            # 1. Save bankroll_state.json atomically
+            state_data = {
+                "current_bankroll": self.current_bankroll,
+                "peak_bankroll": self.peak_bankroll,
+                "total_profit_loss": self.total_profit_loss,
+                "paper_balance": self.paper_balance,
+                "last_updated": datetime.now().isoformat(),
+            }
+            tmp_state = self._state_file + ".tmp"
+            with open(tmp_state, "w") as f:
+                json.dump(state_data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_state, self._state_file)
 
-            with open(self._bets_file, "w") as f:
-                json.dump([asdict(b) for b in self._bets], f, indent=2, default=str)
+            # 2. Save bet_history.json atomically
+            bets_data = [asdict(b) for b in self._bets]
+            tmp_bets = self._bets_file + ".tmp"
+            with open(tmp_bets, "w") as f:
+                json.dump(bets_data, f, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_bets, self._bets_file)
+
         except Exception as e:
-            logger.error(f"Failed to save state: {e}")
+            logger.error(f"Failed to save state atomically: {e}")
 
     # ─── Computed Properties ────────────────────────────────────────────────
 
@@ -199,20 +208,25 @@ class BankrollGovernor:
             (self.peak_bankroll - self.current_bankroll) / self.peak_bankroll
         ) * 100.0
 
+    def get_open_exposure(self) -> float:
+        """Calculate total stake of currently open/pending bets"""
+        return sum(b.stake for b in self.get_open_bets())
+
     # ─── Limit Checks ───────────────────────────────────────────────────────
 
-    def can_bet_today(self) -> tuple[bool, str]:
-        """Check if betting is allowed today"""
+    def can_bet_today(self, next_bet_stake: float = 0.0) -> tuple[bool, str]:
+        """Check if betting is allowed today, factoring in unsettled exposure and new stake"""
         today_stats = self.get_today_stats()
         daily_loss = -today_stats.profit_loss
+        open_exposure = self.get_open_exposure()
+        total_at_risk = daily_loss + open_exposure + next_bet_stake
 
-        if daily_loss >= self.current_bankroll * (
-            self.DAILY_LOSS_LIMIT_PERCENT / 100.0
-        ):
-            return False, f"Daily loss limit reached ({self.DAILY_LOSS_LIMIT_PERCENT}%)"
+        limit = self.current_bankroll * (self.DAILY_LOSS_LIMIT_PERCENT / 100.0)
+        if total_at_risk >= limit:
+            return False, f"Daily limit reached (Loss: R{daily_loss:.2f}, Exposure: R{open_exposure:.2f}, New: R{next_bet_stake:.2f} >= Limit: R{limit:.2f})"
 
         if self.drawdown_percent >= self.MAX_DRAWDOWN_PERCENT:
-            return False, f"Max drawdown reached ({self.MAX_DRAWDOWN_PERCENT}%)"
+            return False, f"Max drawdown reached ({self.drawdown_percent:.1f}% >= {self.MAX_DRAWDOWN_PERCENT}%)"
 
         return True, "OK"
 
@@ -244,12 +258,6 @@ class BankrollGovernor:
             paper_settings = _load_paper_settings(self.data_dir)
             is_paper = paper_settings["paper_mode"]
 
-            if not is_paper:
-                can_bet, reason = self.can_bet_today()
-                if not can_bet:
-                    logger.warning(f"Bet blocked by governor: {reason}")
-                    return None
-
             if edge_percent < self.MIN_EDGE_PERCENT:
                 logger.warning(
                     f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)"
@@ -265,6 +273,12 @@ class BankrollGovernor:
                     f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"
                 )
                 stake = max_stake
+
+            if not is_paper:
+                can_bet, reason = self.can_bet_today(stake)
+                if not can_bet:
+                    logger.warning(f"Bet blocked by governor: {reason}")
+                    return None
 
             now = datetime.now()
             bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
@@ -357,6 +371,55 @@ class BankrollGovernor:
                     stats.losses += 1
 
         return stats
+
+    def generate_daily_report(self) -> str:
+        """Generate a structured performance report for the day"""
+        today = date.today().isoformat()
+        today_stats = self.get_today_stats()
+        overall = self.get_performance_summary()
+        
+        today_bets = [b for b in self._bets if b.date == today]
+        settled_today = [b for b in today_bets if b.status in ("WON", "LOST")]
+        open_today = [b for b in today_bets if b.status == "PENDING"]
+        
+        report_lines = [
+            f"📅 DAILY REPORT FOR {today}",
+            "==========================================",
+            f"🏦 Bankroll Balance : R{self.current_bankroll:.2f} (Peak: R{self.peak_bankroll:.2f})",
+            f"📈 Total P&L        : {'+' if self.total_profit_loss >= 0 else ''}R{self.total_profit_loss:.2f}",
+            "",
+            "📊 Today's Performance:",
+            "------------------------------------------",
+            f"👉 Bets Placed      : {today_stats.bets_placed} (Wins: {today_stats.wins} | Losses: {today_stats.losses})",
+            f"💰 Total Staked     : R{today_stats.total_staked:.2f}",
+            f"💵 Total Returned   : R{today_stats.total_returned:.2f}",
+            f"📉 Net Profit/Loss  : {'+' if today_stats.profit_loss >= 0 else ''}R{today_stats.profit_loss:.2f}",
+            "",
+            "📊 Lifetime Statistics:",
+            "------------------------------------------",
+            f"👉 Total Settled    : {overall['total_bets']} (Wins: {overall['wins']} | Losses: {overall['losses']})",
+            f"🎯 Win Rate         : {overall['win_rate']:.1f}%",
+            f"💸 ROI              : {overall['roi']:.1f}%",
+        ]
+        
+        if settled_today:
+            report_lines.append("\n✅ Today's Settled Bets:")
+            for b in settled_today:
+                res = "WON" if b.status == "WON" else "LOST"
+                pl_sign = "+" if (b.profit_loss or 0) >= 0 else ""
+                report_lines.append(
+                    f"  - R{b.race_number} @ {b.track}: {b.horse} ({b.odds:.1f}x) "
+                    f"| Stake: R{b.stake:.2f} | [{res}] {pl_sign}R{b.profit_loss or 0.0:.2f}"
+                )
+                
+        if open_today:
+            report_lines.append("\n⏳ Today's Open Bets:")
+            for b in open_today:
+                report_lines.append(
+                    f"  - R{b.race_number} @ {b.track}: {b.horse} ({b.odds:.1f}x) | Stake: R{b.stake:.2f} [PENDING]"
+                )
+                
+        return "\n".join(report_lines)
 
     def get_open_bets(self) -> List[BetRecord]:
         """Return all pending (unsettled) bets"""

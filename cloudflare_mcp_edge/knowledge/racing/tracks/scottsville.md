@@ -42,7 +42,7 @@ timestamp: 2026-06-28T00:00:00Z
 
 - **Golden Horse Sprint** (Grade 1, 1200m)
 - **SA Fillies Sprint** (Grade 1, 1200m)
-- **Golden Horse Medallion** (Grade 1, 1200m)
+- **Gold Medallion** (Grade 1, 1200m)
 - **Allan Robertson Championship** (Grade 1, 1200m)
 
 Four Grade 1 races on the same day in May — one of the biggest race days in SA.

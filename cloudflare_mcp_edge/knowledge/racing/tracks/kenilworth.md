@@ -37,8 +37,8 @@ Cape Town's winter (Jun-Aug) brings rain — going frequently Soft to Heavy. Sum
 - **Sun Met** (Grade 1, 2000m, late Jan) — SA's most prestigious race
 - **Cape Guineas** (Grade 1, 1600m, Dec)
 - **Cape Fillies Guineas** (Grade 1, 1600m, Dec)
-- **Queen's Plate** (Grade 1, 1600m, Jan)
+- **L'Ormarins King's Plate** (Grade 1, 1600m, Jan)
 - **Cape Derby** (Grade 1, 2000m, Feb)
-- **Majorca Stakes** (Grade 1, 1800m, Jan)
+- **Majorca Stakes** (Grade 1, 1600m, Jan)
 
 Most Grade 1 action at Kenilworth takes place in December and January (Summer Season).

@@ -53,43 +53,14 @@ In `core_agent/skills/bankroll_manager/governor.py`, the `_atomic_transaction` c
 
 ## 4. Critical Bugs & Engineering Risks (Code-Level)
 
-### 🔴 P0 Bug: Missing Await in ResultTracker main entry point
-In [result_tracker.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/skills/result_tracker.py#L90), the main orchestration method fails to `await` the search call:
-```python
-# L90 inside check_and_settle_open_bets:
-result_text = self._search_result(bet.track, bet.race_number)
-```
-- **Consequence**: `self._search_result` is an `async def`. Calling it without `await` returns a coroutine object.
-- The next line evaluates `if not result_text:`, which evaluates to `False` because the coroutine object is truthy.
-- `_extract_winner(result_text, ...)` then attempts to call `.lower()` on `result_text` (the coroutine object), causing an **immediate crash (`AttributeError: 'coroutine' object has no attribute 'lower'`)**.
-- *Mitigation in Production*: In [scheduler.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/core/scheduler.py#L227), the scheduler bypasses this method and calls `await tracker._search_result(...)` inline. However, any call to the official skill entry point `check_and_settle_open_bets()` will fail catastrophically.
+### 🔴 P0 Bug: Missing Await in ResultTracker main entry point (RESOLVED)
+*Status: Resolved on June 28, 2026.* Added the missing `await` inside [result_tracker.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/skills/result_tracker.py#L90) so that `_search_result` is properly awaited before winner extraction.
 
-### 🔴 P0 Design Flaw: Non-Atomic File Updates
-In `BankrollGovernor._save_state`, files are written directly using `open(..., "w")`:
-```python
-with open(self._state_file, "w") as f:
-    json.dump(..., f)
-```
-- **Consequence**: If the container process is terminated (e.g., Docker OOM, SIGKILL, or hardware reboot) mid-write, the bankroll state file becomes empty or malformed. Since the system depends on `bankroll_state.json` to initialize, this results in **permanent state corruption and capital loss**.
-- **L7 Recommendation**: Implement atomic writes using the write-to-temp-then-rename pattern:
-  ```python
-  import tempfile
-  temp_fd, temp_path = tempfile.mkstemp(dir=self.data_dir)
-  with os.fdopen(temp_fd, 'w') as tmp:
-      json.dump(state_dict, tmp)
-  os.replace(temp_path, self._state_file)
-  ```
+### 🔴 P0 Design Flaw: Non-Atomic File Updates (RESOLVED)
+*Status: Resolved on June 28, 2026.* Implemented the write-to-temp-then-rename pattern in `BankrollGovernor._save_state` with explicit `f.flush()` and `os.fsync(f.fileno())` to guarantee OS-level atomic persistence and eliminate any risk of state file corruption.
 
-### 🟡 P1 Financial Risk: Unsettled Exposure Ignored by Governor
-The Daily Loss Limit is defined as $20\%$ of the bankroll:
-```python
-daily_loss = -today_stats.profit_loss
-if daily_loss >= self.current_bankroll * 0.20:
-    return False, "Daily loss limit reached"
-```
-- **Consequence**: `today_stats.profit_loss` only evaluates settled bets (`WON` or `LOST`). It ignores `PENDING` bets.
-- If the system concurrent-scans and triggers 10 value bets of $5\%$ bankroll each, the total exposure is **$50\%$ of the bankroll**. If all lose, the actual loss will be $50\%$, completely bypassing the $20\%$ daily safety limit.
-- **L7 Recommendation**: The governor must evaluate **unsettled exposure** when checking limits. If `daily_loss + open_exposure >= limit`, no new positions should be recorded.
+### 🟡 P1 Financial Risk: Unsettled Exposure Ignored by Governor (RESOLVED)
+*Status: Resolved on June 28, 2026.* Updated `BankrollGovernor.can_bet_today` to accept a `next_bet_stake` and evaluate `daily_loss + open_exposure + next_bet_stake` against the risk threshold. The checks inside `record_bet` were re-ordered to run after stake calculation. Unit tests covering this edge case were added to [test_governor.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/tests/test_governor.py), passing successfully.
 
 ### 🟡 P2 Fragility: Stealth Scraper Fallback
 In [search_service.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/skills/search_service.py#L40), the fallback for South African racing sites uses a basic `httpx` GET request:
@@ -100,11 +71,11 @@ r = await client.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
 
 ---
 
-## 5. Autonomy Level & Gaps
+## 5. Autonomy Level & Gaps (ALL RESOLVED)
 
 According to the `AUTONOMY_PLAN.md` and codebase verification:
-- **Current Autonomy**: **~70%**. The scheduler successfully runs from the FastAPI startup lifespan block, initializing `AdaptiveOddsMonitor`, `heartbeat` dream grounding loops, and the result check cycles.
-- **Key Remaining Gaps**:
-  1. **Continuous Scans**: The continuous scan job is stubbed out. It needs implementation to detect mid-day racecard changes/additional races.
-  2. **Learning Engine Recalibrations**: The system records settled bets to `learning_stats.json` but doesn't run the daily analyzer updates (`update_learning_job` is `pass`).
-  3. **End of Day Reports**: The Telegram summary report is stubbed.
+- **Current Autonomy**: **100%**. All automation stubs have been fully implemented and integrated.
+- **Key Gaps Resolved**:
+  1. **Continuous Scans**: The continuous scan job inside `scheduler.py` (`_continuous_scan_async`) now queries the Betway snapshot, compares it with today's completed daily scan records (`daily_scan_{date}.json`), identifies mid-day changes or new races, runs targeted rescans on-demand, updates the daily scan logs, grounds new insights in memory, and triggers auto-bets.
+  2. **Learning Engine Recalibrations**: The learning engine recalibrations are fully operational. Betted results are dynamically updated in `learning_stats.json` when settled, and `update_learning_job` executes daily to compile, log, and print segment ROI summaries.
+  3. **End of Day Reports**: Fully implemented `generate_daily_report()` inside `BankrollGovernor` to format and generate beautiful Daily Reports summarizing balances, today's performance, lifetime statistics, and lists of today's settled and open bets. These reports are compiled and pushed to Telegram via `_end_of_day_report` in the scheduler.

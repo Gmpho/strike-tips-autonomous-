@@ -11,9 +11,11 @@ export const config = {
 
 export default async function middleware(request: Request) {
   const url = new URL(request.url)
-  const pathPrefix = '/' + url.pathname.split('/').slice(1, 3).join('/')
+  const isCloudflare = Array.from(CLOUDFLARE_ENDPOINTS).some(ep => url.pathname.startsWith(ep)) ||
+                       url.pathname.startsWith('/api/racing/evaluate/') ||
+                       url.pathname === '/mcp'
 
-  if (CLOUDFLARE_ENDPOINTS.has(pathPrefix) || url.pathname.startsWith('/api/racing/evaluate/') || url.pathname === '/mcp') {
+  if (isCloudflare) {
     const targetUrl = `https://striketips-mcp.gmphorg379.workers.dev${url.pathname}${url.search}`
     const headers = new Headers(request.headers)
     headers.set('x-api-key', process.env.STRIKE_TIPS_API_KEY || '')

@@ -4,7 +4,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-load_dotenv("strike-tips/.env")
+load_dotenv(".env")
 
 def test_gemini_3():
     api_key = os.getenv("GEMINI_API_KEY")

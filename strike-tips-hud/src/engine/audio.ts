@@ -1,20 +1,43 @@
-let ctx: AudioContext | null = null
+let ctx: AudioContext | null = null;
 
 function getCtx(): AudioContext {
-  if (!ctx) ctx = new AudioContext()
-  if (ctx.state === 'suspended') ctx.resume()
-  return ctx
+  if (!ctx) ctx = new AudioContext();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
 }
 
 export function isSoundEnabled(): boolean {
   try {
-    const raw = localStorage.getItem('strike_hud_state')
-    if (!raw) return false
-    const state = JSON.parse(raw)
-    return state?.soundEnabled ?? false
+    return localStorage.getItem('strike_sound_enabled') === 'true';
   } catch {
-    return false
+    return false;
   }
+}
+
+export function initAudio(): void {
+  try {
+    if (!ctx) ctx = new AudioContext();
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+  } catch (e) {
+    console.warn('AudioContext failed to initialize:', e);
+  }
+}
+
+// Automatically resume AudioContext upon first user interaction if sound is enabled
+if (typeof window !== 'undefined') {
+  const resumeOnInteraction = () => {
+    if (isSoundEnabled()) {
+      initAudio();
+    }
+    window.removeEventListener('click', resumeOnInteraction);
+    window.removeEventListener('touchstart', resumeOnInteraction);
+    window.removeEventListener('keydown', resumeOnInteraction);
+  };
+  window.addEventListener('click', resumeOnInteraction);
+  window.addEventListener('touchstart', resumeOnInteraction);
+  window.addEventListener('keydown', resumeOnInteraction);
 }
 
 export function playAlertTone(): void {

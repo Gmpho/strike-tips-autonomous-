@@ -72,6 +72,10 @@ class StrikeBrain:
         # 3. Initialize Agent Tools (Functional capability layer)
         self.tools = AgentTools
 
+        # 4. Initialize AI Provider orchestrator
+        from core_agent.agents.ai_providers import AIProvider
+        self.ai = AIProvider()
+
         self._is_initialized = True
         logger.info("[MAF] Strike Brain initialized with %d MAF tools", len(self.tools) if self.tools else 0)
 

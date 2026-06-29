@@ -284,38 +284,199 @@ class StrikeTipsScheduler:
                 )
 
     async def _continuous_scan_async(self, brain):
-        """Fetch Betway snapshot and check for value opportunities."""
-        print(f"[SCAN] Continuous scan at {datetime.now().strftime('%H:%M')}")
-        state = await brain.strike.betway.get_snapshot_format()
-        events = state.get("events", {})
-        if not events:
+        """Fetch Betway snapshot, detect mid-day schedule/race changes, and run targeted scans."""
+        print(f"[SCAN] Continuous scan starting at {datetime.now().strftime('%H:%M')}")
+        
+        # 1. Fetch latest Betway snapshot
+        try:
+            snapshot = await brain.strike.betway.get_snapshot_format()
+        except Exception as e:
+            print(f"[WARN] Failed to fetch Betway snapshot: {e}")
             return
-        settings_path = os.path.join(self.data_dir, "settings.json")
-        min_edge = 8.0
-        if os.path.exists(settings_path):
-            with open(settings_path) as f:
-                settings = json.load(f)
-                min_edge = float(settings.get("auto_bet_min_edge", 8.0))
-        found = 0
+            
+        events = snapshot.get("events", {})
+        if not events:
+            print("[SCAN] No active events in snapshot.")
+            return
+
+        # 2. Save latest market snapshot to file (for HUD dashboard)
+        snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
+        try:
+            with open(snapshot_file, "w") as f:
+                json.dump(snapshot, f, indent=2, default=str)
+        except Exception as e:
+            print(f"[WARN] Failed to save market snapshot: {e}")
+
+        # 3. Load daily scan results to see what has already been scanned
+        today_iso = date.today().isoformat()
+        daily_scan_path = os.path.join(self.data_dir, f"daily_scan_{today_iso}.json")
+        scanned_races = {}  # Maps track -> set of race numbers
+        if os.path.exists(daily_scan_path):
+            try:
+                with open(daily_scan_path) as f:
+                    scanned_data = json.load(f)
+                    for track, races in scanned_data.items():
+                        if isinstance(races, list):
+                            scanned_races[track.lower()] = {
+                                r.get("race_number") for r in races if isinstance(r, dict) and "race_number" in r
+                            }
+            except Exception as e:
+                print(f"[WARN] Failed to load daily scan results: {e}")
+
+        # 4. Find tracks/races in the current snapshot that haven't been scanned yet
+        tracks_to_rescan = set()
         for eid, event in events.items():
-            course = event.get("course", "Unknown")
-            runners = event.get("runners", [])
-            for runner in runners:
-                odds_str = str(runner.get("odds", "1/1"))
-                if odds_str.upper() == "SP":
+            course = event.get("course", "").strip()
+            race_num = event.get("race_number")
+            if not course or race_num is None:
+                continue
+            
+            # If the track/race is not in our scanned list, mark the track for a rescan
+            course_lower = course.lower()
+            if course_lower not in scanned_races or race_num not in scanned_races[course_lower]:
+                print(f"[SCAN] Detected unscanned mid-day race: {course} Race {race_num}")
+                tracks_to_rescan.add(course)
+
+        # 5. Execute targeted scrape and analysis on tracks with changes
+        if not tracks_to_rescan:
+            print("[SCAN] No new mid-day races detected. All snapshot events are already scanned.")
+            return
+
+        print(f"[SCAN] Triggering mid-day rescans for tracks: {', '.join(tracks_to_rescan)}")
+        
+        # Load settings for auto-bet check
+        settings_path = os.path.join(self.data_dir, "settings.json")
+        auto_bet_enabled = False
+        min_edge = 5.5
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path) as f:
+                    settings = json.load(f)
+                    auto_bet_enabled = settings.get("auto_bet_enabled", False)
+                    min_edge = float(settings.get("auto_bet_min_edge", 5.5))
+            except Exception:
+                pass
+
+        # Load existing results to update them
+        existing_results = {}
+        if os.path.exists(daily_scan_path):
+            try:
+                with open(daily_scan_path) as f:
+                    existing_results = json.load(f)
+            except Exception:
+                pass
+
+        for track in tracks_to_rescan:
+            try:
+                print(f"[SCAN] Rescanning track: {track}")
+                results = await brain.strike.scrape_and_analyze_track(track)
+                if not results:
                     continue
-                try:
-                    odds = float(odds_str)
-                except ValueError:
-                    continue
-                if odds <= 0:
-                    continue
-                implied = 1.0 / max(odds, 1.01)
-                edge = round((1.0 - implied) * 100 * 0.15, 1)
-                if edge >= min_edge:
-                    print(f"[SCAN] Value: {runner.get('name')} @ {course} odds={odds} edge={edge}%")
-                    found += 1
-        print(f"[SCAN] Continuous scan complete — {found} value opportunities found")
+                
+                # Update our daily scan file with the rescanned track
+                existing_results[track] = results
+                with open(daily_scan_path, "w") as f:
+                    json.dump(existing_results, f, indent=2, default=str)
+                
+                # Ground the new race info in memory
+                if brain.memory:
+                    for race in results:
+                        brain.memory.add_form_insight(
+                            horse=f"Track_{race['track']}_R{race['race_number']}",
+                            insight=(
+                                f"OFFICIAL RACE CARD: {race['track']} Race {race['race_number']} at {race['race_time']}. "
+                                f"Condition: {race['condition']}. Runners: {race['runners']}."
+                            ),
+                            metadata={
+                                "date": today_iso,
+                                "track": race["track"],
+                                "type": "official_card",
+                            },
+                        )
+
+                # Auto-bet on any new value bets from this rescan
+                if auto_bet_enabled:
+                    for race in results:
+                        if not isinstance(race, dict):
+                            continue
+                        for vb in race.get("value_bets", []):
+                            horse = vb.get("horse") or ""
+                            if not horse:
+                                continue
+                            raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("estimated_edge") or 0
+                            edge = float(raw_edge)
+                            if 0 < edge < 1:
+                                edge *= 100
+                            if edge < min_edge:
+                                continue
+                            raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
+                            
+                            # Place the bet!
+                            brain.strike.place_bet(
+                                horse=horse,
+                                track=track,
+                                race_number=race.get("race_number", 0),
+                                odds=float(raw_odds),
+                                edge_percent=edge,
+                                confidence="AUTO_MIDDAY",
+                                distance=race.get("distance"),
+                            )
+                            print(f"[AUTO-BET] Placed mid-day auto-bet on {horse} @ {track} R{race.get('race_number')} edge={edge}%")
+
+                # Send individual value bet notifications via Telegram based on settings
+                if brain.strike.telegram:
+                    try:
+                        telegram_enabled = True
+                        priority_only = False
+                        if os.path.exists(settings_path):
+                            with open(settings_path) as f:
+                                settings = json.load(f)
+                            telegram_enabled = settings.get("telegramEnabled", True)
+                            priority_only = settings.get("valueBetAlerts", False)
+
+                        if telegram_enabled:
+                            for race in results:
+                                if not isinstance(race, dict):
+                                    continue
+                                for vb in race.get("value_bets", []):
+                                    horse = vb.get("horse") or ""
+                                    if not horse:
+                                        continue
+                                    raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("estimated_edge") or 0
+                                    edge = float(raw_edge)
+                                    if 0 < edge < 1:
+                                        edge *= 100
+
+                                    # Filter for priority alerts (edge >= 15.0%) if configured
+                                    if priority_only and edge < 15.0:
+                                        continue
+
+                                    raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
+                                    odds = float(raw_odds)
+
+                                    # Calculate advised stake using Half-Kelly for the notification
+                                    max_stake = brain.strike.bankroll.calculate_max_stake(edge)
+                                    advised_stake = min(max_stake, brain.strike.bankroll.current_bankroll * 0.05)
+
+                                    # Determine confidence category
+                                    confidence = "STRONG_VALUE" if edge >= 15.0 else "VALUE" if edge >= 8.0 else "MARGINAL"
+
+                                    await brain.strike.telegram.send_value_bet(
+                                        horse=horse,
+                                        track=track,
+                                        race_number=race.get("race_number", 0),
+                                        race_time=race.get("race_time", "TBD"),
+                                        odds=odds,
+                                        edge_percent=edge,
+                                        stake=advised_stake,
+                                        confidence=confidence,
+                                        reasoning=vb.get("reasoning", "Value detected by AI model analysis during continuous scan."),
+                                    )
+                    except Exception as e:
+                        print(f"[ERR] Failed to send continuous scan individual value bet alerts: {e}")
+            except Exception as e:
+                print(f"[ERR] Continuous scan rescan failed for {track}: {e}")
+        print("[SCAN] Continuous scan job complete.")
 
     def update_learning_job(self):
         """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""

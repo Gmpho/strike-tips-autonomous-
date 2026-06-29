@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon, FlaskConical, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { apiFetch } from '../../lib/api-fetch';
+import { initAudio, playAlertTone, playValueBetTone } from '../../engine/audio';
+import { checkWebGPUSupport } from '../../lib/webllm';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -24,6 +26,11 @@ const DEFAULTS: Settings = {
 export const SettingsView: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
+  const [webGpuSupported, setWebGpuSupported] = useState(false);
+
+  useEffect(() => {
+    checkWebGPUSupport().then(supported => setWebGpuSupported(supported));
+  }, []);
 
   // Load persisted settings from backend on mount
   useEffect(() => {
@@ -60,6 +67,8 @@ export const SettingsView: React.FC = () => {
             autoBetMinEdge: data.auto_bet_min_edge ?? DEFAULTS.autonomous.autoBetMinEdge,
           },
         });
+        localStorage.setItem('strike_sound_enabled', String(data.soundEnabled ?? DEFAULTS.alerts.soundEnabled));
+        localStorage.setItem('strike_value_bet_alerts', String(data.valueBetAlerts ?? DEFAULTS.alerts.valueBetAlerts));
       })
       .catch(() => {/* keep defaults */});
   }, []);
@@ -84,7 +93,13 @@ export const SettingsView: React.FC = () => {
           auto_bet_min_edge: settings.autonomous.autoBetMinEdge,
         }),
       });
-      setSaveState(res.ok ? 'ok' : 'err');
+      if (res.ok) {
+        setSaveState('ok');
+        localStorage.setItem('strike_sound_enabled', String(settings.alerts.soundEnabled));
+        localStorage.setItem('strike_value_bet_alerts', String(settings.alerts.valueBetAlerts));
+      } else {
+        setSaveState('err');
+      }
     } catch {
       setSaveState('err');
     }
@@ -188,7 +203,23 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <Toggle
                   on={settings.alerts[item.id]}
-                  onToggle={() => set('alerts', item.id, !settings.alerts[item.id])}
+                  onToggle={() => {
+                    const newVal = !settings.alerts[item.id];
+                    set('alerts', item.id, newVal);
+                    if (item.id === 'soundEnabled') {
+                      localStorage.setItem('strike_sound_enabled', String(newVal));
+                      if (newVal) {
+                        initAudio();
+                        playAlertTone();
+                      }
+                    } else if (item.id === 'valueBetAlerts') {
+                      localStorage.setItem('strike_value_bet_alerts', String(newVal));
+                      if (newVal) {
+                        initAudio();
+                        playValueBetTone();
+                      }
+                    }
+                  }}
                   color="bg-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.4)]"
                 />
               </div>
@@ -248,11 +279,16 @@ export const SettingsView: React.FC = () => {
                     <option value="groq-llama">Groq Cloud (Llama 3.3)</option>
                     <option value="gemini">Gemini Flash</option>
                   </optgroup>
-                  <optgroup label="💻 Local (Ollama)">
-                    <option value="functiongemma:270m">FunctionGemma 270M (Tools)</option>
-                    <option value="qwen3.5:0.8b">Qwen3.5 0.8B (Chat + Tools)</option>
-                    <option value="racing_qwen:latest">Racing Qwen (Domain Specialist)</option>
-                    <option value="lfm_racing:latest">LFM Racing (Lightweight)</option>
+                  <optgroup label="🌐 Browser Local (WebGPU)">
+                    <option value="webllm-qwen-0.5b" disabled={!webGpuSupported}>
+                      Qwen 2.5 0.5B {!webGpuSupported ? '(No WebGPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-llama-1b" disabled={!webGpuSupported}>
+                      Llama 3.2 1B {!webGpuSupported ? '(No WebGPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-qwen-1.5b" disabled={!webGpuSupported}>
+                      Qwen 2.5 1.5B {!webGpuSupported ? '(No WebGPU)' : '⚡'}
+                    </option>
                   </optgroup>
                 </select>
               </div>

@@ -49,11 +49,11 @@ Johannesburg is at ~1700m elevation. Times are faster due to thinner air. Horses
 
 ## Feature Races
 
-- **Betway Summer Cup** (Grade 1, 2160m, late Nov) — Highveld's flagship handicap
-- **SA Classic** (Grade 1, 1600m, Mar) — 2nd leg of SA Triple Crown
-- **SA Fillies Classic** (Grade 1, 1600m, Mar)
+- **Betway Summer Cup** (Grade 1, 2000m, late Nov) — Highveld's flagship handicap
+- **SA Classic** (Grade 1, 1800m, Mar) — 2nd leg of SA Triple Crown
+- **SA Fillies Classic** (Grade 1, 1800m, Mar)
 - **SA Derby** (Grade 2, 2450m, Apr)
 - **Horse Chestnut Stakes** (Grade 1, 1600m)
 - **Empress Club Stakes** (Grade 1, 1600m)
-- **Premier's Champions Challenge** (Grade 1, 1600m, Apr)
-- **Computaform Stakes** (Grade 1, 1600m)
+- **Premier's Champions Challenge** (Grade 1, 2000m, Apr)
+- **Computaform Sprint** (Grade 1, 1000m)

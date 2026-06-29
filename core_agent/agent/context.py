@@ -55,7 +55,7 @@ class ContextBuilder:
                 timeout=3.0,
             )
             if snap and snap.get("events"):
-                summary = self._truncate_snapshot(snap)
+                summary = self._truncate_snapshot(snap, user_message)
                 if summary:
                     parts.append(f"[LIVE SNAPSHOT]\n{summary[:3000]}")
         except Exception:
@@ -72,13 +72,27 @@ class ContextBuilder:
             result = result[:MAX_CONTEXT_CHARS] + "\n...[truncated]"
         return result
 
-    def _truncate_snapshot(self, snap: dict) -> str | None:
+    def _truncate_snapshot(self, snap: dict, user_message: str = "") -> str | None:
         events = snap.get("events", {})
         if not events:
             return None
+        
+        msg_lower = user_message.lower()
+        matched_events = []
+        other_events = []
+        
+        for ev in events.values():
+            course = (ev.get("course") or ev.get("venue") or "").lower()
+            if course and course in msg_lower:
+                matched_events.append(ev)
+            else:
+                other_events.append(ev)
+                
+        # Prioritize matched events, then fill up to 8 events total
+        prioritized = matched_events + other_events
+
         lines = [f"Today's races ({len(events)} events):"]
-        seen = set()
-        for ev in list(events.values())[:8]:
+        for ev in prioritized[:8]:
             eid = ev.get("id", ev.get("en", "?"))
             name = ev.get("en", "?")
             course = ev.get("course", ev.get("venue", ""))

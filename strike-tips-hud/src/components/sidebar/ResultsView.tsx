@@ -85,14 +85,45 @@ function RaceCard({ race }: { race: ResultRace }) {
 export const ResultsView: React.FC = () => {
   const store = useHUD();
   const results = Array.isArray(store.results) ? store.results : [];
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedCourses, setCollapsedCourses] = useState<Record<string, boolean>>({});
 
-  const groupedByCourse = results.reduce<Record<string, ResultRace[]>>((acc, race) => {
+  const filteredResults = results.filter((race) => {
+    const query = searchQuery.toLowerCase();
+    const courseMatches = 
+      race.course.toLowerCase().includes(query) ||
+      getFullCourseName(race.course).toLowerCase().includes(query);
+    const titleMatches = race.title?.toLowerCase().includes(query);
+    const runnersMatch = race.runners.some(runner => runner.name.toLowerCase().includes(query));
+    return courseMatches || titleMatches || runnersMatch;
+  });
+
+  const groupedByCourse = filteredResults.reduce<Record<string, ResultRace[]>>((acc, race) => {
     if (!acc[race.course]) acc[race.course] = [];
     acc[race.course].push(race);
     return acc;
   }, {});
 
   const courseNames = Object.keys(groupedByCourse).sort();
+
+  const toggleCourse = (course: string) => {
+    setCollapsedCourses(prev => ({
+      ...prev,
+      [course]: !prev[course]
+    }));
+  };
+
+  const isCourseExpanded = (course: string, index: number) => {
+    const explicitState = collapsedCourses[course];
+    if (explicitState !== undefined) {
+      return explicitState;
+    }
+    if (searchQuery.trim() !== '') {
+      return true;
+    }
+    return index === 0;
+  };
 
   return (
     <motion.div
@@ -118,6 +149,19 @@ export const ResultsView: React.FC = () => {
             {results.reduce((sum, r) => sum + r.runners.length, 0)} runners across {results.length} races
           </div>
         )}
+
+        {/* Search Input */}
+        {results.length > 0 && (
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search course or runner..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition-all font-semibold"
+            />
+          </div>
+        )}
       </div>
 
       {results.length === 0 ? (
@@ -126,23 +170,67 @@ export const ResultsView: React.FC = () => {
           <p className="text-sm font-bold">No results yet</p>
           <p className="text-xs opacity-70 mt-1">Data refreshes every 30s</p>
         </div>
+      ) : filteredResults.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-theme-secondary">
+          <div className="p-6 rounded-3xl bg-white/5 border border-white/10 flex flex-col items-center gap-4">
+            <Flag className="w-10 h-10 opacity-30" />
+            <div className="text-center space-y-1">
+              <p className="text-sm font-bold text-theme-primary/60">No Results Match Filters</p>
+              <p className="text-xs text-theme-secondary">
+                Try adjusting your search query
+              </p>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1">
-          <div className="space-y-8 pb-2">
-            {courseNames.map(course => (
-              <div key={course}>
-                <div className="flex items-center gap-3 mb-4">
-                  <Medal className="w-4 h-4 text-emerald-400" />
-                  <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">{getFullCourseName(course)}</h3>
-                  <span className="text-[10px] text-theme-secondary font-bold">{groupedByCourse[course].length} races</span>
+          <div className="space-y-6 pb-2">
+            {courseNames.map((course, index) => {
+              const expanded = isCourseExpanded(course, index);
+              return (
+                <div key={course} className="space-y-1">
+                  {/* Collapsible Accordion Header */}
+                  <button
+                    onClick={() => toggleCourse(course)}
+                    className="w-full flex items-center justify-between py-2 text-left hover:bg-white/5 rounded-xl px-2 -mx-2 transition-colors cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Medal className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest group-hover:text-emerald-400 transition-colors">
+                        {getFullCourseName(course)}
+                      </h3>
+                      <span className="text-[10px] text-theme-secondary font-bold">
+                        {groupedByCourse[course].length} races
+                      </span>
+                    </div>
+                    <div className="p-1 rounded-lg bg-white/5 border border-white/10 group-hover:bg-emerald-500/10 group-hover:border-emerald-500/20 transition-colors">
+                      {expanded ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Accordion Content */}
+                  <AnimatePresence initial={false}>
+                    {expanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden space-y-3 mt-2 pl-2 border-l border-emerald-500/10"
+                      >
+                        {groupedByCourse[course].map((race, idx) => (
+                          <RaceCard key={`${race.course}-${race.time}-${idx}`} race={race} />
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-                <div className="space-y-3">
-                  {groupedByCourse[course].map((race, idx) => (
-                    <RaceCard key={`${race.course}-${race.time}-${idx}`} race={race} />
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
+import { apiFetch } from './lib/api-fetch';
 import { AgentDashboard } from './components/AgentDashboard';
 import { RaceCard } from './components/RaceCard.tsx';
 import type { RaceEvent } from './types';
@@ -55,6 +56,21 @@ export const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const state = useHUD();
   useTelegram();
+
+  // Load backend configuration at startup to sync sound prompts state to localStorage
+  useEffect(() => {
+    apiFetch('/api/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && data.soundEnabled !== undefined) {
+          localStorage.setItem('strike_sound_enabled', String(data.soundEnabled));
+        }
+        if (data && data.valueBetAlerts !== undefined) {
+          localStorage.setItem('strike_value_bet_alerts', String(data.valueBetAlerts));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('strike_active_view', activeView);

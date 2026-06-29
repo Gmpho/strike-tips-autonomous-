@@ -139,8 +139,21 @@ def _merge_ro_into(betway_state: dict, ro_snapshot: dict):
     )
 
 
+def _atomic_write_json(path: str, data: any, indent: int = 2):
+    """Write data to a JSON file atomically to prevent corruption on crash"""
+    tmp_path = str(path) + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=indent, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception as e:
+        print(f"[WARN] Failed atomic write to {path}: {e}")
+
+
 def _write_healing_event(action: str, details: str, agent: str = "OddsMonitor", status: str = "SUCCESS"):
-    """Append a healing event to the shared log file."""
+    """Append a healing event to the shared log file atomically."""
     try:
         events = []
         if os.path.exists(HEALING_EVENTS_PATH):
@@ -154,8 +167,7 @@ def _write_healing_event(action: str, details: str, agent: str = "OddsMonitor", 
             "agent": agent,
             "status": status,
         })
-        with open(HEALING_EVENTS_PATH, "w") as f:
-            json.dump(events[-50:], f, indent=2)  # keep last 50
+        _atomic_write_json(HEALING_EVENTS_PATH, events[-50:])  # keep last 50
     except Exception:
         pass
 
@@ -262,8 +274,7 @@ class AdaptiveOddsMonitor:
                 active_ids = list(state["events"].keys())
                 active_count = len(active_ids)
 
-                with open(MARKET_SNAPSHOT_PATH, "w") as f:
-                    json.dump(state, f, indent=2)
+                _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
                 try:
                     from core_agent.core.snapshot_cache import set_snapshot, publish_snapshot
                     from core_agent.core.task_queue import get_redis
@@ -297,24 +308,21 @@ class AdaptiveOddsMonitor:
                     try:
                         atr_results = await self.at_races.get_results("yesterday")
                         if atr_results:
-                            with open(ATR_RESULTS_PATH, "w") as f:
-                                json.dump({"results": atr_results, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                            _atomic_write_json(ATR_RESULTS_PATH, {"results": atr_results, "timestamp": datetime.now().isoformat()})
                     except Exception as e:
                         logger.debug("ATR results fetch skipped: %s", e)
 
                     try:
                         atr_movers = await self.at_races.get_market_movers()
                         if atr_movers:
-                            with open(ATR_MOVERS_PATH, "w") as f:
-                                json.dump({"movers": atr_movers, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                            _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
                     except Exception as e:
                         logger.debug("ATR movers fetch skipped: %s", e)
 
                     try:
                         atr_predictions = await self.at_races.get_predictor()
                         if atr_predictions:
-                            with open(ATR_PREDICTOR_PATH, "w") as f:
-                                json.dump({"predictions": atr_predictions, "timestamp": datetime.now().isoformat()}, f, indent=2)
+                            _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
                     except Exception as e:
                         logger.debug("ATR predictor fetch skipped: %s", e)
                 else:

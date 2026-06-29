@@ -13,7 +13,54 @@ interface MovementInfo {
   numericChange: number | null;
 }
 
-function parseMovement(movement: string): MovementInfo {
+function parseFractionalOdds(fraction: string): number | null {
+  if (!fraction) return null;
+  const clean = fraction.trim().toLowerCase();
+  if (clean === 'evs' || clean === 'evens' || clean === 'eve') {
+    return 2.0;
+  }
+  const parts = clean.split(/[\/\-]/);
+  if (parts.length === 2) {
+    const num = parseFloat(parts[0]);
+    const den = parseFloat(parts[1]);
+    if (!isNaN(num) && !isNaN(den) && den > 0) {
+      return num / den + 1;
+    }
+  }
+  const decimal = parseFloat(clean);
+  if (!isNaN(decimal)) return decimal;
+  return null;
+}
+
+function parseMovement(movement: string, firstShow?: string, currentOdds?: string): MovementInfo {
+  if (firstShow && currentOdds) {
+    const opening = parseFractionalOdds(firstShow);
+    const current = parseFractionalOdds(currentOdds);
+    if (opening !== null && current !== null) {
+      if (current < opening) {
+        const diffPercent = ((opening - current) / opening) * 100;
+        return {
+          direction: 'shortened',
+          label: `${diffPercent.toFixed(1)}% Shorter`,
+          numericChange: -diffPercent
+        };
+      } else if (current > opening) {
+        const diffPercent = ((current - opening) / opening) * 100;
+        return {
+          direction: 'drifted',
+          label: `${diffPercent.toFixed(1)}% Drifted`,
+          numericChange: diffPercent
+        };
+      } else {
+        return {
+          direction: 'stable',
+          label: 'Stable',
+          numericChange: 0
+        };
+      }
+    }
+  }
+
   if (!movement || movement.trim() === '' || movement === '—') {
     return { direction: 'stable', label: 'Stable', numericChange: null };
   }
@@ -79,8 +126,8 @@ function extractNumeric(s: string): number | null {
 }
 
 // ─── Movement Badge Component ─────────────────────────────────────────────────
-function MovementBadge({ movement }: { movement: string }) {
-  const info = parseMovement(movement);
+function MovementBadge({ movement, firstShow, currentOdds }: { movement: string; firstShow?: string; currentOdds?: string }) {
+  const info = parseMovement(movement, firstShow, currentOdds);
 
   if (info.direction === 'shortened') {
     return (
@@ -109,8 +156,8 @@ function MovementBadge({ movement }: { movement: string }) {
 }
 
 // ─── Direction colour for the odds change ────────────────────────────────────
-function oddsChangeColor(movement: string): string {
-  const { direction } = parseMovement(movement);
+function oddsChangeColor(movement: string, firstShow?: string, currentOdds?: string): string {
+  const { direction } = parseMovement(movement, firstShow, currentOdds);
   if (direction === 'shortened') return 'text-emerald-400';
   if (direction === 'drifted')   return 'text-red-400';
   return 'text-slate-400';
@@ -119,7 +166,7 @@ function oddsChangeColor(movement: string): string {
 // ─── Single Mover Card ────────────────────────────────────────────────────────
 function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
   const fullCourse = getFullCourseName(mover.course);
-  const { direction } = parseMovement(mover.movement);
+  const { direction } = parseMovement(mover.movement, mover.first_show, mover.current_odds);
 
   const accentBorder =
     direction === 'shortened' ? 'border-l-emerald-500/60' :
@@ -144,7 +191,7 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
             {mover.time}
           </p>
         </div>
-        <MovementBadge movement={mover.movement} />
+        <MovementBadge movement={mover.movement} firstShow={mover.first_show} currentOdds={mover.current_odds} />
       </div>
 
       {/* Venue */}
@@ -172,7 +219,7 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
           <p className="text-[9px] font-black text-theme-secondary uppercase tracking-widest mb-0.5">
             Current
           </p>
-          <p className={`text-sm font-black tabular-nums ${oddsChangeColor(mover.movement)}`}>
+          <p className={`text-sm font-black tabular-nums ${oddsChangeColor(mover.movement, mover.first_show, mover.current_odds)}`}>
             {mover.current_odds || '—'}
           </p>
         </div>
@@ -202,9 +249,30 @@ export const MarketMoversView: React.FC = () => {
   const store = useHUD();
   const marketMovers = Array.isArray(store.marketMovers) ? store.marketMovers : [];
 
-  const shortened = marketMovers.filter(m => parseMovement(m.movement).direction === 'shortened');
-  const drifted   = marketMovers.filter(m => parseMovement(m.movement).direction === 'drifted');
-  const stable    = marketMovers.filter(m => parseMovement(m.movement).direction === 'stable');
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [trackFilter, setTrackFilter] = React.useState('ALL');
+  const [limitShortened, setLimitShortened] = React.useState(15);
+  const [limitDrifted, setLimitDrifted] = React.useState(15);
+  const [limitStable, setLimitStable] = React.useState(15);
+
+  // Filter based on search query and track
+  const filteredMovers = marketMovers.filter((m) => {
+    const matchesSearch = 
+      m.horse.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.course.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getFullCourseName(m.course).toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesTrack = trackFilter === 'ALL' || m.course.toLowerCase() === trackFilter.toLowerCase();
+    
+    return matchesSearch && matchesTrack;
+  });
+
+  const shortened = filteredMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'shortened');
+  const drifted   = filteredMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'drifted');
+  const stable    = filteredMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'stable');
+
+  // Extract unique track codes for the filter dropdown
+  const uniqueTracks = Array.from(new Set(marketMovers.map(m => m.course))).sort();
 
   return (
     <motion.div
@@ -214,7 +282,7 @@ export const MarketMoversView: React.FC = () => {
       className="p-6 space-y-6 h-full flex flex-col"
     >
       {/* ── Header ── */}
-      <div className="shrink-0 space-y-3">
+      <div className="shrink-0 space-y-4">
         <div>
           <h2 className="text-2xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
             Market Movers
@@ -228,17 +296,50 @@ export const MarketMoversView: React.FC = () => {
         {marketMovers.length > 0 && (
           <div className="grid grid-cols-3 gap-2">
             <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
-              <p className="text-lg font-black text-emerald-400">{shortened.length}</p>
+              <p className="text-lg font-black text-emerald-400">
+                {marketMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'shortened').length}
+              </p>
               <p className="text-[9px] font-black text-emerald-500/70 uppercase tracking-widest">Shortened</p>
             </div>
             <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-center">
-              <p className="text-lg font-black text-red-400">{drifted.length}</p>
+              <p className="text-lg font-black text-red-400">
+                {marketMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'drifted').length}
+              </p>
               <p className="text-[9px] font-black text-red-500/70 uppercase tracking-widest">Drifted</p>
             </div>
             <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-center">
-              <p className="text-lg font-black text-slate-400">{stable.length}</p>
+              <p className="text-lg font-black text-slate-400">
+                {marketMovers.filter(m => parseMovement(m.movement, m.first_show, m.current_odds).direction === 'stable').length}
+              </p>
               <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Stable</p>
             </div>
+          </div>
+        )}
+
+        {/* Filter Controls Row */}
+        {marketMovers.length > 0 && (
+          <div className="flex flex-col sm:flex-row gap-2">
+            {/* Search Input */}
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                placeholder="Search horse or venue..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 transition-all font-semibold"
+              />
+            </div>
+            {/* Track Selector */}
+            <select
+              value={trackFilter}
+              onChange={(e) => setTrackFilter(e.target.value)}
+              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-theme-primary focus:outline-none focus:border-amber-500/50 transition-all font-semibold sm:w-40"
+            >
+              <option value="ALL">All Venues</option>
+              {uniqueTracks.map(track => (
+                <option key={track} value={track}>{getFullCourseName(track)} ({track.toUpperCase()})</option>
+              ))}
+            </select>
           </div>
         )}
 
@@ -246,14 +347,14 @@ export const MarketMoversView: React.FC = () => {
       </div>
 
       {/* ── Content ── */}
-      {marketMovers.length === 0 ? (
+      {filteredMovers.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-theme-secondary">
           <div className="p-6 rounded-3xl bg-white/5 border border-white/10 flex flex-col items-center gap-4">
             <Eye className="w-10 h-10 opacity-30" />
             <div className="text-center space-y-1">
-              <p className="text-sm font-bold text-theme-primary/60">No Market Movers Detected</p>
+              <p className="text-sm font-bold text-theme-primary/60">No Movers Matching Filter</p>
               <p className="text-xs text-theme-secondary">
-                Monitoring live odds — data refreshes every 30 seconds
+                Try adjusting your search or track filters
               </p>
             </div>
           </div>
@@ -275,9 +376,17 @@ export const MarketMoversView: React.FC = () => {
                 </span>
               </div>
               <div className="space-y-2.5">
-                {shortened.map((mover, i) => (
+                {shortened.slice(0, limitShortened).map((mover, i) => (
                   <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={i} />
                 ))}
+                {shortened.length > limitShortened && (
+                  <button
+                    onClick={() => setLimitShortened(prev => prev + 25)}
+                    className="w-full py-2.5 text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/20 rounded-xl transition-all cursor-pointer"
+                  >
+                    Show More (+{Math.min(25, shortened.length - limitShortened)})
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -296,9 +405,17 @@ export const MarketMoversView: React.FC = () => {
                 </span>
               </div>
               <div className="space-y-2.5">
-                {drifted.map((mover, i) => (
+                {drifted.slice(0, limitDrifted).map((mover, i) => (
                   <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + i} />
                 ))}
+                {drifted.length > limitDrifted && (
+                  <button
+                    onClick={() => setLimitDrifted(prev => prev + 25)}
+                    className="w-full py-2.5 text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 rounded-xl transition-all cursor-pointer"
+                  >
+                    Show More (+{Math.min(25, drifted.length - limitDrifted)})
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -317,9 +434,17 @@ export const MarketMoversView: React.FC = () => {
                 </span>
               </div>
               <div className="space-y-2.5">
-                {stable.map((mover, i) => (
+                {stable.slice(0, limitStable).map((mover, i) => (
                   <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + drifted.length + i} />
                 ))}
+                {stable.length > limitStable && (
+                  <button
+                    onClick={() => setLimitStable(prev => prev + 25)}
+                    className="w-full py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all cursor-pointer"
+                  >
+                    Show More (+{Math.min(25, stable.length - limitStable)})
+                  </button>
+                )}
               </div>
             </div>
           )}

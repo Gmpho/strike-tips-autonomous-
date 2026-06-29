@@ -64,6 +64,6 @@ This makes Greyville a very testing ride.
 - **Daily News 2000** (Grade 1, 2000m)
 - **Woolavington 2000** (Grade 1, 2000m)
 - **Gold Challenge** (Grade 1, 1600m)
-- **Gold Cup** (Grade 3, 3000m)
+- **Gold Cup** (Grade 3, 3200m)
 
 Greyville hosts 12 Grade 1 races during Champions Season with over R44M total stakes.

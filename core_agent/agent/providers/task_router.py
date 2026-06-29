@@ -73,7 +73,7 @@ def _build_tool_keyword_map() -> Dict[str, str]:
 
 KEYWORD_TO_TOOL = _build_tool_keyword_map()
 
-CLOUD_TIMEOUT = 5.0  # Max seconds to wait for cloud providers before fallback
+CLOUD_TIMEOUT = 12.0  # Groq handles this easily; prevents premature fallback to local Ollama
 
 
 class TaskRouter:
@@ -84,6 +84,19 @@ class TaskRouter:
     def __init__(self) -> None:
         self.ollama = OllamaProvider()
         self.cloud_providers = [GroqProvider(), GeminiProvider()]
+
+    def _load_settings(self) -> dict:
+        from core_agent.config.paths import DATA_DIR
+        import json
+        import os
+        settings_file = os.path.join(str(DATA_DIR), "settings.json")
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -180,55 +193,89 @@ class TaskRouter:
                             return "\n".join(lines)
                         return "No ATR predictor data available."
 
-            # Recent results
+            # Recent results — filter by any mentioned course dynamically
             if "result" in last_msg:
                 if ATR_RESULTS_PATH.exists():
                     fn = TOOL_REGISTRY.get("get_atr_results")
                     if fn:
                         result = await fn() if asyncio.iscoroutinefunction(fn) else fn()
-                        results = result.get("results", [])
-                        course = "greyville" if "greyville" in last_msg else None
-                        if course:
-                            results = [r for r in results if course.lower() in r.get("course","").lower()]
-                        if results:
-                            lines = [f"**Recent{' Greyville' if course else ''} Results:**"]
-                            for r in results[:10]:
-                                course_str = r.get("course", "?")
-                                ts = r.get("date", "?")
-                                lines.append(f"\n{course_str} {ts} {r.get('time','?')}")
+                        all_results = result.get("results", [])
+                        # Find any course name mentioned in the query
+                        course_filter = None
+                        all_courses = {r.get("course", "").lower() for r in all_results}
+                        for c in all_courses:
+                            if c and c in last_msg:
+                                course_filter = c
+                                break
+                        filtered = [r for r in all_results if course_filter is None or course_filter in r.get("course", "").lower()]
+                        if filtered:
+                            label = f" {course_filter.title()}" if course_filter else ""
+                            lines = [f"**Recent{label} Results:**"]
+                            for r in filtered[:10]:
+                                lines.append(f"\n{r.get('course', '?')} {r.get('date', '?')} {r.get('time','?')}")
                                 lines.append(f"  {r.get('title','').strip()[:80]}")
                                 for h in r.get("runners", [])[:3]:
                                     lines.append(f"  • {h.get('name','?')} — {h.get('position','?')} ({h.get('odds','?')})")
-                            return "\n".join(lines)
-                        return f"No results found{f' for Greyville' if course else ''}."
+                        return f"No results found{f' for {course_filter.title()}' if course_filter else ''}."
 
-            # Odds snapshot
-            if "odds" in last_msg or "race" in last_msg:
-                track = None
-                for t in ["greyville", "bath", "kempton", "southwell", "utoxeter"]:
-                    if t in last_msg:
-                        track = t
-                        break
-                if not track:
-                    track = "greyville" if re.search(r"\brace\b", last_msg) or "today" in last_msg else None
-                if track:
-                    fn = TOOL_REGISTRY.get("get_odds_snapshot")
-                    if fn:
-                        result = await fn(track=track) if asyncio.iscoroutinefunction(fn) else fn(track=track)
-                        events = result.get("events", {})
-                        if events:
-                            lines = [f"**Races at {track.title()}:**"]
-                            for eid, ev in list(events.items())[:8]:
-                                runners = ev.get("runners", [])
-                                lines.append(f"\n{ev.get('name','?')} ({ev.get('time','?')}) — {len(runners)} runners")
-                                for h in runners[:5]:
-                                    lines.append(f"  • {h.get('name','?')} — W:{h.get('weight','?')} O:{h.get('outcomeName','?')}")
-                                if len(runners) > 5:
-                                    lines.append(f"  ... and {len(runners)-5} more")
-                            return "\n".join(lines)
+            # Races / odds — match any track dynamically from the live snapshot
+            if "odds" in last_msg or "race" in last_msg or "runner" in last_msg or "today" in last_msg:
+                try:
+                    from core_agent.core.snapshot_cache import get_snapshot
+                    snap = get_snapshot()
+                    events = snap.get("events", {})
+                except Exception:
+                    events = {}
+
+                if events:
+                    # Build course → events mapping from live snapshot
+                    snapshot_courses: dict = {}
+                    for eid, ev in events.items():
+                        c = (ev.get("course") or ev.get("venue") or "").strip().lower()
+                        if c:
+                            snapshot_courses.setdefault(c, []).append((eid, ev))
+
+                    # Match any course name from user message
+                    track = None
+                    for course_name in snapshot_courses:
+                        if course_name and course_name in last_msg:
+                            track = course_name
+                            break
+
+                    if track:
+                        track_events = snapshot_courses[track]
+                        lines = [f"**Races at {track.title()} today ({len(track_events)} races):**"]
+                        for eid, ev in track_events[:10]:
+                            runners = ev.get("runners", [])
+                            race_name = ev.get("name") or ev.get("en") or "Race"
+                            race_time = ev.get("time") or ev.get("start_time") or ""
+                            race_num = ev.get("raceNumber", "")
+                            lines.append(f"\n**Race {race_num}** — {race_name} ({race_time}) — {len(runners)} runners")
+                            for h in runners[:6]:
+                                j = h.get("jockeyName", "?")
+                                t_name = h.get("trainerName", "?")
+                                o = h.get("outcomeName") or h.get("odds") or "?"
+                                lines.append(f"  • {h.get('name','?')} | J:{j} T:{t_name} | Odds:{o}")
+                            if len(runners) > 6:
+                                lines.append(f"  ... and {len(runners)-6} more runners")
+                        return "\n".join(lines)
+
+                    elif "today" in last_msg or re.search(r"\brace[s]?\b", last_msg):
+                        # Generic "today's races" — list all tracks
+                        lines = [f"**Today's Racing — {len(events)} races across {len(snapshot_courses)} tracks:**\n"]
+                        for course, course_evs in sorted(snapshot_courses.items()):
+                            race_times = [ev.get("time") or ev.get("start_time") or "" for _, ev in course_evs]
+                            race_times = [t for t in race_times if t]
+                            time_str = (f" ({race_times[0]}–{race_times[-1]})" if len(race_times) > 1
+                                        else (f" ({race_times[0]})" if race_times else ""))
+                            lines.append(f"• **{course.title()}** — {len(course_evs)} race{'s' if len(course_evs) != 1 else ''}{time_str}")
+                        lines.append("\nAsk me about any track e.g. *'races at turffontein'* or *'odds for kempton'*")
+                        return "\n".join(lines)
+
         except Exception as e:
             logger.debug("[TASK_ROUTER] snapshot answer failed: %s", e)
         return None
+
 
     # ── Main route ────────────────────────────────────────────────────────────
 
@@ -237,6 +284,7 @@ class TaskRouter:
         messages: list[dict],
         tools: list[dict] | None,
         intent: str | None,
+        model_override: str | None = None,
     ) -> AsyncIterator[str]:
         # Phase 0: Answer from local snapshot data (no model call needed)
         snap = await self._try_snapshot_answer(messages)
@@ -244,57 +292,58 @@ class TaskRouter:
             yield snap
             return
 
-        specialist = self._detect_specialist(messages, intent)
-        if specialist:
-            logger.info("[TASK_ROUTER] specialist route → %s", specialist)
-            try:
-                yielded = False
-                async for chunk in self.ollama.stream(messages, None, intent, model_override=specialist):
-                    yielded = True
-                    yield chunk
-                if yielded:
+        # Load system configuration settings
+        settings = self._load_settings()
+        local_only = settings.get("localModelOnly", False)
+        pref_model = settings.get("preferredModel", "auto")
+
+        # Resolve the active model choice (UI override takes precedence over settings preferredModel)
+        active_model = model_override or "auto"
+        if active_model == "auto" and pref_model and pref_model != "auto":
+            active_model = pref_model
+
+        # Strict Local Override: If local_only is True, force all cloud requests to run locally
+        if local_only and active_model in ("groq", "gemini", "groq-llama", "llama-3.3-70b-versatile", "gemini-3.5-flash"):
+            logger.info("[TASK_ROUTER] Strict local mode active. Overriding cloud model %s to local auto.", active_model)
+            active_model = "auto"
+
+        # If a specific model is explicitly requested, route directly to it
+        if active_model and active_model != "auto":
+            logger.info("[TASK_ROUTER] explicit model override/preference → %s", active_model)
+            if active_model in ("groq", "groq-llama", "llama-3.3-70b-versatile"):
+                provider = GroqProvider()
+                try:
+                    async for chunk in provider.stream(messages, None, intent):
+                        yield chunk
                     return
-            except Exception as e:
-                logger.warning("[TASK_ROUTER] specialist %s failed: %s", specialist, e)
-
-        needs_tools = self._needs_tools(messages, intent)
-        logger.info("[TASK_ROUTER] no specialist, trying cloud (needs_tools=%s)", needs_tools)
-
-        # Phase 1: All cloud providers concurrently with 5s deadline
-        cloud_result = await self._try_cloud_concurrent(messages, intent)
-        if cloud_result:
-            yield cloud_result
-            return
-
-        # Phase 2: Cloud failed + tools needed → functiongemma locally
-        if needs_tools:
-            logger.info("[TASK_ROUTER] cloud failed, trying functiongemma:270m")
-            try:
-                yielded = False
-                async for chunk in self.ollama.stream(messages, None, intent, model_override="functiongemma:270m"):
-                    yielded = True
-                    yield chunk
-                if yielded:
+                except Exception as e:
+                    logger.warning("[TASK_ROUTER] Groq override failed: %s", e)
+            elif active_model in ("gemini", "gemini-3.5-flash"):
+                provider = GeminiProvider()
+                try:
+                    async for chunk in provider.stream(messages, None, intent):
+                        yield chunk
                     return
-            except Exception as e:
-                logger.warning("[TASK_ROUTER] functiongemma failed: %s", e)
-
-        # Phase 3: General chat with no tools — return fast instead of cold-start
-        if not needs_tools:
-            logger.info("[TASK_ROUTER] cloud down + general chat → fast cached response")
-            yield "Hi! I'm currently in offline mode — my cloud services aren't reachable. " \
-                  "Try asking about today's races, odds, your account, or recent results."
-            return
-
-        # Phase 4: Tool-oriented fallback — try local specialist models
-        for model_name in ["func_gemma:latest", "qwen3.5:0.8b"]:
-            logger.info("[TASK_ROUTER] final fallback → %s", model_name)
-            try:
-                yielded = False
-                async for chunk in self.ollama.stream(messages, None, intent, model_override=model_name):
-                    yielded = True
-                    yield chunk
-                if yielded:
+                except Exception as e:
+                    logger.warning("[TASK_ROUTER] Gemini override failed: %s", e)
+            else:
+                try:
+                    async for chunk in self.ollama.stream(messages, None, intent, model_override=active_model):
+                        yield chunk
                     return
-            except Exception as e:
-                logger.warning("[TASK_ROUTER] %s failed: %s", model_name, e)
+                except Exception as e:
+                    logger.warning("[TASK_ROUTER] Ollama override %s failed: %s", active_model, e)
+
+        # Auto routing or failed overrides fall through to here:
+        # Try cloud providers concurrently ONLY if local_only is disabled
+        if not local_only:
+            logger.info("[TASK_ROUTER] trying cloud providers")
+            cloud_result = await self._try_cloud_concurrent(messages, intent)
+            if cloud_result:
+                yield cloud_result
+                return
+
+        # Fallback notice: cloud is unreachable/disabled and local Ollama is disabled for chat
+        logger.info("[TASK_ROUTER] cloud unreachable or local_only is active. Chat fallback disabled.")
+        yield "Hi! Cloud services are currently offline or unreachable. " \
+              "Please check your internet connection or select a Browser Local (WebGPU) model from the dropdown to run offline chat."

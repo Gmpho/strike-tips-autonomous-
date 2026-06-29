@@ -23,7 +23,7 @@ timestamp: 2026-06-28T00:00:00Z
 - Home straight is on a **downward slope until just before the finish**
 - Excellent drainage — makes it an ideal **winter racing venue** (almost all meetings there take place in winter)
 - Adjacent to the Durbanville Nature Reserve
-- Course record: Fort Agopian, 2021 Cape Classic Stakes — 119.24 seconds
+- Course class record (1800m): Fort Agopian (October 20, 2020) — 109.36 seconds
 
 ## Track Bias
 
@@ -35,5 +35,5 @@ timestamp: 2026-06-28T00:00:00Z
 
 ## Feature Races
 
-- Diana Stakes (Grade 3, fillies & mares sprint, October)
-- World Sports Betting Matchem Stakes (Listed)
+- Diana Stakes (Grade 3, fillies & mares, October)
+- World Sports Betting Matchem Stakes (Grade 3, October)

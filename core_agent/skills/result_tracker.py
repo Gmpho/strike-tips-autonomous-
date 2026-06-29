@@ -87,7 +87,7 @@ class ResultTracker:
 
         settled = []
         for bet in open_bets:
-            result_text = self._search_result(bet.track, bet.race_number)
+            result_text = await self._search_result(bet.track, bet.race_number)
             if not result_text:
                 continue
 

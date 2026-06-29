@@ -1,6 +1,6 @@
 import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
-import { playAlertTone, playSettleTone } from './audio';
+import { playAlertTone, playSettleTone, playValueBetTone } from './audio';
 import { apiFetch } from '../lib/api-fetch';
 
 const FAST_INTERVAL = 15000;
@@ -13,6 +13,7 @@ export class DataBridge {
   private slowTimer: number | null = null;
   private prevEventCount = 0;
   private prevBetCount = 0;
+  private playedValueBets = new Set<string>();
   private fastBackoffMs = FAST_INTERVAL;
   private slowBackoffMs = SLOW_INTERVAL;
   private refCount = 0;
@@ -57,6 +58,31 @@ export class DataBridge {
       playSettleTone(won);
     }
     this.prevBetCount = settledCount;
+
+    // Priority Edge Alerts logic
+    try {
+      const valueBetAlertsEnabled = localStorage.getItem('strike_value_bet_alerts') === 'true';
+      if (valueBetAlertsEnabled) {
+        // Iterate through all runners in all active events
+        Object.values(snapshot.events || {}).forEach((event: any) => {
+          const course = event.course || 'Unknown';
+          const raceNum = event.raceNumber || '';
+          (event.runners || []).forEach((runner: any) => {
+            const edge = runner.edge;
+            // Check if edge is greater than or equal to 15%
+            if (edge && edge >= 15) {
+              const key = `${course}_${raceNum}_${runner.name}`;
+              if (!this.playedValueBets.has(key)) {
+                this.playedValueBets.add(key);
+                playValueBetTone();
+              }
+            }
+          });
+        });
+      }
+    } catch (e) {
+      console.error('Error processing priority edge alerts sound:', e);
+    }
   }
 
   private async runFast() {
