@@ -9,8 +9,8 @@ This document provides guidelines for AI agents working in this repository.
 **South African Horse Racing Intelligence System — 3-Layer Architecture**
 
 - **Cloudflare MCP Edge** (`cloudflare_mcp_edge/`): Always-free edge worker with 16 MCP tools, OKF knowledge bundle, REST API, D1 + KV
-- **Modal Backend** (`core_agent/`): Serverless Python backend for AI analysis, scrapers, Telegram bot
-- **Vercel HUD** (`strike-tips-hud/`): Vite + React + Three.js frontend with middleware routing
+- **Modal Backend** (`core_agent/`): Serverless Python backend for AI analysis, scrapers, Telegram bot, Bayesian dream engine, DSI Kelly scaling, WebGPU context API
+- **Vercel HUD** (`strike-tips-hud/`): Vite + React + Three.js frontend with middleware routing, WebLLM browser AI
 
 ---
 
@@ -25,14 +25,17 @@ cd core_agent
 # Install dependencies
 pip install -r requirements.txt
 
-# Run all tests
+# Run all tests (6 total — 5 governor + 1 DSI staking)
 pytest
 
 # Run single test file
-pytest tests/test_analyzer.py
+pytest tests/test_governor.py
 
-# Run specific test function
-pytest tests/test_analyzer.py::TestRaceAnalyzer::test_edge_calculation -v
+# DSI stress test
+pytest tests/test_dsi_staking.py -v
+
+# Run inside Docker
+docker exec strike-bot-new pytest core_agent/tests/
 
 # Run with coverage
 pytest --cov=core_agent --cov-report=term-missing

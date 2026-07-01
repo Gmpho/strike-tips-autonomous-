@@ -180,3 +180,9 @@ All 11 MAF tools use gambling-free naming:
 - `skills/race_schedule.py`: RaceScheduleService dynamically fetches today's tracks via TAB4Racing API
 - **ALL 7 SA tracks always included** + international tracks grouped by region
 - Regions: UK, Australia, USA, Ireland, France, Hong Kong, Japan
+
+### Recent Updates (July 2026 - v2.2)
+- **WebGPU Search Grounding**: Added `/api/agent/context` endpoint fetching real-time odds, vector insights, and live DuckDuckGo web search results to feed local browser-side models.
+- **Bayesian Prior Decays**: Implemented statistical prior decay inside the Bayesian Learning Engine using alternative scenarios (dreams) as prior distributions that decay exponentially as real bets accumulate.
+- **DSI Kelly Staking & Sizing Checks**: Integrated background dream simulations to calculate the **Dream Stress Index (DSI)** and automatically scale down Kelly betting sizes (1.0x, 0.75x, 0.50x) under volatile/adverse conditions.
+- **ChromaDB Conflict Resilience**: Added fallback handling to automatically bypass and reuse persisted embedding functions during schema conflicts on boot.

@@ -26,6 +26,11 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **⏰ Automated Scheduling** - Daily scans at your preferred time
 - **🧠 Dual Memory System** - Combines ChromaDB for race intelligence RAG (local/cloud) and Honcho for user/agent memory with background reasoning, using local Ollama embeddings with Gemini fallback
 - **🔄 Auto-Result Updates** - Automatically settles bets when races complete
+- **🧠 Bayesian Learning Engine** - Beta-Binomial updating blends simulated dreams with real settled outcomes; `decay = e^{-0.15 × real_bets}` makes simulation influence fade with real-world data
+- **🎲 Deterministic Dream Engine** - Physical adjustments (Going/Rain, Wind, Scratches) replace random shifts; persisted to ChromaDB with metadata tags
+- **📊 Dream Stress Index (DSI)** - Scales Half-Kelly staking defensively: DSI < 20% → 1.0x, 20-50% → 0.75x, > 50% → 0.50x (Quarter-Kelly)
+- **🌐 WebGPU Search Grounding** - Local browser models fetch live context (odds, runners, ChromaDB insights, DDG search) via `/api/agent/context` before inference
+- **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
 
 ---
 
@@ -52,13 +57,15 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
               │  CLOUDFLARE EDGE    │    │  MODAL BACKEND             │
               │  (Always Free)      │    │  (Serverless, ~$30/mo)     │
               │                     │    │                            │
-              │  ● 16 MCP tools     │    │  ● FastAPI (serve-api)     │
-              │  ● 13 REST endpoints│    │  ● Telegram bot            │
-              │  ● OKF knowledge    │    │  ● AI analysis (Gemini)    │
-              │  ● D1 database      │    │  ● Dream engine            │
-              │  ● KV odds cache    │    │  ● ChromaDB memory         │
-              │  ● Web search tool  │    │  ● Odds processing         │
-              └─────────────────────┘    └────────────────────────────┘
+               │  ● 16 MCP tools     │    │  ● FastAPI (serve-api)     │
+               │  ● 13 REST endpoints│    │  ● Telegram bot            │
+               │  ● OKF knowledge    │    │  ● AI analysis (Gemini)    │
+               │  ● D1 database      │    │  ● Dream engine (Bayesian) │
+               │  ● KV odds cache    │    │  ● DSI Kelly scaling       │
+               │  ● Web search tool  │    │  ● ChromaDB memory         │
+               │                     │    │  ● Odds processing         │
+               │                     │    │  ● Context API/WebGPU      │
+               └─────────────────────┘    └────────────────────────────┘
 ```
 
 ---
@@ -295,6 +302,17 @@ MAX_DRAWDOWN = 50.0          # Stop if down 50% from peak
 KELLY_FRACTION = 0.5         # Use Half-Kelly (conservative)
 ```
 
+### 🧠 Dream Stress Index (DSI) Kelly Sizing Scale Down
+
+To protect the bankroll from adverse track/weather scenarios, Strike Tips runs Monte Carlo simulations (dreams) in the background. Before placing any real bet, the Bankroll Governor queries ChromaDB for all simulated dreams today for that specific track and distance to calculate the **Dream Stress Index (DSI)**:
+
+$$\text{DSI} = \frac{\text{Simulations where horse failed to maintain edge}}{\text{Total simulations}}$$
+
+Based on the DSI, the Half-Kelly stake is scaled down defensively:
+- **DSI < 20%** (Stable Edge): **1.0x** allocation.
+- **20% <= DSI <= 50%** (Moderate Risk): **0.75x** allocation.
+- **DSI > 50%** (High Volatility / Adverse Conditions): **0.50x** allocation (Quarter-Kelly).
+
 ### Example Bankroll Management
 
 Starting Bankroll: **R1,000**
@@ -423,16 +441,24 @@ core_agent/                                # Modal backend (Python FastAPI)
 │   └── api.py                            # FastAPI entry point
 ├── skills/                               # Domain skills
 │   ├── race_analysis/                    # Value bet engine
-│   ├── bankroll_manager/                 # Bankroll governor
+│   ├── bankroll_manager/                 # Bankroll governor (DSI scaling)
+│   ├── dreamer.py                        # Dream engine (Bayesian sims)
 │   ├── parsers/                          # Tab4, PDF scrapers
-│   ├── memory/                           # ChromaDB memory
-│   ├── learning/                         # Learning engine
+│   ├── memory/                           # ChromaDB memory (embedder fix)
+│   ├── learning/                         # Learning engine (Beta-Binomial)
+│   ├── search_service.py                 # DDG search (thread executor)
 │   └── notifications/                    # Telegram bot
 ├── tools/                                # MAF tools
-│   └── maf_tool_registry.py             # 15 gambling-free tools
+│   └── maf_tool_registry.py             # 17 gambling-free tools (+dream tools)
+├── agent/                                # AI orchestration
+│   ├── context.py                        # ContextBuilder (WebGPU grounding)
+│   └── loop.py                           # Telegram router (+/dream cmd)
 ├── routes/                               # API endpoints
 │   ├── agent.py, betting.py, racing.py
 ├── ollama_configs/                       # 5 racing Modelfiles
+├── tests/                                # Test suite
+│   ├── test_governor.py                  # 5 bankroll tests
+│   └── test_dsi_staking.py              # DSI stress test
 └── requirements.txt
 
 cloudflare_mcp_edge/                      # Cloudflare Worker (always-free edge)
@@ -498,14 +524,20 @@ strike = StrikeTips(bankroll_config=custom_config)
 ## 🧪 Testing
 
 ```bash
-# Run all tests
+# Run all tests (6 tests — 5 governor + 1 DSI staking)
 pytest
 
 # Test specific component
-pytest tests/test_analyzer.py
+pytest tests/test_governor.py
+
+# DSI stress test
+pytest tests/test_dsi_staking.py -v
+
+# Test inside Docker
+docker exec strike-bot-new pytest core_agent/tests/
 
 # Test with coverage
-pytest --cov=strike_tips
+pytest --cov=core_agent --cov-report=term-missing
 ```
 
 ---
@@ -567,6 +599,7 @@ MIT License - see [LICENSE](LICENSE) file
 | [`docs/AGENTS.md`](docs/AGENTS.md) | Agent coding guidelines, build commands, project structure |
 | [`docs/MCP_INTEGRATION_GUIDE.md`](docs/MCP_INTEGRATION_GUIDE.md) | MCP protocol, n8n integration, Claude Desktop setup |
 | [`docs/MODAL_README.md`](docs/MODAL_README.md) | Modal serverless deployment |
+| [`walkthrough.md`](walkthrough.md) | Execution logs and test verification |
 | [`docs/PRIVACY.md`](docs/PRIVACY.md) | Privacy policy |
 | [`docs/TERMS.md`](docs/TERMS.md) | Terms of service |
 | [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md) | Legal disclaimer |

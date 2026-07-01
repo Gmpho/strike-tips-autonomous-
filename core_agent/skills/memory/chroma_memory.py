@@ -123,12 +123,31 @@ class RacingMemory:
                 logger.info(f"[MEMORY] ChromaDB local: {self.data_dir}")
 
             col_kwargs = {"metadata": {"hnsw:space": "cosine"}, "embedding_function": embed_fn}
-            self._form_collection = self._client.get_or_create_collection(
-                name="form_insights", **col_kwargs
-            )
-            self._chat_collection = self._client.get_or_create_collection(
-                name="chat_history", **col_kwargs
-            )
+            try:
+                self._form_collection = self._client.get_or_create_collection(
+                    name="form_insights", **col_kwargs
+                )
+            except Exception as e:
+                if "embedding function" in str(e).lower() or "conflict" in str(e).lower():
+                    logger.warning("[MEMORY] Embedding conflict for 'form_insights'. Re-trying without new embedding function parameter.")
+                    self._form_collection = self._client.get_or_create_collection(
+                        name="form_insights", metadata={"hnsw:space": "cosine"}
+                    )
+                else:
+                    raise e
+
+            try:
+                self._chat_collection = self._client.get_or_create_collection(
+                    name="chat_history", **col_kwargs
+                )
+            except Exception as e:
+                if "embedding function" in str(e).lower() or "conflict" in str(e).lower():
+                    logger.warning("[MEMORY] Embedding conflict for 'chat_history'. Re-trying without new embedding function parameter.")
+                    self._chat_collection = self._client.get_or_create_collection(
+                        name="chat_history", metadata={"hnsw:space": "cosine"}
+                    )
+                else:
+                    raise e
             self._is_ready = True
             logger.info(f"[MEMORY] Ready — form:{self._form_collection.count()} chat:{self._chat_collection.count()}")
         except Exception as e:

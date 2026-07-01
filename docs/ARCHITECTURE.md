@@ -583,8 +583,9 @@ if not response:
 |---------|------|---------|
 | 1.0 | March 2024 | Initial release |
 | 2.0 | April 2026 | Refactored to core_agent/, removed Pydantic AI, added Docker 3-container setup |
+| 2.2 | July 2026 | Added WebGPU context hydration (/api/agent/context), Bayesian Prior Decays (Option A), DSI Kelly Sizing checks, and FastMCP dreaming tools |
 
 ---
 
-*Architecture Version: 2.0*
-*Last Updated: April 2026*
+*Architecture Version: 2.2*
+*Last Updated: July 2026*

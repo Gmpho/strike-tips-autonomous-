@@ -367,7 +367,7 @@ def run_scan():
     memory=512,
     timeout=43200,
     min_containers=0,
-    container_idle_timeout=120,
+    scaledown_window=120,
     env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"}
 )
 async def run_odds_monitor():

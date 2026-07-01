@@ -190,6 +190,64 @@ class AgentLoop:
                 asyncio.create_task(_run_scan_bg())
                 response_content = "🚀 Starting today's full racing scan in background..."
 
+        elif cmd == "/dream":
+            import re
+            match = re.match(r"^/dream\s+(\w+)\s+(?:race\s+)?(\d+)\s*-\s*(.+)$", cmd_text, re.IGNORECASE)
+            if not match:
+                response_content = (
+                    "❌ *Invalid Dream Command Format.*\n\n"
+                    "• *Usage*: `/dream <track> race <number> - <scenario>`\n"
+                    "• *Example*: `/dream greyville race 5 - heavy rain`"
+                )
+            else:
+                track = match.group(1).lower()
+                race_num = int(match.group(2))
+                scenario = match.group(3).strip()
+                
+                try:
+                    from core_agent.skills.dreamer import dream_engine
+                    response_content = (
+                        f"🔮 *Simulating race scenario in background...*\n"
+                        f"• Track: *{track.title()}*\n"
+                        f"• Race: *{race_num}*\n"
+                        f"• Scenario: *{scenario}*"
+                    )
+                    
+                    async def _run_dream_bg():
+                        try:
+                            d = await dream_engine.generate_custom_dream(
+                                track=track,
+                                race_num=race_num,
+                                scenario_override=scenario
+                            )
+                            await self.bus.publish_outbound(OutboundMessage(
+                                session_key=msg.session_key,
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content=(
+                                    f"✨ *Dream Simulation Complete!*\n\n"
+                                    f"🏁 *Track*: {d.track} R{d.race}\n"
+                                    f"🎭 *Scenario*: {d.scenario}\n"
+                                    f"📊 *Estimated Probability Shift*: `{d.probability_shift * 100:+.1f}%`\n"
+                                    f"🧠 *Vividness/Confidence*: `{d.vividness * 100:.1f}%`\n\n"
+                                    f"💡 *Insight*: {d.insight}"
+                                ),
+                                done=True,
+                            ))
+                        except Exception as e:
+                            logger.error("Custom dream error: %s", e)
+                            await self.bus.publish_outbound(OutboundMessage(
+                                session_key=msg.session_key,
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content=f"❌ *Dream simulation failed*: {e}",
+                                done=True,
+                            ))
+                    
+                    asyncio.create_task(_run_dream_bg())
+                except Exception as e:
+                    response_content = f"❌ Error initializing dream: {e}"
+
         else:
             response_content = f"❓ Unknown command: *{cmd}*. Type `/help` to see list of valid commands."
 

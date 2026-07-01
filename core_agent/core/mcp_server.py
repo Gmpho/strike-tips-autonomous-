@@ -125,6 +125,26 @@ async def mcp_run_daily_analysis() -> str:
         return f'{{"error": "{e}"}}'
 
 
+@mcp.tool(name="simulate_race_scenarios", description="Force on-demand scenario simulation (e.g. wind, going, scratch), recalculate runner probability shifts, and record to memory.")
+async def mcp_simulate_race_scenarios(track: str, race_number: int, scenario_override: str) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import simulate_race_scenarios as tool_fn
+        result = await tool_fn(track=track, race_number=race_number, scenario_override=scenario_override)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
+
+
+@mcp.tool(name="query_racing_dreams", description="Query ChromaDB vector database for background scenario simulations matching specific tracks and conditions.")
+async def mcp_query_racing_dreams(track: Optional[str] = None, keywords: Optional[str] = None, limit: int = 3) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import query_racing_dreams as tool_fn
+        result = await tool_fn(track=track, keywords=keywords, limit=limit)
+        return str(result)
+    except Exception as e:
+        return f'{{"error": "{e}"}}'
+
+
 @mcp.resource("racing://current-config")
 def get_config_resource() -> str:
     try:

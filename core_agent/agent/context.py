@@ -1,7 +1,10 @@
 from __future__ import annotations
 import asyncio
 import re
+import logging
 from core_agent.core.strike_brain import brain
+
+logger = logging.getLogger("context-builder")
 
 MAX_CONTEXT_CHARS = 12000
 
@@ -47,6 +50,22 @@ class ContextBuilder:
                     parts.append(f"[FORM INSIGHTS]\n{insights[:2000]}")
         except Exception:
             pass
+
+        try:
+            from core_agent.skills.search_service import search_racing
+            # Trigger live DuckDuckGo search for real-time information
+            search_res = await asyncio.wait_for(
+                search_racing(user_message, limit=3),
+                timeout=10.0,
+            )
+            if search_res and search_res.get("results"):
+                lines = []
+                for r in search_res["results"]:
+                    lines.append(f"• {r.get('title','')} ({r.get('url','')}):\n  {r.get('snippet','')}")
+                if lines:
+                    parts.append(f"[WEB SEARCH RESULTS]\n" + "\n".join(lines)[:2000])
+        except Exception:
+            logger.exception("ContextBuilder web search failed")
 
         try:
             from core_agent.core.snapshot_cache import get_snapshot

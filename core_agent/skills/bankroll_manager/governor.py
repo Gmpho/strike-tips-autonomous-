@@ -230,14 +230,58 @@ class BankrollGovernor:
 
         return True, "OK"
 
-    def calculate_max_stake(self, edge_percent: float) -> float:
-        """Calculate maximum allowed stake using Half-Kelly, capped at 5%"""
+    def calculate_max_stake(
+        self,
+        edge_percent: float,
+        track: Optional[str] = None,
+        race_number: Optional[int] = None,
+    ) -> float:
+        """Calculate maximum allowed stake using Half-Kelly, scaled by Dream Stress Index (DSI)"""
         if edge_percent < self.MIN_EDGE_PERCENT:
             return 0.0
+            
         edge_fraction = edge_percent / 100.0
         kelly_stake = self.current_bankroll * edge_fraction * self.KELLY_FRACTION
+        
+        # Calculate Dream Stress Index (DSI) from ChromaDB simulations
+        dsi_scale = 1.0
+        if track and race_number is not None:
+            try:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.memory and brain.memory._is_ready:
+                    results = brain.memory.search_form_insights(
+                        query=f"Scenario simulation for {track} R{race_number}",
+                        n_results=10,
+                        where={"$and": [{"type": "dream"}, {"track": track.lower()}, {"race": str(race_number)}]}
+                    )
+                    if results:
+                        total_dreams = len(results)
+                        neg_dreams = sum(
+                            1 for r in results 
+                            if r.get("metadata", {}).get("probability_shift", 0.0) < 0.0
+                        )
+                        dsi = neg_dreams / total_dreams if total_dreams > 0 else 0.0
+                        
+                        if dsi < 0.20:
+                            dsi_scale = 1.0
+                        elif dsi <= 0.50:
+                            dsi_scale = 0.75
+                            logger.info(
+                                f"[GOVERNOR] DSI = {dsi*100:.1f}% (moderate stress). "
+                                f"Staking scaled by 0.75x"
+                            )
+                        else:
+                            dsi_scale = 0.50
+                            logger.info(
+                                f"[GOVERNOR] DSI = {dsi*100:.1f}% (high stress under adverse scenarios). "
+                                f"Staking scaled by 0.50x (Quarter-Kelly)"
+                            )
+            except Exception as e:
+                logger.warning(f"Failed to query ChromaDB for DSI calculation: {e}")
+                
+        scaled_kelly = kelly_stake * dsi_scale
         max_stake = self.current_bankroll * (self.MAX_BET_PERCENT / 100.0)
-        return round(min(kelly_stake, max_stake), 2)
+        return round(min(scaled_kelly, max_stake), 2)
 
     # ─── Bet Operations ─────────────────────────────────────────────────────
 
@@ -267,7 +311,7 @@ class BankrollGovernor:
             if is_paper:
                 max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
             else:
-                max_stake = self.calculate_max_stake(edge_percent)
+                max_stake = self.calculate_max_stake(edge_percent, track, race_number)
             if stake > max_stake:
                 logger.warning(
                     f"Stake reduced from R{stake:.2f} to R{max_stake:.2f} (governor cap)"

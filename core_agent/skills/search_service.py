@@ -59,27 +59,37 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
 
     # 1. DDGS → get URLs (try auto backend, not lite which was removed)
     ddgs_items = []
+    
+    def _run_ddgs(q: str, lim: int) -> List[Dict]:
+        try:
+            from ddgs import DDGS
+            with DDGS() as d:
+                return list(d.text(q, max_results=lim))
+        except Exception as err:
+            logger.debug(f"[SEARCH] DDGS worker error: {err}")
+            return []
+
     try:
-        from ddgs import DDGS
-        with DDGS() as d:
-            for r in d.text(query, max_results=limit * 2):
-                url = r.get("href", "") or r.get("url", "")
-                if url and not _blocked(url) and url not in seen:
-                    seen.add(url)
-                    ddgs_items.append({
-                        "url": url,
-                        "title": r.get("title", ""),
-                        "snippet": r.get("body", ""),
-                    })
+        loop = asyncio.get_event_loop()
+        raw_results = await loop.run_in_executor(None, _run_ddgs, query, limit * 2)
+        for r in raw_results:
+            url = r.get("href", "") or r.get("url", "")
+            if url and not _blocked(url) and url not in seen:
+                seen.add(url)
+                ddgs_items.append({
+                    "url": url,
+                    "title": r.get("title", ""),
+                    "snippet": r.get("body", ""),
+                })
         logger.info(f"[SEARCH] DDGS: {len(ddgs_items)} URLs")
         provider = "ddgs"
     except Exception as e:
-        logger.debug(f"[SEARCH] DDGS: {e}")
+        logger.debug(f"[SEARCH] DDGS wrapper: {e}")
 
     # 2. Fetch top 2 URLs for real content (concurrent)
     to_fetch = ddgs_items[:2]
     if to_fetch:
-        texts = await asyncio.gather(*[_fetch(item["url"]) for item in to_fetch])
+        texts = await asyncio.gather(*[_fetch(item["url"], timeout=3) for item in to_fetch])
         for item, text in zip(to_fetch, texts):
             if text:
                 results.append({
@@ -111,14 +121,14 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     # 4. SA-specific fallback — direct fetch to known SA racing sites
     _is_sa_query = any(kw in query.lower() for kw in ("south africa", "sa ", "sa racing", "tomorrow", "scottsville", "kenilworth", "fairview", "turffontein", "vaal", "greyville", "durbanville"))
     _has_sa_result = any("tab4racing" in r.get("url","") or "sahorseracing" in r.get("url","") or "topbets" in r.get("url","") or "raceform" in r.get("url","") or "goldcircle" in r.get("url","") or "bethq" in r.get("url","") for r in results)
-    if _is_sa_query and (not _has_sa_result or len(results) < 3):
+    if not results and _is_sa_query:
         sa_urls = [
             "https://www.tab4racing.com/racecards",
             "https://www.topbets.co.za/racing",
             "https://www.raceform.co.za/",
             "https://www.sahorseracing.com/race-meetings",
         ]
-        texts = await asyncio.gather(*[_fetch(u) for u in sa_urls])
+        texts = await asyncio.gather(*[_fetch(u, timeout=3) for u in sa_urls])
         for url, text in zip(sa_urls, texts):
             if text and url not in seen:
                 seen.add(url)

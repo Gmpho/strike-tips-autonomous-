@@ -6,12 +6,30 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV DATA_DIR=/app/data
 ENV SENTENCE_TRANSFORMERS_HOME=/app/data/.cache/torch
+ENV PIP_PREFER_BINARY=1
+ENV PIP_TIMEOUT=600
 
 WORKDIR /app
 
-# Install Python requirements (no --no-cache-dir: pip cache survives rebuilds, ~10x faster)
+# Upgrade pip first (backtracking fixes in newer pip)
+RUN pip install --no-cache-dir --upgrade pip "setuptools<75"
+
+# Install agent-framework with --no-deps to avoid core-orchestrations version conflict
+# (agent-framework==1.0.0rc4 requires agent-framework-core==1.0.0rc4, but
+#  agent-framework-core[all] pulls orchestrations which demands core>=1.9.0)
+RUN pip install --timeout=600 --retries=5 \
+    --no-deps \
+    agent-framework==1.0.0rc4 \
+    agent-framework-core==1.0.0rc4 \
+    agent-framework-openai==1.0.0
+
+# Install everything else
 COPY requirements.txt .
-RUN pip install --timeout=300 --retries=5 --default-timeout=300 -r requirements.txt
+RUN sed -i '/^agent-framework/d; /^openai/d' requirements.txt \
+ && pip install --timeout=600 --retries=5 --default-timeout=600 -r requirements.txt
+
+# Install openai separately (no conflict)
+RUN pip install --timeout=600 --retries=5 openai==2.30.0
 
 # Install Playwright system dependencies
 RUN playwright install-deps chromium 2>&1 || echo "System deps install failed"

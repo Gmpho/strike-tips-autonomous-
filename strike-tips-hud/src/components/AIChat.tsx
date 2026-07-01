@@ -201,35 +201,31 @@ export const AIChat: React.FC = () => {
 
     if (selectedModel.startsWith('webllm-')) {
       try {
-        // Fetch config to hydrate system prompt context
-        let balanceInfo = '1000';
-        let tracksList = 'None';
+        // Fetch server-compiled context (snapshot events, vector guides, web search results)
+        let compiledContext = '';
         try {
-          const configRes = await apiFetch('/api/config');
-          if (configRes.ok) {
-            const config = await configRes.json();
-            balanceInfo = config.bankroll?.total_bankroll?.toString() || '1000';
-            const tracksVal = config.tracks;
-            if (Array.isArray(tracksVal)) {
-              tracksList = tracksVal.join(', ');
-            } else if (typeof tracksVal === 'string') {
-              tracksList = tracksVal;
-            } else if (tracksVal && typeof tracksVal === 'object') {
-              tracksList = Object.keys(tracksVal).join(', ');
+          const contextRes = await apiFetch(
+            `/api/agent/context?query=${encodeURIComponent(userMsg)}&session_id=${activeSessionId}`
+          );
+          if (contextRes.ok) {
+            const data = await contextRes.json();
+            if (data.success && data.context) {
+              compiledContext = data.context;
             }
           }
         } catch (e) {
-          console.warn('[WebLLM Context Fetch Failed]', e);
+          console.warn('[WebLLM Server Context Fetch Failed]', e);
         }
 
         if (controller.signal.aborted) return;
 
         const systemPrompt = `You are Strike Tips Racing AI, a helpful, private on-device assistant. Answer concisely and accurately.
-Today's Balance: R${balanceInfo}.
-Active tracks today: ${tracksList}.
 Rules:
-1. ALWAYS base your answers on this live snapshot balance and tracks list.
-2. Answer in a clean, professional, and concise betting format.`;
+1. ALWAYS base your answers on the live compiled context provided below.
+2. Answer in a clean, professional, and concise betting format.
+
+[LIVE RESEARCH & CONTEXT DATA]
+${compiledContext || 'No context data available.'}`;
 
         // Update activity to download
         setMessages(prev => prev.map((m, i) =>

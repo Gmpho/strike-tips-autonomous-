@@ -167,6 +167,20 @@ TOOL_INFO: Dict[str, Dict] = {
         "speed": "~1s",
         "use_case": "Save the Turffontein rail bias analysis pattern after 5 tool calls",
     },
+    "simulate_race_scenarios": {
+        "description": "Force on-demand scenario simulation (e.g. wind, going, scratch), recalculate runner probability shifts, and record to memory.",
+        "specialist": "ds_racing",
+        "category": "analysis",
+        "speed": "~3-5s",
+        "use_case": "Simulate heavy rain scenario for Vaal Race 4",
+    },
+    "query_racing_dreams": {
+        "description": "Query ChromaDB vector database for background scenario simulations matching specific tracks and conditions.",
+        "specialist": "racing_qwen",
+        "category": "search",
+        "speed": "~2s",
+        "use_case": "Find all soft going dreams simulated for Vaal",
+    },
 }
 
 
@@ -572,6 +586,72 @@ async def save_learned_insight(
         return {"status": "ERROR", "reason": str(e)}
 
 
+async def simulate_race_scenarios(track: str, race_number: int, scenario_override: str, **kwargs) -> Dict[str, Any]:
+    """Force on-demand scenario simulation, recalculate runner probability shift and record to memory."""
+    try:
+        from core_agent.skills.dreamer import dream_engine
+        d = await dream_engine.generate_custom_dream(
+            track=track,
+            race_num=race_number,
+            scenario_override=scenario_override
+        )
+        return {
+            "status": "success",
+            "dream_id": d.id,
+            "track": d.track,
+            "race": d.race,
+            "scenario": d.scenario,
+            "probability_shift": d.probability_shift,
+            "vividness": d.vividness,
+            "insight": d.insight
+        }
+    except Exception as e:
+        logger.error(f"simulate_race_scenarios failed: {e}")
+        return {"status": "error", "reason": str(e)}
+
+
+async def query_racing_dreams(track: Optional[str] = None, keywords: Optional[str] = None, limit: int = 3, **kwargs) -> Dict[str, Any]:
+    """Query ChromaDB vector database for past simulations matching specific tracks and conditions."""
+    try:
+        from core_agent.core.strike_brain import brain
+        if not brain or not brain.memory or not brain.memory._is_ready:
+            return {"status": "error", "reason": "Memory not ready"}
+            
+        where = {"type": "dream"}
+        if track:
+            where["track"] = track.lower()
+            
+        results = brain.memory.search_form_insights(
+            query=keywords or "simulation",
+            n_results=limit,
+            where=where
+        )
+        
+        dreams = []
+        for r in results:
+            meta = r.get("metadata", {})
+            dreams.append({
+                "track": meta.get("track"),
+                "race": meta.get("race"),
+                "scenario": meta.get("scenario"),
+                "probability_shift": meta.get("probability_shift"),
+                "vividness": meta.get("vividness"),
+                "timestamp": meta.get("timestamp"),
+                "content": r.get("content")
+            })
+            
+        return {
+            "status": "success",
+            "track": track,
+            "keywords": keywords,
+            "count": len(dreams),
+            "dreams": dreams
+        }
+    except Exception as e:
+        logger.error(f"query_racing_dreams failed: {e}")
+        return {"status": "error", "reason": str(e)}
+
+
 # ─── Registry ─────────────────────────────────────────────────────────────────
 
 TOOL_REGISTRY: Dict[str, Callable] = {
@@ -593,6 +673,8 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "search_racing_keywords": search_racing_keywords,
     "search_hybrid": search_hybrid,
     "save_learned_insight": save_learned_insight,
+    "simulate_race_scenarios": simulate_race_scenarios,
+    "query_racing_dreams": query_racing_dreams,
 }
 
 

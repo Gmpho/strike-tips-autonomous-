@@ -117,6 +117,50 @@ SCENARIO_TEMPLATES = [
 ]
 
 
+def calculate_scenario_shift(scenario: str, race_info: Dict, insight_text: str) -> float:
+    """Calculate a mathematical probability shift based on going, wind, scratches, and sentiment."""
+    scen_lower = scenario.lower()
+    ins_lower = insight_text.lower()
+    
+    # 1. Going/Rain simulation
+    if any(w in scen_lower for w in ("heavy", "soft", "rain", "wet", "mud")):
+        # Check if form or name implies mud capability
+        horse_name = race_info.get("name", "").lower()
+        form_comments = race_info.get("form", "").lower()
+        if any(w in horse_name or w in form_comments for w in ("mud", "wet", "rain", "heavy", "soft", "sire", "storm")):
+            return 0.08
+        return -0.05
+        
+    # 2. Wind simulation
+    if any(w in scen_lower for w in ("wind", "headwind", "gale", "breeze")):
+        form_comments = race_info.get("form", "").lower()
+        # Pacesetters get penalized by headwinds
+        if any(w in form_comments for w in ("led", "pace", "front", "speed")):
+            return -0.06
+        # Closers get boosted
+        if any(w in form_comments for w in ("ran on", "stayed", "closer", "slowly away")):
+            return 0.04
+        return -0.01
+
+    # 3. Scratch simulation
+    if any(w in scen_lower for w in ("scratch", "withdrawn", "non-runner")):
+        return 0.05
+
+    # 4. Sentiment fallback from Groq/LLM insight
+    positive_words = ("favor", "boost", "advantage", "value", "positive", "benefit", "strong", "win")
+    negative_words = ("penalize", "downgrade", "negative", "hurt", "risk", "hazard", "weak", "lose")
+    
+    pos_count = sum(1 for w in positive_words if w in ins_lower)
+    neg_count = sum(1 for w in negative_words if w in ins_lower)
+    
+    if pos_count > neg_count:
+        return 0.05
+    elif neg_count > pos_count:
+        return -0.05
+        
+    return round(random.uniform(-0.03, 0.03), 3)
+
+
 class DreamEngine:
     def __init__(self):
         self.history: List[Dream] = []
@@ -152,12 +196,13 @@ class DreamEngine:
 
         scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
         insight = await _groq_insight(scenario, race)
+        prob_shift = calculate_scenario_shift(scenario, race, insight)
 
         dream = Dream(
             id=f"dream-{int(datetime.now().timestamp())}",
             timestamp=datetime.now().isoformat(),
             scenario=scenario,
-            probability_shift=round(random.uniform(-0.15, 0.15), 3),
+            probability_shift=prob_shift,
             insight=insight,
             vividness=round(random.uniform(0.4, 0.95), 2),
             track=course,
@@ -166,6 +211,166 @@ class DreamEngine:
         self.history.insert(0, dream)
         if len(self.history) > 20:
             self.history.pop()
+
+        # Parse decimal odds for win simulation
+        try:
+            odds_val = float(odds) if odds else 5.0
+        except Exception:
+            odds_val = 5.0
+
+        # Simulate outcome (Bernoulli trial) based on odds and edge shift
+        won = random.random() < ((1.0 / max(odds_val, 1.01)) * (1.0 + dream.probability_shift))
+
+        # Record simulated result to LearningEngine
+        try:
+            from core_agent.skills.learning.engine import LearningEngine
+            from core_agent.core.strike_brain import brain
+            data_dir = brain.data_dir if brain else "./data"
+            le = LearningEngine(data_dir=data_dir)
+            le.record_dream_result(
+                track=course,
+                distance=1400,  # Default bucket if not specified in snapshot
+                odds=odds_val,
+                won=won
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record dream to learning engine: {e}")
+
+        # Store dream in local ChromaDB for semantic stress-test lookups
+        try:
+            from core_agent.core.strike_brain import brain
+            if brain and brain.memory and brain.memory._is_ready:
+                meta = {
+                    "type": "dream",
+                    "track": course.lower(),
+                    "race": str(race_num),
+                    "scenario": scenario,
+                    "probability_shift": dream.probability_shift,
+                    "vividness": dream.vividness,
+                    "timestamp": dream.timestamp,
+                }
+                brain.memory.add_form_insight(
+                    horse=f"dream_{course.lower()}_r{race_num}",
+                    insight=f"Scenario: {scenario} | Shift: {dream.probability_shift} | Vividness: {dream.vividness} | Insight: {insight}",
+                    metadata=meta,
+                )
+                logger.info(f"[DREAM] Persisted dream to ChromaDB for {course} R{race_num}")
+        except Exception as e:
+            logger.warning(f"Failed to persist dream to ChromaDB: {e}")
+
+        # Write to two-phase dream memory (non-blocking, best-effort)
+        try:
+            import asyncio
+            from core_agent.core.dream_memory import write_memory
+            asyncio.get_event_loop().run_in_executor(
+                None, write_memory, "dreams",
+                f"{course} R{race_num} — {scenario[:40]}",
+                insight,
+                [course, f"R{race_num}", "dream"],
+            )
+        except Exception:
+            pass
+
+        return dream
+
+    async def generate_custom_dream(self, track: str, race_num: int, scenario_override: str) -> Dream:
+        snap = _load_snapshot()
+        # Find matching race in snapshot
+        target_race = None
+        events = snap.get("events", {})
+        for ev in events.values():
+            course = (ev.get("course") or ev.get("venue") or "").lower()
+            r_num = str(ev.get("raceNumber", ""))
+            if track.lower() in course and r_num == str(race_num):
+                target_race = ev
+                break
+
+        if not target_race:
+            # Fallback to a mock race structure if not found in live snapshot
+            target_race = {
+                "course": track.title(),
+                "raceNumber": str(race_num),
+                "runners": [{"name": "Mock Runner", "odds": "5.0", "jockey": "Mock Jockey", "trainer": "Mock Trainer"}]
+            }
+
+        course = target_race.get("course", track.title())
+        # Pick the favorite or first runner for context
+        runners = target_race.get("runners", [])
+        fav = runners[0] if runners else {}
+        
+        race_info = {
+            "course": course,
+            "raceNumber": str(race_num),
+            "jockey": fav.get("jockeyName", fav.get("jockey", "Unknown Jockey")),
+            "odds": fav.get("decimalOdds", fav.get("odds", "5.0")),
+            "form": "No recent form data.",
+            "name": fav.get("name", "Unknown Horse"),
+            "trainer": fav.get("trainerName", fav.get("trainer", "Unknown Trainer"))
+        }
+
+        scenario = scenario_override
+        insight = await _groq_insight(scenario, race_info)
+        prob_shift = calculate_scenario_shift(scenario, race_info, insight)
+
+        dream = Dream(
+            id=f"dream-{int(datetime.now().timestamp())}",
+            timestamp=datetime.now().isoformat(),
+            scenario=scenario,
+            probability_shift=prob_shift,
+            insight=insight,
+            vividness=round(random.uniform(0.4, 0.95), 2),
+            track=course,
+            race=str(race_num),
+        )
+        self.history.insert(0, dream)
+        if len(self.history) > 20:
+            self.history.pop()
+
+        # Parse decimal odds for win simulation
+        try:
+            odds_val = float(race_info["odds"])
+        except Exception:
+            odds_val = 5.0
+
+        # Simulate outcome (Bernoulli trial) based on odds and edge shift
+        won = random.random() < ((1.0 / max(odds_val, 1.01)) * (1.0 + dream.probability_shift))
+
+        # Record simulated result to LearningEngine
+        try:
+            from core_agent.skills.learning.engine import LearningEngine
+            from core_agent.core.strike_brain import brain
+            data_dir = brain.data_dir if brain else "./data"
+            le = LearningEngine(data_dir=data_dir)
+            le.record_dream_result(
+                track=course,
+                distance=1400,
+                odds=odds_val,
+                won=won
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record custom dream to learning engine: {e}")
+
+        # Store dream in local ChromaDB for semantic stress-test lookups
+        try:
+            from core_agent.core.strike_brain import brain
+            if brain and brain.memory and brain.memory._is_ready:
+                meta = {
+                    "type": "dream",
+                    "track": course.lower(),
+                    "race": str(race_num),
+                    "scenario": scenario,
+                    "probability_shift": dream.probability_shift,
+                    "vividness": dream.vividness,
+                    "timestamp": dream.timestamp,
+                }
+                brain.memory.add_form_insight(
+                    horse=f"dream_{course.lower()}_r{race_num}",
+                    insight=f"Scenario: {scenario} | Shift: {dream.probability_shift} | Vividness: {dream.vividness} | Insight: {insight}",
+                    metadata=meta,
+                )
+                logger.info(f"[DREAM] Persisted custom dream to ChromaDB for {course} R{race_num}")
+        except Exception as e:
+            logger.warning(f"Failed to persist custom dream to ChromaDB: {e}")
 
         # Write to two-phase dream memory (non-blocking, best-effort)
         try:

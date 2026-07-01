@@ -65,6 +65,27 @@ async def get_memory(query: str = "betting preferences, favourite tracks, risk t
     }
 
 
+@router.get("/context")
+async def get_agent_context(query: str, session_id: Optional[str] = None):
+    if not query:
+        raise HTTPException(400, "Query is required")
+    from core_agent.agent.context import ContextBuilder
+    builder = ContextBuilder()
+    sess_id = session_id or "anon_web"
+    context = await builder.build(
+        session_key=f"api:{sess_id}",
+        user_message=query,
+        history=[],
+        intent=None,
+    )
+    return {
+        "success": True,
+        "query": query,
+        "session_id": sess_id,
+        "context": context,
+    }
+
+
 @router.post("/kill")
 async def kill_switch():
     brain.set_emergency_stop(True)

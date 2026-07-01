@@ -6,6 +6,7 @@ Improves probability estimates over time using historical bet results.
 import json
 import logging
 import os
+import math
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
@@ -82,6 +83,36 @@ class LearningEngine:
         odds_bucket = "short" if odds < 4.0 else ("mid" if odds < 8.0 else "long")
         return f"{track.lower()}:{dist_bucket}:{odds_bucket}"
 
+    def record_dream_result(
+        self,
+        track: str,
+        distance: Optional[int],
+        odds: float,
+        won: bool,
+    ):
+        """Record a simulated/dreamed bet result to bootstrap segment statistics"""
+        key = self._get_segment_key(track, distance, odds)
+        if key not in self._stats:
+            self._stats[key] = {
+                "bets": 0,
+                "wins": 0,
+                "total_staked": 0.0,
+                "total_returned": 0.0,
+                "dream_bets": 0,
+                "dream_wins": 0,
+            }
+
+        stats = self._stats[key]
+        stats["dream_bets"] = stats.get("dream_bets", 0) + 1
+        if won:
+            stats["dream_wins"] = stats.get("dream_wins", 0) + 1
+
+        self._save()
+        logger.info(
+            f"[LEARN] Recorded dream result for {key}: "
+            f"wins={stats['dream_wins']}/{stats['dream_bets']}"
+        )
+
     def record_result(
         self,
         track: str,
@@ -91,7 +122,7 @@ class LearningEngine:
         won: bool,
         actual_return: float,
     ):
-        """Record a bet result to update segment statistics"""
+        """Record a real bet result to update segment statistics"""
         key = self._get_segment_key(track, distance, odds)
         if key not in self._stats:
             self._stats[key] = {
@@ -99,13 +130,16 @@ class LearningEngine:
                 "wins": 0,
                 "total_staked": 0.0,
                 "total_returned": 0.0,
+                "dream_bets": 0,
+                "dream_wins": 0,
             }
 
-        self._stats[key]["bets"] += 1
-        self._stats[key]["total_staked"] += stake
-        self._stats[key]["total_returned"] += actual_return
+        stats = self._stats[key]
+        stats["bets"] += 1
+        stats["total_staked"] += stake
+        stats["total_returned"] += actual_return
         if won:
-            self._stats[key]["wins"] += 1
+            stats["wins"] += 1
 
         self._save()
 
@@ -114,24 +148,44 @@ class LearningEngine:
     ) -> float:
         """
         Return a probability adjustment factor for a segment.
-        Only applied if MIN_SAMPLES bets have been recorded.
-        Returns a multiplier: 1.0 = no change, 1.3 = +30%, 0.7 = -30%
+        Uses Bayesian Beta-Binomial updates where simulated dreams act as 
+        priors that decay as real settled bets accumulate (Option A).
         """
         key = self._get_segment_key(track, distance, odds)
         stats = self._stats.get(key)
 
-        if not stats or stats["bets"] < MIN_SAMPLES:
-            return 1.0  # Not enough data yet
+        if not stats:
+            return 1.0
 
-        # Expected win rate at given odds
-        implied_prob = 1.0 / max(odds, 1.01)
-        actual_win_rate = stats["wins"] / stats["bets"]
+        real_bets = stats.get("bets", 0)
+        real_wins = stats.get("wins", 0)
+        dream_bets = stats.get("dream_bets", 0)
+        dream_wins = stats.get("dream_wins", 0)
 
-        # Adjustment = ratio of actual to implied
-        if implied_prob > 0:
-            adjustment = actual_win_rate / implied_prob
-        else:
-            adjustment = 1.0
+        # Apply exponential decay to dream priors as real bets accumulate (k=0.15)
+        decay = math.exp(-0.15 * real_bets)
+        effective_dream_bets = dream_bets * decay
+
+        # Total sample weight check: needs at least MIN_SAMPLES total weight
+        if (real_bets + effective_dream_bets) < MIN_SAMPLES:
+            return 1.0
+
+        # Prior distribution parameters (from decayed simulated outcomes)
+        alpha_prior = 1.0 + (dream_wins * decay)
+        beta_prior = 1.0 + ((dream_bets - dream_wins) * decay)
+
+        # Posterior distribution parameters (Prior + Likelihood)
+        alpha_post = alpha_prior + real_wins
+        beta_post = beta_prior + (real_bets - real_wins)
+
+        # Expected win rate from posterior
+        p_bayesian = alpha_post / (alpha_post + beta_post)
+
+        # Implied win rate at given odds
+        p_implied = 1.0 / max(odds, 1.01)
+
+        # Adjustment ratio
+        adjustment = p_bayesian / p_implied if p_implied > 0 else 1.0
 
         # Clamp to ±30%
         return max(1.0 - MAX_ADJUSTMENT, min(1.0 + MAX_ADJUSTMENT, adjustment))
