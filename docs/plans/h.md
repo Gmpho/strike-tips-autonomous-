@@ -202,7 +202,61 @@ strike-tips-hud.vercel.app  (Vite + React + Three.js)
 3. Phase 2: Qwen2.5-7B/14B synthesis on Workers AI for natural language race summaries
 4. Phase 2: Hermes Agent for autonomous bankroll management
 
+
 ---
 
-*Generated: June 28, 2026*
-*Architecture Version: 2.1*
+## Session Report — June 29, 2026
+
+### 1. Ollama CPU resource tuning & containers
+- **CPU limits allocation fix**: Scaled Ollama's CPU limits down from `4.0` to `3.0` cores (and `OLLAMA_NUM_THREADS=3`) in `docker-compose.yml`, leaving 1 core free for FastAPI and Playwright scrapers to prevent host thrashing.
+- **Engine memory optimization**: Decreased `OLLAMA_MAX_LOADED_MODELS` to `1` (prevents swapping), set `OLLAMA_KEEP_ALIVE=-1` (prevents cold starts), and set `OLLAMA_KV_CACHE_TYPE` to `q4_0` (reduced RAM usage).
+
+### 2. Local Ollama Tool Interception
+- **System Prompt Tool Injection**: Replaced placeholder system prompts for local Ollama models with the full `build_system_prompt()`.
+- **Text-based `TOOL:` Protocol**: Added instructions for local Ollama models to output a structured text line (e.g. `TOOL: get_odds_snapshot({"track": "greyville"})`) to simulate function-calling.
+- **Interception Engine ([ollama.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/agent/providers/ollama.py))**: Streams output, catches `TOOL:` lines, executes the respective Python function from `TOOL_REGISTRY`, and injects live results back.
+
+### 3. Dynamic Track Discovery & Cloud Fallbacks
+- **Dynamic Track Discovery**: Refactored `_try_snapshot_answer` in `task_router.py` to retrieve active tracks dynamically from the live snapshot (`get_snapshot()`), avoiding hardcoded lists and eliminating 60-second timeouts.
+- **Cloud Resiliency**: Raised `CLOUD_TIMEOUT` to 12s. Added a `for_cloud` prompt flag to bypass manual `TOOL:` text injection instructions for cloud models (Groq/Gemini), resolving Groq HTTP 400 errors. Built a fallback loop in `GeminiProvider` to traverse `gemini-1.5`, `2.0`, `2.5` flash versions.
+- **Query-aware context selection**: Prioritized events matching course names in user queries before truncating context data.
+
+### 4. Client-side WebLLM (WebGPU) Integration
+- **NPM Package**: Integrated `@mlc-ai/web-llm` in `package.json`.
+- **Engine Manager ([webllm.ts](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/strike-tips-hud/src/lib/webllm.ts))**: Built singleton lifecycle manager supporting Qwen 0.5B, Llama 1B, and Qwen 1.5B, with dynamic WebGPU checks (`navigator.gpu`).
+- **Wasm Multithreading Headers**: Added COOP (`same-origin`) and COEP (`require-corp`) headers to Vite dev server to prevent main-thread locking with `SharedArrayBuffer`.
+- **Disk Safe Storage**: Added IndexedDB/OPFS cache estimation gauges and `clearWebLLMStorage()` for storage purging.
+
+---
+
+## Session Report — June 30, 2026
+
+### 1. Asynchronous Web Worker Execution
+- **Web Worker Offloading ([webllm.worker.ts](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/strike-tips-hud/src/workers/webllm.worker.ts))**: Created background thread worker executing WebLLM completions.
+- **Three.js Performance Safety**: Kept weights loading, WGSL compilation, and text tokenization entirely off the main thread, maintaining 60fps rendering for Three.js animations on the UI.
+
+### 2. Multi-Session Storage & UX Simplification
+- **Session History Manager ([AIChat.tsx](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/strike-tips-hud/src/components/AIChat.tsx))**: Built localStorage-backed multi-sessions with "+ New Chat" triggers, dynamic title generation, and trash deletion.
+- **Layout Upgrades**: Expanded chat panel to 100% full-width.
+- **Mobile responsiveness**: Added a Framer Motion slide-out drawer backdrop for mobile session lists, and an auto-growing input `<textarea>`.
+- **Generation Interrupt / Stop Button**: Bound `AbortController` and `.interruptGenerate()` triggers to a red Send-to-Stop button.
+
+### 3. Telegram Session Model Picker & Backend Commands
+- **Command Router ([loop.py](file:///home/giftmpho/Kimi_Agent_Strike%20Tips%20Racing%20Bot/core_agent/agent/loop.py))**: Implemented `_handle_command` in `AgentLoop` to prevent `/` command crashes:
+  - `/model <name>`: Switch active model for the chat session.
+  - `/model`: View options list and current selection.
+  - `/status`: Connects directly to `brain.strike` to show account balance and P&L.
+  - `/scan`: Runs daily scan in the background.
+  - `/clear`: Empties chat history.
+- **Session Model Persistence**: Saved model override values in `session.metadata["preferred_model"]` so standard Telegram chat sessions keep user preferences.
+- **HUD Model Selection Sync**: Exposed the local backend Ollama models (`racing_qwen`, `lfm_racing`, `ds_racing`, etc.) inside the dropdown selector.
+
+### 4. Cache Reuse & Loading Screen Optimizations
+- **Bypassed Redundant Reloads**: Optimized `webllm.ts` to immediately return the loaded engine singleton when `currentModelId === modelId`, avoiding the 15-second cache re-loading delay on every prompt.
+- **Premium Streaming UI**: Integrated progress loaders and Thinking spinners directly inside the AI message bubble, removing duplicate loader nodes.
+
+---
+
+*Generated: July 1, 2026*
+*Architecture Version: 2.3*
+

@@ -1,35 +1,98 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, User, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
-import { checkWebGPUSupport, getWebLLMEngine } from '../lib/webllm';
+import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
 
-const STORAGE_KEY = 'strike_chat_messages';
+const SESSIONS_STORAGE_KEY = 'strike_chat_sessions';
+const ACTIVE_SESSION_KEY = 'strike_active_chat_session';
+
+interface Session {
+  id: string;
+  title: string;
+  timestamp: number;
+}
+
+interface Message {
+  role: 'user' | 'ai';
+  content: string;
+  timestamp: string;
+  activity?: string;
+}
 
 export const AIChat: React.FC = () => {
-  const [messages, setMessages] = useState<{role: 'user' | 'ai', content: string, timestamp: string, activity?: string}[]>(() => {
+  // 1. Sessions State Management
+  const [sessions, setSessions] = useState<Session[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
+      const saved = localStorage.getItem(SESSIONS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [{ id: 'default', title: 'New Chat Session', timestamp: Date.now() }];
   });
-  const [sessions] = useState<{id: string, title: string}[]>([
-    { id: '1', title: 'Race Triage - Kelso' },
-    { id: '2', title: 'Bankroll Strategy' },
-  ]);
+
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    const lastActive = localStorage.getItem(ACTIVE_SESSION_KEY);
+    return lastActive || 'default';
+  });
+
+  // 2. Messages State Management (by Session ID)
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const [webGpuSupported, setWebGpuSupported] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile Drawer State
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const actIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sync active view support
   useEffect(() => {
     checkWebGPUSupport().then(supported => {
       setWebGpuSupported(supported);
     });
   }, []);
+
+  // Sync session list to localStorage
+  useEffect(() => {
+    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+  }, [sessions]);
+
+  // Load messages whenever activeSessionId changes
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`strike_chat_messages_${activeSessionId}`);
+      setMessages(saved ? JSON.parse(saved) : []);
+    } catch {
+      setMessages([]);
+    }
+    // Sync active session ID to localStorage
+    localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
+  }, [activeSessionId]);
+
+  // Save messages whenever they change
+  useEffect(() => {
+    if (activeSessionId) {
+      try {
+        localStorage.setItem(`strike_chat_messages_${activeSessionId}`, JSON.stringify(messages));
+      } catch {}
+    }
+  }, [messages, activeSessionId]);
+
+  // Scroll to bottom
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: 'smooth'
+    });
+  }, [messages, currentActivity]);
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -46,13 +109,76 @@ export const AIChat: React.FC = () => {
     return ["🧠 Strike Brain processing...", "⚡ Routing to specialist agent...", "📡 Awaiting model response..."];
   };
 
+  // Create New Session
+  const createNewSession = () => {
+    const newId = `session_${Date.now()}`;
+    const newSession: Session = {
+      id: newId,
+      title: 'New Chat Session',
+      timestamp: Date.now()
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newId);
+  };
+
+  // Delete Session
+  const deleteSession = (idToDelete: string) => {
+    setSessions(prev => {
+      const updated = prev.filter(s => s.id !== idToDelete);
+      if (activeSessionId === idToDelete && updated.length > 0) {
+        setActiveSessionId(updated[0].id);
+      }
+      return updated;
+    });
+    localStorage.removeItem(`strike_chat_messages_${idToDelete}`);
+  };
+
+  // Clear Active Session Messages
+  const clearActiveSession = () => {
+    setMessages([]);
+    localStorage.removeItem(`strike_chat_messages_${activeSessionId}`);
+  };
+
+  // Stop Generation
+  const stopGeneration = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (selectedModel.startsWith('webllm-')) {
+      try {
+        const engine = await getWebLLMEngine(selectedModel);
+        await engine.interruptGenerate();
+      } catch (e) {
+        console.warn("Interrupting WebLLM failed:", e);
+      }
+    }
+    if (actIntervalRef.current) {
+      clearInterval(actIntervalRef.current);
+    }
+    setLoading(false);
+    setCurrentActivity(null);
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     const userMsg = input;
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setMessages(prev => [...prev, { role: 'user', content: userMsg, timestamp: now }]);
+    
+    // Create new message array
+    const updatedMessages: Message[] = [...messages, { role: 'user', content: userMsg, timestamp: now }];
+    setMessages(updatedMessages);
     setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '48px';
+    }
     setLoading(true);
+
+    // Auto-generate session title if this is the first message
+    if (messages.length === 0) {
+      const displayTitle = userMsg.length > 22 ? userMsg.slice(0, 20) + '...' : userMsg;
+      setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: displayTitle } : s));
+    }
 
     const activities = getActivities(userMsg);
     setCurrentActivity(activities[0]);
@@ -65,9 +191,13 @@ export const AIChat: React.FC = () => {
         clearInterval(actInterval);
       }
     }, 2000);
+    actIntervalRef.current = actInterval;
 
     // Add empty AI message that we'll stream into
     setMessages(prev => [...prev, { role: 'ai', content: '', timestamp: now }]);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     if (selectedModel.startsWith('webllm-')) {
       try {
@@ -79,11 +209,20 @@ export const AIChat: React.FC = () => {
           if (configRes.ok) {
             const config = await configRes.json();
             balanceInfo = config.bankroll?.total_bankroll?.toString() || '1000';
-            tracksList = config.tracks?.join(', ') || 'None';
+            const tracksVal = config.tracks;
+            if (Array.isArray(tracksVal)) {
+              tracksList = tracksVal.join(', ');
+            } else if (typeof tracksVal === 'string') {
+              tracksList = tracksVal;
+            } else if (tracksVal && typeof tracksVal === 'object') {
+              tracksList = Object.keys(tracksVal).join(', ');
+            }
           }
         } catch (e) {
           console.warn('[WebLLM Context Fetch Failed]', e);
         }
+
+        if (controller.signal.aborted) return;
 
         const systemPrompt = `You are Strike Tips Racing AI, a helpful, private on-device assistant. Answer concisely and accurately.
 Today's Balance: R${balanceInfo}.
@@ -101,12 +240,15 @@ Rules:
 
         // Get the engine and run
         const engine = await getWebLLMEngine(selectedModel, (p) => {
+          if (controller.signal.aborted) return;
           setMessages(prev => prev.map((m, i) =>
             i === prev.length - 1 && m.role === 'ai'
               ? { ...m, content: `Loading: ${p.text} (${Math.round(p.progress * 100)}%)` }
               : m
           ));
         });
+
+        if (controller.signal.aborted) return;
 
         clearInterval(actInterval);
         setCurrentActivity('🧠 Local GPU Processing...');
@@ -118,15 +260,14 @@ Rules:
             : m
         ));
 
-        const chatHistory = messages.map(m => ({
+        const chatHistory = updatedMessages.map(m => ({
           role: (m.role === 'ai' ? 'assistant' : 'user') as 'assistant' | 'user',
           content: m.content
         }));
-        // Prepend system prompt
+
         const chatMessages = [
           { role: 'system' as const, content: systemPrompt },
-          ...chatHistory,
-          { role: 'user' as const, content: userMsg }
+          ...chatHistory
         ];
 
         const chatCompletion = await engine.chat.completions.create({
@@ -135,6 +276,7 @@ Rules:
         });
 
         for await (const chunk of chatCompletion) {
+          if (controller.signal.aborted) break;
           const delta = chunk.choices[0]?.delta?.content || '';
           if (delta) {
             setMessages(prev => prev.map((m, i) =>
@@ -148,21 +290,50 @@ Rules:
         setLastModelUsed(selectedModel);
 
       } catch (err: any) {
+        if (controller.signal.aborted) {
+          console.log("[WebLLM] Generation stopped by user.");
+          return;
+        }
         console.error('[WebLLM Error]', err);
         clearInterval(actInterval);
+        resetWebLLMEngine();
+
+        const errMsg = String(err.message || err).toLowerCase();
+        let displayError = `WebLLM Error: ${err.message || err}`;
+
+        if (errMsg.includes("quota") || errMsg.includes("storage")) {
+          displayError = "💾 **WebLLM Storage Error**: Exceeded browser disk space quota. The model weights are too large to save. " +
+            "Please clear storage space or click 'Reset Browser AI Storage' in Settings to clear old cache files, " +
+            "or switch to the lighter Qwen 2.5 0.5B model.";
+        } else if (
+          errMsg.includes("device") || 
+          errMsg.includes("instance") || 
+          errMsg.includes("lost") || 
+          errMsg.includes("mapasync") ||
+          errMsg.includes("gpubuffer")
+        ) {
+          displayError = "🔌 **WebGPU Device Lost**: Your graphics card ran out of VRAM or crashed while running the model. " +
+            "Please refresh this page and select the lighter **Qwen 2.5 0.5B** model to avoid crashing your GPU.";
+        } else if (errMsg.includes("json")) {
+          displayError = "⚠️ **WebLLM Cache Corruption**: Detected a corrupted download config. " +
+            "Please go to Settings and click 'Reset Browser AI Storage' to clear the corrupted cache and start fresh.";
+        }
+
         setMessages(prev => prev.map((m, i) =>
           i === prev.length - 1 && m.role === 'ai'
-            ? { ...m, content: `WebLLM Error: ${err.message || err}` }
+            ? { ...m, content: displayError }
             : m
         ));
       } finally {
         clearInterval(actInterval);
         setLoading(false);
         setCurrentActivity(null);
+        abortControllerRef.current = null;
       }
       return;
     }
 
+    // Cloud / Auto-Router API fetch
     try {
       const modelVal = selectedModel !== 'auto' ? selectedModel : undefined;
       const modelUsed = modelVal || 'strike-tips';
@@ -171,8 +342,12 @@ Rules:
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
         body: JSON.stringify({
-          messages: [{ role: 'user', content: userMsg }],
+          messages: updatedMessages.map(m => ({
+            role: m.role === 'ai' ? 'assistant' : 'user',
+            content: m.content
+          })),
           model: modelVal,
           stream: true,
         }),
@@ -188,40 +363,53 @@ Rules:
       const decoder = new TextDecoder();
       let buffer = '';
 
-      const readLoop = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) { clearInterval(actInterval); setCurrentActivity(null); break; }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') { clearInterval(actInterval); setCurrentActivity(null); continue; }
-            try {
-              const parsed = JSON.parse(payload);
-              const delta = parsed.choices?.[0]?.delta?.content || '';
-              const finish = parsed.choices?.[0]?.finish_reason;
-              if (delta) {
-                setMessages(prev => prev.map((m, i) =>
-                  i === prev.length - 1 && m.role === 'ai'
-                    ? { ...m, content: m.content + delta, activity: modelUsed }
-                    : m
-                ));
-              }
-              if (finish === 'stop') {
-                const modelName = parsed.model || modelUsed;
-                setLastModelUsed(modelName);
-                clearInterval(actInterval);
-                setCurrentActivity(null);
-              }
-            } catch {}
-          }
+      while (true) {
+        if (controller.signal.aborted) {
+          await reader.cancel();
+          break;
         }
-      };
-      await readLoop();
-    } catch {
+        const { done, value } = await reader.read();
+        if (done) { 
+          clearInterval(actInterval); 
+          setCurrentActivity(null); 
+          break; 
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') { 
+            clearInterval(actInterval); 
+            setCurrentActivity(null); 
+            continue; 
+          }
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            const finish = parsed.choices?.[0]?.finish_reason;
+            if (delta) {
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 && m.role === 'ai'
+                  ? { ...m, content: m.content + delta, activity: modelUsed }
+                  : m
+              ));
+            }
+            if (finish === 'stop') {
+              const modelName = parsed.model || modelUsed;
+              setLastModelUsed(modelName);
+              clearInterval(actInterval);
+              setCurrentActivity(null);
+            }
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      if (controller.signal.aborted) {
+        console.log("[Chat] Generation stopped by user.");
+        return;
+      }
       clearInterval(actInterval);
       setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === 'ai'
@@ -232,64 +420,150 @@ Rules:
       clearInterval(actInterval);
       setLoading(false);
       setCurrentActivity(null);
+      abortControllerRef.current = null;
     }
   };
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [messages, currentActivity]);
+  const renderSidebarContents = () => (
+    <>
+      <button 
+        onClick={() => { createNewSession(); setIsSidebarOpen(false); }}
+        className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/25 border-purple-500/40 rounded-xl text-purple-300 hover:text-white transition-all text-xs font-black uppercase tracking-wider mb-3 shrink-0"
+      >
+        <Plus className="w-4 h-4" /> New Chat
+      </button>
+      
+      <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 custom-scrollbar min-h-0">
+        {sessions.map(s => (
+          <div key={s.id} className="group relative flex items-center justify-between rounded-xl overflow-hidden">
+            <button 
+              onClick={() => { setActiveSessionId(s.id); setIsSidebarOpen(false); }} 
+              className={`flex-1 text-xs text-left px-3 py-2.5 truncate font-bold transition-all ${
+                activeSessionId === s.id 
+                  ? 'text-white bg-purple-500/25 border border-purple-500/30' 
+                  : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
+              } rounded-xl`}
+            >
+              {s.title}
+            </button>
+            {sessions.length > 1 && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                className="absolute right-2 p-1.5 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 rounded-lg border border-white/5"
+                title="Delete chat session"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
 
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-50))); } catch {}
-  }, [messages]);
+      <div className="pt-4 border-t border-white/10 shrink-0 flex flex-col gap-2 mt-auto">
+        <button 
+          onClick={clearActiveSession} 
+          className="w-full py-2.5 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-bold transition-all uppercase tracking-wider"
+        >
+          Clear Chat Messages
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex h-full min-h-[500px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] w-full"
+      className="flex h-full min-h-[500px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] w-full relative"
     >
-      {/* Session Sidebar — Hidden on mobile */}
-      <div className="hidden md:flex w-44 border-r border-white/10 p-4 bg-black/20 flex-col gap-2 shrink-0">
-        <div className="text-xs font-black uppercase text-purple-500 mb-2 tracking-widest">Sessions</div>
-        {sessions.map(s => (
-          <button key={s.id} className="text-sm text-left text-slate-400 hover:text-white hover:bg-white/5 p-2 rounded-lg truncate transition-all">
-            {s.title}
-          </button>
-        ))}
-        <div className="mt-auto flex flex-col gap-2 pt-4 border-t border-white/10">
-          <button className="text-xs font-bold text-slate-600 hover:text-purple-400">Export Logs</button>
-          <button onClick={() => { setMessages([]); localStorage.removeItem(STORAGE_KEY); }} className="text-xs font-bold text-red-500/60 hover:text-red-500">Clear Session</button>
-        </div>
+      {/* 1. Desktop Session Sidebar */}
+      <div className="hidden md:flex w-52 border-r border-white/10 p-4 bg-black/20 flex-col gap-2 shrink-0">
+        <div className="text-xs font-black uppercase text-purple-500 mb-2 tracking-widest px-1">Sessions</div>
+        {renderSidebarContents()}
       </div>
 
+      {/* 2. Mobile Session Drawer (Backdrop + Menu) */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-40"
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ x: '-100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="md:hidden fixed inset-y-0 left-0 w-64 bg-[#0a0712] border-r border-white/10 p-4 z-50 flex flex-col gap-2"
+          >
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <span className="text-xs font-black uppercase text-purple-500 tracking-widest px-1">Sessions</span>
+              <button onClick={() => setIsSidebarOpen(false)} className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {renderSidebarContents()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 3. Main Chat Panel */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden">
-            <div className="flex items-center gap-3 shrink-0">
-              <Bot className="w-5 h-5 text-purple-400" />
+        {/* Chat Header */}
+        <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {/* Menu toggle for mobile history drawer */}
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden p-2 hover:bg-white/5 border border-white/10 rounded-xl text-slate-300 transition-colors shrink-0"
+                title="View sessions history"
+              >
+                <Menu className="w-4.5 h-4.5" />
+              </button>
+              
+              <Bot className="w-5 h-5 text-purple-400 shrink-0" />
               <span className="text-sm font-black uppercase tracking-widest text-white truncate">Strike Command</span>
             </div>
+
             {currentActivity && (
                 <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center gap-2 animate-pulse min-w-0">
                     <Loader2 className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
                     <span className="text-xs font-bold text-purple-300 uppercase truncate">{currentActivity}</span>
                 </div>
             )}
+            
             <div className="flex gap-2 items-center shrink-0">
               <div className="px-2 py-1 bg-purple-900/30 border border-purple-500/50 rounded text-xs font-bold text-purple-300 uppercase">
-                {currentActivity ? 'RUNNING' : 'ACTIVE'}
+                {loading ? 'RUNNING' : 'ACTIVE'}
               </div>
               {lastModelUsed && (
                 <div className="hidden sm:block px-2 py-1 bg-emerald-900/30 border border-emerald-500/40 rounded text-xs font-bold text-emerald-300 uppercase">
                   {lastModelUsed}
                 </div>
               )}
+              {/* Mobile and Desktop Accessible Clean/Clear Chat Button */}
+              <button 
+                onClick={clearActiveSession}
+                title="Clear current chat messages"
+                className="p-2 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 rounded-xl text-red-400 hover:text-red-300 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
         </div>
         
-        <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar">
+        {/* Messages view */}
+        <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10">
             {messages.length === 0 && (
-                <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider">
+                <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
                     Awaiting parameters...
                 </div>
             )}
@@ -300,49 +574,91 @@ Rules:
               key={i} 
               className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : ''}`}
             >
-                <div className="text-xs text-slate-600 uppercase px-2">{m.timestamp}</div>
+                <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
                 <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
                     {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1" />}
-                    <div className={`p-4 rounded-2xl max-w-[85%] break-words ${m.role === 'user' ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto' : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'}`}>
-                      {m.content}
+                    <div className={`p-4 rounded-2xl max-w-[85%] break-words leading-relaxed ${
+                      m.role === 'user' 
+                        ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto border border-purple-500/30' 
+                        : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'
+                    }`}>
+                      {m.role === 'ai' && m.content === '' && loading && i === messages.length - 1 ? (
+                        <div className="flex items-center gap-2 text-slate-400 text-xs py-1 px-0.5">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                          <span className="animate-pulse">Thinking...</span>
+                        </div>
+                      ) : m.role === 'ai' && (m.content.startsWith('Loading:') || m.content.startsWith('Initializing')) && i === messages.length - 1 ? (
+                        <div className="flex flex-col gap-2.5 min-w-[240px] py-1">
+                          <div className="flex items-center justify-between text-xs text-purple-400 font-bold">
+                            <span className="flex items-center gap-1.5">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              GPU AI Core Loading...
+                            </span>
+                            <span>
+                              {m.content.includes('%') ? m.content.match(/\d+%/)?.[0] || '' : ''}
+                            </span>
+                          </div>
+                          <div className="w-full bg-white/5 border border-white/5 rounded-full h-2 overflow-hidden">
+                            <motion.div 
+                              className="bg-gradient-to-r from-purple-500 to-indigo-500 h-full rounded-full"
+                              initial={{ width: 0 }}
+                              animate={{ 
+                                width: m.content.includes('%') 
+                                  ? `${parseInt(m.content.match(/\d+/)?.[0] || '0')}%` 
+                                  : '30%' 
+                              }}
+                              transition={{ duration: 0.2 }}
+                            />
+                          </div>
+                          <span className="text-[11px] text-slate-400 leading-normal italic font-medium">
+                            {m.content}
+                          </span>
+                        </div>
+                      ) : (
+                        m.content
+                      )}
                     </div>
                     {m.role === 'user' && <User className="w-5 h-5 text-slate-500 shrink-0 mt-1" />}
                 </div>
             </motion.div>
             ))}
-            {loading && (
-              <div className="flex gap-3">
-                <Bot className="w-5 h-5 text-purple-500 animate-pulse" />
-                <Loader2 className="w-5 h-5 animate-spin text-purple-500" />
-              </div>
-            )}
         </div>
 
-        <div className="p-4 border-t border-white/10 bg-black/40 flex flex-col sm:flex-row gap-3">
+        {/* Input box */}
+        <div className="p-4 border-t border-white/10 bg-black/40 flex flex-col sm:flex-row gap-3 shrink-0">
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 w-full sm:w-auto min-h-[40px]"
+                className="bg-[#0c0817] border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 w-full sm:w-auto min-h-[48px]"
               >
-                <option value="auto" className="bg-black">⚡ Auto Router</option>
-                <optgroup label="☁️ Cloud">
-                  <option value="groq" className="bg-black">Groq Llama 70B</option>
-                  <option value="gemini" className="bg-black">Gemini Flash</option>
+                <option value="auto" className="bg-[#0c0817]">⚡ Auto Router</option>
+                <optgroup label="☁️ Cloud" className="bg-[#0c0817]">
+                  <option value="groq" className="bg-[#0c0817]">Groq Llama 70B</option>
+                  <option value="gemini" className="bg-[#0c0817]">Gemini Flash</option>
                 </optgroup>
-                <optgroup label="🌐 Browser Local (WebGPU)">
-                  <option value="webllm-qwen-0.5b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                <optgroup label="🤖 Local Backend (Ollama)" className="bg-[#0c0817]">
+                  <option value="racing_qwen:latest" className="bg-[#0c0817]">Racing Qwen</option>
+                  <option value="lfm_racing:latest" className="bg-[#0c0817]">LFM Racing (Thinking)</option>
+                  <option value="ds_racing:latest" className="bg-[#0c0817]">DS Racing (DeepSeek R1)</option>
+                  <option value="qwen3.5:0.8b" className="bg-[#0c0817]">Qwen3.5 0.8B</option>
+                  <option value="functiongemma:270m" className="bg-[#0c0817]">FunctionGemma 270M</option>
+                </optgroup>
+                <optgroup label="🌐 Browser Local (WebGPU)" className="bg-[#0c0817]">
+                  <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Qwen 2.5 0.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
                   </option>
-                  <option value="webllm-llama-1b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                  <option value="webllm-llama-1b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Llama 3.2 1B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
                   </option>
-                  <option value="webllm-qwen-1.5b" className="bg-black text-xs" disabled={!webGpuSupported}>
+                  <option value="webllm-qwen-1.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
                   </option>
                 </optgroup>
               </select>
-            <div className="flex gap-2 flex-1 w-full min-w-0">
+              
+            <div className="flex gap-2 flex-1 w-full min-w-0 items-start">
               <textarea 
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -353,21 +669,31 @@ Rules:
                 }}
                 placeholder="Type command..."
                 aria-label="Chat input"
-                className="flex-1 bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-colors min-h-[40px] max-h-[150px] resize-none overflow-y-auto"
-                rows={1}
+                className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all min-h-[48px] max-h-[150px] resize-none overflow-y-auto custom-scrollbar leading-relaxed"
+                style={{ height: '48px' }}
                 onInput={(e) => {
                   const target = e.target as HTMLTextAreaElement;
-                  target.style.height = 'auto';
-                  target.style.height = `${target.scrollHeight}px`;
+                  target.style.height = '48px';
+                  target.style.height = `${Math.min(target.scrollHeight, 150)}px`;
                 }}
               />
-              <button 
-                onClick={sendMessage} 
-                aria-label="Send message"
-                className="bg-purple-600 px-4 rounded-xl hover:bg-purple-500 transition-all font-black uppercase text-sm tracking-wider shadow-[0_0_15px_rgba(168,85,247,0.3)] shrink-0 min-h-[40px] self-start"
-              >
-                Send
-              </button>
+              {loading ? (
+                <button 
+                  onClick={stopGeneration} 
+                  aria-label="Stop generation"
+                  className="bg-red-600 hover:bg-red-500 px-4 rounded-xl transition-all font-black uppercase text-sm tracking-wider shadow-[0_0_15px_rgba(239,68,68,0.3)] shrink-0 min-h-[48px] flex items-center justify-center gap-1.5 self-start text-white"
+                >
+                  <StopCircle className="w-4 h-4" /> Stop
+                </button>
+              ) : (
+                <button 
+                  onClick={sendMessage} 
+                  aria-label="Send message"
+                  className="bg-purple-600 hover:bg-purple-500 px-4 rounded-xl transition-all font-black uppercase text-sm tracking-wider shadow-[0_0_15px_rgba(168,85,247,0.3)] shrink-0 min-h-[48px] flex items-center justify-center self-start text-white"
+                >
+                  Send
+                </button>
+              )}
             </div>
         </div>
       </div>

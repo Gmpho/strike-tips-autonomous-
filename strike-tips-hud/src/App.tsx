@@ -34,7 +34,11 @@ const VALID_VIEWS = [
 
 function getViewFromPath(): string {
   const path = window.location.pathname.slice(1); // remove leading /
-  return VALID_VIEWS.includes(path) ? path : 'dashboard';
+  if (VALID_VIEWS.includes(path)) {
+    return path;
+  }
+  const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('strike_active_view') : null;
+  return saved && VALID_VIEWS.includes(saved) ? saved : 'dashboard';
 }
 
 export const App: React.FC = () => {
@@ -204,7 +208,7 @@ export const App: React.FC = () => {
           <div className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel backdrop-blur-2xl transition-all duration-300 ease-in-out z-30`}>
             <Sidebar
               activeView={activeView}
-              setActiveView={setActiveView}
+              setActiveView={navigate}
               isCollapsed={isSidebarCollapsed}
               onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             />

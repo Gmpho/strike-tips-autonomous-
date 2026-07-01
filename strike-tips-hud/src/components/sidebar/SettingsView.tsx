@@ -3,7 +3,7 @@ import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon
 import { motion } from 'framer-motion';
 import { apiFetch } from '../../lib/api-fetch';
 import { initAudio, playAlertTone, playValueBetTone } from '../../engine/audio';
-import { checkWebGPUSupport } from '../../lib/webllm';
+import { checkWebGPUSupport, getStorageEstimate, clearWebLLMStorage, StorageEstimateInfo } from '../../lib/webllm';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -27,10 +27,37 @@ export const SettingsView: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [webGpuSupported, setWebGpuSupported] = useState(false);
+  const [storageEstimate, setStorageEstimate] = useState<StorageEstimateInfo | null>(null);
+  const [clearingStorage, setClearingStorage] = useState(false);
+
+  const loadStorageInfo = () => {
+    getStorageEstimate().then(est => setStorageEstimate(est));
+  };
 
   useEffect(() => {
     checkWebGPUSupport().then(supported => setWebGpuSupported(supported));
+    loadStorageInfo();
   }, []);
+
+  const handleResetStorage = async () => {
+    if (!window.confirm("Are you sure you want to delete all cached WebGPU model files? You will need to redownload them when starting a local browser session.")) {
+      return;
+    }
+    setClearingStorage(true);
+    try {
+      const success = await clearWebLLMStorage();
+      if (success) {
+        alert("WebGPU Local Storage successfully reset!");
+      } else {
+        alert("Reset completed (storage was already empty).");
+      }
+      loadStorageInfo();
+    } catch (e: any) {
+      alert("Failed to reset WebGPU storage: " + (e.message || e));
+    } finally {
+      setClearingStorage(false);
+    }
+  };
 
   // Load persisted settings from backend on mount
   useEffect(() => {
@@ -292,6 +319,44 @@ export const SettingsView: React.FC = () => {
                   </optgroup>
                 </select>
               </div>
+
+              {/* Storage estimate gauge */}
+              {storageEstimate && storageEstimate.isSupported && (
+                <div className="p-5 bg-theme-secondary/20 rounded-2xl border border-theme text-xs space-y-3">
+                  <div className="flex justify-between font-black text-theme-primary uppercase text-[10px] tracking-wider">
+                    <span>Browser Storage Quota</span>
+                    <span className={storageEstimate.percentage > 80 ? "text-rose-400 font-black animate-pulse" : "text-blue-400"}>
+                      {storageEstimate.percentage}% ({Math.round(storageEstimate.usage / (1024 * 1024))} MB used)
+                    </span>
+                  </div>
+                  <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden border border-white/5">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${storageEstimate.percentage > 80 ? "bg-rose-500" : "bg-blue-500"}`} 
+                      style={{ width: `${storageEstimate.percentage}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[9px] text-theme-secondary font-bold">
+                    <span>Free space: {Math.round(storageEstimate.free / (1024 * 1024))} MB</span>
+                    <span>Qwen 1.5B requires ~1.1 GB</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Reset Storage Button */}
+              <div className="flex items-center justify-between p-5 bg-rose-950/20 rounded-2xl border border-rose-500/20">
+                <div>
+                  <div className="text-rose-300 font-black uppercase text-sm">Reset Browser AI Storage</div>
+                  <div className="text-[10px] text-slate-500 font-bold mt-1">Purge cached weights to resolve download glitches</div>
+                </div>
+                <button
+                  onClick={handleResetStorage}
+                  disabled={clearingStorage}
+                  className="bg-rose-900/60 hover:bg-rose-800 border border-rose-500/30 text-rose-200 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shrink-0 min-h-[36px] disabled:opacity-50"
+                >
+                  {clearingStorage ? "Resetting..." : "Reset"}
+                </button>
+              </div>
+
               <div className="flex items-center justify-between p-5 bg-theme-secondary/30 rounded-2xl border border-theme">
                 <div>
                   <div className="text-theme-primary font-black uppercase text-sm">Strict Local</div>

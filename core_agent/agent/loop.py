@@ -1,12 +1,16 @@
 from __future__ import annotations
+import asyncio
+import logging
 from core_agent.bus.queue import MessageBus
 from core_agent.bus.events import InboundMessage, OutboundMessage, TurnState
-from core_agent.agent.session import SessionManager
+from core_agent.agent.session import SessionManager, Session
 from core_agent.agent.context import ContextBuilder
 from core_agent.agent.runner import AgentRunner
 from core_agent.agent.providers.task_router import TaskRouter
 from core_agent.agent.prompts import build_system_prompt
 from core_agent.core.strike_brain import brain
+
+logger = logging.getLogger("agent-loop")
 
 
 class AgentLoop:
@@ -49,6 +53,8 @@ class AgentLoop:
             elif state == TurnState.RUN:
                 full_response = ""
                 model_override = getattr(msg, "model", None)
+                if not model_override or model_override == "auto":
+                    model_override = session.metadata.get("preferred_model")
                 async for chunk in self.runner.run_stream(session.messages, None, model_override=model_override):
                     full_response += chunk
                     await self.bus.publish_outbound(OutboundMessage(
@@ -85,3 +91,112 @@ class AgentLoop:
 
     def _is_command(self, text: str) -> bool:
         return text.strip().startswith("/")
+
+    async def _handle_command(self, msg: InboundMessage, session: Session) -> None:
+        cmd_text = msg.content.strip()
+        parts = cmd_text.split()
+        cmd = parts[0].lower()
+        args = parts[1:]
+
+        response_content = ""
+
+        if cmd == "/start" or cmd == "/help":
+            response_content = (
+                "🏇 *Strike Tips Agent*\n\n"
+                "I'm your AI Racing Data Analyst. Just chat with me or use commands:\n\n"
+                "• `/model <name>` — Switch active model for this chat session\n"
+                "• `/model` — Show current selected model & all options\n"
+                "• `/status` — Quick account & bankroll summary\n"
+                "• `/scan` — Start today's full racing scan\n"
+                "• `/clear` — Reset conversation history\n"
+                "• `/help` — Show this help menu"
+            )
+
+        elif cmd == "/clear":
+            session.history.clear()
+            response_content = "🧹 Chat history cleared for this session."
+
+        elif cmd == "/model":
+            current_model = session.metadata.get("preferred_model") or "auto"
+            
+            if not args:
+                response_content = (
+                    "🧠 *Select active model*\n"
+                    "To switch model, reply with `/model <name>`:\n\n"
+                    "• `/model auto` — ⚡ Auto Router (optimal)\n"
+                    "• `/model groq` — ☁️ Groq Llama 70B\n"
+                    "• `/model gemini` — ☁️ Gemini Flash\n"
+                    "• `/model racing_qwen` — 🤖 Racing Qwen\n"
+                    "• `/model lfm_racing` — 🤖 LFM Racing (Thinking)\n"
+                    "• `/model ds_racing` — 🤖 DS Racing (DeepSeek R1)\n"
+                    "• `/model qwen3.5` — 🤖 Qwen3.5 0.8B\n"
+                    "• `/model functiongemma` — 🤖 FunctionGemma 270M\n\n"
+                    f"Current selection: *{current_model}*"
+                )
+            else:
+                choice = args[0].lower()
+                mapping = {
+                    "auto": "auto",
+                    "groq": "groq",
+                    "gemini": "gemini",
+                    "racing_qwen": "racing_qwen:latest",
+                    "racing-qwen": "racing_qwen:latest",
+                    "lfm_racing": "lfm_racing:latest",
+                    "lfm-racing": "lfm_racing:latest",
+                    "lfm": "lfm_racing:latest",
+                    "ds_racing": "ds_racing:latest",
+                    "ds-racing": "ds_racing:latest",
+                    "ds": "ds_racing:latest",
+                    "deepseek": "ds_racing:latest",
+                    "qwen3.5": "qwen3.5:0.8b",
+                    "qwen": "qwen3.5:0.8b",
+                    "functiongemma": "functiongemma:270m",
+                    "gemma": "functiongemma:270m"
+                }
+                
+                mapped = mapping.get(choice)
+                if mapped:
+                    session.metadata["preferred_model"] = mapped
+                    response_content = f"✅ Active model switched to *{mapped}*. Subsequent requests in this session will use this model."
+                else:
+                    response_content = f"❌ Unknown model: *{choice}*. Type `/model` to see the list of valid models."
+
+        elif cmd == "/status":
+            if not brain.strike:
+                response_content = "❌ System not initialized."
+            else:
+                try:
+                    s = brain.strike.get_bankroll_status()
+                    response_content = (
+                        f"💰 *Account Summary*\n\n"
+                        f"• Balance: *R{s.get('current_bankroll', 0.0):.2f}*\n"
+                        f"• P&L: *R{s.get('total_profit_loss', 0.0):.2f}*\n"
+                        f"• Open Bets: *{s.get('open_bets', 0)}*\n"
+                        f"• Drawdown: *{s.get('drawdown_percent', 0.0):.1f}%*"
+                    )
+                except Exception as e:
+                    response_content = f"❌ Error retrieving status: {e}"
+
+        elif cmd == "/scan":
+            if not brain.strike:
+                response_content = "❌ System not initialized."
+            else:
+                async def _run_scan_bg():
+                    try:
+                        await brain.strike.run_daily_scan()
+                    except Exception as e:
+                        logger.error("Scan command error: %s", e)
+                
+                asyncio.create_task(_run_scan_bg())
+                response_content = "🚀 Starting today's full racing scan in background..."
+
+        else:
+            response_content = f"❓ Unknown command: *{cmd}*. Type `/help` to see list of valid commands."
+
+        await self.bus.publish_outbound(OutboundMessage(
+            session_key=msg.session_key,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=response_content,
+            done=True,
+        ))

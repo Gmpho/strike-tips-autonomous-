@@ -512,5 +512,18 @@ pytest core_agent/tests/test_analyzer.py -v
 
 ---
 
+### 💾 Browser AI Storage & GPU Safeguards
+- **Quota Validation**: Call `navigator.storage.estimate()` before downloading weights. Warn if free space is less than 1.5GB for 1B+ models.
+- **Storage Persistence**: Call `navigator.storage.persist()` on app boot to secure cached weights against browser cleanup routines.
+- **Storage Recovery Trigger**: Expose a clear UI trigger that recursively clears OPFS (`getDirectory().removeEntry(...)`) to purge corrupted model shards when JSON parse errors happen.
+- **GPU Loss Fallback UI**: Intercept WebGPU context resets and guide the user to reload the page with a less memory-intensive model.
+
+### 🌐 Web AI Architecture & Framework Rules
+- **WebLLM (MLC-AI)**: Use for browser-local LLM chat (Llama, Qwen) where tokens/sec generation throughput and native tool/schema calling is required.
+- **Transformers.js (ONNX)**: Use for general embedding generation, Whisper transcription, or CLIP image vector classification.
+- **MediaPipe (LiteRT)**: Use for real-time vision analytics (gesture detection, face mesh tracking) and lightweight mobile-web applications.
+- **Wasm Multithreading Headers**: Dev/preview servers must send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` to prevent thread locking on the client's main thread.
+
+
 *Last Updated: June 2026*
 *Architecture Version: 2.1*
