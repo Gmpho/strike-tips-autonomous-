@@ -8,7 +8,7 @@ interface RaceCardProps {
   idx?: number;
 }
 
-export const RaceCard: React.FC<RaceCardProps> = ({ event, idx = 0 }) => {
+export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const topHorse = event.runners?.[0];
   const hasMarketData = topHorse && typeof topHorse.odds === 'number' && topHorse.odds > 0;
@@ -104,4 +104,5 @@ export const RaceCard: React.FC<RaceCardProps> = ({ event, idx = 0 }) => {
             </div>
             </motion.div>
             );
-            };
+            });
+            

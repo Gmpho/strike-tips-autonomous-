@@ -1,29 +1,37 @@
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
 import { apiFetch } from './lib/api-fetch';
-import { AgentDashboard } from './components/AgentDashboard';
-import { RaceCard } from './components/RaceCard.tsx';
 import type { RaceEvent } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
-import { BankrollView } from './components/sidebar/BankrollView';
-import { LogsView } from './components/sidebar/LogsView';
-import { SettingsView } from './components/sidebar/SettingsView';
-import { AnalyticsView } from './components/sidebar/AnalyticsView';
-import { HealingView } from './components/sidebar/HealingView';
-import { SystemVitalsView } from './components/sidebar/SystemVitalsView';
-import { DreamingView } from './components/sidebar/DreamingView';
-import { MarketMoversView } from './components/sidebar/MarketMoversView';
-import { PredictorView } from './components/sidebar/PredictorView';
-import { ResultsView } from './components/sidebar/ResultsView';
 import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
-import { LegalPage } from './components/LegalPage';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
+
+// Lazy-loaded view components — split into separate chunks
+const RaceCard = React.lazy(() => import('./components/RaceCard.tsx').then(m => ({ default: m.RaceCard })));
+const AgentDashboard = React.lazy(() => import('./components/AgentDashboard').then(m => ({ default: m.AgentDashboard })));
+const BankrollView = React.lazy(() => import('./components/sidebar/BankrollView').then(m => ({ default: m.BankrollView })));
+const LogsView = React.lazy(() => import('./components/sidebar/LogsView').then(m => ({ default: m.LogsView })));
+const SettingsView = React.lazy(() => import('./components/sidebar/SettingsView').then(m => ({ default: m.SettingsView })));
+const AnalyticsView = React.lazy(() => import('./components/sidebar/AnalyticsView').then(m => ({ default: m.AnalyticsView })));
+const HealingView = React.lazy(() => import('./components/sidebar/HealingView').then(m => ({ default: m.HealingView })));
+const SystemVitalsView = React.lazy(() => import('./components/sidebar/SystemVitalsView').then(m => ({ default: m.SystemVitalsView })));
+const DreamingView = React.lazy(() => import('./components/sidebar/DreamingView').then(m => ({ default: m.DreamingView })));
+const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMoversView').then(m => ({ default: m.MarketMoversView })));
+const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
+const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
+const LegalPage = React.lazy(() => import('./components/LegalPage').then(m => ({ default: m.LegalPage })));
+
+const ViewFallback = () => (
+  <div className="flex-1 flex items-center justify-center min-h-[300px]">
+    <div className="w-8 h-8 border-2 border-purple-500/20 border-t-purple-500 rounded-full animate-spin" />
+  </div>
+);
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible'];
 const VALID_VIEWS = [
@@ -58,6 +66,7 @@ export const App: React.FC = () => {
   };
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showAllRaces, setShowAllRaces] = useState(false);
   const state = useHUD();
   useTelegram();
 
@@ -105,51 +114,67 @@ export const App: React.FC = () => {
       );
     }
 
+    const events = Object.values(state.events);
+    const MAX_VISIBLE_CARDS = 18;
+    const visibleEvents = showAllRaces ? events : events.slice(0, MAX_VISIBLE_CARDS);
+
     switch (activeView) {
       case 'dashboard':
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
-            {Object.values(state.events).map(event => (
-              <RaceCard key={event.id} event={event as RaceEvent} />
-            ))}
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
+              <Suspense fallback={<ViewFallback />}>
+                {visibleEvents.map((event, idx) => (
+                  <RaceCard key={event.id} event={event as RaceEvent} idx={idx} />
+                ))}
+              </Suspense>
+            </div>
+            {events.length > MAX_VISIBLE_CARDS && !showAllRaces && (
+              <button
+                onClick={() => setShowAllRaces(true)}
+                className="mx-auto py-3 px-8 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 rounded-2xl text-purple-300 hover:text-white transition-all text-xs font-black uppercase tracking-wider"
+              >
+                Show All {events.length} Races
+              </button>
+            )}
           </div>
         );
       case 'agents':
-        return <AgentDashboard key="agents-view" />;
+        return <Suspense key="agents-view" fallback={<ViewFallback />}><AgentDashboard /></Suspense>;
       case 'bankroll':
-        return <BankrollView key="bankroll-view" />;
+        return <Suspense key="bankroll-view" fallback={<ViewFallback />}><BankrollView /></Suspense>;
       case 'analytics':
-        return <AnalyticsView key="analytics-view" />;
+        return <Suspense key="analytics-view" fallback={<ViewFallback />}><AnalyticsView /></Suspense>;
       case 'logs':
-        return <LogsView key="logs-view" />;
+        return <Suspense key="logs-view" fallback={<ViewFallback />}><LogsView /></Suspense>;
       case 'settings':
-        return <SettingsView key="settings-view" />;
+        return <Suspense key="settings-view" fallback={<ViewFallback />}><SettingsView /></Suspense>;
       case 'healing':
-        return <HealingView key="healing-view" />;
+        return <Suspense key="healing-view" fallback={<ViewFallback />}><HealingView /></Suspense>;
       case 'vitals':
-        return <SystemVitalsView key="vitals-view" />;
+        return <Suspense key="vitals-view" fallback={<ViewFallback />}><SystemVitalsView /></Suspense>;
       case 'dreaming':
-        return <DreamingView key="dreaming-view" />;
+        return <Suspense key="dreaming-view" fallback={<ViewFallback />}><DreamingView /></Suspense>;
       case 'market-movers':
-        return <MarketMoversView key="market-movers-view" />;
+        return <Suspense key="market-movers-view" fallback={<ViewFallback />}><MarketMoversView /></Suspense>;
       case 'predictor':
-        return <PredictorView key="predictor-view" />;
+        return <Suspense key="predictor-view" fallback={<ViewFallback />}><PredictorView /></Suspense>;
       case 'results':
-        return <ResultsView key="results-view" />;
+        return <Suspense key="results-view" fallback={<ViewFallback />}><ResultsView /></Suspense>;
       case 'privacy':
-        return <LegalPage key="privacy-view" docId="privacy" title="Privacy Policy" />;
+        return <Suspense key="privacy-view" fallback={<ViewFallback />}><LegalPage docId="privacy" title="Privacy Policy" /></Suspense>;
       case 'terms':
-        return <LegalPage key="terms-view" docId="terms" title="Terms of Service" />;
+        return <Suspense key="terms-view" fallback={<ViewFallback />}><LegalPage docId="terms" title="Terms of Service" /></Suspense>;
       case 'disclaimer':
-        return <LegalPage key="disclaimer-view" docId="disclaimer" title="Disclaimer" />;
+        return <Suspense key="disclaimer-view" fallback={<ViewFallback />}><LegalPage docId="disclaimer" title="Disclaimer" /></Suspense>;
       case 'how-to-bet':
-        return <LegalPage key="how-to-bet-view" docId="how-to-bet" title="How to Bet" />;
+        return <Suspense key="how-to-bet-view" fallback={<ViewFallback />}><LegalPage docId="how-to-bet" title="How to Bet" /></Suspense>;
       case 'faq':
-        return <LegalPage key="faq-view" docId="faq" title="FAQ" />;
+        return <Suspense key="faq-view" fallback={<ViewFallback />}><LegalPage docId="faq" title="FAQ" /></Suspense>;
       case 'betting-rules':
-        return <LegalPage key="betting-rules-view" docId="betting-rules" title="Betting Rules" />;
+        return <Suspense key="betting-rules-view" fallback={<ViewFallback />}><LegalPage docId="betting-rules" title="Betting Rules" /></Suspense>;
       case 'responsible':
-        return <LegalPage key="responsible-view" docId="responsible" title="Responsible Gambling" />;
+        return <Suspense key="responsible-view" fallback={<ViewFallback />}><LegalPage docId="responsible" title="Responsible Gambling" /></Suspense>;
       default:
         return <div key="default-view" className="text-white p-12">Select a module</div>;
     }

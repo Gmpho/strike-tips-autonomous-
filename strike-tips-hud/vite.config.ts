@@ -21,7 +21,8 @@ export default defineConfig(({ mode }) => {
       tsconfigPaths: true
     },
     build: {
-      target: 'es2015',
+      target: 'es2020',
+      cssCodeSplit: true,
       rollupOptions: {
         output: {
           manualChunks(id: string) {
