@@ -94,13 +94,15 @@ export const AIChat: React.FC = () => {
     }
   }, [messages, activeSessionId]);
 
-  // Scroll to bottom
+  // Scroll to bottom (instant during active generation to prevent main thread animation thrashing)
   useEffect(() => {
-    scrollRef.current?.scrollTo({
+    if (!scrollRef.current) return;
+    const isGenerating = loading;
+    scrollRef.current.scrollTo({
       top: scrollRef.current.scrollHeight,
-      behavior: 'smooth'
+      behavior: isGenerating ? 'auto' : 'smooth'
     });
-  }, [messages, currentActivity]);
+  }, [messages, currentActivity, loading]);
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -572,11 +574,11 @@ ${compiledContext || 'No context data available.'}`;
                 </div>
             )}
             {messages.map((m, i) => (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
+            <div 
               key={i} 
-              className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : ''}`}
+              className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : ''} ${
+                i === messages.length - 1 ? 'animate-chat-fade-in-up' : ''
+              }`}
             >
                 <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
                 <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
@@ -624,7 +626,7 @@ ${compiledContext || 'No context data available.'}`;
                     </div>
                     {m.role === 'user' && <User className="w-5 h-5 text-slate-500 shrink-0 mt-1" />}
                 </div>
-            </motion.div>
+            </div>
             ))}
         </div>
 
