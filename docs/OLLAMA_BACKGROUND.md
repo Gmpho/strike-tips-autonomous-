@@ -54,10 +54,9 @@ Every morning at the scheduled time, the orchestrator triggers the following flo
 ### 2. Scenario Simulation ("Dreaming")
 When custom weather or track events are triggered (either via Telegram `/dream` or scheduler):
 1. The **Dream Engine** (`skills/dreamer.py`) calculates going shifts, wind impact, and scratch adjustments.
-2. `lfm_racing` generates 100 alternative Monte Carlo simulations ("dreams") of the race.
+2. The engine evaluates how specific going shifts, weather, or scratchings impact runner performance, generating heuristic probability shifts + a single randomized trial.
 3. Results are saved as vector documents in **ChromaDB** using `embeddinggemma:300m`.
-4. The **Bankroll Governor** query pulls these records to calculate the **Dream Stress Index (DSI)**:
-   $$\text{DSI} = \frac{\text{Negative Shift Simulations}}{\text{Total Simulations}}$$
+4. The **Bankroll Governor** query pulls these records to calculate the **Dream Stress Index (DSI)** based on the simulated scenario outcome to scale down Kelly betting sizes under volatile/adverse conditions.
 
 ### 3. Bayesian Performance Calibration (`skills/learning/`)
 As actual race results are tracked:
