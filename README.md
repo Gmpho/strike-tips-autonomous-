@@ -595,6 +595,7 @@ MIT License - see [LICENSE](LICENSE) file
 
 | Document | Contents |
 |----------|----------|
+| [`docs/OLLAMA_BACKGROUND.md`](docs/OLLAMA_BACKGROUND.md) | Ollama background architecture, specialist models, and background workflows |
 | [`docs/CLOUDFLARE_MCP_EDGE.md`](docs/CLOUDFLARE_MCP_EDGE.md) | 3-layer architecture, OKF bundle, MCP tools, REST endpoints |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | Agent coding guidelines, build commands, project structure |
 | [`docs/MCP_INTEGRATION_GUIDE.md`](docs/MCP_INTEGRATION_GUIDE.md) | MCP protocol, n8n integration, Claude Desktop setup |
