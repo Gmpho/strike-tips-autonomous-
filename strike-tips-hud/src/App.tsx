@@ -5,15 +5,15 @@ import { useTelegram } from './hooks/useTelegram';
 import { apiFetch } from './lib/api-fetch';
 import type { RaceEvent } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
-import { AmbientCanvas } from './components/visualizer/AmbientCanvas';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
+import { RaceCard } from './components/RaceCard.tsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 
 // Lazy-loaded view components — split into separate chunks
-const RaceCard = React.lazy(() => import('./components/RaceCard.tsx').then(m => ({ default: m.RaceCard })));
+const AmbientCanvas = React.lazy(() => import('./components/visualizer/AmbientCanvas').then(m => ({ default: m.AmbientCanvas })));
 const AgentDashboard = React.lazy(() => import('./components/AgentDashboard').then(m => ({ default: m.AgentDashboard })));
 const BankrollView = React.lazy(() => import('./components/sidebar/BankrollView').then(m => ({ default: m.BankrollView })));
 const LogsView = React.lazy(() => import('./components/sidebar/LogsView').then(m => ({ default: m.LogsView })));
@@ -123,11 +123,9 @@ export const App: React.FC = () => {
         return (
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
-              <Suspense fallback={<ViewFallback />}>
-                {visibleEvents.map((event, idx) => (
-                  <RaceCard key={event.id} event={event as RaceEvent} idx={idx} />
-                ))}
-              </Suspense>
+              {visibleEvents.map((event, idx) => (
+                <RaceCard key={event.id} event={event as RaceEvent} idx={idx} />
+              ))}
             </div>
             {events.length > MAX_VISIBLE_CARDS && !showAllRaces && (
               <button
@@ -185,7 +183,10 @@ export const App: React.FC = () => {
       {/* Ambient Background Layer (Fixed) */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <WebGLErrorBoundary>
-          <AmbientCanvas />
+          <Suspense fallback={<div className="absolute inset-0 z-0 pointer-events-none"
+            style={{background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.08) 0%, transparent 70%)'}} />}>
+            <AmbientCanvas />
+          </Suspense>
         </WebGLErrorBoundary>
       </div>
 

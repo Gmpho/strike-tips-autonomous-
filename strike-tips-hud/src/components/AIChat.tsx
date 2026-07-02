@@ -60,6 +60,14 @@ export const AIChat: React.FC = () => {
     });
   }, []);
 
+  // Dispatch WebGPU activity event to pause Three.js rendering during local inference
+  useEffect(() => {
+    const isWebgpu = selectedModel.startsWith('webllm-');
+    window.dispatchEvent(new CustomEvent('webgpu-activity', {
+      detail: { active: loading && isWebgpu }
+    }));
+  }, [loading, selectedModel]);
+
   // Sync session list to localStorage
   useEffect(() => {
     localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));

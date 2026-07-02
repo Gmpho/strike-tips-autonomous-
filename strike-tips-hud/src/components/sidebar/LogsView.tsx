@@ -7,6 +7,14 @@ export const LogsView: React.FC = () => {
   const { logs, systemHealth, alerts, healing, betHistory } = useHUD();
   const [filter, setFilter] = useState('');
   const [viewMode, setViewMode] = useState<'timeline' | 'dev'>('timeline');
+
+  // Only show Developer Diagnostics in local dev environment or if manually enabled via localStorage
+  const isDevEnvironment = import.meta.env.DEV || (typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' || 
+    window.location.hostname === '127.0.0.1' ||
+    localStorage.getItem('strike_dev_mode') === 'true'
+  ));
+
   const [activeCategory, setActiveCategory] = useState<'ALL' | 'ALERT' | 'BET' | 'SYSTEM'>('ALL');
   const [wrap, setWrap] = useState(true);
   const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg'>('sm');
@@ -155,28 +163,30 @@ export const LogsView: React.FC = () => {
         </div>
         
         {/* Toggle Button Group */}
-        <div className="flex gap-1.5 bg-black/40 border border-white/10 p-1 rounded-xl w-full sm:w-auto self-start sm:self-auto backdrop-blur-md">
-          <button
-            onClick={() => setViewMode('timeline')}
-            className={`flex-1 sm:flex-none px-3.5 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
-              viewMode === 'timeline' 
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/10 border border-purple-500/20' 
-                : 'text-slate-400 hover:text-white border border-transparent'
-            }`}
-          >
-            📋 Operations Feed
-          </button>
-          <button
-            onClick={() => setViewMode('dev')}
-            className={`flex-1 sm:flex-none px-3.5 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
-              viewMode === 'dev' 
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/10 border border-purple-500/20' 
-                : 'text-slate-400 hover:text-white border border-transparent'
-            }`}
-          >
-            🛠️ Dev Diagnostics
-          </button>
-        </div>
+        {isDevEnvironment && (
+          <div className="flex gap-1.5 bg-black/40 border border-white/10 p-1 rounded-xl w-full sm:w-auto self-start sm:self-auto backdrop-blur-md">
+            <button
+              onClick={() => setViewMode('timeline')}
+              className={`flex-1 sm:flex-none px-3.5 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                viewMode === 'timeline' 
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/10 border border-purple-500/20' 
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              📋 Operations Feed
+            </button>
+            <button
+              onClick={() => setViewMode('dev')}
+              className={`flex-1 sm:flex-none px-3.5 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                viewMode === 'dev' 
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/10 border border-purple-500/20' 
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              🛠️ Dev Diagnostics
+            </button>
+          </div>
+        )}
       </div>
 
       {/* System Health Cards */}

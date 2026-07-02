@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState } from 'react';
+import { useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Stars } from '@react-three/drei';
 import * as THREE from 'three';
@@ -129,8 +129,20 @@ function webglSupported(): boolean {
 
 export const AmbientCanvas: React.FC = () => {
   const [hasWebgl] = useState(webglSupported);
+  const [isWebgpuActive, setIsWebgpuActive] = useState(false);
 
-  if (!hasWebgl) {
+  useEffect(() => {
+    const handleWebGPUActivity = (e: Event) => {
+      const active = (e as CustomEvent).detail?.active ?? false;
+      setIsWebgpuActive(active);
+    };
+    window.addEventListener('webgpu-activity', handleWebGPUActivity);
+    return () => {
+      window.removeEventListener('webgpu-activity', handleWebGPUActivity);
+    };
+  }, []);
+
+  if (!hasWebgl || isWebgpuActive) {
     return (
       <div className="absolute inset-0 pointer-events-none z-0"
         style={{

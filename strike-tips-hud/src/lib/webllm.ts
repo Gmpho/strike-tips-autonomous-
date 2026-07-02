@@ -1,5 +1,3 @@
-import { CreateWebWorkerMLCEngine, prebuiltAppConfig } from "@mlc-ai/web-llm";
-
 export const MODEL_MAPPING: Record<string, string> = {
   "webllm-qwen-0.5b": "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
   "webllm-llama-1b": "Llama-3.2-1B-Instruct-q4f16_1-MLC",
@@ -170,6 +168,9 @@ export async function getWebLLMEngine(
 
   console.log("[WebLLM] Initializing model:", modelId);
   currentModelId = modelId;
+
+  // Dynamic import to prevent initial bundle bloat (reduces bundle size by 6MB)
+  const { CreateWebWorkerMLCEngine, prebuiltAppConfig } = await import("@mlc-ai/web-llm");
 
   const allowedModelIds = Object.values(MODEL_MAPPING);
   const filteredModelList = prebuiltAppConfig.model_list.filter((m) =>
