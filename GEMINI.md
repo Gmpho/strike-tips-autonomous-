@@ -133,6 +133,7 @@ The system follows a strict "God Mode" betting strategy:
 -   `strike-tips-frontend/src/lib/api.ts`: Frontend-to-backend communication layer.
 -   `docs/AGENTS.md`: Detailed coding guidelines for agents.
 -   `docs/OLLAMA_BACKGROUND.md`: Ollama background architecture and specialist models guide.
+-   `docs/PWA_TWA_GUIDE.md`: PWA structure and TWA Play Store packaging guide.
 
 ---
 

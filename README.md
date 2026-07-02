@@ -595,6 +595,7 @@ MIT License - see [LICENSE](LICENSE) file
 
 | Document | Contents |
 |----------|----------|
+| [`docs/PWA_TWA_GUIDE.md`](docs/PWA_TWA_GUIDE.md) | PWA structure, Service Worker caching, and TWA Play Store packaging |
 | [`docs/OLLAMA_BACKGROUND.md`](docs/OLLAMA_BACKGROUND.md) | Ollama background architecture, specialist models, and background workflows |
 | [`docs/CLOUDFLARE_MCP_EDGE.md`](docs/CLOUDFLARE_MCP_EDGE.md) | 3-layer architecture, OKF bundle, MCP tools, REST endpoints |
 | [`docs/AGENTS.md`](docs/AGENTS.md) | Agent coding guidelines, build commands, project structure |
