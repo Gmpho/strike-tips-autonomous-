@@ -27,6 +27,7 @@ class GroqProvider:
             "wager", "lay", "tip", "recommend", "odds",
             "market", "mover", "predictor", "prediction", "probability", "stake", "bank",
             "race", "runner", "horse", "jockey", "trainer",
+            "tool", "tools", "capability", "capabilities", "function", "functions",
         )
 
     def _needs_tools(self, message: str, intent: str | None) -> bool:
