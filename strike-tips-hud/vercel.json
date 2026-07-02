@@ -1,7 +1,7 @@
 {
   "rewrites": [
     {
-      "source": "/((?!api/|v1/|mcp).*)",
+      "source": "/((?!api/|v1/|mcp|sw\\.js|manifest\\.json|offline\\.html|robots\\.txt|assets/).*)",
       "destination": "/index.html"
     }
   ]

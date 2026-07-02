@@ -41,6 +41,7 @@ export const BankrollView: React.FC = () => {
         </div>
         <button 
           onClick={() => window.location.reload()}
+          aria-label="Reload page"
           className="p-3 rounded-xl bg-theme-panel border border-theme text-theme-secondary hover:text-theme-primary hover:bg-theme-secondary transition-all"
         >
           <RotateCcw className="w-5 h-5" />

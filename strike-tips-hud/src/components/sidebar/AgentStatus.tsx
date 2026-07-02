@@ -25,7 +25,7 @@ export const AgentStatus: React.FC = () => {
           <Cpu className="w-4 h-4 text-purple-500" />
           <span className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">Agent Pipeline</span>
         </div>
-        <button onClick={toggleLock} className="p-1.5 hover:bg-theme-secondary rounded-lg transition-colors border border-theme">
+        <button onClick={toggleLock} aria-label={isLocked ? "Unlock agent pipeline" : "Lock agent pipeline"} className="p-1.5 hover:bg-theme-secondary rounded-lg transition-colors border border-theme">
           {isLocked ? <AlertTriangle className="w-4 h-4 text-red-500" /> : <Power className="w-4 h-4 text-emerald-500" />}
         </button>
       </div>

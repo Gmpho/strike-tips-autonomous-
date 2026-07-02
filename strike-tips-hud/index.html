@@ -2,14 +2,33 @@
 <html lang="en" style="background: #000;">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
     <meta name="theme-color" content="#000000" />
     <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Strike Tips HUD — Real-time horse racing intelligence, AI predictions, and betting analysis dashboard." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- iOS-specific metadata -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="StrikeTips" />
+    <link rel="apple-touch-icon" href="/assets/icons/icon-192x192.png" />
+
     <title>STRIKE TIPS | HUD</title>
     <link rel="preconnect" href="https://gmpho--strike-tips-racing-serve-api.modal.run">
     <link rel="dns-prefetch" href="https://gmpho--strike-tips-racing-serve-api.modal.run">
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+    <script>
+      // Register Service Worker for offline capability
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('[SW] Registered successfully:', reg.scope))
+            .catch(err => console.error('[SW] Registration failed:', err));
+        });
+      }
+    </script>
     <style>
       html, body {
         background: #000 !important;

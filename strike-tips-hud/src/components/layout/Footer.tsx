@@ -48,20 +48,20 @@ export const Footer: React.FC = () => {
                 <span className="text-rose-400/80 mx-1">National Responsible Gambling Programme:</span>
                 0800 006 008 or WHATSAPP 'HELP' to 076 675 0710.
               </p>
-              <p className="text-[7px] md:text-[9px] leading-relaxed text-theme-secondary opacity-60 font-medium mt-1">
+              <p className="text-[7px] md:text-[9px] leading-relaxed text-theme-secondary font-medium mt-1">
                 Warning: Gambling involves risk. All games are fixed-odds betting events.
               </p>
             </div>
             <div className="shrink-0">
               <div className="px-2 md:px-3 py-0.5 md:py-1 bg-emerald-500/5 border border-emerald-500/10 rounded-md">
-                <span className="text-[7px] md:text-[9px] font-black text-emerald-500/60 uppercase tracking-widest">MPUMALANGA ECONOMIC REGULATOR</span>
+                <span className="text-[7px] md:text-[9px] font-black text-emerald-400/70 uppercase tracking-widest">MPUMALANGA ECONOMIC REGULATOR</span>
               </div>
             </div>
           </div>
         </div>
 
         {/* Copyright */}
-        <div className="flex justify-between items-center opacity-30 px-2">
+        <div className="flex justify-between items-center opacity-60 px-2">
           <span className="text-[7px] md:text-[9px] font-black uppercase tracking-[0.3em]">STRIKE TIPS INTELLIGENCE</span>
           <span className="text-[7px] md:text-[9px] font-black uppercase tracking-widest">&copy; 2026 STRIKE</span>
         </div>

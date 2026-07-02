@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon, FlaskConical, Zap } from 'lucide-react';
+import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon, FlaskConical, Zap, Smartphone } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { apiFetch } from '../../lib/api-fetch';
 import { initAudio, playAlertTone, playValueBetTone } from '../../engine/audio';
 import { checkWebGPUSupport, getStorageEstimate, clearWebLLMStorage, StorageEstimateInfo } from '../../lib/webllm';
+import { usePWA } from '../../hooks/usePWA';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -29,6 +30,8 @@ export const SettingsView: React.FC = () => {
   const [webGpuSupported, setWebGpuSupported] = useState(false);
   const [storageEstimate, setStorageEstimate] = useState<StorageEstimateInfo | null>(null);
   const [clearingStorage, setClearingStorage] = useState(false);
+  const [clearingSwCache, setClearingSwCache] = useState(false);
+  const { isInstallable, isInstalled, installPWA } = usePWA();
 
   const loadStorageInfo = () => {
     getStorageEstimate().then(est => setStorageEstimate(est));
@@ -38,6 +41,23 @@ export const SettingsView: React.FC = () => {
     checkWebGPUSupport().then(supported => setWebGpuSupported(supported));
     loadStorageInfo();
   }, []);
+
+  const clearSwCache = async () => {
+    if (!window.confirm("Clear the service worker cache? This will free up storage but may slow the first page load after clearing.")) return;
+    setClearingSwCache(true);
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      if ((navigator as any).serviceWorker?.controller) {
+        (navigator as any).serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+      }
+      loadStorageInfo();
+    } catch {
+      alert("Failed to clear SW cache. Try reopening the app.");
+    } finally {
+      setClearingSwCache(false);
+    }
+  };
 
   const handleResetStorage = async () => {
     if (!window.confirm("Are you sure you want to delete all cached WebGPU model files? You will need to redownload them when starting a local browser session.")) {
@@ -341,6 +361,53 @@ export const SettingsView: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {/* PWA App Installation */}
+              {isInstallable && (
+                <div className="flex items-center justify-between p-5 bg-purple-950/20 rounded-2xl border border-purple-500/20">
+                  <div>
+                    <div className="text-purple-300 font-black uppercase text-sm flex items-center gap-2">
+                      <Smartphone className="w-4.5 h-4.5 text-purple-400" />
+                      <span>Install Strike Tips PWA</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-bold mt-1">Run as a standalone app with offline WebGPU support</div>
+                  </div>
+                  <button
+                    onClick={installPWA}
+                    className="bg-purple-900/60 hover:bg-purple-800 border border-purple-500/30 text-purple-200 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shrink-0 min-h-[36px]"
+                  >
+                    Install
+                  </button>
+                </div>
+              )}
+
+              {isInstalled && (
+                <div className="flex items-center justify-between p-5 bg-emerald-950/20 rounded-2xl border border-emerald-500/20">
+                  <div>
+                    <div className="text-emerald-300 font-black uppercase text-sm flex items-center gap-2">
+                      <Smartphone className="w-4.5 h-4.5 text-emerald-400" />
+                      <span>App Installed Successfully</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-bold mt-1">Standalone mode active (PWA offline caching enabled)</div>
+                  </div>
+                  <div className="text-emerald-400 text-xs font-black uppercase border border-emerald-500/30 px-3 py-1 rounded-lg bg-emerald-500/10">Active</div>
+                </div>
+              )}
+
+              {/* Clear SW Cache Button */}
+              <div className="flex items-center justify-between p-5 bg-amber-950/20 rounded-2xl border border-amber-500/20">
+                <div>
+                  <div className="text-amber-300 font-black uppercase text-sm">Clear App Cache</div>
+                  <div className="text-[10px] text-slate-500 font-bold mt-1">Free up space by purging cached static assets (SW cache)</div>
+                </div>
+                <button
+                  onClick={clearSwCache}
+                  disabled={clearingSwCache}
+                  className="bg-amber-900/60 hover:bg-amber-800 border border-amber-500/30 text-amber-200 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shrink-0 min-h-[36px] disabled:opacity-50"
+                >
+                  {clearingSwCache ? "Clearing..." : "Clear Cache"}
+                </button>
+              </div>
 
               {/* Reset Storage Button */}
               <div className="flex items-center justify-between p-5 bg-rose-950/20 rounded-2xl border border-rose-500/20">

@@ -51,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
         <button 
           onClick={onToggle}
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           className="p-1.5 rounded-lg bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-500 transition-all border border-theme"
         >
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
