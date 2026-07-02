@@ -125,12 +125,7 @@ class AgentLoop:
                     "To switch model, reply with `/model <name>`:\n\n"
                     "• `/model auto` — ⚡ Auto Router (optimal)\n"
                     "• `/model groq` — ☁️ Groq Llama 70B\n"
-                    "• `/model gemini` — ☁️ Gemini Flash\n"
-                    "• `/model racing_qwen` — 🤖 Racing Qwen\n"
-                    "• `/model lfm_racing` — 🤖 LFM Racing (Thinking)\n"
-                    "• `/model ds_racing` — 🤖 DS Racing (DeepSeek R1)\n"
-                    "• `/model qwen3.5` — 🤖 Qwen3.5 0.8B\n"
-                    "• `/model functiongemma` — 🤖 FunctionGemma 270M\n\n"
+                    "• `/model gemini` — ☁️ Gemini Flash\n\n"
                     f"Current selection: *{current_model}*"
                 )
             else:
@@ -138,20 +133,7 @@ class AgentLoop:
                 mapping = {
                     "auto": "auto",
                     "groq": "groq",
-                    "gemini": "gemini",
-                    "racing_qwen": "racing_qwen:latest",
-                    "racing-qwen": "racing_qwen:latest",
-                    "lfm_racing": "lfm_racing:latest",
-                    "lfm-racing": "lfm_racing:latest",
-                    "lfm": "lfm_racing:latest",
-                    "ds_racing": "ds_racing:latest",
-                    "ds-racing": "ds_racing:latest",
-                    "ds": "ds_racing:latest",
-                    "deepseek": "ds_racing:latest",
-                    "qwen3.5": "qwen3.5:0.8b",
-                    "qwen": "qwen3.5:0.8b",
-                    "functiongemma": "functiongemma:270m",
-                    "gemma": "functiongemma:270m"
+                    "gemini": "gemini"
                 }
                 
                 mapped = mapping.get(choice)

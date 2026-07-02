@@ -58,6 +58,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         taskTypes=[TASK_TOOLS, TASK_TRANSACTION],
         bestForTaskTypes=[TASK_TOOLS],
         defaultConfig={"temperature": 0.0, "maxTokens": 1024, "topK": 64},
+        frontend_visible=False,
     ),
     ModelInfo(
         id="qwen3.5:0.8b",
@@ -68,6 +69,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_RACING],
         bestForTaskTypes=[TASK_CHAT],
         defaultConfig={"temperature": 0.3, "maxTokens": 4096, "topK": 20},
+        frontend_visible=False,
     ),
     ModelInfo(
         id="racing_qwen:latest",
@@ -79,6 +81,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         bestForTaskTypes=[TASK_RACING, TASK_ANALYSIS],
         defaultConfig={"temperature": 0.1, "maxTokens": 512, "topK": 40},
         api_format="generate",
+        frontend_visible=False,
     ),
     ModelInfo(
         id="lfm_racing:latest",
@@ -90,6 +93,7 @@ MODEL_REGISTRY: List[ModelInfo] = [
         bestForTaskTypes=[TASK_ANALYSIS],
         defaultConfig={"temperature": 0.2, "maxTokens": 256, "topK": 40},
         api_format="generate",
+        frontend_visible=False,
     ),
     ModelInfo(
         id="func_gemma:latest",

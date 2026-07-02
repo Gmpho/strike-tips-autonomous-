@@ -642,13 +642,6 @@ ${compiledContext || 'No context data available.'}`;
                   <option value="groq" className="bg-[#0c0817]">Groq Llama 70B</option>
                   <option value="gemini" className="bg-[#0c0817]">Gemini Flash</option>
                 </optgroup>
-                <optgroup label="🤖 Local Backend (Ollama)" className="bg-[#0c0817]">
-                  <option value="racing_qwen:latest" className="bg-[#0c0817]">Racing Qwen</option>
-                  <option value="lfm_racing:latest" className="bg-[#0c0817]">LFM Racing (Thinking)</option>
-                  <option value="ds_racing:latest" className="bg-[#0c0817]">DS Racing (DeepSeek R1)</option>
-                  <option value="qwen3.5:0.8b" className="bg-[#0c0817]">Qwen3.5 0.8B</option>
-                  <option value="functiongemma:270m" className="bg-[#0c0817]">FunctionGemma 270M</option>
-                </optgroup>
                 <optgroup label="🌐 Browser Local (WebGPU)" className="bg-[#0c0817]">
                   <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Qwen 2.5 0.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
