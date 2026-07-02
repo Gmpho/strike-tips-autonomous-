@@ -132,9 +132,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 5. Skip caching large lazy-loaded vendor chunks (WebLLM, Three.js)
-  // These are loaded on-demand and change between deploys — caching them just burns storage
-  if (url.pathname.match(/\/assets\/(lib-|vendor-three-|webllm\.worker-)/)) {
+  // 5. Skip caching large lazy-loaded Three.js chunk (dashboard needs internet anyway)
+  if (url.pathname.match(/\/assets\/vendor-three-/)) {
     return;
   }
 
