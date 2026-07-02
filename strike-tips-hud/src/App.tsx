@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useEffect, useState, Suspense } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
+import { usePWA } from './hooks/usePWA';
+import { UpdateToast } from './components/UpdateToast';
 import { apiFetch } from './lib/api-fetch';
 import type { RaceEvent } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
@@ -69,6 +71,7 @@ export const App: React.FC = () => {
   const [showAllRaces, setShowAllRaces] = useState(false);
   const state = useHUD();
   useTelegram();
+  const { hasUpdate, updateSW } = usePWA();
 
   // Load backend configuration at startup to sync sound prompts state to localStorage
   useEffect(() => {
@@ -272,6 +275,8 @@ export const App: React.FC = () => {
           <Footer />
         </main>
       </div>
+
+      <UpdateToast visible={hasUpdate} onUpdate={updateSW} />
     </div>
   );
 };

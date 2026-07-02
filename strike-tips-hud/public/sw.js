@@ -26,8 +26,7 @@ self.addEventListener('install', (event) => {
       });
     })
   );
-  // Activate the service worker immediately
-  self.skipWaiting();
+  // Don't skipWaiting here — let the app prompt the user first
 });
 
 // Limit total cache storage to 30 MB — evict oldest entries when exceeded
@@ -63,6 +62,9 @@ async function enforceCacheLimit() {
 
 // Listen for clear-cache commands from the app
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
   if (event.data?.type === 'CLEAR_CACHE') {
     caches.keys().then((names) =>
       Promise.all(names.filter((n) => n.startsWith('strike-')).map((n) => caches.delete(n)))

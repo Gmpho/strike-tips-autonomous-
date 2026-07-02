@@ -1,37 +1,53 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function usePWA() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstallable, setIsInstallable] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [hasUpdate, setHasUpdate] = useState(false);
+  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
 
   useEffect(() => {
-    // Check if the app is running in standalone mode (already installed)
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches 
-      || (navigator as any).standalone 
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as any).standalone
       || document.referrer.includes('android-app://');
-    
+
     setIsInstalled(isStandalone);
 
     const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent the mini-infobar on mobile
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       setDeferredPrompt(e);
       setIsInstallable(true);
-      console.log('[PWA] beforeinstallprompt event captured');
     };
 
     const handleAppInstalled = () => {
-      // Clear the deferredPrompt
       setDeferredPrompt(null);
       setIsInstallable(false);
       setIsInstalled(true);
-      console.log('[PWA] Application installed successfully');
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        if (reg.waiting) {
+          setHasUpdate(true);
+          setWaitingWorker(reg.waiting);
+        }
+
+        reg.onupdatefound = () => {
+          const installing = reg.installing;
+          if (!installing) return;
+          installing.onstatechange = () => {
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+              setHasUpdate(true);
+              setWaitingWorker(installing);
+            }
+          };
+        };
+      });
+    }
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -40,24 +56,27 @@ export function usePWA() {
   }, []);
 
   const installPWA = async () => {
-    if (!deferredPrompt) {
-      console.warn('[PWA] Install prompt not available yet');
-      return;
-    }
-    // Show the install prompt
+    if (!deferredPrompt) return;
     deferredPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`[PWA] User response to install prompt: ${outcome}`);
-    
-    // We've used the prompt, and can't use it again
+    const { outcome: _outcome } = await deferredPrompt.userChoice;
     setDeferredPrompt(null);
     setIsInstallable(false);
   };
+
+  const updateSW = useCallback(() => {
+    if (waitingWorker) {
+      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+  }, [waitingWorker]);
 
   return {
     isInstallable,
     isInstalled,
     installPWA,
+    hasUpdate,
+    updateSW,
   };
 }
