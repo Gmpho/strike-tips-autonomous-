@@ -23,6 +23,7 @@ class BankrollConfig:
     min_edge_threshold: float = 5.0  # Minimum 5% edge to bet
     kelly_fraction: float = 0.5  # Half-Kelly for safety
     currency: str = "ZAR"
+    max_exotic_cost_per_pool: float = 200.0  # Max R200 per exotic pool ticket
 
 
 @dataclass

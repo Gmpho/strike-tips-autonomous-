@@ -312,6 +312,82 @@ class StrikeTips:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
         return validated
 
+    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict) -> List[Dict]:
+        """Extract pool structure from PDF leg_info and run AI exotic analysis."""
+        import re
+
+        # 1. Extract pool starts from PDF leg_info
+        pool_starts = {}
+        for rn, race_data in pdf_races.items():
+            if not isinstance(race_data, dict):
+                continue
+            leg = (race_data.get("leg_info") or "").upper()
+            if not leg:
+                continue
+            for kw, mk in [("BIPOT", "BI"), ("JACKPOT", "JP"), ("PICK6", "P6"), ("PA", "PA")]:
+                if kw not in leg:
+                    continue
+                lm = re.search(rf'{kw}\s+LEG\s+(\d+)', leg)
+                if not lm:
+                    continue
+                pn = mk if mk in ("PA", "P6") else f"{mk}{lm.group(1)}"
+                if pn not in pool_starts:
+                    pool_starts[pn] = int(rn)
+
+        if not pool_starts:
+            return []
+
+        # 2. Build full-card context from Betway data
+        card_sections = []
+        for track_name, track_results in all_results.items():
+            if not track_results:
+                continue
+            card_sections.append(f"TRACK: {track_name}")
+            for race in track_results:
+                rn = race.get("race_number", "?")
+                rt = race.get("race_time", "TBD")
+                runners = race.get("runners", [])
+                card_sections.append(f"\nRace {rn} ({rt}): {len(runners)} runners")
+                card_sections.append(f"  Runners: {', '.join(runners)}")
+
+        pool_summary = ", ".join(f"{k} starts R{v}" for k, v in sorted(pool_starts.items()))
+        card_context = (
+            "=== FULL RACE CARD EXOTIC ANALYSIS ===\n"
+            + "\n".join(card_sections)
+            + f"\n\nPOOL LAYOUT: {pool_summary}\n\n"
+            + "YOUR TASK: Generate exotic pool combinations for each declared pool. "
+            + "For each pool, pick banker and saver selections per leg based on horse quality, "
+            + "form, and trainer/jockey strength. "
+            + "Return ONLY valid JSON: "
+            + '{"exotic_plays": [{"pool": "JACKPOT 1", "legs": [1,2,3,4], '
+            + '"combinations": [{"legs": [4,8,2,1], "type": "banker"}, '
+            + '{"legs": [4,8,2,3], "type": "saver"}], '
+            + '"estimated_combinations": 2, "estimated_dividend": 850.0, '
+            + '"reasoning": "..."}]}'
+        )
+
+        # 3. Send to AI as single extra analysis call via Groq
+        try:
+            from core_agent.config.model_factory import get_client
+            client = get_client("llama-3.3-70b-versatile")
+            session = client.create_session()
+            result = await client.run(card_context, session=session)
+            raw = result.text if hasattr(result, "text") else str(result)
+            if not raw:
+                return []
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            if "{" in clean:
+                clean = clean[clean.find("{"):clean.rfind("}") + 1]
+            data = json.loads(clean)
+            plays = data.get("exotic_plays", [])
+            for p in plays:
+                p["_track"] = track_name
+            print(f"[EXOTIC] AI returned {len(plays)} exotic play(s)")
+            return plays
+        except Exception as e:
+            print(f"[EXOTIC] AI exotic analysis failed: {e}")
+            return []
+
     def _convert_race_data(self, scraped_race: ScrapedRace) -> tuple:
         """
         Convert scraped race data to analysis format
@@ -550,6 +626,9 @@ class StrikeTips:
                 )
             print(f"  📜 {len(pdf_tips)} official PDF tips grounded in memory.")
 
+        # Store PDF race data for exotic analysis
+        pdf_races = pdf_res.get("races", {})
+
         # 2. Legacy fallback
         all_results = {}
         total_value_bets = 0
@@ -581,6 +660,18 @@ class StrikeTips:
             except Exception as e:
                 print(f"[ERR] Error processing {track}: {e}")
                 all_results[track] = []
+
+        # 3. Exotic Analysis from PDF pool structure
+        exotic_plays = []
+        has_pool_structure = any(
+            isinstance(r, dict) and r.get("leg_info")
+            for r in pdf_races.values()
+        )
+        if has_pool_structure and all_results:
+            print("\n[EXOTIC] Detected pool structure in PDF. Running exotic analysis...")
+            exotic_plays = await self._analyze_exotic_pools(all_results, pdf_races)
+            if exotic_plays:
+                print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
 
         if self.telegram:
             try:
@@ -670,6 +761,7 @@ class StrikeTips:
 
         # Auto-bet: place bets for qualifying value bets from daily scan
         auto_bets_placed = 0
+        exotic_bets_placed = 0
         try:
             settings_path = os.path.join(self.data_dir, "settings.json")
             if os.path.exists(settings_path):
@@ -701,13 +793,38 @@ class StrikeTips:
                                     confidence="AUTO",
                                 )
                                 auto_bets_placed += 1
-                    if auto_bets_placed:
-                        print(f"[AUTO-BET] Placed {auto_bets_placed} bets from daily scan")
-                        if self.telegram:
-                            await self.telegram.send_message(
-                                f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
-                                f"Placed {auto_bets_placed} value bet(s) from today's scan."
+
+                    # Auto-bet exotic plays
+                    if exotic_plays:
+                        ticket_cost = float(settings.get("exotic_ticket_cost", 1.2))
+                        for play in exotic_plays:
+                            pool = play.get("pool", "UNKNOWN")
+                            legs = play.get("legs", [])
+                            combos = play.get("combinations", [])
+                            estimated_div = play.get("estimated_dividend", 2.0)
+                            play_track = play.get("_track", list(all_results.keys())[0])
+                            if not combos:
+                                continue
+                            bet = self.bankroll.record_exotic_bet(
+                                track=play_track,
+                                pool_type=pool,
+                                pool_legs=legs,
+                                combinations=combos,
+                                ticket_cost=ticket_cost,
+                                estimated_dividend=estimated_div,
                             )
+                            if bet:
+                                exotic_bets_placed += 1
+
+                    if auto_bets_placed or exotic_bets_placed:
+                        msg = f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
+                        if auto_bets_placed:
+                            msg += f"Placed {auto_bets_placed} value bet(s)\n"
+                        if exotic_bets_placed:
+                            msg += f"Placed {exotic_bets_placed} exotic play(s)"
+                        print(f"[AUTO-BET] Placed {auto_bets_placed} win + {exotic_bets_placed} exotic bets")
+                        if self.telegram:
+                            await self.telegram.send_message(msg)
         except Exception as e:
             print(f"[ERR] Auto-bet placement failed: {e}")
 

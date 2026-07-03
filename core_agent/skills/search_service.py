@@ -124,6 +124,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     if not results and _is_sa_query:
         sa_urls = [
             "https://www.tab4racing.com/racecards",
+            "https://www.tab4racing.com/results",
             "https://www.topbets.co.za/racing",
             "https://www.raceform.co.za/",
             "https://www.sahorseracing.com/race-meetings",

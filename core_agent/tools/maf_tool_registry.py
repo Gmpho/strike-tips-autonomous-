@@ -5,6 +5,7 @@ Tool names follow the func_gemma-compatible naming convention.
 """
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import asdict
@@ -12,6 +13,12 @@ from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core_agent.core.redis_cache import get_cache, set_cache
+from core_agent.skills.exotics.parser import (
+    extract_form_string,
+    detect_jockey_trainer,
+    compute_win_probability,
+)
+from core_agent.skills.exotics.builder import build_exotics_blueprint
 
 logger = logging.getLogger("maf-tool-registry")
 
@@ -659,207 +666,7 @@ async def query_racing_dreams(track: Optional[str] = None, keywords: Optional[st
         return {"status": "error", "reason": str(e)}
 
 
-# ─── Exotics & Full Card Analysis Helpers ─────────────────────────────────────
-
-def extract_form_string(text: str) -> str:
-    """Helper to extract form string (digits and dashes) from horse description."""
-    import re
-    # Strip horse number prefix (e.g. #10)
-    cleaned_text = re.sub(r'^#\d+', '', text)
-    # Strip weight/age parenthesis
-    cleaned_text = re.sub(r'\(\d+(?:\.\d+)?kg\)', '', cleaned_text)
-    cleaned_text = re.sub(r'\(\d+yo\)', '', cleaned_text)
-    cleaned_text = re.sub(r'\(\d+\s*yo\)', '', cleaned_text)
-    cleaned_text = re.sub(r'\(\d+\s*year(?:s)?\)', '', cleaned_text)
-    
-    # 1. Check inside parenthesis first
-    paren_matches = re.findall(r'\(([^)]+)\)', cleaned_text)
-    for match in paren_matches:
-        if 'kg' in match.lower() or 'yo' in match.lower() or 'year' in match.lower():
-            continue
-        clean = re.sub(r'[^0-9\-]', '', match)
-        if len(clean) >= 2 and '-' in clean:
-            return clean
-        if len(clean) >= 3:
-            return clean
-            
-    # 2. Check for 'form X' pattern
-    form_match = re.search(r'(?i)(?:form\s+)?\b([0-9\-]{3,})\b', cleaned_text)
-    if form_match:
-        return re.sub(r'[^0-9\-]', '', form_match.group(1))
-        
-    # 3. Check for specific dash patterns like \b\d+-\d+\b
-    dash_match = re.search(r'\b([0-9\-]+-[0-9\-]+)\b', cleaned_text)
-    if dash_match:
-        return re.sub(r'[^0-9\-]', '', dash_match.group(1))
-        
-    # 4. Generic regex check for sequence of digits/dashes
-    generic = re.findall(r'\b([0-9\-]{3,})\b', cleaned_text)
-    for g in generic:
-        clean = re.sub(r'[^0-9\-]', '', g)
-        if '-' in clean or len(clean) >= 3:
-            return clean
-    return ""
-
-
-def detect_jockey_trainer(text: str) -> Tuple[str, str]:
-    """Helper to extract jockey and trainer names from description."""
-    import re
-    # Check "Trainer X, jockey Y"
-    match1 = re.search(r'(?i)trainer\s+([A-Za-z\s]+?),\s*jockey\s+([A-Za-z\s]+)', text)
-    if match1:
-        return match1.group(2).strip(), match1.group(1).strip()
-        
-    # Check "X/Y"
-    match2 = re.search(r'([A-Za-z\s\.\-]+?)/([A-Za-z\s\.\-]+)', text)
-    if match2:
-        return match2.group(2).strip(), match2.group(1).strip()
-        
-    # Check for keywords and match known list
-    known_jockeys = {"fourie", "murray", "veale", "habib", "zackey", "lerena", "de melo", "lloyd", "moodley", "khumalo", "yeni", "marcus", "domeyer", "schofield", "little", "godden"}
-    known_trainers = {"snaith", "tarry", "kock", "peter", "laird", "azzie", "klaasen", "woodruff", "kotzen", "crawford", "kannemeyer", "marshall", "bass", "puller", "steyn", "wright", "dawson", "bronkhorst", "ferrie", "rivalland"}
-    
-    words = re.findall(r'[A-Za-z]+', text)
-    jockey = ""
-    trainer = ""
-    for w in words:
-        w_lower = w.lower()
-        if w_lower in known_jockeys and not jockey:
-            jockey = w
-        if w_lower in known_trainers and not trainer:
-            trainer = w
-            
-    return jockey, trainer
-
-
-def get_jockey_trainer_multiplier(jockey: str, trainer: str) -> float:
-    """Returns win probability multiplier based on jockey/trainer stats."""
-    mult = 1.0
-    known_jockeys = {"fourie", "murray", "veale", "habib", "zackey", "lerena", "de melo", "lloyd", "moodley", "khumalo", "yeni", "marcus", "domeyer", "schofield", "little", "godden"}
-    known_trainers = {"snaith", "tarry", "kock", "peter", "laird", "azzie", "klaasen", "woodruff", "kotzen", "crawford", "kannemeyer", "marshall", "bass", "puller", "steyn", "wright", "dawson", "bronkhorst", "ferrie", "rivalland"}
-    
-    if jockey.lower() in known_jockeys:
-        mult += 0.05
-    if trainer.lower() in known_trainers:
-        mult += 0.05
-    return mult
-
-
-def compute_win_probability(form_str: str, weight: float, jockey: str, trainer: str, field_size: int) -> float:
-    """Computes win probability adjusted by form, weight, and trainer/jockey combinations."""
-    from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
-    
-    positions = parse_sa_form(form_str)
-    analyzer = FormAnalyzer()
-    
-    base_prob, _, _ = analyzer.estimate_win_probability(
-        horse_name="candidate",
-        form_positions=positions,
-        field_size=field_size
-    )
-    
-    # Weight Adjustment: Every kg above 58kg reduces probability by ~0.8%, below increases it
-    weight_diff = weight - 58.0
-    weight_factor = 1.0 - (weight_diff * 0.008)
-    weight_factor = max(0.8, min(1.2, weight_factor))
-    
-    jt_mult = get_jockey_trainer_multiplier(jockey, trainer)
-    
-    final_prob = base_prob * weight_factor * jt_mult
-    return max(0.01, min(0.75, final_prob))
-
-
-def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
-    """Dynamically builds Pick 3/6, Bipot, Jackpots, and Place Accumulator leg combinations."""
-    total_races = len(races)
-    
-    # 1. Detect starting races from parsed pools
-    pool_starts = {}
-    for race in races:
-        for p in race["pools"]:
-            key = p
-            if p == "BIPOT": key = "BI1"
-            if p == "JACKPOT": key = "JP1"
-            if key not in pool_starts:
-                pool_starts[key] = race["number"]
-                
-    # 2. Dynamic Fallback defaults based on total race count
-    if "BI1" not in pool_starts:
-        pool_starts["BI1"] = 2 if total_races >= 10 else 1
-            
-    if "PA" not in pool_starts:
-        if total_races >= 12:
-            pool_starts["PA"] = 3
-        elif total_races in (9, 10):
-            pool_starts["PA"] = 2
-        else:
-            pool_starts["PA"] = 2
-            
-    if "P6" not in pool_starts:
-        if total_races >= 12:
-            pool_starts["P6"] = 4
-        elif total_races in (9, 10):
-            pool_starts["P6"] = 3
-        else:
-            pool_starts["P6"] = 3
-            
-    if "JP1" not in pool_starts:
-        if total_races >= 12:
-            pool_starts["JP1"] = 1
-        elif total_races in (9, 10):
-            pool_starts["JP1"] = 4
-        else:
-            pool_starts["JP1"] = 5
-            
-    if "JP2" not in pool_starts and total_races >= 9:
-        if total_races >= 12:
-            pool_starts["JP2"] = 5
-        else:
-            pool_starts["JP2"] = 6
-            
-    if "JP3" not in pool_starts and total_races >= 12:
-        pool_starts["JP3"] = 9
-        
-    if "BI2" not in pool_starts and total_races >= 12:
-        pool_starts["BI2"] = 7
-        
-    # 3. Compile selections for each pool
-    blueprints = {}
-    
-    def get_selections_for_legs(start_race: int, num_legs: int):
-        legs = []
-        for leg_idx in range(num_legs):
-            target_race_num = start_race + leg_idx
-            race = next((r for r in races if r["number"] == target_race_num), None)
-            if race and race["runners"]:
-                sorted_runners = sorted(race["runners"], key=lambda r: r.get("prob", 0.0), reverse=True)
-                banker = sorted_runners[0]
-                savers = sorted_runners[1:3]
-                legs.append({
-                    "race": target_race_num,
-                    "banker": banker,
-                    "savers": savers
-                })
-        return legs
-
-    if "JP1" in pool_starts:
-        blueprints["Jackpot 1"] = get_selections_for_legs(pool_starts["JP1"], 4)
-    if "JP2" in pool_starts:
-        blueprints["Jackpot 2"] = get_selections_for_legs(pool_starts["JP2"], 4)
-    if "JP3" in pool_starts:
-        blueprints["Jackpot 3"] = get_selections_for_legs(pool_starts["JP3"], 4)
-    if "BI1" in pool_starts:
-        blueprints["Bipot 1"] = get_selections_for_legs(pool_starts["BI1"], 6)
-    if "BI2" in pool_starts:
-        blueprints["Bipot 2"] = get_selections_for_legs(pool_starts["BI2"], 6)
-    if "PA" in pool_starts:
-        blueprints["Place Accumulator"] = get_selections_for_legs(pool_starts["PA"], 7)
-    if "P6" in pool_starts:
-        blueprints["Pick 6"] = get_selections_for_legs(pool_starts["P6"], 6)
-        
-    # Clean up empty blueprints
-    blueprints = {k: v for k, v in blueprints.items() if len(v) > 0}
-    return blueprints, pool_starts
+# ─── Exotics & Full Card Analysis Tool (helpers in core_agent/skills/exotics/) ──
 
 
 # ─── Full Card Analysis Tool ──────────────────────────────────────────────────
@@ -867,8 +674,6 @@ def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
 async def analyze_full_race_card(card_text: str, strike=None, **kwargs) -> Dict[str, Any]:
     """Parses daily racecard text, calculates runner win probabilities, and suggests exotics paths."""
     try:
-        import re
-        # Normalize dashes
         card_text = card_text.replace("‑", "-").replace("–", "-").replace("—", "-")
         
         # 1. Parse text into races

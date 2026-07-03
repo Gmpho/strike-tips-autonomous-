@@ -232,7 +232,7 @@ class StrikeTipsScheduler:
                     winner, confidence = tracker._extract_winner(
                         result_text, [bet.horse]
                     )
-                    if winner and confidence >= 0.6:
+                    if winner and confidence >= 0.55:
                         won = winner == bet.horse
                         brain.strike.settle_bet(
                             bet_id=bet.bet_id,

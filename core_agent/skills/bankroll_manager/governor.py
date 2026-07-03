@@ -95,6 +95,7 @@ class BankrollGovernor:
     MAX_DRAWDOWN_PERCENT: float = 50.0
     MIN_EDGE_PERCENT: float = 5.0
     KELLY_FRACTION: float = 0.5
+    MAX_EXOTIC_COST: float = 200.0  # Max R200 per exotic pool ticket
 
     def __init__(self, data_dir: str = "./data", starting_bankroll: float = 1000.0):
         self.data_dir = os.path.abspath(data_dir)
@@ -354,6 +355,110 @@ class BankrollGovernor:
                 f"{'[PAPER] ' if is_paper else ''}Bet recorded: {horse} @ {odds} for R{stake:.2f} (edge: +{edge_percent}%)"
             )
             return bet
+
+    def record_exotic_bet(
+        self,
+        track: str,
+        pool_type: str,
+        pool_legs: List[int],
+        combinations: List[Dict],
+        ticket_cost: float,
+        estimated_dividend: float,
+    ) -> Optional[BetRecord]:
+        """Record an exotic pool bet (Pick 6, Jackpot, Bipot, etc.)"""
+        total_cost = len(combinations) * ticket_cost
+        if total_cost > self.MAX_EXOTIC_COST:
+            logger.warning(f"Exotic cost R{total_cost:.2f} exceeds limit R{self.MAX_EXOTIC_COST:.2f}")
+            total_cost = self.MAX_EXOTIC_COST
+
+        with self._atomic_transaction():
+            paper_settings = _load_paper_settings(self.data_dir)
+            is_paper = paper_settings["paper_mode"]
+
+            if not is_paper:
+                can_bet, reason = self.can_bet_today(total_cost)
+                if not can_bet:
+                    logger.warning(f"Exotic bet blocked by governor: {reason}")
+                    return None
+
+            now = datetime.now()
+            leg_desc = "-".join(str(r) for r in pool_legs)
+            combo_desc = ";".join(
+                f"R{c.get('race','?')}#{c.get('banker','?')}" for c in combinations[:3]
+            )
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}"
+
+            bet = BetRecord(
+                bet_id=bet_id,
+                timestamp=now.isoformat(),
+                date=date.today().isoformat(),
+                track=track,
+                race_number=pool_legs[0] if pool_legs else 0,
+                horse=f"{pool_type}:{leg_desc}",
+                odds=estimated_dividend,
+                stake=round(total_cost, 2),
+                potential_return=round(total_cost * estimated_dividend, 2),
+                status="PENDING",
+                edge_percent=0.0,
+                confidence="EXOTIC",
+                notes=json.dumps({
+                    "pool_type": pool_type,
+                    "pool_legs": pool_legs,
+                    "combinations": combinations,
+                    "ticket_cost": ticket_cost,
+                }),
+                distance=None,
+            )
+
+            if is_paper:
+                self.paper_balance -= total_cost
+            else:
+                self.current_bankroll -= total_cost
+                self.total_profit_loss -= total_cost
+
+            self._bets.append(bet)
+            logger.info(
+                f"{'[PAPER] ' if is_paper else ''}Exotic bet recorded: {pool_type} "
+                f"Races {leg_desc} for R{total_cost:.2f} ({len(combinations)} combos)"
+            )
+            return bet
+
+    def settle_exotic_bet(self, bet_id: str, pool_return: float, notes: str = "") -> bool:
+        """Settle an exotic pool bet with its actual pool dividend return."""
+        with self._atomic_transaction():
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            if not bet:
+                logger.warning(f"Exotic bet not found: {bet_id}")
+                return False
+            if bet.status != "PENDING":
+                logger.warning(f"Exotic bet {bet_id} already settled as {bet.status}")
+                return False
+
+            won = pool_return > 0.0
+            if won:
+                bet.actual_return = pool_return
+                bet.status = "WON"
+            else:
+                bet.actual_return = 0.0
+                bet.status = "LOST"
+
+            bet.profit_loss = (bet.actual_return or 0.0) - bet.stake
+            if notes:
+                existing = json.loads(bet.notes) if bet.notes else {}
+                existing["settlement_notes"] = notes
+                bet.notes = json.dumps(existing)
+
+            if bet.notes and "PAPER" in str(bet.notes):
+                self.paper_balance += (bet.actual_return or 0.0)
+            else:
+                self.current_bankroll += (bet.actual_return or 0.0) - bet.stake
+                self.total_profit_loss += (bet.actual_return or 0.0) - bet.stake
+
+            logger.info(
+                f"Exotic bet settled: {bet.horse} - {'WON' if won else 'LOST'} "
+                f"| Return: R{bet.actual_return:.2f} | P&L: R{bet.profit_loss:.2f}"
+            )
+            return True
 
     def settle_bet(self, bet_id: str, won: bool, notes: str = "") -> bool:
         """Settle a pending bet with a result (Atomic)"""

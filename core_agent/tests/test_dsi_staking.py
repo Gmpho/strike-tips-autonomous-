@@ -19,6 +19,8 @@ def test_dsi_stake_scaling(tmp_path):
     from chromadb import EmbeddingFunction
     
     class MockEmbeddingFn(EmbeddingFunction):
+        def __init__(self):
+            pass
         def __call__(self, input):
             return [[0.0] * 384 for _ in input]
             

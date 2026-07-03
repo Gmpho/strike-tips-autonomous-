@@ -75,10 +75,17 @@ class RacingService:
             race_mappings = []
             for race in races:
                 race_card, probs, reason = self._convert_race_data(race)
-                prompts.append(self.ai._build_race_prompt(asdict(race)))
+                prompt = (
+                    f"Analyze this single race for value (Edge > 5%): {json.dumps(asdict(race))}. "
+                    f"Context: {track} Race {race.race_number}. "
+                    "Return ONLY valid JSON: {'race_number': "
+                    + str(race.race_number)
+                    + ", 'summary': '...', 'value_bets': []}."
+                )
+                prompts.append(prompt)
                 race_mappings.append((race, race_card, probs, reason))
 
-            ai_results = await self.ai._call_kimi_parallel(prompts)
+            ai_results = await self.ai._call_parallel(prompts)
 
             results = []
             for i, ai_res in enumerate(ai_results):
