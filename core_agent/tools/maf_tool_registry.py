@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import asdict
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core_agent.core.redis_cache import get_cache, set_cache
 
@@ -180,6 +180,13 @@ TOOL_INFO: Dict[str, Dict] = {
         "category": "search",
         "speed": "~2s",
         "use_case": "Find all soft going dreams simulated for Vaal",
+    },
+    "analyze_full_race_card": {
+        "description": "Parse a raw daily South African racecard (Greyville, Kenilworth, etc.), compute runner win probabilities (weighted form & jockey/trainer combinations), and map out optimal exotic combinations (Pick 3/6, Bipot, PA, Jackpots) with dynamic leg detection.",
+        "specialist": "lfm_racing",
+        "category": "analysis",
+        "speed": "~5-10s",
+        "use_case": "Parse and analyze today's card to suggest exotics and find value",
     },
 }
 
@@ -652,6 +659,360 @@ async def query_racing_dreams(track: Optional[str] = None, keywords: Optional[st
         return {"status": "error", "reason": str(e)}
 
 
+# ─── Exotics & Full Card Analysis Helpers ─────────────────────────────────────
+
+def extract_form_string(text: str) -> str:
+    """Helper to extract form string (digits and dashes) from horse description."""
+    import re
+    # Strip horse number prefix (e.g. #10)
+    cleaned_text = re.sub(r'^#\d+', '', text)
+    # Strip weight/age parenthesis
+    cleaned_text = re.sub(r'\(\d+(?:\.\d+)?kg\)', '', cleaned_text)
+    cleaned_text = re.sub(r'\(\d+yo\)', '', cleaned_text)
+    cleaned_text = re.sub(r'\(\d+\s*yo\)', '', cleaned_text)
+    cleaned_text = re.sub(r'\(\d+\s*year(?:s)?\)', '', cleaned_text)
+    
+    # 1. Check inside parenthesis first
+    paren_matches = re.findall(r'\(([^)]+)\)', cleaned_text)
+    for match in paren_matches:
+        if 'kg' in match.lower() or 'yo' in match.lower() or 'year' in match.lower():
+            continue
+        clean = re.sub(r'[^0-9\-]', '', match)
+        if len(clean) >= 2 and '-' in clean:
+            return clean
+        if len(clean) >= 3:
+            return clean
+            
+    # 2. Check for 'form X' pattern
+    form_match = re.search(r'(?i)(?:form\s+)?\b([0-9\-]{3,})\b', cleaned_text)
+    if form_match:
+        return re.sub(r'[^0-9\-]', '', form_match.group(1))
+        
+    # 3. Check for specific dash patterns like \b\d+-\d+\b
+    dash_match = re.search(r'\b([0-9\-]+-[0-9\-]+)\b', cleaned_text)
+    if dash_match:
+        return re.sub(r'[^0-9\-]', '', dash_match.group(1))
+        
+    # 4. Generic regex check for sequence of digits/dashes
+    generic = re.findall(r'\b([0-9\-]{3,})\b', cleaned_text)
+    for g in generic:
+        clean = re.sub(r'[^0-9\-]', '', g)
+        if '-' in clean or len(clean) >= 3:
+            return clean
+    return ""
+
+
+def detect_jockey_trainer(text: str) -> Tuple[str, str]:
+    """Helper to extract jockey and trainer names from description."""
+    import re
+    # Check "Trainer X, jockey Y"
+    match1 = re.search(r'(?i)trainer\s+([A-Za-z\s]+?),\s*jockey\s+([A-Za-z\s]+)', text)
+    if match1:
+        return match1.group(2).strip(), match1.group(1).strip()
+        
+    # Check "X/Y"
+    match2 = re.search(r'([A-Za-z\s\.\-]+?)/([A-Za-z\s\.\-]+)', text)
+    if match2:
+        return match2.group(2).strip(), match2.group(1).strip()
+        
+    # Check for keywords and match known list
+    known_jockeys = {"fourie", "murray", "veale", "habib", "zackey", "lerena", "de melo", "lloyd", "moodley", "khumalo", "yeni", "marcus", "domeyer", "schofield", "little", "godden"}
+    known_trainers = {"snaith", "tarry", "kock", "peter", "laird", "azzie", "klaasen", "woodruff", "kotzen", "crawford", "kannemeyer", "marshall", "bass", "puller", "steyn", "wright", "dawson", "bronkhorst", "ferrie", "rivalland"}
+    
+    words = re.findall(r'[A-Za-z]+', text)
+    jockey = ""
+    trainer = ""
+    for w in words:
+        w_lower = w.lower()
+        if w_lower in known_jockeys and not jockey:
+            jockey = w
+        if w_lower in known_trainers and not trainer:
+            trainer = w
+            
+    return jockey, trainer
+
+
+def get_jockey_trainer_multiplier(jockey: str, trainer: str) -> float:
+    """Returns win probability multiplier based on jockey/trainer stats."""
+    mult = 1.0
+    known_jockeys = {"fourie", "murray", "veale", "habib", "zackey", "lerena", "de melo", "lloyd", "moodley", "khumalo", "yeni", "marcus", "domeyer", "schofield", "little", "godden"}
+    known_trainers = {"snaith", "tarry", "kock", "peter", "laird", "azzie", "klaasen", "woodruff", "kotzen", "crawford", "kannemeyer", "marshall", "bass", "puller", "steyn", "wright", "dawson", "bronkhorst", "ferrie", "rivalland"}
+    
+    if jockey.lower() in known_jockeys:
+        mult += 0.05
+    if trainer.lower() in known_trainers:
+        mult += 0.05
+    return mult
+
+
+def compute_win_probability(form_str: str, weight: float, jockey: str, trainer: str, field_size: int) -> float:
+    """Computes win probability adjusted by form, weight, and trainer/jockey combinations."""
+    from core_agent.skills.race_analysis.form_analyzer import FormAnalyzer, parse_sa_form
+    
+    positions = parse_sa_form(form_str)
+    analyzer = FormAnalyzer()
+    
+    base_prob, _, _ = analyzer.estimate_win_probability(
+        horse_name="candidate",
+        form_positions=positions,
+        field_size=field_size
+    )
+    
+    # Weight Adjustment: Every kg above 58kg reduces probability by ~0.8%, below increases it
+    weight_diff = weight - 58.0
+    weight_factor = 1.0 - (weight_diff * 0.008)
+    weight_factor = max(0.8, min(1.2, weight_factor))
+    
+    jt_mult = get_jockey_trainer_multiplier(jockey, trainer)
+    
+    final_prob = base_prob * weight_factor * jt_mult
+    return max(0.01, min(0.75, final_prob))
+
+
+def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
+    """Dynamically builds Pick 3/6, Bipot, Jackpots, and Place Accumulator leg combinations."""
+    total_races = len(races)
+    
+    # 1. Detect starting races from parsed pools
+    pool_starts = {}
+    for race in races:
+        for p in race["pools"]:
+            key = p
+            if p == "BIPOT": key = "BI1"
+            if p == "JACKPOT": key = "JP1"
+            if key not in pool_starts:
+                pool_starts[key] = race["number"]
+                
+    # 2. Dynamic Fallback defaults based on total race count
+    if "BI1" not in pool_starts:
+        pool_starts["BI1"] = 2 if total_races >= 10 else 1
+            
+    if "PA" not in pool_starts:
+        if total_races >= 12:
+            pool_starts["PA"] = 3
+        elif total_races in (9, 10):
+            pool_starts["PA"] = 2
+        else:
+            pool_starts["PA"] = 2
+            
+    if "P6" not in pool_starts:
+        if total_races >= 12:
+            pool_starts["P6"] = 4
+        elif total_races in (9, 10):
+            pool_starts["P6"] = 3
+        else:
+            pool_starts["P6"] = 3
+            
+    if "JP1" not in pool_starts:
+        if total_races >= 12:
+            pool_starts["JP1"] = 1
+        elif total_races in (9, 10):
+            pool_starts["JP1"] = 4
+        else:
+            pool_starts["JP1"] = 5
+            
+    if "JP2" not in pool_starts and total_races >= 9:
+        if total_races >= 12:
+            pool_starts["JP2"] = 5
+        else:
+            pool_starts["JP2"] = 6
+            
+    if "JP3" not in pool_starts and total_races >= 12:
+        pool_starts["JP3"] = 9
+        
+    if "BI2" not in pool_starts and total_races >= 12:
+        pool_starts["BI2"] = 7
+        
+    # 3. Compile selections for each pool
+    blueprints = {}
+    
+    def get_selections_for_legs(start_race: int, num_legs: int):
+        legs = []
+        for leg_idx in range(num_legs):
+            target_race_num = start_race + leg_idx
+            race = next((r for r in races if r["number"] == target_race_num), None)
+            if race and race["runners"]:
+                sorted_runners = sorted(race["runners"], key=lambda r: r.get("prob", 0.0), reverse=True)
+                banker = sorted_runners[0]
+                savers = sorted_runners[1:3]
+                legs.append({
+                    "race": target_race_num,
+                    "banker": banker,
+                    "savers": savers
+                })
+        return legs
+
+    if "JP1" in pool_starts:
+        blueprints["Jackpot 1"] = get_selections_for_legs(pool_starts["JP1"], 4)
+    if "JP2" in pool_starts:
+        blueprints["Jackpot 2"] = get_selections_for_legs(pool_starts["JP2"], 4)
+    if "JP3" in pool_starts:
+        blueprints["Jackpot 3"] = get_selections_for_legs(pool_starts["JP3"], 4)
+    if "BI1" in pool_starts:
+        blueprints["Bipot 1"] = get_selections_for_legs(pool_starts["BI1"], 6)
+    if "BI2" in pool_starts:
+        blueprints["Bipot 2"] = get_selections_for_legs(pool_starts["BI2"], 6)
+    if "PA" in pool_starts:
+        blueprints["Place Accumulator"] = get_selections_for_legs(pool_starts["PA"], 7)
+    if "P6" in pool_starts:
+        blueprints["Pick 6"] = get_selections_for_legs(pool_starts["P6"], 6)
+        
+    # Clean up empty blueprints
+    blueprints = {k: v for k, v in blueprints.items() if len(v) > 0}
+    return blueprints, pool_starts
+
+
+# ─── Full Card Analysis Tool ──────────────────────────────────────────────────
+
+async def analyze_full_race_card(card_text: str, strike=None, **kwargs) -> Dict[str, Any]:
+    """Parses daily racecard text, calculates runner win probabilities, and suggests exotics paths."""
+    try:
+        import re
+        # Normalize dashes
+        card_text = card_text.replace("‑", "-").replace("–", "-").replace("—", "-")
+        
+        # 1. Parse text into races
+        races_raw = []
+        blocks = re.split(r'(?i)\bRace\s+(\d+)\b', card_text)
+        
+        if len(blocks) < 3:
+            # Fallback split
+            blocks = re.split(r'(?m)^(\d+)\s+–\s+\d{2}:\d{2}', card_text)
+            
+        if len(blocks) < 3:
+            return {"status": "error", "reason": "Could not identify races. Ensure races start with 'Race X' or 'X - HH:MM'."}
+            
+        for i in range(1, len(blocks), 2):
+            race_num = int(blocks[i])
+            content = blocks[i+1]
+            
+            header = " ".join(content.split("\n")[:3])
+            
+            runners = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line.startswith("#"):
+                    continue
+                
+                num_match = re.match(r'^#(\d+)\s+([A-Za-z\s\'\-]+?)\s*\((\d+(?:\.\d+)?)kg\)', line)
+                if num_match:
+                    h_num = int(num_match.group(1))
+                    h_name = num_match.group(2).strip()
+                    h_weight = float(num_match.group(3))
+                    
+                    jockey, trainer = detect_jockey_trainer(line)
+                    form_str = extract_form_string(line)
+                    
+                    runners.append({
+                        "number": h_num,
+                        "name": h_name,
+                        "weight": h_weight,
+                        "jockey": jockey,
+                        "trainer": trainer,
+                        "form": form_str,
+                        "raw_line": line
+                    })
+                    
+            pools_started = []
+            for pool in ["JP1", "JP2", "JP3", "BI1", "BI2", "PA", "P6", "BIPOT", "JACKPOT"]:
+                if re.search(rf'\b{pool}\b', header, re.IGNORECASE):
+                    pools_started.append(pool.upper())
+                    
+            if runners:
+                races_raw.append({
+                    "number": race_num,
+                    "runners": runners,
+                    "pools": pools_started,
+                    "header": header
+                })
+                
+        if not races_raw:
+            return {"status": "error", "reason": "No runners parsed from the racecard."}
+            
+        # 2. Run probability scoring for all runners
+        for race in races_raw:
+            field_size = len(race["runners"])
+            for r in race["runners"]:
+                r["prob"] = compute_win_probability(r["form"], r["weight"], r["jockey"], r["trainer"], field_size)
+                
+        # 3. Dynamic Exotics Mapping
+        blueprints, starts = build_exotics_blueprint(races_raw)
+        
+        # 4. Generate the Markdown Report
+        lines = []
+        lines.append("🏇 **STRIKE TIPS L7 RACE ANALYSIS & EXOTICS BLUEPRINT**")
+        lines.append(f"📊 *Parsed {len(races_raw)} races | Dynamic Pool Detection Active*\n")
+        
+        pool_starts_str = ", ".join(f"{k}: Race {v}" for k, v in sorted(starts.items()))
+        lines.append(f"🔍 **Detected Pool Starts:** {pool_starts_str}\n")
+        
+        for race in races_raw:
+            lines.append("---")
+            lines.append(f"### Race {race['number']}")
+            if race["pools"]:
+                lines.append(f"🏆 *Pools declared: {', '.join(race['pools'])}*")
+                
+            sorted_runners = sorted(race["runners"], key=lambda r: r["prob"], reverse=True)
+            top_3 = sorted_runners[:3]
+            
+            field_size = len(race["runners"])
+            implied_avg = 1.15 / field_size
+            
+            for r in race["runners"]:
+                r["edge"] = r["prob"] - implied_avg
+                
+            value_shots = [r for r in race["runners"] if r["edge"] >= 0.05 and r["name"] not in [t["name"] for t in top_3]]
+            big_shots = value_shots[:2] if value_shots else sorted_runners[3:5]
+            
+            lines.append("**🎯 Top 3 Contenders:**")
+            for idx, r in enumerate(top_3, 1):
+                j_t = f" (J:{r['jockey']}, T:{r['trainer']})" if r["jockey"] or r["trainer"] else ""
+                lines.append(f"  {idx}. #{r['number']} **{r['name']}** ({r['weight']}kg) - Win Prob: {r['prob']:.1%}{j_t}")
+                
+            lines.append("\n**💣 Big 2 Shots (Value / Exotics Savers):**")
+            for r in big_shots:
+                j_t = f" (J:{r['jockey']}, T:{r['trainer']})" if r["jockey"] or r["trainer"] else ""
+                lines.append(f"  • #{r['number']} **{r['name']}** (Form: {r['form'] or 'Unknown'}){j_t}")
+                
+            if sorted_runners:
+                banker = sorted_runners[0]
+                lines.append(f"\n🥇 **Win Bet Suggestion**: #{banker['number']} **{banker['name']}**")
+                
+            lines.append("")
+            
+        lines.append("---")
+        lines.append("📋 **EXOTICS COMBINATION SHEET**")
+        
+        for pool_name, legs in blueprints.items():
+            lines.append(f"\n🏆 **{pool_name} Layout:**")
+            banker_tokens = []
+            saver_tokens = []
+            for leg in legs:
+                b = leg["banker"]
+                banker_tokens.append(f"R{leg['race']}: #{b['number']}")
+                
+                s_list = [f"#{s['number']}" for s in leg["savers"]]
+                saver_tokens.append(f"R{leg['race']}: {'/'.join(s_list)}")
+                
+            lines.append(f"  • **Banker Path:** {' | '.join(banker_tokens)}")
+            lines.append(f"  • **Savers Path:** {' | '.join(saver_tokens)}")
+            
+        lines.append("\n---")
+        lines.append("⚖️ *Governance: Staking sizes are subject to drawdown and Kelly limits. Bet responsibly.*")
+        
+        report_text = "\n".join(lines)
+        return {
+            "status": "success",
+            "races_parsed": len(races_raw),
+            "pool_starts": starts,
+            "report": report_text
+        }
+        
+    except Exception as e:
+        logger.error(f"analyze_full_race_card failed: {e}")
+        return {"status": "error", "reason": str(e)}
+
+
 # ─── Registry ─────────────────────────────────────────────────────────────────
 
 TOOL_REGISTRY: Dict[str, Callable] = {
@@ -675,6 +1036,7 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "save_learned_insight": save_learned_insight,
     "simulate_race_scenarios": simulate_race_scenarios,
     "query_racing_dreams": query_racing_dreams,
+    "analyze_full_race_card": analyze_full_race_card,
 }
 
 

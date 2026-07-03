@@ -145,6 +145,19 @@ async def mcp_query_racing_dreams(track: Optional[str] = None, keywords: Optiona
         return f'{{"error": "{e}"}}'
 
 
+@mcp.tool(name="analyze_full_race_card", description="Parse daily SA racecard text, compute runner win probabilities, and suggest dynamic exotics combinations (BI, PA, P6, JPs).")
+async def mcp_analyze_full_race_card(card_text: str) -> str:
+    try:
+        from core_agent.tools.maf_tool_registry import analyze_full_race_card as tool_fn
+        result = await tool_fn(card_text=card_text, strike=brain.strike)
+        if result.get("status") == "success":
+            return result["report"]
+        else:
+            return f"Error: {result.get('reason', 'Unknown error')}"
+    except Exception as e:
+        return f"Error wrapper: {e}"
+
+
 @mcp.resource("racing://current-config")
 def get_config_resource() -> str:
     try:
