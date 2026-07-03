@@ -10,6 +10,8 @@ from typing import Dict, List
 from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("search-service")
+# Suppress noisy ddgs engine-level timeouts (shown at INFO by library)
+logging.getLogger("ddgs.ddgs").setLevel(logging.WARNING)
 
 _BLOCKED = (
     "youtube.com", "facebook.com", "instagram.com", "tiktok.com",
@@ -71,7 +73,10 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
 
     try:
         loop = asyncio.get_event_loop()
-        raw_results = await loop.run_in_executor(None, _run_ddgs, query, limit * 2)
+        raw_results = await asyncio.wait_for(
+            loop.run_in_executor(None, _run_ddgs, query, limit * 2),
+            timeout=20.0,
+        )
         for r in raw_results:
             url = r.get("href", "") or r.get("url", "")
             if url and not _blocked(url) and url not in seen:

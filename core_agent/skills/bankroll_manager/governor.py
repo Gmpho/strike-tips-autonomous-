@@ -591,6 +591,72 @@ class BankrollGovernor:
             "roi": (total_pl / total_staked * 100) if total_staked > 0 else 0.0,
         }
 
+    def get_settled_bets_by_track(self, min_bets: int = 3) -> List[Dict]:
+        """Group settled bets by track and return performance metrics per track."""
+        settled = [b for b in self._bets if b.status in ("WON", "LOST")]
+        from collections import defaultdict
+        by_track: Dict[str, List[BetRecord]] = defaultdict(list)
+        for b in settled:
+            by_track[b.track.lower()].append(b)
+
+        results = []
+        for track, bets in by_track.items():
+            if len(bets) < min_bets:
+                continue
+            total_stake = sum(b.stake for b in bets)
+            total_pl = sum(b.profit_loss or 0.0 for b in bets)
+            wins = sum(1 for b in bets if b.status == "WON")
+            roi = (total_pl / total_stake * 100) if total_stake > 0 else 0.0
+            results.append({
+                "track": track,
+                "total_bets": len(bets),
+                "wins": wins,
+                "losses": len(bets) - wins,
+                "win_rate": (wins / len(bets) * 100) if bets else 0.0,
+                "total_stake": round(total_stake, 2),
+                "profit_loss": round(total_pl, 2),
+                "roi": round(roi, 2),
+            })
+        results.sort(key=lambda r: r["roi"])
+        return results
+
+    def get_settled_bets_by_odds_range(self, min_bets: int = 3) -> List[Dict]:
+        """Group settled bets by odds bracket and return performance per bracket."""
+        settled = [b for b in self._bets if b.status in ("WON", "LOST")]
+        from collections import defaultdict
+
+        def bracket(odds: float) -> str:
+            if odds < 2.0:
+                return "odds_under_2"
+            if odds < 4.0:
+                return "odds_2_to_4"
+            if odds < 7.0:
+                return "odds_4_to_7"
+            return "odds_7_plus"
+
+        by_bracket: Dict[str, List[BetRecord]] = defaultdict(list)
+        for b in settled:
+            by_bracket[bracket(b.odds)].append(b)
+
+        results = []
+        for bracket_name, bets in by_bracket.items():
+            if len(bets) < min_bets:
+                continue
+            total_stake = sum(b.stake for b in bets)
+            total_pl = sum(b.profit_loss or 0.0 for b in bets)
+            wins = sum(1 for b in bets if b.status == "WON")
+            roi = (total_pl / total_stake * 100) if total_stake > 0 else 0.0
+            results.append({
+                "bracket": bracket_name,
+                "total_bets": len(bets),
+                "wins": wins,
+                "losses": len(bets) - wins,
+                "win_rate": round((wins / len(bets) * 100) if bets else 0.0, 1),
+                "roi": round(roi, 2),
+            })
+        results.sort(key=lambda r: r["roi"])
+        return results
+
     def get_history_stats(self, days: int = 15) -> List[Dict]:
         """Return cumulative profit/loss history for charting"""
         from collections import defaultdict

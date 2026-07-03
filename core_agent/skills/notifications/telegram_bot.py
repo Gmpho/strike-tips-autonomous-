@@ -46,11 +46,20 @@ class TelegramNotifier:
 
         self._base = self.BASE_URL.format(token=self.token)
         self._client: Optional[httpx.AsyncClient] = None
+        self._client_loop_id: Optional[int] = None
         logger.info("TelegramNotifier initialized (admin=%s)", self.chat_id)
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
+        current_loop = asyncio.get_running_loop()
+        if (
+            self._client is None
+            or self._client.is_closed
+            or id(current_loop) != self._client_loop_id
+        ):
+            if self._client is not None and not self._client.is_closed:
+                await self._client.aclose()
             self._client = httpx.AsyncClient(timeout=10.0)
+            self._client_loop_id = id(current_loop)
         return self._client
 
     async def _send_to_chat(self, chat_id: str, text: str, parse_mode: str = "HTML") -> bool:

@@ -91,7 +91,7 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
     )
     try:
         from core_agent.core.http_client import get_async_client
-        client = get_async_client(timeout=10.0)
+        client = get_async_client(timeout=10.0, resolve_hosts={"api.groq.com"})
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},

@@ -3,6 +3,7 @@ import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X } from 'lucide-re
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
+import type { RaceEvent } from '../types';
 
 const SESSIONS_STORAGE_KEY = 'strike_chat_sessions';
 const ACTIVE_SESSION_KEY = 'strike_active_chat_session';
@@ -20,8 +21,31 @@ interface Message {
   activity?: string;
 }
 
-export const AIChat: React.FC = () => {
+function formatRaceCardPrompt(event: RaceEvent): string {
+  const runnersText = event.runners
+    .map((r, i) => {
+      const odds = typeof r.odds === 'number' ? r.odds.toFixed(2) : r.odds || 'SP';
+      const jockey = r.jockeyName || 'TBA';
+      const trainer = r.trainerName || 'TBA';
+      return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}`;
+    })
+    .join('\n');
+  return `Analyse this race for value betting opportunities:
+
+Course: ${event.course} | Race ${event.raceNumber} | Off Time: ${event.t}
+Runners:
+${runnersText}
+
+Identify the best value selection, estimate the probability edge, and flag any high-strike-rate jockey/trainer combos.`;
+}
+
+export interface AIChatProps {
+  initialRaceEvent?: RaceEvent;
+}
+
+export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
   // 1. Sessions State Management
+
   const [sessions, setSessions] = useState<Session[]>(() => {
     try {
       const saved = localStorage.getItem(SESSIONS_STORAGE_KEY);
@@ -59,6 +83,26 @@ export const AIChat: React.FC = () => {
       setWebGpuSupported(supported);
     });
   }, []);
+
+  // Pre-fill textarea with race card prompt when launched from Execute Position
+  useEffect(() => {
+    if (!initialRaceEvent) return;
+    const prompt = formatRaceCardPrompt(initialRaceEvent);
+    const sessionTitle = `${initialRaceEvent.course} R${initialRaceEvent.raceNumber}`;
+    const newId = `race_${initialRaceEvent.id}_${Date.now()}`;
+    const newSession: Session = { id: newId, title: sessionTitle, timestamp: Date.now() };
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newId);
+    setInput(prompt);
+    // Resize textarea to fit the pre-filled content
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      }
+    }, 50);
+  }, [initialRaceEvent]);
+
 
   // Dispatch WebGPU activity event to pause Three.js rendering during local inference
   useEffect(() => {

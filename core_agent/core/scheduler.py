@@ -489,8 +489,16 @@ class StrikeTipsScheduler:
         except Exception as e:
             print(f"[ERR] Learning update failed: {e}")
 
+    async def _send_eod_report_async(self, report: str):
+        from core_agent.core.strike_brain import brain
+        if not brain or not brain.strike or not brain.strike.telegram:
+            return
+        await brain.strike.telegram.send_message(
+            f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
+        )
+
     def _end_of_day_report(self):
-        """Generate and send end-of-day performance report."""
+        """Generate and send end-of-day performance report + auto-learn from results."""
         try:
             from core_agent.core.strike_brain import brain
             if not brain or not brain.strike:
@@ -499,16 +507,24 @@ class StrikeTipsScheduler:
             print(f"\n{'='*60}\n[REPORT] End of Day Report\n{'='*60}")
             print(report)
             if brain.strike.telegram:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(brain.strike.telegram.send_message(
-                        f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
-                    ))
-                except RuntimeError:
-                    asyncio.run(brain.strike.telegram.send_message(
-                        f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
-                    ))
+                    loop.run_until_complete(self._send_eod_report_async(report))
+                finally:
+                    loop.close()
             print("[OK] End-of-day report sent")
+
+            # Auto-learn from settled bet performance
+            try:
+                from core_agent.skills.memory.self_improve import analyze_performance_and_learn
+                if brain.strike.bankroll:
+                    learn_results = analyze_performance_and_learn(brain.strike.bankroll)
+                    saved = sum(1 for r in learn_results if r.get("status") == "SAVED")
+                    if saved:
+                        print(f"[AUTO-LEARN] Generated {saved} new learned insight(s) from performance data")
+            except Exception as e:
+                print(f"[WARN] Auto-learn step failed: {e}")
         except Exception as e:
             print(f"[ERR] End-of-day report failed: {e}")
 

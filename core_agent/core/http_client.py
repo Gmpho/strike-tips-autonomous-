@@ -5,6 +5,7 @@ Each call gets a fresh proxy + browser impersonation to avoid detection.
 
 import logging
 import socket
+import time
 from typing import Optional
 
 from curl_cffi.curl import CurlOpt
@@ -16,6 +17,32 @@ logger = logging.getLogger("http-client")
 
 REQUEST_TIMEOUT = 30.0
 
+# DNS cache: {host: (ip_list, expiry_timestamp)}
+_dns_cache: dict[str, tuple[list[str], float]] = {}
+_DNS_CACHE_TTL = 300  # 5 minutes
+
+
+def _resolve_host(host: str) -> list[str]:
+    """Resolve hostname with retries + cache."""
+    now = time.time()
+    cached = _dns_cache.get(host)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            ips = [r[4][0] for r in socket.getaddrinfo(host, 443)]
+            if ips:
+                _dns_cache[host] = (ips, now + _DNS_CACHE_TTL)
+                return ips
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2)
+    logger.debug("Could not resolve %s after 3 attempts: %s", host, last_err)
+    return []
+
 
 def _resolve_hosts_curl_opts(hosts: set[str]) -> dict:
     """Pre-resolve hostnames via Python's socket (works in Docker) and return
@@ -24,12 +51,9 @@ def _resolve_hosts_curl_opts(hosts: set[str]) -> dict:
         return {}
     entries = []
     for host in hosts:
-        try:
-            ips = [r[4][0] for r in socket.getaddrinfo(host, 443)]
-            for ip in ips[:2]:
-                entries.append(f"{host}:443:{ip}")
-        except Exception:
-            logger.debug(f"Could not pre-resolve {host}")
+        ips = _resolve_host(host)
+        for ip in ips[:2]:
+            entries.append(f"{host}:443:{ip}")
     if entries:
         return {CurlOpt.RESOLVE: entries}
     return {}

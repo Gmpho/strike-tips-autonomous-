@@ -40,6 +40,7 @@ except ImportError:
 BROWSER_PROFILE = "/app/data/browser_profile"
 
 logger = logging.getLogger("at-the-races")
+logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 
 def _parse_odds(odds_text: Optional[str]) -> Optional[float]:
@@ -65,6 +66,15 @@ class AtTheRacesAPI:
         """Fetch page with tiered fallback: StealthyFetcher → Fetcher → None."""
         url = f"{self.BASE_URL}{path}"
 
+        # DNS pre-check — skip Scrapling entirely if domain can't resolve (avoids noisy retries)
+        import socket as _socket
+        try:
+            _socket.setdefaulttimeout(3)
+            _socket.gethostbyname("www.attheraces.com")
+        except Exception:
+            logger.debug("ATR DNS resolution failed — skipping %s", path)
+            return None
+
         # Tier 1: StealthyFetcher — headless Chromium with Cloudflare solver + persistent profile
         if _STEALTH_AVAILABLE:
             try:
@@ -75,8 +85,8 @@ class AtTheRacesAPI:
                     user_data_dir=BROWSER_PROFILE,
                     timeout=30000,
                     disable_resources=True,
-                    retries=2,
-                    retry_delay=2,
+                    retries=1,
+                    retry_delay=1,
                 )
                 if page and page.status == 200:
                     return page.body
@@ -86,13 +96,13 @@ class AtTheRacesAPI:
         # Tier 2: Basic Fetcher — fast HTTP impersonation (curl_cffi)
         if _SCRAPLING_AVAILABLE:
             try:
-                page = Fetcher.get(url, impersonate="chrome131", timeout=20)
+                page = Fetcher.get(url, impersonate="chrome131", timeout=15)
                 if page and page.status == 200:
                     return page.body
             except Exception as e:
                 logger.debug("Basic fetch failed for %s: %s", path, e)
 
-        logger.warning("All fetch tiers failed for %s", url)
+        logger.debug("All fetch tiers failed for %s", url)
         return None
 
     def _parse_one_runner(self, runner_el) -> Optional[Dict]:

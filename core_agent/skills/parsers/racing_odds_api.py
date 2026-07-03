@@ -33,6 +33,7 @@ except ImportError:
         def xpath(self, sel): return type("XPath", (), {"get": lambda *a, **kw: None})()
 
 logger = logging.getLogger("racing-odds")
+logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 
 def _fractional_to_decimal(fractional: str) -> float:
@@ -61,14 +62,29 @@ class RacingOddsAPI:
         url = f"{self.BASE_URL}{path}"
         if not _SCRAPLING_AVAILABLE:
             logger.warning("Racing-odds scrapling not installed — using stub fallback, will return empty")
-        page = Fetcher.get(url, impersonate="chrome131", timeout=30)
-        if page.status != 200:
-            logger.warning("Racing-odds %s -> %s", path, page.status)
             return None
-        body_len = len(page.body) if page.body else 0
-        if body_len < 500:
-            logger.warning("Racing-odds %s suspiciously small body (%d bytes) — possible blocking", path, body_len)
-        return page.body
+
+        # DNS pre-check — skip Scrapling retries if domain can't resolve
+        import socket as _socket
+        try:
+            _socket.setdefaulttimeout(3)
+            _socket.gethostbyname("www.racing-odds.com")
+        except Exception:
+            logger.debug("Racing-odds DNS resolution failed — skipping %s", path)
+            return None
+
+        try:
+            page = Fetcher.get(url, impersonate="chrome131", timeout=8)
+            if page.status != 200:
+                logger.debug("Racing-odds %s -> %s", path, page.status)
+                return None
+            body_len = len(page.body) if page.body else 0
+            if body_len < 500:
+                logger.debug("Racing-odds %s suspiciously small body (%d bytes)", path, body_len)
+            return page.body
+        except Exception as e:
+            logger.debug("Racing-odds fetch failed for %s: %s", path, e)
+            return None
 
     # ------------------------------------------------------------------
     # Daily page -- list of today's meetings + per-race detail URLs

@@ -257,7 +257,11 @@ class AdaptiveOddsMonitor:
                 bw_task = asyncio.create_task(self.betway.get_snapshot_format())
                 ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
                 state = await bw_task
-                ro_snapshot = await ro_task
+                try:
+                    ro_snapshot = await ro_task
+                except Exception:
+                    ro_snapshot = {"events": {}, "count": 0}
+                    logger.debug("Racing-Odds snapshot failed, skipping merge")
 
                 # 1b. Merge Racing-Odds data into Betway events where race/horse match
                 _merge_ro_into(state, ro_snapshot)

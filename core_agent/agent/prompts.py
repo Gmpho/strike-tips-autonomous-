@@ -13,6 +13,7 @@ logger = logging.getLogger("agent-prompts")
 def build_system_prompt(for_cloud: bool = False) -> str:
     today = datetime.now().strftime("%A, %d %B %Y")
     race_info = _build_race_context()
+    learned_info = _build_learned_context()
     
     tools_str = (
         "Available tools (call the RIGHT tool for the job):\n"
@@ -43,6 +44,7 @@ def build_system_prompt(for_cloud: bool = False) -> str:
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
             f"{tools_str}"
+            f"{learned_info}"
             "Rules:\n"
             "1. ALWAYS call a tool when you need live data — never guess odds, horses or results.\n"
             "2. Report tool results directly — do not fabricate numbers.\n"
@@ -55,6 +57,7 @@ def build_system_prompt(for_cloud: bool = False) -> str:
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
             f"{tools_str}"
+            f"{learned_info}"
             "HOW TO USE TOOLS:\n"
             "When you need live data, output EXACTLY this on its own line (nothing else on that line):\n"
             "  TOOL: tool_name({\"arg\": \"value\"})\n"
@@ -113,3 +116,39 @@ def _build_race_context() -> str:
     except Exception as e:
         logger.debug(f"Could not load snapshot: {e}")
         return "Live race data unavailable."
+
+
+def _build_learned_context() -> str:
+    """Query ChromaDB for saved learned_insight entries and format as prompt context.
+    Returns empty string if memory unavailable or no insights found.
+    """
+    try:
+        from core_agent.core.strike_brain import brain
+        if brain and brain.memory and brain.memory._is_ready:
+            results = brain.memory.search_form_insights(
+                query="learned insight analysis feature",
+                n_results=12,
+                where={"type": "learned_insight"},
+            )
+            if not results:
+                return ""
+            lines = ["=== LEARNED PATTERNS FROM PAST ANALYSIS ==="]
+            seen = set()
+            for r in results:
+                meta = r.get("metadata", {})
+                name = meta.get("pattern_name", "")
+                if name and name not in seen:
+                    seen.add(name)
+                    content = r.get("content", "")
+                    desc = ""
+                    for line in content.split("\n"):
+                        if line.startswith("Description:"):
+                            desc = line[len("Description:"):].strip()
+                            break
+                    lines.append(f"  • {name}: {desc[:150]}")
+            lines.append("")
+            return "\n".join(lines)
+        return ""
+    except Exception as e:
+        logger.debug(f"Could not load learned context: {e}")
+        return ""

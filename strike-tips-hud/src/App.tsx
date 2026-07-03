@@ -28,6 +28,7 @@ const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMov
 const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
 const LegalPage = React.lazy(() => import('./components/LegalPage').then(m => ({ default: m.LegalPage })));
+const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
 
 const ViewFallback = () => (
   <div className="flex-1 flex items-center justify-center min-h-[300px]">
@@ -37,7 +38,7 @@ const ViewFallback = () => (
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible'];
 const VALID_VIEWS = [
-  'dashboard', 'agents', 'bankroll', 'analytics', 'logs', 'settings',
+  'dashboard', 'agents', 'chat', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
@@ -69,6 +70,7 @@ export const App: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAllRaces, setShowAllRaces] = useState(false);
+  const [pendingRaceEvent, setPendingRaceEvent] = useState<RaceEvent | null>(null);
   const state = useHUD();
   useTelegram();
   const { hasUpdate, updateSW } = usePWA();
@@ -127,7 +129,15 @@ export const App: React.FC = () => {
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
               {visibleEvents.map((event, idx) => (
-                <RaceCard key={event.id} event={event as RaceEvent} idx={idx} />
+                <RaceCard
+                  key={event.id}
+                  event={event as RaceEvent}
+                  idx={idx}
+                  onExecutePosition={(ev) => {
+                    setPendingRaceEvent(ev);
+                    navigate('chat');
+                  }}
+                />
               ))}
             </div>
             {events.length > MAX_VISIBLE_CARDS && !showAllRaces && (
@@ -142,6 +152,8 @@ export const App: React.FC = () => {
         );
       case 'agents':
         return <Suspense key="agents-view" fallback={<ViewFallback />}><AgentDashboard /></Suspense>;
+      case 'chat':
+        return <Suspense key="chat-view" fallback={<ViewFallback />}><AIChat initialRaceEvent={pendingRaceEvent ?? undefined} /></Suspense>;
       case 'bankroll':
         return <Suspense key="bankroll-view" fallback={<ViewFallback />}><BankrollView /></Suspense>;
       case 'analytics':

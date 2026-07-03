@@ -31,6 +31,9 @@ RUN sed -i '/^agent-framework/d; /^openai/d' requirements.txt \
 # Install openai separately (no conflict)
 RUN pip install --timeout=600 --retries=5 openai==2.30.0
 
+# OpenTelemetry semantic conventions for AI (needed by agent-framework tracing at runtime)
+RUN pip install --timeout=600 --retries=5 opentelemetry-semantic-conventions-ai
+
 # Install Playwright system dependencies
 RUN playwright install-deps chromium 2>&1 || echo "System deps install failed"
 
