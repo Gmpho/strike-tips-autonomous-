@@ -199,18 +199,33 @@ def serve_api():
                     if not brain.strike:
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
                         return {"ok": True}
+                    # Prevent duplicate scans from Telegram webhook retries + bus double-processing
+                    _scanning = getattr(request.app.state, "_scanning", False)
+                    if _scanning:
+                        logger.info("Scan already in progress — skipping duplicate /scan request")
+                        return {"ok": True}
+                    request.app.state._scanning = True
                     await bot.send_message(chat_id=chat_id, text="🔄 *Starting Daily Scan...*\n_This may take 30-60 seconds._", parse_mode="Markdown")
-                    try:
-                        result = await brain.strike.run_daily_scan()
-                        reply = (
-                            f"✅ *Daily Scan Complete*\n\n"
-                            f"Tracks: *{result.get('tracks_scanned', 0)}*\n"
-                            f"Value Bets: *{result.get('total_value_bets', 0)}*\n"
-                            f"Auto-Bets: *{result.get('auto_bets_placed', 0)}*"
-                        )
-                    except Exception as e:
-                        reply = f"❌ *Scan Failed*\n`{str(e)[:200]}`"
-                    await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
+                    # Fire scan in background so webhook returns immediately (Telegram retries otherwise)
+                    async def _bg_scan(chat_id: int):
+                        try:
+                            result = await brain.strike.run_daily_scan()
+                            reply = (
+                                f"✅ *Daily Scan Complete*\n\n"
+                                f"Tracks: *{result.get('tracks_scanned', 0)}*\n"
+                                f"Value Bets: *{result.get('total_value_bets', 0)}*\n"
+                                f"Auto-Bets: *{result.get('auto_bets_placed', 0)}*"
+                            )
+                        except Exception as e:
+                            reply = f"❌ *Scan Failed*\n`{str(e)[:200]}`"
+                        finally:
+                            request.app.state._scanning = False
+                        try:
+                            bot2 = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
+                            await bot2.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
+                        except Exception as e2:
+                            logger.error("Failed to send scan result: %s", e2)
+                    asyncio.create_task(_bg_scan(chat_id))
                     return {"ok": True}
 
                 if cmd == "/clear":

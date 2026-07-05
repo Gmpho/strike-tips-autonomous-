@@ -39,10 +39,23 @@ class ResultTracker:
         return intersection / max(len(a), len(b))
 
     async def _search_result(self, track: str, race_number: int) -> Optional[str]:
-        """Search for race result text — tries multiple dates + direct SA sites."""
-        from core_agent.skills.search_service import search_racing
+        """Search for race result text — tries ATR first, then DDGS + direct SA sites."""
+        # Primary: ATR structured results (most reliable for SA racing)
+        try:
+            from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+            atr = AtTheRacesAPI()
+            winner = await atr.get_winner_for_bet(track, race_number, date="yesterday")
+            if winner:
+                logger.info(
+                    "[RESULT] ATR winner: %s at %s R%s (odds %s)",
+                    winner["horse"], track, race_number, winner.get("odds", "?"),
+                )
+                return f"Winner: {winner['horse']} (1st) in race {race_number} at {track}"
+        except Exception as e:
+            logger.debug(f"ATR lookup failed for {track} R{race_number}: {e}")
 
-        # Try DDGS with each date, then bare
+        # Fallback: DDGS with each date, then bare
+        from core_agent.skills.search_service import search_racing
         for dt_str in _iter_dates():
             query = f"{track} Race {race_number} result winner {dt_str} South Africa horse racing"
             try:

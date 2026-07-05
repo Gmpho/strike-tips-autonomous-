@@ -162,12 +162,17 @@ class AgentLoop:
         elif cmd == "/scan":
             if not brain.strike:
                 response_content = "❌ System not initialized."
+            elif getattr(brain, "_scanning", False):
+                response_content = "🔄 Scan already in progress — please wait."
             else:
+                brain._scanning = True
                 async def _run_scan_bg():
                     try:
                         await brain.strike.run_daily_scan()
                     except Exception as e:
                         logger.error("Scan command error: %s", e)
+                    finally:
+                        brain._scanning = False
                 
                 asyncio.create_task(_run_scan_bg())
                 response_content = "🚀 Starting today's full racing scan in background..."

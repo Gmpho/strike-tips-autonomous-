@@ -1,4 +1,4 @@
-"""at-the-races.com Scraper -- Results, Market Movers, and Predictor
+"""at-the-races.com Scraper -- Results, Market Movers, Predictor, and Winner Lookup
 Uses Scrapling adaptive/self-healing selectors via desktop site (www).
 
 Architecture (tiered fallback):
@@ -11,12 +11,14 @@ Integration:
     results = await api.get_results(date="yesterday")
     movers = await api.get_market_movers()
     predictions = await api.get_predictor()
+    # Winner lookup for bet settlement:
+    winner = await api.get_winner_for_bet("Greyville", 4, "yesterday")
 """
 
 import asyncio
 import logging
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 _SCRAPLING_AVAILABLE = False
 _STEALTH_AVAILABLE = False
@@ -41,6 +43,16 @@ BROWSER_PROFILE = "/app/data/browser_profile"
 
 logger = logging.getLogger("at-the-races")
 logging.getLogger("scrapling").setLevel(logging.ERROR)
+
+TRACK_NAME_ALIASES = {
+    "greyville": "Greyville",
+    "durbanville": "Durbanville",
+    "turffontein": "Turffontein",
+    "vaal": "Vaal",
+    "kenilworth": "Kenilworth",
+    "fairview": "Fairview",
+    "scottsville": "Scottsville",
+}
 
 
 def _parse_odds(odds_text: Optional[str]) -> Optional[float]:
@@ -106,31 +118,53 @@ class AtTheRacesAPI:
         return None
 
     def _parse_one_runner(self, runner_el) -> Optional[Dict]:
+        """Parse a single runner row from the results page.
+
+        HTML structure:
+            <a class="h7 a--plain tooltip" href="/form/horse/...">
+                <span class="text-color--neutral">
+                    1st
+                    <span class="silk silk--inline"><img ...></span>
+                    (10)
+                </span>
+                <span>HorseName</span>
+                <span class="text-color--neutral">15/8</span>
+                <span>F</span>
+            </a>
+        """
         link = runner_el.css("a.h7.a--plain.tooltip, a[class*=tooltip]", adaptive=True)
         if not link:
             return None
         link = link[0]
-        spans = link.css("span", adaptive=True)
 
+        # Use direct children only to avoid picking up nested spans (e.g. silk inside neutral)
         name = None
         odds_text = None
         position = None
         form = ""
 
-        for s in spans:
-            cls = s.attrib.get("class", "")
-            txt = _text(s)
+        seen_neutral = 0
+        for child in link.children:
+            if child.tag != "span":
+                continue
+            cls = child.attrib.get("class", "") or ""
+            txt = _text(child)
 
             if "silk" in cls or "icon" in cls:
                 continue
 
             if "neutral" in cls:
-                pos_match = re.search(r"(1st|2nd|3rd|\d+th)", txt)
-                if pos_match:
-                    position = pos_match.group(1)
-                odds_match = re.search(r"\d+/\d+", txt)
-                if odds_match:
-                    odds_text = odds_match.group(0)
+                seen_neutral += 1
+                if seen_neutral == 1:
+                    pos_match = re.search(r"(1st|2nd|3rd|\d+th)", txt)
+                    if pos_match:
+                        position = pos_match.group(1)
+                elif seen_neutral >= 2:
+                    odds_match = re.search(r"\d+/\d+", txt)
+                    if odds_match:
+                        odds_text = odds_match.group(0)
+                    elif "Evens" in txt or "Evens" in txt:
+                        odds_text = "1/1"
                 continue
 
             if not name and txt and len(txt) > 1:
@@ -221,6 +255,65 @@ class AtTheRacesAPI:
             len([m for m in meeting_divs if m.css("a.panel-header h2", adaptive=True)]),
         )
         return races
+
+    async def get_results_for_track(self, track_name: str, date: str = "yesterday") -> List[Dict]:
+        """Get results filtered to a specific track.
+
+        Handles name matching: 'greyville' matches 'Greyville (RSA)' on ATR.
+        Returns race list with runners, each runner having 'position' and 'name'.
+        """
+        all_results = await self.get_results(date=date)
+        if not all_results:
+            return []
+
+        canonical = TRACK_NAME_ALIASES.get(track_name.lower(), track_name.title())
+        filtered = []
+        for race in all_results:
+            course = race.get("course", "")
+            if canonical.lower() in course.lower():
+                filtered.append(race)
+
+        if not filtered and all_results:
+            looser = [r for r in all_results if track_name.lower() in r.get("course", "").lower()]
+            filtered = looser
+
+        return filtered
+
+    async def get_winner_for_bet(
+        self, track_name: str, race_number: int, date: str = "yesterday"
+    ) -> Optional[Dict]:
+        """Get the winner for a bet at a specific track and race number.
+
+        Returns dict with 'horse', 'position', 'odds' or None if not found.
+        Example:
+            winner = await api.get_winner_for_bet("Greyville", 4, "yesterday")
+            # {"horse": "Sommerstern", "position": "1st", "odds": "15/8"}
+        """
+        track_results = await self.get_results_for_track(track_name, date=date)
+        if not track_results:
+            return None
+
+        for race in track_results:
+            race_num_match = re.search(r"(\d+)\s+\d{2}:\d{2}", race.get("title", ""))
+            if race_num_match:
+                num = int(race_num_match.group(1))
+                if num != race_number:
+                    continue
+            else:
+                continue
+
+            for runner in race.get("runners", []):
+                if runner.get("position") == "1st":
+                    return {
+                        "horse": runner["name"],
+                        "position": "1st",
+                        "odds": runner.get("odds", ""),
+                        "odds_decimal": runner.get("odds_decimal"),
+                        "race_time": race.get("time", ""),
+                        "course": race.get("course", ""),
+                    }
+
+        return None
 
     async def get_market_movers(self) -> List[Dict]:
         """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov."""

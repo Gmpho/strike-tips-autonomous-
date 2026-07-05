@@ -194,10 +194,17 @@ class StrikeTips:
 
                     if not races:
                         print(
-                            f"[WARN] No Betway data for {track}. Skipping fallback to TAB as per data-source policy."
+                            f"[WARN] No Betway data for {track}. Falling back to TAB scraper..."
                         )
-                        self._track_data_cache[track_key] = []
-                        return []
+                        races = await self.scraper.scrape_racecard(
+                            track, today_iso
+                        )
+                        if not races:
+                            print(
+                                f"[WARN] TAB also returned no data for {track}. Skipping."
+                            )
+                            self._track_data_cache[track_key] = []
+                            return []
 
                     self._track_data_cache[track_key] = races
                 else:
@@ -228,9 +235,7 @@ class StrikeTips:
             for i in range(0, len(prompts)):
                 batch = prompts[i : i + 1]
                 logger.info(f"[SWARM] Processing race {i+1}/{len(prompts)}...")
-                batch_responses = await self.ai._call_kimi_parallel(
-                    batch, strike_instance=self
-                )
+                batch_responses = await self.ai._call_kimi_parallel(batch)
                 ai_responses.extend(batch_responses)
                 await asyncio.sleep(3)  # Increased throttle delay for 8GB RAM
 
@@ -370,9 +375,11 @@ class StrikeTips:
         try:
             from core_agent.config.model_factory import get_client
             client = get_client("llama-3.3-70b-versatile")
-            session = client.create_session()
-            result = await client.run(card_context, session=session)
-            raw = result.text if hasattr(result, "text") else str(result)
+            agent = client.as_agent()
+            session = agent.create_session()
+            from agent_framework import Message
+            result = await agent.run([Message(role="user", text=card_context)], session=session)
+            raw = result.text
             if not raw:
                 return []
             clean = raw.replace("```json", "").replace("```", "").strip()

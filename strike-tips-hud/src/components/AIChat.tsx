@@ -76,6 +76,8 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const actIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prefetchedContextRef = useRef<string | null>(null);
+  const contextAbortRef = useRef<AbortController | null>(null);
 
   // Sync active view support
   useEffect(() => {
@@ -147,6 +149,37 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
       behavior: isGenerating ? 'auto' : 'smooth'
     });
   }, [messages, currentActivity, loading]);
+
+  // Debounced context prefetch while user types
+  useEffect(() => {
+    if (!input.trim()) {
+      return;
+    }
+    const timer = setTimeout(async () => {
+      if (contextAbortRef.current) {
+        contextAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      contextAbortRef.current = controller;
+      try {
+        const res = await apiFetch(
+          `/api/agent/context?query=${encodeURIComponent(input)}&session_id=${activeSessionId}`,
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.context) {
+            prefetchedContextRef.current = data.context;
+          }
+        }
+      } catch (e: any) {
+        if (e.name !== 'AbortError') {
+          console.warn('[Context Prefetch]', e);
+        }
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [input, activeSessionId, apiFetch]);
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -257,18 +290,23 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
       try {
         // Fetch server-compiled context (snapshot events, vector guides, web search results)
         let compiledContext = '';
-        try {
-          const contextRes = await apiFetch(
-            `/api/agent/context?query=${encodeURIComponent(userMsg)}&session_id=${activeSessionId}`
-          );
-          if (contextRes.ok) {
-            const data = await contextRes.json();
-            if (data.success && data.context) {
-              compiledContext = data.context;
+        if (prefetchedContextRef.current) {
+          compiledContext = prefetchedContextRef.current;
+          prefetchedContextRef.current = null;
+        } else {
+          try {
+            const contextRes = await apiFetch(
+              `/api/agent/context?query=${encodeURIComponent(userMsg)}&session_id=${activeSessionId}`
+            );
+            if (contextRes.ok) {
+              const data = await contextRes.json();
+              if (data.success && data.context) {
+                compiledContext = data.context;
+              }
             }
+          } catch (e) {
+            console.warn('[WebLLM Server Context Fetch Failed]', e);
           }
-        } catch (e) {
-          console.warn('[WebLLM Server Context Fetch Failed]', e);
         }
 
         if (controller.signal.aborted) return;
@@ -695,6 +733,12 @@ ${compiledContext || 'No context data available.'}`;
                   </option>
                   <option value="webllm-qwen-1.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  </option>
+                  <option value="webllm-qwen3-1.7b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
+                    Qwen3 1.7B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  </option>
+                  <option value="webllm-qwen35-2b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
+                    Qwen3.5 2B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
                   </option>
                 </optgroup>
               </select>

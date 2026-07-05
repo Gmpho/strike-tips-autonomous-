@@ -340,5 +340,8 @@ class TAB4RacingScraper:
 
     async def close(self):
         """Close the client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        if self._client:
+            try:
+                await self._client.close()
+            except AttributeError:
+                self._client.close()

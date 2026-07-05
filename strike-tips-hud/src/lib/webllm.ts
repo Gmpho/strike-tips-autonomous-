@@ -2,6 +2,8 @@ export const MODEL_MAPPING: Record<string, string> = {
   "webllm-qwen-0.5b": "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
   "webllm-llama-1b": "Llama-3.2-1B-Instruct-q4f16_1-MLC",
   "webllm-qwen-1.5b": "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+  "webllm-qwen3-1.7b": "Qwen3-1.7B-q4f16_1-MLC",
+  "webllm-qwen35-2b": "Qwen3.5-2B-q4f16_1-MLC",
 };
 
 let engineInstance: any = null;
@@ -190,7 +192,7 @@ export async function getWebLLMEngine(
       appConfig: {
         ...prebuiltAppConfig,
         model_list: filteredModelList,
-        cacheBackend: "opfs",
+        cacheBackend: "cache",
       },
       initProgressCallback: (report: any) => {
         console.log(`[WebLLM Progress] ${report.text} (${Math.round(report.progress * 100)}%)`);

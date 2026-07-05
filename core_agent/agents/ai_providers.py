@@ -42,19 +42,21 @@ class AIProvider:
             if ModelConfig.groq_available():
                 try:
                     client = get_client("llama-3.3-70b-versatile")
-                    session = client.create_session()
-                    result = await client.run(prompt, session=session)
-                    text = result.text if hasattr(result, "text") else str(result)
-                    return AIResponse(content=text, provider="groq")
+                    agent = client.as_agent()
+                    session = agent.create_session()
+                    from agent_framework import Message
+                    result = await agent.run([Message(role="user", text=prompt)], session=session)
+                    return AIResponse(content=result.text, provider="groq")
                 except Exception as e:
                     logger.warning(f"Groq failed, falling back to Gemini: {e}")
             # Fallback: Gemini 3.5 flash
             try:
                 client = get_client("gemini-3.5-flash")
-                session = client.create_session()
-                result = await client.run(prompt, session=session)
-                text = result.text if hasattr(result, "text") else str(result)
-                return AIResponse(content=text, provider="gemini")
+                agent = client.as_agent()
+                session = agent.create_session()
+                from agent_framework import Message
+                result = await agent.run([Message(role="user", text=prompt)], session=session)
+                return AIResponse(content=result.text, provider="gemini")
             except Exception as e:
                 logger.error(f"All providers failed for prompt: {e}")
                 return AIResponse(content="", provider="error", error=str(e))
@@ -79,8 +81,10 @@ class AIProvider:
 
         try:
             client = get_client(f"{provider}:{model}")
-            result = await client.run(prompt, session=client.create_session())
-            text = result.text if hasattr(result, "text") else str(result)
-            return AIResponse(content=text, provider=provider)
+            agent = client.as_agent()
+            session = agent.create_session()
+            from agent_framework import Message
+            result = await agent.run([Message(role="user", text=prompt)], session=session)
+            return AIResponse(content=result.text, provider=provider)
         except Exception as e:
             return AIResponse(content="", provider=provider, error=str(e))
