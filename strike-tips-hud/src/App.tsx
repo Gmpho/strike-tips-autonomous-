@@ -90,22 +90,6 @@ export const App: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  // Warm up WebLLM model silently on app boot (3s delay)
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      try {
-        const { checkWebGPUSupport, getWebLLMEngine } = await import('./lib/webllm');
-        const supported = await checkWebGPUSupport();
-        if (supported) {
-          await getWebLLMEngine('webllm-qwen-0.5b', () => {});
-        }
-      } catch {
-        // best-effort — user won't see anything if this fails
-      }
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
   useEffect(() => {
     localStorage.setItem('strike_active_view', activeView);
   }, [activeView]);
