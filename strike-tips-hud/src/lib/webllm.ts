@@ -192,7 +192,7 @@ export async function getWebLLMEngine(
       appConfig: {
         ...prebuiltAppConfig,
         model_list: filteredModelList,
-        cacheBackend: "cache",
+        cacheBackend: "opfs",
       },
       initProgressCallback: (report: any) => {
         console.log(`[WebLLM Progress] ${report.text} (${Math.round(report.progress * 100)}%)`);
