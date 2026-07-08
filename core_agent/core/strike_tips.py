@@ -210,6 +210,11 @@ class StrikeTips:
                 else:
                     races = self._track_data_cache[track_key]
 
+            # Fill SP runners with Scrapling-sourced odds from RacingOddsAPI
+            sp_count = sum(1 for r in races for ru in r.runners if ru.odds_decimal == 5.0)
+            if sp_count and "betway" in str(type(self.betway)).lower():
+                await self._fill_sp_odds_from_ro(races, track, today_iso)
+
             if not races:
                 print(f"[WARN] No race data found for {track} after all attempts.")
                 return []
@@ -316,6 +321,50 @@ class StrikeTips:
             else:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
         return validated
+
+    async def _fill_sp_odds_from_ro(self, races: List[ScrapedRace], track: str, date_str: str) -> int:
+        """Fill SP odds (5.0) with Scrapling-sourced odds from RacingOddsAPI.
+        Uses the same pattern as adaptive_odds_monitor._merge_ro_into."""
+        import difflib
+        import re
+        from core_agent.skills.parsers.racing_odds_api import RacingOddsAPI
+
+        def _normalise(n):
+            return re.sub(r"[^a-zA-Z0-9]", "", n).lower()
+
+        ro_api = RacingOddsAPI()
+        ro_snapshot = await ro_api.get_snapshot_format(target_date=date_str)
+        ro_events = ro_snapshot.get("events", {})
+
+        ro_horses = {}
+        for e in ro_events.values():
+            course = e.get("course", "").lower()
+            if track.lower() not in course:
+                continue
+            for runner in e.get("runners", []):
+                rn = _normalise(runner.get("name", ""))
+                ro_horses[rn] = runner.get("odds", 5.0)
+
+        if not ro_horses:
+            return 0
+
+        filled = 0
+        for race in races:
+            for runner in race.runners:
+                if runner.odds_decimal == 5.0:
+                    rn = _normalise(runner.horse_name)
+                    odds = ro_horses.get(rn)
+                    if not odds:
+                        matches = difflib.get_close_matches(rn, list(ro_horses.keys()), n=1, cutoff=0.6)
+                        if matches:
+                            odds = ro_horses.get(matches[0])
+                    if odds and odds != 5.0:
+                        runner.odds_decimal = odds
+                        filled += 1
+
+        if filled:
+            logger.info("[RO] Filled %d SP runners with Scrapling odds for %s", filled, track)
+        return filled
 
     async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict) -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
@@ -808,7 +857,7 @@ class StrikeTips:
                                 if edge < min_edge:
                                     continue
                                 raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
-                                self.place_bet(
+                                bet = self.place_bet(
                                     horse=horse,
                                     track=track,
                                     race_number=race.get("race_number", 0),
@@ -816,7 +865,8 @@ class StrikeTips:
                                     edge_percent=edge,
                                     confidence="AUTO",
                                 )
-                                auto_bets_placed += 1
+                                if bet:
+                                    auto_bets_placed += 1
 
                     # Auto-bet exotic plays
                     if exotic_plays:

@@ -357,6 +357,30 @@ def daily_scan():
     volumes={"/app/data": data_volume},
     memory=2048,
     timeout=3600,
+    schedule=modal.Cron("30 7 * * *", timezone="Africa/Johannesburg"),
+)
+def value_scan():
+    """Morning value scan — runs at 09:30 SAST when Betway odds are live."""
+    import subprocess
+
+    logger.info("Scheduled value scan starting...")
+    result = subprocess.run(
+        ["python3", "core_agent/core/strike_tips.py", "scan"],
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(f"Errors: {result.stderr}")
+    return {"status": "complete"}
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=2048,
+    timeout=3600,
 )
 def run_scan():
     """Run strike-tips daily scan for all tracks (manual one-shot)."""

@@ -58,6 +58,12 @@ class TelegramNotifier:
         ):
             if self._client is not None and not self._client.is_closed:
                 await self._client.aclose()
+            # Pre-resolve api.telegram.org to avoid ~33% DNS failures in Docker
+            try:
+                from core_agent.core.http_client import _resolve_host
+                _resolve_host("api.telegram.org")
+            except Exception:
+                pass
             self._client = httpx.AsyncClient(timeout=10.0)
             self._client_loop_id = id(current_loop)
         return self._client

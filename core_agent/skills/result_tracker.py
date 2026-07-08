@@ -38,13 +38,14 @@ class ResultTracker:
         intersection = len(a & b)
         return intersection / max(len(a), len(b))
 
-    async def _search_result(self, track: str, race_number: int) -> Optional[str]:
+    async def _search_result(self, track: str, race_number: int, bet_date: Optional[str] = None) -> Optional[str]:
         """Search for race result text — tries ATR first, then DDGS + direct SA sites."""
         # Primary: ATR structured results (most reliable for SA racing)
         try:
             from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
             atr = AtTheRacesAPI()
-            winner = await atr.get_winner_for_bet(track, race_number, date="yesterday")
+            atr_date = bet_date or "yesterday"
+            winner = await atr.get_winner_for_bet(track, race_number, date=atr_date)
             if winner:
                 logger.info(
                     "[RESULT] ATR winner: %s at %s R%s (odds %s)",
@@ -138,44 +139,29 @@ class ResultTracker:
         self, text: str, candidates: List[str]
     ) -> Tuple[Optional[str], float]:
         """
-        Try to find one of the candidate horse names in the result text.
+        Try to find one of the candidate horse names as the WINNER in result text.
         Returns (horse_name, confidence_score).
+        Uses position indicators to avoid marking non-winners as wins.
         """
         if not text:
             return None, 0.0
 
         text_lower = text.lower()
-        best_match = None
-        best_score = 0.0
 
         for candidate in candidates:
             cl = candidate.lower()
+            patterns = [
+                rf'(?:^|\s)1st\s+[^.?!]*?\b{re.escape(cl)}\b',
+                rf'(?:^|\s)1\.\s*[^.?!]*?\b{re.escape(cl)}\b',
+                rf'(?:^|\s)winner:?\s*[^.?!]*?\b{re.escape(cl)}\b',
+                rf'(?:^|\s)won\s+by\s+[^.?!]*?\b{re.escape(cl)}\b',
+                rf'\b{re.escape(cl)}\b.*?\b1st\b',
+            ]
+            for pat in patterns:
+                if re.search(pat, text_lower):
+                    return candidate, 1.0
 
-            # Direct substring match
-            if cl in text_lower:
-                return candidate, 1.0
-
-            # Word-level fuzzy match
-            cand_words = cl.split()
-            matched = sum(1 for w in cand_words if w in text_lower)
-            score = matched / len(cand_words) if cand_words else 0.0
-            if score > best_score:
-                best_score = score
-                best_match = candidate
-
-            # Character bigram overlap as tiebreaker
-            if best_score >= 0.5 and best_score < 1.0:
-                a_bigrams = set(cl[i : i + 2] for i in range(len(cl) - 1))
-                b_bigrams = set(text_lower[j : j + 2] for j in range(len(text_lower) - 1))
-                if a_bigrams:
-                    overlap = len(a_bigrams & b_bigrams) / len(a_bigrams)
-                    combined = score * 0.6 + overlap * 0.4
-                    if combined > best_score:
-                        best_score = combined
-                        best_match = candidate
-
-        threshold = 0.55
-        return (best_match, best_score) if best_score >= threshold else (None, 0.0)
+        return None, 0.0
 
     async def check_and_settle_open_bets(self) -> List[Dict]:
         """
@@ -191,13 +177,13 @@ class ResultTracker:
 
         settled = []
         for bet in open_bets:
-            result_text = await self._search_result(bet.track, bet.race_number)
+            result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
             if not result_text:
                 continue
 
             winner, confidence = self._extract_winner(result_text, [bet.horse])
             if winner and confidence >= 0.55:
-                won = winner == bet.horse
+                won = True
                 success = self.governor.settle_bet(
                     bet.bet_id,
                     won=won,

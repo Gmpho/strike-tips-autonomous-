@@ -303,7 +303,7 @@ class AlertEngine:
                 settings = _json.load(f)
             if not settings.get("auto_bet_enabled", False):
                 return
-            min_edge = float(settings.get("auto_bet_min_edge", 8.0))
+            min_edge = float(settings.get("auto_bet_min_edge", 5.5))
 
             from core_agent.core.strike_brain import brain
             if not brain or not brain.strike:
