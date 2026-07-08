@@ -197,12 +197,20 @@ class AtTheRacesAPI:
         }
 
     async def get_results(self, date: str = "yesterday") -> List[Dict]:
-        """Scrape race results via Scrapling with self-healing selectors."""
-        try:
-            html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=60)
-        except asyncio.TimeoutError:
-            logger.warning("ATR results fetch timed out after 60s: %s", date)
-            return []
+        """Scrape race results via Scrapling with self-healing selectors + retry."""
+        for attempt in range(3):
+            try:
+                html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=60)
+            except asyncio.TimeoutError:
+                logger.warning("ATR results fetch timed out after 60s: %s", date)
+                return []
+
+            if html and len(html) < 10_000:
+                logger.debug("ATR response too small (%d bytes) — possible bot block, retrying %d/3", len(html), attempt + 1)
+                await asyncio.sleep(5 * (attempt + 1))
+                continue
+            break
+
         if not html:
             return []
 
@@ -211,7 +219,7 @@ class AtTheRacesAPI:
 
         meeting_divs = sel.css(".push--x-small")
         if not meeting_divs:
-            logger.warning("No meeting containers (.push--x-small) found on ATR page")
+            logger.warning("No meeting containers (.push--x-small) found on ATR page (%d bytes)", len(html))
             return races
 
         for meeting in meeting_divs:

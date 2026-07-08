@@ -5,12 +5,15 @@ API endpoints for scanning tracks and gathering racing intelligence.
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
+import logging
 from core_agent.services.racing_service import RacingService
 from core_agent.config.settings import TRACKS
 from core_agent.config.paths import ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
 from core_agent.core.strike_brain import brain
 from datetime import date, timedelta
 import json
+
+logger = logging.getLogger("racing-routes")
 
 router = APIRouter(prefix="/api", tags=["racing"])
 racing_service = RacingService()
@@ -85,7 +88,8 @@ async def scan_track(track: str):
         results = await racing_service.scan_and_analyze(track_clean)
         return {"track": track_clean, "results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to scan track")
+        logger.error(f"Failed to scan track {track_clean}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to scan track: {e}")
 
 
 @router.get("/racing/intelligence")

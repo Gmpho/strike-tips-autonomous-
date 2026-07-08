@@ -26,7 +26,14 @@ async def list_models():
 
 @router.get("/history")
 async def get_agent_history(limit: int = 20):
-    return {"success": True, "history": [], "count": 0}
+    if not brain or not brain.memory:
+        return {"success": False, "history": [], "count": 0, "error": "Memory not initialized"}
+    try:
+        history = brain.memory.get_chat_history(limit=limit)
+    except Exception as e:
+        logger.warning(f"Failed to load agent history: {e}")
+        return {"success": False, "history": [], "count": 0, "error": str(e)}
+    return {"success": True, "history": history, "count": len(history)}
 
 
 @router.post("/embedding")
@@ -47,7 +54,14 @@ async def clear_agent_history():
 @router.get("/memory/search")
 async def search_memory(query: str):
     from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
-    result = TOOL_REGISTRY.get("search_past_races")(query=query)
+    tool = TOOL_REGISTRY.get("search_past_races")
+    if tool is None:
+        raise HTTPException(status_code=404, detail="Tool 'search_past_races' is not registered")
+    try:
+        result = tool(query=query)
+    except Exception as e:
+        logger.warning(f"search_past_races failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {e}")
     return {"success": True, "query": query, "results": result}
 
 

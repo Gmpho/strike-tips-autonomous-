@@ -405,6 +405,7 @@ class StrikeTips:
         runners = []
         probability_estimates = {}
         reasoning_map = {}
+        raw_strengths = {}
 
         for sr in scraped_race.runners:
             # Parse form
@@ -414,6 +415,15 @@ class StrikeTips:
 
             # Estimate probability from form
             est_prob, rating, reasoning = self.form_analyzer.estimate_win_probability(
+                sr.horse_name,
+                form_positions,
+                target_track=scraped_race.track,
+                target_distance=scraped_race.distance,
+                track_condition=scraped_race.track_condition.lower(),
+                field_size=len(scraped_race.runners),
+            )
+            # Collect uncapped strength for field-wide normalization
+            raw_strengths[sr.horse_name] = self.form_analyzer.estimate_win_strength(
                 sr.horse_name,
                 form_positions,
                 target_track=scraped_race.track,
@@ -436,6 +446,13 @@ class StrikeTips:
             runners.append(runner)
             probability_estimates[sr.horse_name] = est_prob
             reasoning_map[sr.horse_name] = reasoning
+
+        # Normalize per-horse estimates into a coherent distribution (sums to ~1.0)
+        # so that edge = est_prob - 1/odds is a calibrated probability gap.
+        if raw_strengths:
+            normalized = FormAnalyzer.normalize_field(raw_strengths)
+            for horse, prob in normalized.items():
+                probability_estimates[horse] = round(prob, 4)
 
         # Apply LearningEngine adjustments to probability estimates
         if hasattr(self, 'learning') and self.learning:

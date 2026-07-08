@@ -117,9 +117,18 @@ class RacingService:
         runners = []
         probs = {}
         reasoning = {}
+        raw_strengths = {}
         for sr in scraped_race.runners:
             form = parse_sa_form(sr.form) if sr.form else []
             prob, rating, reason = self.form_analyzer.estimate_win_probability(
+                sr.horse_name,
+                form,
+                target_track=scraped_race.track,
+                target_distance=scraped_race.distance,
+                track_condition=scraped_race.track_condition.lower(),
+                field_size=len(scraped_race.runners),
+            )
+            raw_strengths[sr.horse_name] = self.form_analyzer.estimate_win_strength(
                 sr.horse_name,
                 form,
                 target_track=scraped_race.track,
@@ -140,6 +149,12 @@ class RacingService:
             )
             probs[sr.horse_name] = prob
             reasoning[sr.horse_name] = reason
+
+        # Normalize per-horse estimates into a coherent distribution (sums to ~1.0)
+        if raw_strengths:
+            normalized = FormAnalyzer.normalize_field(raw_strengths)
+            for horse, np_ in normalized.items():
+                probs[horse] = round(np_, 4)
 
         return (
             RaceCard(

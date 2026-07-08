@@ -69,18 +69,22 @@ async def place_bet(bet: BetRequest):
     """Place a new bet"""
     if not brain.strike:
         raise HTTPException(status_code=503, detail="System not initialized")
-    result = brain.strike.place_bet(
-        track=bet.track,
-        race_number=bet.race_number,
-        horse=bet.horse,
-        odds=bet.odds,
-        edge_percent=bet.edge_percent,
-        confidence=bet.confidence,
-        override_stake=bet.stake,
-    )
+    try:
+        result = brain.strike.place_bet(
+            track=bet.track,
+            race_number=bet.race_number,
+            horse=bet.horse,
+            odds=bet.odds,
+            edge_percent=bet.edge_percent,
+            confidence=bet.confidence,
+            override_stake=bet.stake,
+        )
+    except Exception as e:
+        logger.error(f"Failed to place bet: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to place bet: {e}")
     if result:
         return {"success": True, "bet": result}
-    raise HTTPException(status_code=400, detail="Failed to place bet")
+    raise HTTPException(status_code=400, detail="Failed to place bet (governor rejected)")
 
 
 @router.post("/settle")
@@ -88,7 +92,11 @@ async def settle_bet(request: BetSettleRequest):
     """Settle a bet"""
     if not brain.strike:
         raise HTTPException(status_code=503, detail="System not initialized")
-    result = brain.strike.settle_bet(request.bet_id, request.won, request.notes or "")
+    try:
+        result = brain.strike.settle_bet(request.bet_id, request.won, request.notes or "")
+    except Exception as e:
+        logger.error(f"Failed to settle bet: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to settle bet: {e}")
     return {"success": True, "result": result}
 
 

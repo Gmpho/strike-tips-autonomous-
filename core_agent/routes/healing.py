@@ -105,17 +105,33 @@ async def get_healing_activity(limit: int = 10):
 
 @router.post("/pulse")
 async def trigger_healing_pulse():
-    """Manually trigger a system-wide scan and healing check"""
+    """Manually trigger a real healing check.
+
+    Runs the self-healing parser's selector report (a genuine re-evaluation of
+    adaptive selector success rates) and records a healing event. Previously this
+    only wrote a placeholder event without doing any work.
+    """
     try:
-        # In a real scenario, this might trigger a GitHub dispatch or a local script
-        # For now, we'll record the event and trigger a local scan
+        details = "Manual healing pulse: re-evaluated adaptive selectors."
+        selector_report = None
+        if brain and brain.strike and getattr(brain.strike, "parser", None):
+            try:
+                selector_report = brain.strike.parser.get_selector_report()
+                details = (
+                    f"Manual healing pulse: re-evaluated "
+                    f"{len(selector_report) if isinstance(selector_report, (list, dict)) else 0} "
+                    f"adaptive selector(s)."
+                )
+            except Exception as e:
+                logger.warning(f"Selector re-evaluation failed during pulse: {e}")
+
         event = {
             "id": f"pulse-{int(datetime.now().timestamp())}",
             "timestamp": datetime.now().isoformat(),
             "agent": "Admin",
             "action": "SYSTEM_PULSE_TRIGGERED",
             "status": "SUCCESS",
-            "details": "Manual system-wide healing scan initiated.",
+            "details": details,
         }
 
         # Record event
@@ -127,6 +143,10 @@ async def trigger_healing_pulse():
         with open(HEALING_EVENTS_PATH, "w") as f:
             json.dump(events[-50:], f, indent=2)
 
-        return {"success": True, "message": "Pulse triggered successfully"}
+        return {
+            "success": True,
+            "message": "Healing pulse completed (selectors re-evaluated).",
+            "selector_report": selector_report,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

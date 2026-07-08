@@ -1,19 +1,16 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
-# 1. Static Setup
 WORKDIR /app
-# Ensure data and browser profile dirs exist
 RUN mkdir -p /app/data/browser_profile /app/data/cache
 
-# 2. Dependency Layer
-COPY requirements.txt .
-RUN pip install --timeout=300 --retries=5 --default-timeout=300 -r requirements.txt beautifulsoup4 lxml aiohttp
+# 2. Dependencies — install uv, then use it (uv is 10-100x faster than pip)
+RUN pip install --no-cache-dir uv -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn
+COPY pinned-requirements.txt .
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
+RUN uv pip install --prerelease=allow --system -r pinned-requirements.txt
 
-# Install Playwright system dependencies (libglib2.0, libnss3, etc.)
+# 3. Playwright system deps (libglib2.0, libnss3, etc.)
 RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"
-
-# 3. User config — must be root for host-mounted volume write access
-USER root
 
 # 4. Source Code Layer
 COPY . .
@@ -21,6 +18,5 @@ COPY . .
 # Persist Scrapling cache under host-mounted volume
 RUN mkdir -p /app/data/.scrapling && ln -sfn /app/data/.scrapling /root/.scrapling
 
-
-# Install browsers at runtime (CDN is reachable from containers but not Docker build daemon)
+# Install browsers at runtime (CDN reachable from containers, not Docker build daemon)
 CMD playwright install chromium 2>&1 || true && python core_agent/core/adaptive_odds_monitor.py
