@@ -173,21 +173,21 @@ def _merge_daily_scan_into(state: dict):
     """Merge today's daily scan value bets, favorites, and outsiders into active events."""
     today_str = datetime.now().strftime("%Y-%m-%d")
     daily_scan_file = os.path.join(str(DATA_DIR), f"daily_scan_{today_str}.json")
-    if not os.path.exists(daily_scan_file):
-        return
 
-    try:
-        with open(daily_scan_file, "r") as f:
-            scan_data = json.load(f)
-    except Exception as e:
-        logger.debug("Failed to read daily scan JSON: %s", e)
-        return
+    scan_data = {}
+    if os.path.exists(daily_scan_file):
+        try:
+            with open(daily_scan_file, "r") as f:
+                scan_data = json.load(f)
+        except Exception as e:
+            logger.debug("Failed to read daily scan JSON: %s", e)
 
     # Normalize track keys in scan_data
     scan_lookup = {}
-    for track_name, races in scan_data.items():
-        if isinstance(races, list):
-            scan_lookup[track_name.lower().replace(" ", "")] = races
+    if isinstance(scan_data, dict):
+        for track_name, races in scan_data.items():
+            if isinstance(races, list):
+                scan_lookup[track_name.lower().replace(" ", "")] = races
 
     for event in state.get("events", {}).values():
         course_norm = _norm_course(event.get("course", ""))
@@ -199,22 +199,12 @@ def _merge_daily_scan_into(state: dict):
         except ValueError:
             continue
 
-        # Look up track in scan data
-        races_list = scan_lookup.get(course_norm.replace(" ", ""))
-        if not races_list:
-            continue
-
-        # Find the specific race
-        scanned_race = next((r for r in races_list if r.get("race_number") == race_num), None)
-        if not scanned_race:
-            continue
-
         # Extract runners from event
         runners_list = event.get("runners", [])
         if not runners_list:
             continue
 
-        # 1. Determine Favourite (runner with the lowest offered bookmaker odds > 1.0)
+        # 1. Determine Favourite from live market odds (lowest decimal odds > 1.0)
         fav_runner = None
         min_odds = 9999.0
         for r in runners_list:
@@ -225,61 +215,80 @@ def _merge_daily_scan_into(state: dict):
                     fav_runner = r
             except (ValueError, TypeError):
                 pass
+        if not fav_runner:
+            fav_runner = runners_list[0]
 
-        # 2. Extract value bets from scanned_race
-        value_bets = scanned_race.get("value_bets", [])
-        
-        # Match value bets to runners in the event using fuzzy or normalized name match
+        # 2. Determine Outsider from live market odds (highest decimal odds)
+        max_live_odds = -1.0
+        live_outsider_runner = None
+        for r in runners_list:
+            try:
+                odds_val = float(r.get("odds", 0.0))
+                if odds_val > max_live_odds:
+                    max_live_odds = odds_val
+                    live_outsider_runner = r
+            except (ValueError, TypeError):
+                pass
+        if not live_outsider_runner:
+            live_outsider_runner = runners_list[-1]
+
+        # Look up track and race in scan data
+        scanned_race = None
+        races_list = scan_lookup.get(course_norm.replace(" ", ""))
+        if races_list:
+            scanned_race = next((r for r in races_list if r.get("race_number") == race_num), None)
+
         val_runner = None
-        max_edge = 0.0
         outsider_runner = None
-        max_outsider_odds = 0.0
 
-        for vb in value_bets:
-            vb_horse = _normalise(vb.get("horse", ""))
-            edge = float(vb.get("edge_percent", 0.0) or vb.get("edge", 0.0))
-            odds_dec = float(vb.get("odds_decimal", 0.0) or vb.get("odds", 0.0) or 2.0)
+        if scanned_race:
+            value_bets = scanned_race.get("value_bets", [])
+            max_edge = 0.0
+            max_outsider_odds = 0.0
 
-            # Match with runner in event
-            matched_r = None
-            for r in runners_list:
-                if _normalise(r.get("name", "")) == vb_horse:
-                    matched_r = r
-                    break
-            
-            if not matched_r:
-                # Fuzzy fallback if needed
-                import difflib
-                names = [r.get("name", "") for r in runners_list]
-                norm_names = [_normalise(n) for n in names]
-                matches = difflib.get_close_matches(vb_horse, norm_names, n=1, cutoff=0.7)
-                if matches:
-                    matched_idx = norm_names.index(matches[0])
-                    matched_r = runners_list[matched_idx]
+            for vb in value_bets:
+                vb_horse = _normalise(vb.get("horse", ""))
+                edge = float(vb.get("edge_percent", 0.0) or vb.get("edge", 0.0))
+                odds_dec = float(vb.get("odds_decimal", 0.0) or vb.get("odds", 0.0) or 2.0)
 
-            if matched_r:
-                # Set runner's edge and probability
-                matched_r["edge"] = edge
-                matched_r["winProbability"] = float(vb.get("estimated_probability", 0.0))
+                # Match with runner in event
+                matched_r = None
+                for r in runners_list:
+                    if _normalise(r.get("name", "")) == vb_horse:
+                        matched_r = r
+                        break
+                
+                if not matched_r:
+                    # Fuzzy fallback
+                    import difflib
+                    names = [r.get("name", "") for r in runners_list]
+                    norm_names = [_normalise(n) for n in names]
+                    matches = difflib.get_close_matches(vb_horse, norm_names, n=1, cutoff=0.7)
+                    if matches:
+                        matched_idx = norm_names.index(matches[0])
+                        matched_r = runners_list[matched_idx]
 
-                # Track highest edge for the "Value Bet" option
-                if edge > max_edge:
-                    max_edge = edge
-                    val_runner = matched_r
+                if matched_r:
+                    # Set runner's edge and probability
+                    matched_r["edge"] = edge
+                    matched_r["winProbability"] = float(vb.get("estimated_probability", 0.0))
 
-                # Track "Shout-Outsider" (value bet with odds >= 8.0)
-                if odds_dec >= 8.0 and odds_dec > max_outsider_odds:
-                    max_outsider_odds = odds_dec
-                    outsider_runner = matched_r
+                    # Track highest edge for the "Value Bet" option
+                    if edge > max_edge:
+                        max_edge = edge
+                        val_runner = matched_r
 
-        # Construct aiSelections payload
-        event["aiSelections"] = {}
-        if val_runner:
-            event["aiSelections"]["value"] = val_runner
-        if fav_runner:
-            event["aiSelections"]["favourite"] = fav_runner
-        if outsider_runner:
-            event["aiSelections"]["outsider"] = outsider_runner
+                    # Track "Shout-Outsider" (value bet with odds >= 8.0)
+                    if odds_dec >= 8.0 and odds_dec > max_outsider_odds:
+                        max_outsider_odds = odds_dec
+                        outsider_runner = matched_r
+
+        # Populate payload with strict fallbacks
+        event["aiSelections"] = {
+            "value": val_runner or runners_list[0],
+            "favourite": fav_runner or runners_list[0],
+            "outsider": outsider_runner or live_outsider_runner or runners_list[-1]
+        }
 
 
 

@@ -125,6 +125,20 @@ function extractNumeric(s: string): number | null {
   return m ? parseFloat(m[1]) : null;
 }
 
+function isSteamer(mover: MarketMover): boolean {
+  if (!mover.first_show || !mover.current_odds) return false;
+  const opening = parseFractionalOdds(mover.first_show);
+  const current = parseFractionalOdds(mover.current_odds);
+  if (opening !== null && current !== null && opening > 0) {
+    return current <= opening * 0.70;
+  }
+  const info = parseMovement(mover.movement, mover.first_show, mover.current_odds);
+  if (info.numericChange !== null && info.numericChange <= -30.0) {
+    return true;
+  }
+  return false;
+}
+
 // ─── Movement Badge Component ─────────────────────────────────────────────────
 function MovementBadge({ movement, firstShow, currentOdds }: { movement: string; firstShow?: string; currentOdds?: string }) {
   const info = parseMovement(movement, firstShow, currentOdds);
@@ -182,9 +196,14 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
     >
       {/* Horse Name + Movement Badge */}
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-black text-theme-primary tracking-tight leading-snug truncate">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-black text-theme-primary tracking-tight leading-snug truncate flex items-center gap-1.5">
             {mover.horse}
+            {isSteamer(mover) && (
+              <span className="shrink-0 text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded animate-pulse">
+                🔥 STEAMER
+              </span>
+            )}
           </h3>
           <p className="text-[10px] font-bold text-theme-secondary uppercase tracking-wider mt-0.5 flex items-center gap-1">
             <Clock className="w-2.5 h-2.5 shrink-0" />
@@ -231,7 +250,7 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
 // ─── Legend Strip ─────────────────────────────────────────────────────────────
 function MarketLegend() {
   return (
-    <div className="flex items-center gap-4 text-[9px] font-black uppercase tracking-widest">
+    <div className="flex flex-wrap items-center gap-4 text-[9px] font-black uppercase tracking-widest">
       <span className="flex items-center gap-1.5 text-emerald-400">
         <TrendingDown className="w-3 h-3" />
         Shortened (Backed)
@@ -239,6 +258,9 @@ function MarketLegend() {
       <span className="flex items-center gap-1.5 text-red-400">
         <TrendingUp className="w-3 h-3" />
         Drifted (Eased)
+      </span>
+      <span className="flex items-center gap-1.5 text-amber-400">
+        <span className="animate-pulse">🔥 STEAMER</span> (Price Collapse ≥30%)
       </span>
     </div>
   );

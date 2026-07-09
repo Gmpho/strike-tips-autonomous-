@@ -18,6 +18,12 @@ export const DreamingView: React.FC = () => {
   const [dreams, setDreams] = useState<Dream[]>([]);
   const [isPulsing, setIsPulsing] = useState(false);
 
+  // Custom dream states
+  const [customTrack, setCustomTrack] = useState('Turffontein');
+  const [customRaceNum, setCustomRaceNum] = useState(1);
+  const [customScenario, setCustomScenario] = useState('heavy rain / wind 25km/h / scratches 3, 5');
+  const [simulating, setSimulating] = useState(false);
+
   const fetchDreams = async () => {
     try {
       const res = await apiFetch(`/api/dreaming/logs`);
@@ -39,6 +45,28 @@ export const DreamingView: React.FC = () => {
     setTimeout(() => setIsPulsing(false), 2000);
   };
 
+  const triggerCustomDream = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customTrack || !customScenario) return;
+    setSimulating(true);
+    try {
+      await apiFetch(`/api/dreaming/custom`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          track: customTrack.trim(),
+          race_number: Number(customRaceNum),
+          scenario: customScenario.trim(),
+        }),
+      });
+      await fetchDreams();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   useEffect(() => {
     fetchDreams();
     const interval = setInterval(fetchDreams, 10000);
@@ -47,57 +75,109 @@ export const DreamingView: React.FC = () => {
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 h-full p-6">
-      {/* Simulation Visualizer */}
-      <div className="flex-1 min-h-[400px] bg-theme-panel border border-theme rounded-3xl relative overflow-hidden group">
-        <div className="absolute inset-0 z-0">
-          <Canvas
-            camera={{ position: [0, 0, 8] }}
-            onCreated={(state) => {
-              state.gl.domElement.addEventListener('webglcontextlost', (e) => {
-                e.preventDefault();
-              });
-            }}
-          >
-            <ambientLight intensity={0.5} />
-            <pointLight position={[10, 10, 10]} intensity={1.5} color="#a855f7" />
-            <DreamOrb />
-          </Canvas>
-        </div>
-
-        {/* Overlay Controls */}
-        <div className="absolute inset-0 z-10 p-8 flex flex-col justify-between pointer-events-none">
-          <div className="flex justify-between items-start pointer-events-auto">
-            <div>
-              <h2 className="text-2xl font-black text-theme-primary flex items-center gap-3">
-                <CloudMoon className="text-purple-500" /> Neural Dreaming
-              </h2>
-              <p className="text-theme-secondary text-[10px] font-black uppercase tracking-widest mt-1">
-                Background Simulation Tier 7
-              </p>
-            </div>
-            <button 
-              onClick={triggerPulse}
-              disabled={isPulsing}
-              className={`p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-500 hover:bg-purple-500/20 transition-all ${isPulsing ? 'animate-pulse' : ''}`}
+      {/* Simulation Visualizer & Controls */}
+      <div className="flex-1 flex flex-col gap-6 min-w-0">
+        <div className="flex-1 min-h-[300px] bg-theme-panel border border-theme rounded-3xl relative overflow-hidden group">
+          <div className="absolute inset-0 z-0">
+            <Canvas
+              camera={{ position: [0, 0, 8] }}
+              onCreated={(state) => {
+                state.gl.domElement.addEventListener('webglcontextlost', (e) => {
+                  e.preventDefault();
+                });
+              }}
             >
-              <RefreshCcw className={`w-5 h-5 ${isPulsing ? 'animate-spin' : ''}`} />
-            </button>
+              <ambientLight intensity={0.5} />
+              <pointLight position={[10, 10, 10]} intensity={1.5} color="#a855f7" />
+              <DreamOrb />
+            </Canvas>
           </div>
 
-          <div className="bg-theme-panel/80 backdrop-blur-xl border border-theme p-6 rounded-2xl w-fit shadow-2xl">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-purple-500/10 flex items-center justify-center">
-                <Brain className="text-purple-500 w-6 h-6" />
-              </div>
+          {/* Overlay Controls */}
+          <div className="absolute inset-0 z-10 p-6 flex flex-col justify-between pointer-events-none">
+            <div className="flex justify-between items-start pointer-events-auto">
               <div>
-                <div className="text-[10px] font-black text-theme-secondary uppercase tracking-tighter">Current Simulation</div>
-                <div className="text-sm font-black text-theme-primary">
-                  {dreams[0]?.scenario || "Initializing Neural Pathways..."}
+                <h2 className="text-2xl font-black text-theme-primary flex items-center gap-3">
+                  <CloudMoon className="text-purple-500" /> Neural Dreaming
+                </h2>
+                <p className="text-theme-secondary text-[10px] font-black uppercase tracking-widest mt-1">
+                  Background Simulation Tier 7
+                </p>
+              </div>
+              <button 
+                onClick={triggerPulse}
+                disabled={isPulsing}
+                className={`p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-500 hover:bg-purple-500/20 transition-all cursor-pointer ${isPulsing ? 'animate-pulse' : ''}`}
+              >
+                <RefreshCcw className={`w-4 h-4 ${isPulsing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            <div className="bg-theme-panel/80 backdrop-blur-xl border border-theme p-4 rounded-xl w-fit shadow-2xl pointer-events-auto">
+              <div className="flex items-center gap-4">
+                <div className="p-2 rounded-full bg-purple-500/10 flex items-center justify-center">
+                  <Brain className="text-purple-500 w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[9px] font-black text-theme-secondary uppercase tracking-tighter">Current Simulation</div>
+                  <div className="text-xs font-black text-theme-primary">
+                    {dreams[0]?.scenario || "Initializing Neural Pathways..."}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Custom Simulation Controls */}
+        <form onSubmit={triggerCustomDream} className="bg-theme-panel border border-theme p-6 rounded-3xl space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Brain className="w-4 h-4 text-purple-500" />
+            <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">Trigger Custom Dream Simulation</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-theme-secondary font-black uppercase">Track Name</label>
+              <input
+                type="text"
+                value={customTrack}
+                onChange={(e) => setCustomTrack(e.target.value)}
+                className="w-full bg-theme-secondary border border-theme rounded-xl px-3 py-2 text-xs font-bold text-theme-primary focus:outline-hidden focus:border-purple-500"
+                placeholder="e.g. Greyville"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-theme-secondary font-black uppercase">Race Number</label>
+              <input
+                type="number"
+                value={customRaceNum}
+                onChange={(e) => setCustomRaceNum(Number(e.target.value))}
+                min="1"
+                max="12"
+                className="w-full bg-theme-secondary border border-theme rounded-xl px-3 py-2 text-xs font-bold text-theme-primary focus:outline-hidden focus:border-purple-500"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-theme-secondary font-black uppercase">Scenario Conditions</label>
+              <input
+                type="text"
+                value={customScenario}
+                onChange={(e) => setCustomScenario(e.target.value)}
+                className="w-full bg-theme-secondary border border-theme rounded-xl px-3 py-2 text-xs font-bold text-theme-primary focus:outline-hidden focus:border-purple-500"
+                placeholder="e.g. heavy rain / wind 25km/h"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-2">
+            <button
+              type="submit"
+              disabled={simulating}
+              className="bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all disabled:opacity-50"
+            >
+              {simulating ? 'Running Dream Simulation...' : '⭐ Launch Custom Dream'}
+            </button>
+          </div>
+        </form>
       </div>
 
       {/* Dream Logs */}

@@ -3,12 +3,13 @@ Strike Tips - Racing Routes
 API endpoints for scanning tracks and gathering racing intelligence.
 """
 
+import os
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 import logging
 from core_agent.services.racing_service import RacingService
 from core_agent.config.settings import TRACKS
-from core_agent.config.paths import ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
+from core_agent.config.paths import DATA_DIR, ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
 from core_agent.core.strike_brain import brain
 from datetime import date, timedelta
 import json
@@ -151,7 +152,7 @@ async def get_results():
 @router.get("/racing/exotics")
 async def get_latest_exotics():
     """Return latest computed exotic plays from exotics_latest.json."""
-    path = os.path.join(DATA_DIR, "exotics_latest.json")
+    path = str(DATA_DIR / "exotics_latest.json")
     if os.path.exists(path):
         with open(path, "r") as f:
             return json.load(f)
