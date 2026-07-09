@@ -3,14 +3,17 @@ import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone, playValueBetTone } from './audio';
 import { apiFetch } from '../lib/api-fetch';
 
-const FAST_INTERVAL = 15000;
-const SLOW_INTERVAL = 60000;
-const MAX_FAST_BACKOFF = 120000;
-const MAX_SLOW_BACKOFF = 300000;
+const FAST_INTERVAL = 5000;
+const SLOW_INTERVAL = 15000;
+const MAX_FAST_BACKOFF = 60000;
+const MAX_SLOW_BACKOFF = 120000;
+const SSE_URL = '/api/monitoring/stream';
 
 export class DataBridge {
   private fastTimer: number | null = null;
   private slowTimer: number | null = null;
+  private sse: EventSource | null = null;
+  private sseReconnectMs = 2000;
   private prevEventCount = 0;
   private prevBetCount = 0;
   private playedValueBets = new Set<string>();
@@ -21,6 +24,7 @@ export class DataBridge {
   start() {
     this.refCount++;
     if (this.refCount > 1) return;
+    this.connectSSE();
     this.scheduleFast();
     this.scheduleSlow();
   }
@@ -32,6 +36,67 @@ export class DataBridge {
     if (this.slowTimer) clearTimeout(this.slowTimer);
     this.fastTimer = null;
     this.slowTimer = null;
+    this.disconnectSSE();
+  }
+
+  private connectSSE() {
+    this.disconnectSSE();
+    this.sse = new EventSource(SSE_URL);
+
+    this.sse.addEventListener('snapshot', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        const current = hudStore.getState();
+        hudStore.updateState({
+          events: data.events || {},
+          alerts: data.alerts || [],
+        });
+        this.playSoundsForChanges(data, null, { bets: current.betHistory });
+      } catch (err) {
+        console.error('SSE snapshot parse error:', err);
+      }
+    });
+
+    this.sse.addEventListener('market-movers', (e: MessageEvent) => {
+      try {
+        hudStore.updateState({ marketMovers: JSON.parse(e.data) });
+      } catch (err) {
+        console.error('SSE market-movers parse error:', err);
+      }
+    });
+
+    this.sse.addEventListener('predictor', (e: MessageEvent) => {
+      try {
+        hudStore.updateState({ predictions: JSON.parse(e.data) });
+      } catch (err) {
+        console.error('SSE predictor parse error:', err);
+      }
+    });
+
+    this.sse.addEventListener('results', (e: MessageEvent) => {
+      try {
+        hudStore.updateState({ results: JSON.parse(e.data) });
+      } catch (err) {
+        console.error('SSE results parse error:', err);
+      }
+    });
+
+    this.sse.onerror = () => {
+      this.disconnectSSE();
+      setTimeout(() => this.connectSSE(), this.sseReconnectMs);
+      this.sseReconnectMs = Math.min(this.sseReconnectMs * 2, 30000);
+    };
+
+    this.sse.onopen = () => {
+      this.sseReconnectMs = 2000;
+    };
+  }
+
+  private disconnectSSE() {
+    if (this.sse) {
+      this.sse.close();
+      this.sse = null;
+    }
   }
 
   private scheduleFast() {
@@ -88,25 +153,22 @@ export class DataBridge {
   private async runFast() {
     const start = performance.now();
     try {
-      const [snapshotRes, healthRes, bankrollRes, betsRes] = await Promise.all([
-        apiFetch('/api/monitoring/snapshot'),
+      const [healthRes, bankrollRes, betsRes] = await Promise.all([
         apiFetch('/api/system/health'),
         apiFetch(BETTING_ENDPOINTS.accountSummary),
         apiFetch(BETTING_ENDPOINTS.open),
       ]);
 
-      if (!snapshotRes.ok || !healthRes.ok) throw new Error('Backend link severed');
+      if (!healthRes.ok) throw new Error('Backend link severed');
 
-      const snapshot = await snapshotRes.json();
       const health = await healthRes.json();
       const bankroll = bankrollRes.ok ? await bankrollRes.json() : null;
       const openBets = betsRes.ok ? await betsRes.json() : { bets: [] };
 
       const latency = performance.now() - start;
+      const current = hudStore.getState();
 
       hudStore.updateState({
-        events: snapshot.events || {},
-        alerts: snapshot.alerts || [],
         systemHealth: {
           cpu: health.cpu_usage_percent || 0,
           memory: health.memory_usage_percent || 0,
@@ -119,10 +181,8 @@ export class DataBridge {
           dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
           maxStake: bankroll.maxStake || bankroll.max_stake,
           totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0,
-        } : hudStore.getState().bankroll,
+        } : current.bankroll,
       });
-
-      this.playSoundsForChanges(snapshot, bankroll, { bets: hudStore.getState().betHistory });
 
       this.fastBackoffMs = FAST_INTERVAL;
     } catch {
@@ -141,7 +201,7 @@ export class DataBridge {
 
   private async runSlow() {
     try {
-      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes, moversRes, predRes, resultsRes] = await Promise.all([
+      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
         apiFetch(BETTING_ENDPOINTS.history),
         apiFetch(BETTING_ENDPOINTS.stats),
         apiFetch('/api/betting/learning/roi-by-track'),
@@ -151,9 +211,6 @@ export class DataBridge {
         apiFetch('/api/system/vitals'),
         apiFetch('/api/betting/bankroll-history'),
         apiFetch('/api/agent/memory'),
-        apiFetch('/api/racing/market-movers'),
-        apiFetch('/api/racing/predictor'),
-        apiFetch('/api/racing/results'),
       ]);
 
       const history = historyRes.ok ? await historyRes.json() : { bets: [] };
@@ -193,9 +250,6 @@ export class DataBridge {
         vitals: {
           docker: vitals.vitals || [],
         },
-        marketMovers: moversRes.ok ? await moversRes.json() : [],
-        predictions: predRes.ok ? await predRes.json() : [],
-        results: resultsRes.ok ? await resultsRes.json() : [],
       });
 
       this.slowBackoffMs = SLOW_INTERVAL;

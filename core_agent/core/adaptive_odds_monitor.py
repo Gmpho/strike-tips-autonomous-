@@ -47,6 +47,36 @@ def _norm_time(t: str) -> str:
     return t.replace("-", ":").replace(".", ":").strip()
 
 
+def _parse_race_off_time(t_str: str, race_date: datetime = None) -> Optional[datetime]:
+    """Parse HH:MM race time into a datetime for off-time comparison."""
+    if not t_str or ":" not in t_str:
+        return None
+    try:
+        parts = t_str.strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+        base = race_date or datetime.now()
+        return base.replace(hour=h, minute=m, second=0, microsecond=0)
+    except (ValueError, IndexError):
+        return None
+
+
+def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
+    """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
+    
+    Catches races where Betway never sets isFinished (common for UK/Ireland tracks).
+    """
+    now = datetime.now()
+    filtered = {}
+    for eid, e in events.items():
+        t_str = e.get("t") or e.get("st")
+        off_time = _parse_race_off_time(t_str) if t_str else None
+        if off_time and (now - off_time).total_seconds() > max_minutes_after_off * 60:
+            logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {t_str}, now {now.strftime('%H:%M')})")
+            continue
+        filtered[eid] = e
+    return filtered
+
+
 def _norm_course(c: str) -> str:
     """Normalise course name for cross-source matching."""
     n = c.lower().strip()
@@ -267,12 +297,14 @@ class AdaptiveOddsMonitor:
                 _merge_ro_into(state, ro_snapshot)
 
                 # 2. Persistence & Pruning
-                # Remove finished races and normalize names
-                state["events"] = {
+                # Remove Betway-finished races and normalize names
+                active = {
                     eid: {**e, "en": " ".join(e.get("en", "").split())}
                     for eid, e in state.get("events", {}).items()
                     if not e.get("isFinished")
                 }
+                # Off-time closure — catches races Betway never flags (common for UK/Ireland)
+                state["events"] = _close_overdue_races(active)
                 state["count"] = len(state["events"])
                 state["timestamp"] = datetime.now().isoformat()
                 active_ids = list(state["events"].keys())
@@ -307,14 +339,21 @@ class AdaptiveOddsMonitor:
                 except Exception as exc:
                     logger.debug("Cloudflare push skipped: %s", exc)
 
-                # 1c. ATR data — only fetch every 3rd cycle, skip entirely when no active races
-                if active_count > 0 or self._atr_cycle % 3 == 0:
+                # 1c. ATR data — fetch every cycle for maximum freshness
+                if True:
                     try:
-                        atr_results = await self.at_races.get_results("yesterday")
-                        if atr_results:
-                            _atomic_write_json(ATR_RESULTS_PATH, {"results": atr_results, "timestamp": datetime.now().isoformat()})
+                        atr_results_yesterday = await self.at_races.get_results("yesterday")
                     except Exception as e:
-                        logger.debug("ATR results fetch skipped: %s", e)
+                        atr_results_yesterday = None
+                        logger.debug("ATR yesterday results fetch skipped: %s", e)
+                    try:
+                        atr_results_today = await self.at_races.get_results("today")
+                    except Exception as e:
+                        atr_results_today = None
+                        logger.debug("ATR today results fetch skipped: %s", e)
+                    all_results = (atr_results_yesterday or []) + (atr_results_today or [])
+                    if all_results:
+                        _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
 
                     try:
                         atr_movers = await self.at_races.get_market_movers()
@@ -371,7 +410,7 @@ class AdaptiveOddsMonitor:
                 logger.debug(traceback.format_exc())
 
             # Dynamic sleep — poll aggressively when races are live, back off when idle
-            sleep_secs = 45 if active_count > 0 else 300
+            sleep_secs = 15 if active_count > 0 else 300
             logger.debug("Monitor sleep %ds (active_races=%d)", sleep_secs, active_count)
             await asyncio.sleep(sleep_secs)
 

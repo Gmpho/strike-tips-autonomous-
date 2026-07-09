@@ -210,10 +210,8 @@ class StrikeTips:
                 else:
                     races = self._track_data_cache[track_key]
 
-            # Fill SP runners with Scrapling-sourced odds from RacingOddsAPI
-            sp_count = sum(1 for r in races for ru in r.runners if ru.odds_decimal == 5.0)
-            if sp_count and "betway" in str(type(self.betway)).lower():
-                await self._fill_sp_odds_from_ro(races, track, today_iso)
+            # Enrich runners with PDF racecard data from ChromaDB
+            await self._enrich_runners_from_pdf(races, track, today_iso)
 
             if not races:
                 print(f"[WARN] No race data found for {track} after all attempts.")
@@ -322,49 +320,99 @@ class StrikeTips:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
         return validated
 
-    async def _fill_sp_odds_from_ro(self, races: List[ScrapedRace], track: str, date_str: str) -> int:
-        """Fill SP odds (5.0) with Scrapling-sourced odds from RacingOddsAPI.
-        Uses the same pattern as adaptive_odds_monitor._merge_ro_into."""
-        import difflib
-        import re
-        from core_agent.skills.parsers.racing_odds_api import RacingOddsAPI
+    async def _enrich_runners_from_pdf(
+        self, races: List[ScrapedRace], track: str, date_str: str
+    ) -> int:
+        """Populate ScrapedRunner.form with PDF racecard comments from ChromaDB.
 
-        def _normalise(n):
-            return re.sub(r"[^a-zA-Z0-9]", "", n).lower()
-
-        ro_api = RacingOddsAPI()
-        ro_snapshot = await ro_api.get_snapshot_format(target_date=date_str)
-        ro_events = ro_snapshot.get("events", {})
-
-        ro_horses = {}
-        for e in ro_events.values():
-            course = e.get("course", "").lower()
-            if track.lower() not in course:
-                continue
-            for runner in e.get("runners", []):
-                rn = _normalise(runner.get("name", ""))
-                ro_horses[rn] = runner.get("odds", 5.0)
-
-        if not ro_horses:
+        For TAB-fallback tracks that lack Betway form data, this provides
+        the AI with form_flag (X/XX = recent winner) and comment text
+        scraped from the Computaform PDF and stored in vector memory.
+        """
+        if not self.memory or not self.memory._is_ready:
             return 0
+        try:
+            rows = self.memory.get_pdf_racecards(track=track, date=date_str)
+            if not rows:
+                return 0
 
-        filled = 0
-        for race in races:
-            for runner in race.runners:
-                if runner.odds_decimal == 5.0:
-                    rn = _normalise(runner.horse_name)
-                    odds = ro_horses.get(rn)
-                    if not odds:
-                        matches = difflib.get_close_matches(rn, list(ro_horses.keys()), n=1, cutoff=0.6)
-                        if matches:
-                            odds = ro_horses.get(matches[0])
-                    if odds and odds != 5.0:
-                        runner.odds_decimal = odds
-                        filled += 1
+            pdf_by_horse = {}
+            for row in rows:
+                m = row["metadata"]
+                name = m.get("horse_name", "").strip().upper()
+                if name:
+                    pdf_by_horse[name] = row
 
-        if filled:
-            logger.info("[RO] Filled %d SP runners with Scrapling odds for %s", filled, track)
-        return filled
+            enriched = 0
+            for race in races:
+                for runner in race.runners:
+                    key = runner.horse_name.strip().upper()
+                    match = pdf_by_horse.get(key)
+                    if not match:
+                        import difflib
+                        close = difflib.get_close_matches(
+                            key, list(pdf_by_horse.keys()), n=1, cutoff=0.7
+                        )
+                        match = pdf_by_horse.get(close[0]) if close else None
+                    if not match:
+                        continue
+                    m = match["metadata"]
+
+                    if not runner.jockey:
+                        j = m.get("jockey", "")
+                        if j:
+                            runner.jockey = j
+
+                    if not runner.trainer:
+                        t = m.get("trainer", "")
+                        if t:
+                            runner.trainer = t
+
+                    comment = m.get("comment", "")
+                    flag = m.get("form_flag", "")
+                    hmr = m.get("hmr", 0)
+                    cmr = m.get("cmr", 0)
+                    forecast = m.get("forecast_odds_decimal", 0)
+                    parts = []
+                    if flag:
+                        parts.append(f"[PDF: {flag}]")
+                    if comment:
+                        parts.append(comment)
+                    ratings = []
+                    if hmr:
+                        ratings.append(f"HMR={hmr}")
+                    if cmr:
+                        ratings.append(f"CMR={cmr}")
+                    if forecast:
+                        ratings.append(f"Fcst={forecast}")
+                    if ratings:
+                        parts.append(f"[{' '.join(ratings)}]")
+                    if parts:
+                        extra = " | " + " ".join(parts)
+                        if runner.form:
+                            runner.form += extra
+                        else:
+                            runner.form = extra
+
+                    # Override placeholder odds (5.0 = SP) with Computaform forecast odds
+                    if forecast and runner.odds_decimal in (0, 5.0):
+                        runner.odds_decimal = float(forecast)
+                        logger.debug(
+                            "[PDF] Overrode odds for %s: 5.0 → %.1f (Computaform Fcst)",
+                            runner.horse_name, float(forecast),
+                        )
+
+                    enriched += 1
+
+            if enriched:
+                logger.info(
+                    "[PDF] Enriched %d runners with PDF comments for %s %s",
+                    enriched, track, date_str,
+                )
+            return enriched
+        except Exception as e:
+            logger.warning("[PDF] Runner enrichment failed: %s", e)
+            return 0
 
     async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict) -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
@@ -459,8 +507,8 @@ class StrikeTips:
         for sr in scraped_race.runners:
             # Parse form
             form_positions = []
-            if sr.last_5_runs:
-                form_positions = parse_sa_form(sr.last_5_runs)
+            if sr.form:
+                form_positions = parse_sa_form(sr.form)
 
             # Estimate probability from form
             est_prob, rating, reasoning = self.form_analyzer.estimate_win_probability(
@@ -489,7 +537,7 @@ class StrikeTips:
                 trainer=sr.trainer,
                 barrier=sr.barrier,
                 weight=sr.weight,
-                last_5_runs=form_positions if sr.last_5_runs else None,
+                last_5_runs=form_positions if sr.form else None,
             )
 
             runners.append(runner)
@@ -677,7 +725,7 @@ class StrikeTips:
         # 1. Harvest Official PDF Tips FIRST
         from core_agent.skills.parsers.pdf_harvester import PDFHarvester
 
-        pdf = PDFHarvester()
+        pdf = PDFHarvester(memory=self.memory)
         pdf_res = await pdf.get_latest_racing_intelligence("Any", "Daily Tips")
         pdf_tips = pdf_res.get("parsed_tips", [])
 
@@ -701,6 +749,21 @@ class StrikeTips:
 
         # Store PDF race data for exotic analysis
         pdf_races = pdf_res.get("races", {})
+
+        # 1b. Proactively harvest Computaform SA PDFs for ALL tracks
+        # Ensures ChromaDB has trainer/jockey/ratings data for every track
+        # before per-track analysis runs.
+        print(f"\n  📥 Pre-fetching Computaform PDFs for {len(tracks)} tracks...")
+        for track in tracks:
+            try:
+                cf_res = await pdf.get_latest_racing_intelligence(track, "Computaform SA")
+                if cf_res.get("runners"):
+                    print(f"    ✓ {track.title()}: {len(cf_res['runners'])} runners cached")
+                else:
+                    print(f"    - {track.title()}: no PDF (off-day or unavailable)")
+            except Exception as e:
+                print(f"    ✗ {track.title()}: {e}")
+        print(f"  [PDF] Computaform harvest complete.\n")
 
         # 2. Legacy fallback
         all_results = {}
@@ -846,11 +909,23 @@ class StrikeTips:
                         for race in races:
                             if not isinstance(race, dict):
                                 continue
+                            # Skip races with all-5.0 placeholder odds (phantom value bets)
+                            race_odds = [
+                                float(r.get("odds_decimal", 0)) or 0
+                                for r in race.get("runners", [])
+                            ]
+                            real_odds = [o for o in race_odds if o > 0]
+                            if real_odds and all(o == 5.0 for o in real_odds):
+                                logger.info(
+                                    "Auto-bet skip %s R%d: all placeholder 5.0 odds",
+                                    track, race.get("race_number", 0),
+                                )
+                                continue
                             for vb in race.get("value_bets", []):
                                 horse = vb.get("horse") or ""
                                 if not horse:
                                     continue
-                                raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("estimated_edge") or 0
+                                raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("edge_percentage") or vb.get("estimated_edge") or 0
                                 edge = float(raw_edge)
                                 if 0 < edge < 1:
                                     edge *= 100

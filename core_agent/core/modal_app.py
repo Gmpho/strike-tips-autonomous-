@@ -357,7 +357,7 @@ def daily_scan():
     volumes={"/app/data": data_volume},
     memory=2048,
     timeout=3600,
-    schedule=modal.Cron("30 7 * * *", timezone="Africa/Johannesburg"),
+    schedule=modal.Cron("30 9 * * *", timezone="Africa/Johannesburg"),
 )
 def value_scan():
     """Morning value scan — runs at 09:30 SAST when Betway odds are live."""

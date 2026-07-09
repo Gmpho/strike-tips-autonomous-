@@ -154,6 +154,114 @@ class RacingMemory:
             logger.error(f"ChromaDB init failed: {e}")
             self._is_ready = False
 
+    # ─── PDF Racecard Storage ───────────────────────────────────────────────
+
+    def store_pdf_racecard(self, parsed: Dict) -> bool:
+        """Store parsed Computaform PDF data in vector DB for future retrieval.
+
+        Stores one document per runner with rich metadata so you can query
+        things like 'horses with XX form flag at Turffontein' or
+        'comments mentioning well drawn'.
+        """
+        if not self._is_ready or not parsed.get("runners"):
+            return False
+        try:
+            track = parsed.get("track", "unknown")
+            date = parsed.get("date", "unknown")
+            races_meta = parsed.get("races", {})
+            documents, metadatas, ids = [], [], []
+
+            for r in parsed["runners"]:
+                rn = r.get("race_number", 0)
+                horse = r.get("name", "unknown")
+                race_info = races_meta.get(rn, {})
+                doc = (
+                    f"Horse {horse} in Race {rn} at {track} on {date}. "
+                    f"Form flag: {r.get('form_flag', '')}. "
+                    f"Weight: {r.get('weight_kg', '')}kg. "
+                    f"Comment: {r.get('comment', '')}. "
+                    f"Odds: {r.get('odds', '')} ({r.get('odds_decimal', '')} dec). "
+                    f"Distance: {race_info.get('distance_m', '')}m. "
+                    f"Surface: {race_info.get('surface', '')}."
+                )
+                meta = {
+                    "source": "pdf_racecard",
+                    "track": track,
+                    "date": date,
+                    "race_number": rn,
+                    "horse_name": horse,
+                    "horse_number": r.get("horse_number", 0),
+                    "draw": r.get("draw", 0),
+                    "form_flag": r.get("form_flag", ""),
+                    "has_won": r.get("has_won", False),
+                    "weight_kg": r.get("weight_kg", 0),
+                    "odds_decimal": r.get("odds_decimal", 0),
+                    "comment": r.get("comment", ""),
+                    "distance_m": race_info.get("distance_m", 0),
+                    "surface": race_info.get("surface", ""),
+                    "trainer": r.get("trainer", ""),
+                    "jockey": r.get("jockey", ""),
+                    "trainer_win_pct": float(r.get("trainer_win_pct", 0) or 0),
+                    "jockey_win_pct": float(r.get("jockey_win_pct", 0) or 0),
+                    "hmr": int(r.get("hmr", 0) or 0),
+                    "cmr": int(r.get("cmr", 0) or 0),
+                    "forecast_odds_decimal": float(r.get("forecast_odds_decimal", 0) or 0),
+                    "career_runs": int(r.get("career_runs", 0) or 0),
+                    "career_wins": int(r.get("career_wins", 0) or 0),
+                    "career_places": int(r.get("career_places", 0) or 0),
+                }
+                doc_id = f"pdf_{track}_{date}_r{rn}_{horse}".replace(" ", "_").lower()
+                documents.append(doc)
+                metadatas.append(meta)
+                ids.append(doc_id)
+
+            if documents:
+                self._form_collection.upsert(
+                    documents=documents, metadatas=metadatas, ids=ids
+                )
+                logger.info(
+                    f"[MEMORY] Stored {len(documents)} PDF runners "
+                    f"({track} {date})"
+                )
+            return True
+        except Exception as e:
+            logger.error(f"PDF racecard store error: {e}")
+            return False
+
+    def get_pdf_racecards(
+        self,
+        track: Optional[str] = None,
+        date: Optional[str] = None,
+        race_number: Optional[int] = None,
+        n_results: int = 100,
+    ) -> List[Dict]:
+        """Retrieve stored PDF racecard data, optionally filtered."""
+        if not self._is_ready:
+            return []
+        try:
+            where_clause = {"source": "pdf_racecard"}
+            if track:
+                where_clause["track"] = track.upper()
+            if date:
+                where_clause["date"] = date
+            if race_number:
+                where_clause["race_number"] = race_number
+
+            results = self._form_collection.get(
+                where=where_clause,
+                limit=n_results,
+                include=["documents", "metadatas"],
+            )
+            docs = results.get("documents", [])
+            metas = results.get("metadatas", [])
+            return [
+                {"content": doc, "metadata": meta}
+                for doc, meta in zip(docs, metas)
+            ]
+        except Exception as e:
+            logger.error(f"PDF racecard query error: {e}")
+            return []
+
     # ─── Form Insights ────────────────────────────────────────────────────────
 
     def add_form_insight(

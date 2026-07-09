@@ -3,20 +3,89 @@ Strike Tips - Monitoring Routes
 Endpoints for system health, performance, and monitoring.
 """
 
+import asyncio
 import hashlib
 import json
 import os
 import subprocess
 from datetime import datetime
-from core_agent.config.paths import DATA_DIR
+from core_agent.config.paths import DATA_DIR, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH, ATR_RESULTS_PATH
 
 import logging
 import psutil
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger("monitoring-routes")
 
 router = APIRouter(prefix="/api", tags=["monitoring"])
+
+
+@router.get("/monitoring/stream")
+async def stream_snapshot(request: Request):
+    """SSE endpoint — pushes snapshot + ATR updates the moment they change."""
+    async def event_stream():
+        last_hash = ""
+        last_movers_hash = ""
+        last_pred_hash = ""
+        last_results_hash = ""
+
+        while True:
+            try:
+                if await request.is_disconnected():
+                    break
+
+                # Check snapshot for changes
+                cache = request.app.state.snapshot_cache or {}
+                current = dict(cache)
+                current["snapshot_hash"] = hashlib.md5(
+                    json.dumps(current, sort_keys=True).encode()
+                ).hexdigest()
+
+                if current["snapshot_hash"] != last_hash:
+                    last_hash = current["snapshot_hash"]
+                    current["alerts"] = _load_recent_alerts(20)
+                    yield f"event: snapshot\ndata: {json.dumps(current)}\n\n"
+
+                # Check ATR movers for changes
+                if ATR_MOVERS_PATH.exists():
+                    movers_data = json.loads(ATR_MOVERS_PATH.read_text())
+                    m_hash = hashlib.md5(json.dumps(movers_data, sort_keys=True).encode()).hexdigest()
+                    if m_hash != last_movers_hash:
+                        last_movers_hash = m_hash
+                        yield f"event: market-movers\ndata: {json.dumps(movers_data.get('movers', []))}\n\n"
+
+                # Check ATR predictor for changes
+                if ATR_PREDICTOR_PATH.exists():
+                    pred_data = json.loads(ATR_PREDICTOR_PATH.read_text())
+                    p_hash = hashlib.md5(json.dumps(pred_data, sort_keys=True).encode()).hexdigest()
+                    if p_hash != last_pred_hash:
+                        last_pred_hash = p_hash
+                        yield f"event: predictor\ndata: {json.dumps(pred_data.get('predictions', []))}\n\n"
+
+                # Check ATR results for changes
+                if ATR_RESULTS_PATH.exists():
+                    res_data = json.loads(ATR_RESULTS_PATH.read_text())
+                    r_hash = hashlib.md5(json.dumps(res_data, sort_keys=True).encode()).hexdigest()
+                    if r_hash != last_results_hash:
+                        last_results_hash = r_hash
+                        yield f"event: results\ndata: {json.dumps(res_data.get('results', []))}\n\n"
+
+                await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(5)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/monitoring/snapshot")

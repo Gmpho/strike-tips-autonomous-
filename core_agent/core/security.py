@@ -24,6 +24,7 @@ SAFE_PATHS = {
     "/api/legal/betting-rules",
     "/api/legal/responsible",
     "/api/legal/",
+    "/api/monitoring/stream",
 }
 
 
