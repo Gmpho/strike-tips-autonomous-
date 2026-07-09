@@ -212,6 +212,14 @@ async def get_roi_by_track():
     return {"roiByTrack": roi, "accuracy": accuracy}
 
 
+@router.get("/learning/roi-by-odds-range")
+async def get_roi_by_odds_range():
+    """Get settled bets ROI and stats grouped by odds range"""
+    if brain and brain.strike and brain.strike.bankroll:
+        return brain.strike.bankroll.get_settled_bets_by_odds_range()
+    return {}
+
+
 @router.get("/bankroll-history")
 async def get_bankroll_history():
     """Return running bankroll balance over time from bet history"""

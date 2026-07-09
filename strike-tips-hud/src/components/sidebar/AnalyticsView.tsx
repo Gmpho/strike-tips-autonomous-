@@ -136,6 +136,49 @@ export const AnalyticsView: React.FC = () => {
         </div>
       )}
 
+      {/* ROI by Odds Range Bar Chart */}
+      <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+        <div className="flex items-center gap-3 mb-6">
+          <BarChart2 className="w-4 h-4 text-purple-400" />
+          <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">
+            ROI by Odds Bracket
+          </h3>
+        </div>
+        
+        {!learning?.roiByOddsRange || Object.keys(learning.roiByOddsRange).length === 0 ? (
+          <p className="text-xs text-theme-secondary font-bold">No settled odds bracket data yet.</p>
+        ) : (
+          <div className="grid grid-cols-4 gap-4 h-32 items-end pt-4">
+            {Object.entries(learning.roiByOddsRange).map(([key, data]: [string, any]) => {
+              const label = key === 'odds_under_2' ? '< 2.0' : key === 'odds_2_to_4' ? '2.0 - 4.0' : key === 'odds_4_to_7' ? '4.0 - 7.0' : '7.0+';
+              const roiVal = data.roi ?? 0;
+              // Map -50% to +100% to height percentage (min 10%, max 100%)
+              const heightPct = Math.max(10, Math.min(100, ((roiVal + 50) / 150) * 100));
+              
+              return (
+                <div key={key} className="flex flex-col items-center h-full justify-end group">
+                  <span className={`text-[10px] font-black tabular mb-2 opacity-0 group-hover:opacity-100 transition-opacity ${roiVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {roiVal >= 0 ? '+' : ''}{roiVal.toFixed(0)}%
+                  </span>
+                  <div className="w-full bg-theme-secondary rounded-t-lg relative overflow-hidden border border-theme/30 flex items-end" style={{ height: `${heightPct}%` }}>
+                    <motion.div
+                      initial={{ scaleY: 0 }}
+                      animate={{ scaleY: 1 }}
+                      transition={{ duration: 0.8, ease: "easeOut" }}
+                      className={`w-full origin-bottom rounded-t-lg ${roiVal >= 0 ? 'bg-gradient-to-t from-emerald-600 to-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)]' : 'bg-gradient-to-t from-red-600 to-red-400 shadow-[0_0_12px_rgba(239,68,68,0.3)]'}`}
+                      style={{ height: '100%' }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase mt-2 text-center whitespace-nowrap">
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Distribution by Track */}
       <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
         <div className="flex items-center gap-3 mb-8">

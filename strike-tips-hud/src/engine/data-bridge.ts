@@ -201,10 +201,11 @@ export class DataBridge {
 
   private async runSlow() {
     try {
-      const [historyRes, statsRes, roiRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
+      const [historyRes, statsRes, roiRes, roiOddsRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
         apiFetch(BETTING_ENDPOINTS.history),
         apiFetch(BETTING_ENDPOINTS.stats),
         apiFetch('/api/betting/learning/roi-by-track'),
+        apiFetch('/api/betting/learning/roi-by-odds-range'),
         apiFetch('/api/logs?tail=100'),
         apiFetch('/api/healing/activity'),
         apiFetch('/api/healing/selectors'),
@@ -218,6 +219,7 @@ export class DataBridge {
       const roiRaw = roiRes.ok ? await roiRes.json() : {};
       const roiByTrack = roiRaw.roiByTrack ?? roiRaw;
       const roiAccuracy = roiRaw.accuracy ?? 0;
+      const roiOdds = roiOddsRes.ok ? await roiOddsRes.json() : {};
       const logs = logsRes.ok ? await logsRes.json() : { logs: [] };
       const healing = healingRes.ok ? await healingRes.json() : { internal_events: [], github_runs: [] };
       const selectors = selectorsRes.ok ? await selectorsRes.json() : { report: {} };
@@ -235,6 +237,7 @@ export class DataBridge {
           topTrack: Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
           accuracy: roiAccuracy,
           roiByTrack,
+          roiByOddsRange: roiOdds,
         },
         bankrollHistory: bankrollHist.history || [],
         honcho: memoryData ? {

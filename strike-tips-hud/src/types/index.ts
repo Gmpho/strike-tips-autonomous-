@@ -17,6 +17,11 @@ export interface RaceEvent {
   runners: Runner[];
   complexity?: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
   predictionConfidence?: number;
+  aiSelections?: {
+    value?: Runner;
+    favourite?: Runner;
+    outsider?: Runner;
+  };
 }
 
 export interface BankrollState {
@@ -35,6 +40,7 @@ export interface LearningState {
   topTrack: string;
   accuracy: number;
   roiByTrack?: Record<string, number>;
+  roiByOddsRange?: Record<string, any>;
 }
 
 export interface HealingEvent {
