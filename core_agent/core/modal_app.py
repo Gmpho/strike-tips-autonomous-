@@ -12,6 +12,7 @@ Usage:
 
 import modal
 import logging
+from typing import Optional
 
 logger = logging.getLogger("modal-app")
 
@@ -199,33 +200,9 @@ def serve_api():
                     if not brain.strike:
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
                         return {"ok": True}
-                    # Prevent duplicate scans from Telegram webhook retries + bus double-processing
-                    _scanning = getattr(request.app.state, "_scanning", False)
-                    if _scanning:
-                        logger.info("Scan already in progress — skipping duplicate /scan request")
-                        return {"ok": True}
-                    request.app.state._scanning = True
-                    await bot.send_message(chat_id=chat_id, text="🔄 *Starting Daily Scan...*\n_This may take 30-60 seconds._", parse_mode="Markdown")
-                    # Fire scan in background so webhook returns immediately (Telegram retries otherwise)
-                    async def _bg_scan(chat_id: int):
-                        try:
-                            result = await brain.strike.run_daily_scan()
-                            reply = (
-                                f"✅ *Daily Scan Complete*\n\n"
-                                f"Tracks: *{result.get('tracks_scanned', 0)}*\n"
-                                f"Value Bets: *{result.get('total_value_bets', 0)}*\n"
-                                f"Auto-Bets: *{result.get('auto_bets_placed', 0)}*"
-                            )
-                        except Exception as e:
-                            reply = f"❌ *Scan Failed*\n`{str(e)[:200]}`"
-                        finally:
-                            request.app.state._scanning = False
-                        try:
-                            bot2 = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
-                            await bot2.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
-                        except Exception as e2:
-                            logger.error("Failed to send scan result: %s", e2)
-                    asyncio.create_task(_bg_scan(chat_id))
+                    await bot.send_message(chat_id=chat_id, text="🔄 *Starting Daily Scan on Modal...*\n_You will receive progress updates as each track completes._", parse_mode="Markdown")
+                    # Spawn on a dedicated Modal container (survives webhook return)
+                    run_scan.spawn(chat_id)
                     return {"ok": True}
 
                 if cmd == "/clear":
@@ -382,37 +359,62 @@ def value_scan():
     memory=2048,
     timeout=3600,
 )
-def run_scan():
-    """Run strike-tips daily scan for all tracks (manual one-shot)."""
-    import subprocess
+async def run_scan(chat_id: Optional[int] = None):
+    """Run strike-tips daily scan for all tracks (manual one-shot or via /scan)."""
+    import os, telegram
+    from core_agent.core.strike_brain import brain
 
     logger.info("Starting Strike Tips Scan on Modal...")
-    result = subprocess.run(
-        ["python3", "core_agent/core/strike_tips.py", "scan"],
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.stderr:
-        print(f"Errors: {result.stderr}")
-    return {"status": "complete"}
+    brain.initialize()
+
+    async def _progress(track: str, i: int, total: int):
+        if chat_id:
+            try:
+                bot = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📊 *Scan Progress:* {i}/{total} — {track.title()} done...",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
+    result = await brain.strike.run_daily_scan(progress_callback=_progress)
+
+    if chat_id and brain.strike:
+        try:
+            bot = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"✅ *Daily Scan Complete*\n\n"
+                    f"Tracks: *{result.get('tracks_scanned', 0)}*\n"
+                    f"Value Bets: *{result.get('total_value_bets', 0)}*\n"
+                    f"Auto-Bets: *{result.get('auto_bets_placed', 0)}*"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error("Failed to send scan result: %s", e)
+
+    return {"status": "complete", **result}
 
 
-# ── Odds Monitor (now runs via Docker, pushes to Cloudflare KV) ─────────
+# ── Odds Monitor (24/7 on Modal, pushes to Cloudflare KV) ──────────────
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
     volumes={"/app/data": data_volume},
     memory=512,
     timeout=43200,
-    min_containers=0,
+    min_containers=1,
     scaledown_window=120,
     env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"}
 )
 async def run_odds_monitor():
-    """Continuous odds monitoring (fallback — Docker handles now)."""
+    """Continuous odds monitoring 24/7 on Modal."""
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
-    logger.info("Odds monitor started")
+    logger.info("Odds monitor started — running 24/7 on Modal")
     await monitor.run()

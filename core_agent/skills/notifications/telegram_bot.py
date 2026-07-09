@@ -88,19 +88,6 @@ class TelegramNotifier:
             logger.error("Telegram error for %s: %s", chat_id, e)
             return False
 
-    async def broadcast(self, text: str, parse_mode: str = "HTML") -> None:
-        """Send to the admin + every authorized whitelisted user."""
-        targets: list[str] = [self.chat_id]
-        for cid in _get_whitelist_ids():
-            sid = str(cid)
-            if sid not in targets:
-                targets.append(sid)
-        for t in targets:
-            try:
-                await self._send_to_chat(t, text, parse_mode)
-            except Exception:
-                pass
-
     async def send_message(self, text: str, parse_mode: str = "HTML", admin_only: bool = False) -> bool:
         """Send a message.
 
@@ -202,6 +189,21 @@ class TelegramNotifier:
         await self.broadcast(text)
         return True
 
+    async def broadcast(self, text: str, parse_mode: str = "HTML") -> None:
+        """Send to the admin + every authorized whitelisted user, chunking at 4000 chars."""
+        targets: list[str] = [self.chat_id]
+        for cid in _get_whitelist_ids():
+            sid = str(cid)
+            if sid not in targets:
+                targets.append(sid)
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for t in targets:
+            for chunk in chunks:
+                try:
+                    await self._send_to_chat(t, chunk, parse_mode)
+                except Exception:
+                    pass
+
     async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
         """Send a daily summary of all value bets found asynchronously"""
         total_value_bets = sum(
@@ -218,6 +220,9 @@ class TelegramNotifier:
             if vb_count > 0:
                 lines.append(f"\n📍 <b>{track.title()}</b> — {vb_count} selections")
                 for race in races:
+                    insight = race.get("ai_insight", "")
+                    if insight:
+                        lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
                     for vb in race.get("value_bets", [])[:2]:
                         horse_name = (
                             vb.get("horse")
@@ -225,12 +230,34 @@ class TelegramNotifier:
                             or vb.get("horse_name")
                             or "Unknown"
                         )
+                        try:
+                            edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                        except (ValueError, TypeError):
+                            edge = 0.0
                         lines.append(
                             f"  R{race['race_number']}: {horse_name} @ {vb.get('odds_decimal', '?')} "
-                            f"(+{vb.get('edge_percent', 0)}%)"
+                            f"(+{edge:.1f}%)"
                         )
 
         lines.append("\n⚠️ Always bet responsibly.")
+        await self.broadcast("\n".join(lines))
+        return True
+
+    async def send_exotic_plays(self, exotic_plays: List[Dict]) -> bool:
+        """Send exotic pool play alerts"""
+        lines = ["🎰 <b>Exotic Pool Plays Found</b>\n"]
+        for play in exotic_plays:
+            pool = play.get("pool", "UNKNOWN")
+            legs = play.get("legs", [])
+            combos = play.get("combinations", [])
+            est_div = play.get("estimated_dividend", "?")
+            lines.append(
+                f"  🏆 <b>{pool}</b> — {len(legs)} legs, {len(combos)} combo(s)"
+            )
+            if legs:
+                lines.append(f"    Legs: {', '.join(legs[:3])}")
+            if est_div:
+                lines.append(f"    Est. Dividend: R{est_div}")
         await self.broadcast("\n".join(lines))
         return True
 
