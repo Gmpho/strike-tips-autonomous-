@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Ticket, Coins, Trophy, Calendar, ChevronRight, Activity, HelpCircle, Loader2 } from 'lucide-react';
+import { Ticket, Coins, Trophy, Calendar, Activity, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../hooks/useHUD';
 import { apiFetch } from '../lib/api-fetch';
