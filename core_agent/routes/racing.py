@@ -146,3 +146,13 @@ async def get_results():
         data = json.loads(p.read_text())
         return data.get("results", [])
     return []
+
+
+@router.get("/racing/exotics")
+async def get_latest_exotics():
+    """Return latest computed exotic plays from exotics_latest.json."""
+    path = os.path.join(DATA_DIR, "exotics_latest.json")
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return []

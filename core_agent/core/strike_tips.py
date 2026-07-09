@@ -224,11 +224,13 @@ class StrikeTips:
             prompts = []
             for r in races:
                 prompt = (
-                    f"Analyze this single race for value (Edge > 5%): {json.dumps(asdict(r))}. "
+                    f"Analyze this single race for value: {json.dumps(asdict(r))}. "
                     f"Context: {track} Race {r.race_number}. "
-                    "Return ONLY valid JSON: {'race_number': "
-                    + str(r.race_number)
-                    + ", 'summary': '...', 'value_bets': []}."
+                    "Return ONLY valid JSON. Each value_bet MUST include these fields: "
+                    "'horse' (string), 'edge_percent' (float, your edge = (est_prob - 1/odds) * 100), "
+                    "'odds_decimal' (float), 'estimated_probability' (float 0-1), "
+                    "'reasoning' (string). "
+                    f"{{'race_number': {r.race_number}, 'summary': '...', 'value_bets': [...]}}"
                 )
                 prompts.append(prompt)
 
@@ -703,7 +705,10 @@ class StrikeTips:
         races = await self.betway.get_races()
         return list(set(r.track for r in races))
 
-    async def run_daily_scan(self, tracks: Optional[List[str]] = None) -> Dict:
+    async def run_daily_scan(
+        self, tracks: Optional[List[str]] = None,
+        progress_callback: Optional[callable] = None,
+    ) -> Dict:
         """
         Run daily scan for all tracks and SAVE to memory for RAG grounding.
         Uses MAF Workflow (Scrape→Analyse→Bankroll→Notify) when agents are available,
@@ -768,7 +773,7 @@ class StrikeTips:
         # 2. Legacy fallback
         all_results = {}
         total_value_bets = 0
-        for track in tracks:
+        for i, track in enumerate(tracks):
             try:
                 results = await self.scrape_and_analyze_track(track)
                 all_results[track] = results
@@ -778,6 +783,8 @@ class StrikeTips:
                         for r in results
                         if isinstance(r, dict)
                     )
+                if progress_callback:
+                    await progress_callback(track, i + 1, len(tracks))
                 if memory and results:
                     today_str = date.today().isoformat()
                     for race in results:
@@ -808,6 +815,19 @@ class StrikeTips:
             exotic_plays = await self._analyze_exotic_pools(all_results, pdf_races)
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
+                if self.telegram:
+                    try:
+                        await self.telegram.send_exotic_plays(exotic_plays)
+                    except Exception as e:
+                        print(f"[ERR] Failed to send exotic alert: {e}")
+
+        # Save exotic plays (empty or populated) to keep UI state in sync
+        try:
+            exotic_file = os.path.join(self.data_dir, "exotics_latest.json")
+            with open(exotic_file, "w") as f:
+                json.dump(exotic_plays, f, indent=2, default=str)
+        except Exception as e:
+            print(f"[WARN] Failed to save exotics_latest.json: {e}")
 
         if self.telegram:
             try:
@@ -909,15 +929,15 @@ class StrikeTips:
                         for race in races:
                             if not isinstance(race, dict):
                                 continue
-                            # Skip races with all-5.0 placeholder odds (phantom value bets)
-                            race_odds = [
-                                float(r.get("odds_decimal", 0)) or 0
-                                for r in race.get("runners", [])
+                            # Skip races where all value-bet odds are 5.0 placeholder (phantom value)
+                            vb_odds = [
+                                float(vb.get("odds_decimal", 0) or 0)
+                                for vb in race.get("value_bets", [])
                             ]
-                            real_odds = [o for o in race_odds if o > 0]
-                            if real_odds and all(o == 5.0 for o in real_odds):
+                            real_vb_odds = [o for o in vb_odds if o > 0]
+                            if real_vb_odds and all(o == 5.0 for o in real_vb_odds):
                                 logger.info(
-                                    "Auto-bet skip %s R%d: all placeholder 5.0 odds",
+                                    "Auto-bet skip %s R%d: all value-bet odds are 5.0 placeholder",
                                     track, race.get("race_number", 0),
                                 )
                                 continue

@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
   BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
-  TrendingUp, Flag
+  TrendingUp, Flag, Ticket
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 
@@ -23,6 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
     { icon: BrainCircuit, label: 'AI Agents', id: 'agents' },
     { icon: Sparkles, label: 'Dreaming', id: 'dreaming' },
+    { icon: Ticket, label: 'Exotics', id: 'exotics' },
     { icon: Wallet, label: 'Bankroll', id: 'bankroll' },
     { icon: BarChart3, label: 'Analytics', id: 'analytics' },
     { icon: Terminal, label: 'Logs', id: 'logs' },

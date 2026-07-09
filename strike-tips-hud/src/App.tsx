@@ -29,6 +29,7 @@ const PredictorView = React.lazy(() => import('./components/sidebar/PredictorVie
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
 const LegalPage = React.lazy(() => import('./components/LegalPage').then(m => ({ default: m.LegalPage })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
+const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 
 const ViewFallback = () => (
   <div className="flex-1 flex items-center justify-center min-h-[300px]">
@@ -38,7 +39,7 @@ const ViewFallback = () => (
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible'];
 const VALID_VIEWS = [
-  'dashboard', 'agents', 'chat', 'bankroll', 'analytics', 'logs', 'settings',
+  'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
@@ -154,6 +155,8 @@ export const App: React.FC = () => {
         return <Suspense key="agents-view" fallback={<ViewFallback />}><AgentDashboard /></Suspense>;
       case 'chat':
         return <Suspense key="chat-view" fallback={<ViewFallback />}><AIChat initialRaceEvent={pendingRaceEvent ?? undefined} /></Suspense>;
+      case 'exotics':
+        return <Suspense key="exotics-view" fallback={<ViewFallback />}><ExoticsView /></Suspense>;
       case 'bankroll':
         return <Suspense key="bankroll-view" fallback={<ViewFallback />}><BankrollView /></Suspense>;
       case 'analytics':
