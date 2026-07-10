@@ -29,7 +29,7 @@ export const SystemVitalsView: React.FC = () => {
           { label: 'MEMORY', value: `${systemHealth.memory}%`, icon: HardDrive, color: 'text-indigo-500' },
           { label: 'LATENCY', value: `${systemHealth.latency}ms`, icon: Network, color: 'text-cyan-500' },
         ].map((stat, i) => (
-          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme ">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
             <div className="text-xl font-black text-theme-primary mb-0.5 tabular">{stat.value}</div>
             <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>

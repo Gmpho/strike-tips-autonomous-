@@ -249,7 +249,7 @@ export const App: React.FC = () => {
       <div className="flex flex-col md:flex-row">
         {/* Desktop sidebar */}
         <aside className="hidden md:block">
-          <div className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel backdrop-blur-2xl transition-all duration-300 ease-in-out z-30`}>
+          <div className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel transition-all duration-300 ease-in-out z-30`}>
             <Sidebar
               activeView={activeView}
               setActiveView={navigate}
@@ -261,7 +261,7 @@ export const App: React.FC = () => {
 
         <main className="flex-1 min-w-0 relative z-10 flex flex-col">
           {/* Header */}
-          <div className="sticky top-0 z-20 px-4 md:px-8 lg:px-12 pt-4 md:pt-6 lg:pt-8 pb-3 md:pb-4 backdrop-blur-md bg-theme-panel border-b border-theme">
+          <div className="sticky top-0 z-20 px-4 md:px-8 lg:px-12 pt-4 md:pt-6 lg:pt-8 pb-3 md:pb-4 bg-theme-panel border-b border-theme">
             <Header
               onToggleSidebar={() => setIsMobileMenuOpen(true)}
               isSidebarCollapsed={isSidebarCollapsed}

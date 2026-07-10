@@ -14,7 +14,7 @@ export const Footer: React.FC = () => {
   ];
 
   return (
-    <footer className="px-4 md:px-8 lg:px-12 py-4 md:py-8 border-t border-theme bg-theme-panel backdrop-blur-xl">
+    <footer className="px-4 md:px-8 lg:px-12 py-4 md:py-8 border-t border-theme bg-theme-panel ">
       <div className="max-w-7xl mx-auto">
         {/* Links */}
         <div className="flex flex-wrap justify-center gap-2 md:gap-4 lg:gap-8 mb-4 md:mb-8">

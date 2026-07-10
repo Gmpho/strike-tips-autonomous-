@@ -25,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
 
         <div className="relative group shrink-0 hidden xs:flex">
           <div className="absolute -inset-2 bg-linear-to-r from-purple-600 to-emerald-600 rounded-2xl opacity-20 blur group-hover:opacity-40 transition-all duration-500" />
-          <div className="relative bg-theme-panel border border-theme rounded-2xl p-1.5 md:p-2.5 backdrop-blur-xl">
+          <div className="relative bg-theme-panel border border-theme rounded-2xl p-1.5 md:p-2.5 ">
              <div className="w-8 h-8 md:w-12 md:h-12 bg-purple-500/20 rounded-xl flex items-center justify-center overflow-hidden border border-purple-500/30">
                <picture>
                   <source srcSet="/logo.webp" type="image/webp" />
@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           </div>
         </div>
 
-        <div className="bg-theme-secondary border border-theme px-2 md:px-5 py-1.5 md:py-3 rounded-xl md:rounded-2xl backdrop-blur-2xl flex items-center gap-1.5 md:gap-4 hover:border-theme transition-all cursor-pointer group">
+        <div className="bg-theme-secondary border border-theme px-2 md:px-5 py-1.5 md:py-3 rounded-xl md:rounded-2xl  flex items-center gap-1.5 md:gap-4 hover:border-theme transition-all cursor-pointer group">
           <div className="hidden xs:block">
             <div className="text-[8px] md:text-[9px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter">Capital</div>
             <div className="text-[11px] md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">

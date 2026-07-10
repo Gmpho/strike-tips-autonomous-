@@ -196,7 +196,7 @@ export const LogsView: React.FC = () => {
           { label: 'MEMORY', value: `${systemHealth.memory.toFixed(1)}%`, icon: HardDrive, color: 'text-indigo-500' },
           { label: 'STATUS', value: systemHealth.status, icon: Activity, color: systemHealth.status === 'ONLINE' ? 'text-emerald-500' : 'text-amber-500' },
         ].map((stat, i) => (
-          <div key={i} className="p-3 md:p-4 rounded-xl md:rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl flex flex-col justify-between overflow-hidden">
+          <div key={i} className="p-3 md:p-4 rounded-xl md:rounded-2xl bg-theme-panel border border-theme flex flex-col justify-between overflow-hidden">
             <stat.icon className={`w-3.5 h-3.5 md:w-4 md:h-4 ${stat.color} mb-2 md:mb-3`} />
             <div>
               <div className={`text-xs md:text-xl font-black text-theme-primary mb-0.5 tabular truncate ${stat.label === 'STATUS' ? stat.color : ''}`}>

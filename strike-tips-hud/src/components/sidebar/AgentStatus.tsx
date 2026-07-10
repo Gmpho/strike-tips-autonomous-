@@ -18,7 +18,7 @@ export const AgentStatus: React.FC = () => {
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="p-6 bg-theme-panel rounded-3xl border border-theme backdrop-blur-2xl mx-2 mb-6 hover:shadow-[0_0_30px_rgba(168,85,247,0.1)] transition-shadow"
+      className="p-6 bg-theme-panel rounded-3xl border border-theme  mx-2 mb-6 hover:shadow-[0_0_30px_rgba(168,85,247,0.1)] transition-shadow"
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">

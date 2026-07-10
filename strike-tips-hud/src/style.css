@@ -15,8 +15,8 @@
 :root {
   --bg-primary: var(--tg-theme-bg-color, #000000);
   --text-primary: var(--tg-theme-text-color, #ffffff);
-  --bg-secondary: rgba(255, 255, 255, 0.03);
-  --bg-panel: rgba(0, 0, 0, 0.6);
+  --bg-secondary: rgba(255, 255, 255, 0.05);
+  --bg-panel: rgba(8, 8, 18, 0.95);
   --text-secondary: rgba(255, 255, 255, 0.7);
   --text-muted: rgba(255, 255, 255, 0.4);
   --border-color: rgba(255, 255, 255, 0.1);
@@ -102,22 +102,11 @@ body {
 .border-theme { border-color: var(--border-color); }
 
 .hud-card {
-  background: var(--bg-secondary);
+  background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: 1.5rem;
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@supports (transform-style: preserve-3d) {
-  .hud-card {
-    transform: perspective(1000px) rotateX(1deg);
-    transform-style: preserve-3d;
-  }
-  .hud-card:hover {
-    transform: perspective(1000px) rotateX(0deg) scale(1.02) translateZ(10px);
-  }
+  will-change: transform, box-shadow;
 }
 
 @supports not (backdrop-filter: blur(1px)) {
@@ -130,9 +119,10 @@ body {
 }
 
 .hud-card:hover {
+  transform: translateY(-4px) scale(1.015);
   border-color: var(--color-purple-500);
   background: var(--accent-glow);
-  box-shadow: 0 20px 50px var(--accent-glow);
+  box-shadow: 0 20px 40px rgba(168, 85, 247, 0.12), 0 0 30px rgba(168, 85, 247, 0.05);
 }
 
 .text-gradient {

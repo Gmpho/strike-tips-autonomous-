@@ -76,7 +76,7 @@ export const ExoticsView: React.FC = () => {
         </div>
 
         {/* Tab Controls */}
-        <div className="flex border border-theme p-1 rounded-2xl bg-theme-panel backdrop-blur-xl shrink-0">
+        <div className="flex border border-theme p-1 rounded-2xl bg-theme-panel shrink-0">
           <button
             onClick={() => setActiveTab('active')}
             className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
@@ -241,7 +241,7 @@ export const ExoticsView: React.FC = () => {
             </div>
 
             {/* Historic Exotics Table */}
-            <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+            <div className="p-6 rounded-2xl bg-theme-panel border border-theme">
               <div className="flex items-center gap-3 mb-6">
                 <Calendar className="w-4 h-4 text-purple-400" />
                 <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">Exotic Bet History</h3>

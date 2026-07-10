@@ -36,7 +36,7 @@ export const HealingView: React.FC = () => {
       {/* Grid: Agent Stats & Selector Health */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Selector Health Card */}
-        <div className="p-5 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-emerald-500/30 transition-all duration-500">
+        <div className="p-5 rounded-2xl bg-theme-panel border border-theme  group hover:border-emerald-500/30 transition-all duration-500">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
               <ShieldCheck className="w-5 h-5" />
@@ -73,7 +73,7 @@ export const HealingView: React.FC = () => {
         </div>
 
         {/* AI Active Workers Card */}
-        <div className="p-5 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-cyan-500/30 transition-all duration-500">
+        <div className="p-5 rounded-2xl bg-theme-panel border border-theme  group hover:border-cyan-500/30 transition-all duration-500">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
               <Activity className="w-5 h-5" />

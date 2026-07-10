@@ -26,9 +26,8 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
       initial={{ x: -20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ delay: idx * 0.1 }}
-      className={`hud-card group p-6 relative overflow-hidden border border-theme bg-theme-secondary backdrop-blur-2xl transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
+      className={`hud-card group p-6 relative overflow-hidden border border-theme bg-theme-panel transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
     >
-      <div className="absolute inset-0 bg-theme-panel opacity-40 pointer-events-none" />
       <div className="flex justify-between items-start mb-6 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
         <div>
           <div className="flex items-center gap-2 mb-1">

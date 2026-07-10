@@ -49,7 +49,7 @@ export const BankrollView: React.FC = () => {
       </div>
 
       {/* Main Bankroll Display */}
-      <div className="p-8 rounded-4xl bg-linear-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 backdrop-blur-3xl relative overflow-hidden group">
+      <div className="p-8 rounded-4xl bg-linear-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20  relative overflow-hidden group">
         <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform duration-700">
           <Landmark className="w-24 h-24 text-indigo-400" />
         </div>
@@ -79,7 +79,7 @@ export const BankrollView: React.FC = () => {
           { label: 'EXPOSURE', value: `R ${bankroll?.totalExposure?.toFixed(2) || '0.00'}`, icon: Wallet, color: 'text-indigo-500' },
           { label: 'TOTAL ROI', value: `${(betStats?.roi || 0) >= 0 ? '+' : ''}${betStats?.roi?.toFixed(1) || '0.0'}%`, icon: TrendingUp, color: (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' },
         ].map((stat, i) => (
-          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme ">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
             <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label === 'TOTAL ROI' ? (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' : ''}`}>
               {stat.value}
@@ -90,7 +90,7 @@ export const BankrollView: React.FC = () => {
       </div>
 
       {/* Recent Bets */}
-      <div className="rounded-3xl bg-theme-panel border border-theme overflow-hidden backdrop-blur-2xl">
+      <div className="rounded-3xl bg-theme-panel border border-theme overflow-hidden ">
         <div className="px-6 py-4 border-b border-theme bg-theme-secondary/30 flex items-center gap-3">
           <DollarSign className="w-4 h-4 text-emerald-500" />
           <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">Recent Executions</h3>

@@ -277,7 +277,7 @@ export const AnalyticsView: React.FC = () => {
       {/* KPI Grid — 6 cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {kpis.map((stat, i) => (
-          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-theme-primary transition-colors">
+          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme group hover:border-theme-primary transition-colors">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
             <div className="text-xl font-black text-theme-primary mb-0.5 tabular">{stat.value}</div>
             <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
@@ -287,7 +287,7 @@ export const AnalyticsView: React.FC = () => {
 
       {/* Bankroll History Chart */}
       {chartBalances.length >= 2 && (
-        <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+        <div className="p-6 rounded-2xl bg-theme-panel border border-theme">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <TrendingUp className={`w-4 h-4 ${chartTrend ? 'text-emerald-400' : 'text-red-400'}`} />
@@ -309,14 +309,14 @@ export const AnalyticsView: React.FC = () => {
       {(bestTrack || worstTrack) && (
         <div className="grid grid-cols-2 gap-4">
           {bestTrack && (
-            <div className="p-4 rounded-2xl bg-theme-panel border border-emerald-500/20 backdrop-blur-xl">
+            <div className="p-4 rounded-2xl bg-theme-panel border border-emerald-500/20">
               <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Best Track</div>
               <div className="text-theme-primary font-black">{bestTrack.name}</div>
               <div className="text-emerald-400 font-black tabular">+{bestTrack.roi}% ROI</div>
             </div>
           )}
           {worstTrack && worstTrack.name !== bestTrack?.name && (
-            <div className="p-4 rounded-2xl bg-theme-panel border border-red-500/20 backdrop-blur-xl">
+            <div className="p-4 rounded-2xl bg-theme-panel border border-red-500/20">
               <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Worst Track</div>
               <div className="text-theme-primary font-black">{worstTrack.name}</div>
               <div className="text-red-400 font-black tabular">{worstTrack.roi}% ROI</div>
@@ -326,7 +326,7 @@ export const AnalyticsView: React.FC = () => {
       )}
 
       {/* ROI by Odds Range Bar Chart */}
-      <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+      <div className="p-6 rounded-2xl bg-theme-panel border border-theme">
         <div className="flex items-center gap-3 mb-6">
           <BarChart2 className="w-4 h-4 text-purple-400" />
           <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">
@@ -411,7 +411,7 @@ export const AnalyticsView: React.FC = () => {
       </div>
 
       {/* Distribution by Track */}
-      <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl">
+      <div className="p-6 rounded-2xl bg-theme-panel border border-theme">
         <div className="flex items-center gap-3 mb-8">
           <Activity className="w-4 h-4 text-emerald-400" />
           <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">
@@ -445,7 +445,7 @@ export const AnalyticsView: React.FC = () => {
       </div>
 
       {/* Learning Insights */}
-      <div className="p-6 rounded-2xl bg-theme-panel border border-theme backdrop-blur-xl group hover:border-emerald-500/30 transition-all duration-500">
+      <div className="p-6 rounded-2xl bg-theme-panel border border-theme group hover:border-emerald-500/30 transition-all duration-500">
         <div className="flex items-center gap-3 mb-4">
           <Target className="w-4 h-4 text-blue-500" />
           <h3 className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">

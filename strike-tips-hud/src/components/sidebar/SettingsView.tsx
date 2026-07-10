@@ -205,7 +205,7 @@ export const SettingsView: React.FC = () => {
       <div className="grid gap-6 max-w-4xl mx-auto pb-12">
 
         {/* Bankroll */}
-        <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+        <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
           <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
             <DollarSign className="w-6 h-6 text-emerald-500" />
             <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Bankroll Protocol</h3>
@@ -232,7 +232,7 @@ export const SettingsView: React.FC = () => {
         </div>
 
         {/* Notifications */}
-        <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+        <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
           <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
             <Bell className="w-6 h-6 text-purple-500" />
             <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Notification Channels</h3>
@@ -284,7 +284,7 @@ export const SettingsView: React.FC = () => {
 
         {/* Schedule + AI */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+          <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
             <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
               <Clock className="w-6 h-6 text-amber-500" />
               <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Market Scans</h3>
@@ -309,7 +309,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+          <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
             <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
               <Cpu className="w-6 h-6 text-blue-500" />
               <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Inference Engine</h3>
@@ -437,7 +437,7 @@ export const SettingsView: React.FC = () => {
 
         {/* Paper Trading + Auto Bet */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+          <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
             <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
               <FlaskConical className="w-6 h-6 text-cyan-500" />
               <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Paper Trading</h3>
@@ -464,7 +464,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-theme-panel border border-theme rounded-3xl p-8 backdrop-blur-2xl">
+          <div className="bg-theme-panel border border-theme rounded-3xl p-8 ">
             <div className="flex items-center gap-3 mb-8 pb-4 border-b border-theme">
               <Zap className="w-6 h-6 text-yellow-500" />
               <h3 className="text-xl font-black text-theme-primary tracking-tight uppercase">Auto Bet</h3>
