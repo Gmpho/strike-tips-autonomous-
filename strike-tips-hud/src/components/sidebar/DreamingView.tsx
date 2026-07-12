@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Brain, CloudMoon, Zap, RefreshCcw } from 'lucide-react';
+import { Canvas } from '@react-three/fiber';
+import { DreamOrb, DreamOrbFallback } from '../visualizer/DreamOrb';
 import { apiFetch } from '../../lib/api-fetch';
+import { isSoftwareWebGL } from '../../lib/detectSoftwareWebGL';
 
 interface Dream {
   id: string;
@@ -77,12 +80,32 @@ export const DreamingView: React.FC = () => {
       <div className="flex-1 flex flex-col gap-6 min-w-0">
         <div className="flex-1 min-h-[300px] bg-theme-panel border border-theme rounded-3xl relative overflow-hidden group">
           <div className="absolute inset-0 z-0 flex items-center justify-center">
-            <div 
-              className="w-32 h-32 rounded-full bg-purple-500/10 border border-purple-500/20 blur-2xl animate-pulse"
-              style={{
-                boxShadow: '0 0 100px rgba(168, 85, 247, 0.3)'
-              }}
-            />
+            {typeof window !== 'undefined' && (window.innerWidth < 1024 || 'ontouchstart' in window || isSoftwareWebGL()) ? (
+              <DreamOrbFallback />
+            ) : (
+              <Canvas
+                camera={{ position: [0, 0, 8] }}
+                dpr={[1, 1.5]}
+                gl={{ 
+                  powerPreference: 'low-power', 
+                  antialias: false, 
+                  stencil: false, 
+                  depth: true,
+                  alpha: true,
+                  preserveDrawingBuffer: false,
+                  failIfMajorPerformanceCaveat: true
+                }}
+                onCreated={(state) => {
+                  state.gl.domElement.addEventListener('webglcontextlost', (e) => {
+                    e.preventDefault();
+                  });
+                }}
+              >
+                <ambientLight intensity={0.5} />
+                <pointLight position={[10, 10, 10]} intensity={1.5} color="#a855f7" />
+                <DreamOrb />
+              </Canvas>
+            )}
           </div>
 
           {/* Overlay Controls */}

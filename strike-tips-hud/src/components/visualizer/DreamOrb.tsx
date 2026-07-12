@@ -2,7 +2,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
-const NODE_COUNT = 24;
+const NODE_COUNT = 12;
 
 export const DreamOrb = () => {
   const { viewport } = useThree();
@@ -10,8 +10,6 @@ export const DreamOrb = () => {
   const coreRef = useRef<THREE.Mesh>(null);
   const instancesRef = useRef<THREE.InstancedMesh>(null);
   
-  // Calculate dynamic scale based on viewport width
-  // Mobile: ~1.8, Tablet: ~2.4, Desktop: ~2.8
   const dynamicScale = useMemo(() => {
     const minScale = 1.6;
     const baseScale = Math.min(2.8, Math.max(minScale, viewport.width * 0.3));
@@ -33,20 +31,17 @@ export const DreamOrb = () => {
   useFrame((state) => {
     const time = state.clock.getElapsedTime();
     
-    // Main shell
     if (meshRef.current) {
       meshRef.current.rotation.y = time * 0.15;
       meshRef.current.rotation.z = time * 0.1;
       meshRef.current.scale.setScalar(1 + Math.sin(time * 1.5) * 0.03);
     }
     
-    // Inner core
     if (coreRef.current) {
       coreRef.current.rotation.y = -time * 0.4;
       coreRef.current.scale.setScalar(0.75 + Math.cos(time * 2.5) * 0.08);
     }
 
-    // Instanced neural nodes
     if (instancesRef.current) {
       nodeData.forEach((node, i) => {
         const t = time + node.offset;
@@ -66,42 +61,64 @@ export const DreamOrb = () => {
 
   return (
     <group scale={dynamicScale}>
-      {/* Outer Neural Shell */}
       <mesh ref={meshRef}>
-        <icosahedronGeometry args={[1, 12]} />
+        <icosahedronGeometry args={[1, 6]} />
         <meshStandardMaterial 
           color="#4c1d95" 
           wireframe 
           transparent 
-          opacity={0.2} 
+          opacity={0.15} 
           emissive="#6d28d9"
-          emissiveIntensity={1.5}
+          emissiveIntensity={1}
         />
       </mesh>
 
-      {/* Inner Pulsing Core */}
       <mesh ref={coreRef}>
-        <sphereGeometry args={[0.5, 32, 32]} />
+        <sphereGeometry args={[0.5, 16, 16]} />
         <meshStandardMaterial 
           color="#a78bfa" 
           emissive="#8b5cf6" 
-          emissiveIntensity={4}
+          emissiveIntensity={2}
           transparent
-          opacity={0.8}
+          opacity={0.6}
         />
       </mesh>
 
-      {/* Instanced Neural Nodes (Massively optimized) */}
       <instancedMesh ref={instancesRef} args={[undefined, undefined, NODE_COUNT]}>
-        <sphereGeometry args={[1, 8, 8]} />
+        <sphereGeometry args={[1, 6, 6]} />
         <meshStandardMaterial 
           color="#c084fc" 
           emissive="#a855f7" 
-          emissiveIntensity={8}
+          emissiveIntensity={4}
           transparent
-          opacity={0.9}
+          opacity={0.7}
         />
       </instancedMesh>
     </group>
   );
 };
+
+export function DreamOrbFallback() {
+  return (
+    <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
+      <div 
+        className="rounded-full opacity-30"
+        style={{
+          width: '200px',
+          height: '200px',
+          background: 'radial-gradient(circle at 30% 30%, rgba(168,85,247,0.4), rgba(88,28,135,0.2) 50%, transparent 70%)',
+          filter: 'blur(2px)',
+        }}
+      />
+      <div 
+        className="absolute rounded-full opacity-20"
+        style={{
+          width: '120px',
+          height: '120px',
+          background: 'radial-gradient(circle at 40% 40%, rgba(196,132,252,0.5), rgba(139,92,246,0.2) 50%, transparent)',
+          filter: 'blur(4px)',
+        }}
+      />
+    </div>
+  );
+}

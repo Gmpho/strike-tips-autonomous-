@@ -105,8 +105,7 @@ body {
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: 1.5rem;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, box-shadow;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @supports not (backdrop-filter: blur(1px)) {
@@ -119,10 +118,15 @@ body {
 }
 
 .hud-card:hover {
-  transform: translateY(-4px) scale(1.015);
   border-color: var(--color-purple-500);
   background: var(--accent-glow);
   box-shadow: 0 20px 40px rgba(168, 85, 247, 0.12), 0 0 30px rgba(168, 85, 247, 0.05);
+}
+
+@media (hover: hover) {
+  .hud-card:hover {
+    transform: translateY(-2px);
+  }
 }
 
 .text-gradient {
@@ -171,9 +175,8 @@ body {
   }
 }
 
-/* ── Scroll container optimization (prevents layout thrash on large lists) ── */
+/* ── Scroll container optimization ── */
 .scroll-container {
-  will-change: transform;
   contain: content;
   overscroll-behavior: contain;
 }
@@ -211,6 +214,35 @@ html {
   }
 }
 
+@media (max-width: 1023px) {
+  .hud-card .backdrop-blur-sm,
+  .hud-card .backdrop-blur-md,
+  .hud-card .backdrop-blur-xl,
+  .hud-card .backdrop-blur-2xl {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  
+  .animate-pulse { 
+    animation-duration: 2s !important; 
+    animation-timing-function: ease-in-out !important;
+  }
+  
+  .animate-ping {
+    animation: none !important;
+  }
+}
+
+/* Required for reduced-motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Hardware-accelerated native CSS transitions for chat message list updates */
 @keyframes chatFadeInUp {
   from {
@@ -225,5 +257,4 @@ html {
 
 .animate-chat-fade-in-up {
   animation: chatFadeInUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity;
 }

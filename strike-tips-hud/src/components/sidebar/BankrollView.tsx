@@ -96,7 +96,7 @@ export const BankrollView: React.FC = () => {
           <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">Recent Executions</h3>
         </div>
         
-        <div className="divide-y divide-theme overflow-y-auto max-h-[400px]">
+        <div className="divide-y divide-theme overflow-y-auto max-h-[400px] min-h-[100px]">
           {betHistory.length === 0 ? (
             <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
               Awaiting Market Entry...
