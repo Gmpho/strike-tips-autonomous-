@@ -239,13 +239,13 @@ class RacingMemory:
         if not self._is_ready:
             return []
         try:
-            where_clause = {"source": "pdf_racecard"}
+            where_clause = {"$and": [{"source": {"$eq": "pdf_racecard"}}]}
             if track:
-                where_clause["track"] = track.upper()
+                where_clause["$and"].append({"track": {"$eq": track.upper()}})
             if date:
-                where_clause["date"] = date
+                where_clause["$and"].append({"date": {"$eq": date}})
             if race_number:
-                where_clause["race_number"] = race_number
+                where_clause["$and"].append({"race_number": {"$eq": race_number}})
 
             results = self._form_collection.get(
                 where=where_clause,

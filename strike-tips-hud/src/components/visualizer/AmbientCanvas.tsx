@@ -142,9 +142,12 @@ export const AmbientCanvas: React.FC = () => {
     };
   }, []);
 
-  if (!hasWebgl || isWebgpuActive) {
+  // Disable WebGL background on mobile/tablet devices to prevent compositor artifacts and preserve battery life
+  const isMobile = typeof window !== 'undefined' && (window.innerWidth < 1024 || 'ontouchstart' in window);
+
+  if (!hasWebgl || isWebgpuActive || isMobile) {
     return (
-      <div className="absolute inset-0 pointer-events-none z-0"
+      <div className="absolute inset-0 pointer-events-none z-0 animate-fade-in"
         style={{
           background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.06) 0%, transparent 70%)'
         }}
