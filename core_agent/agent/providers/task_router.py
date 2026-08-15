@@ -302,9 +302,10 @@ class TaskRouter:
         if active_model == "auto" and pref_model and pref_model != "auto":
             active_model = pref_model
 
-        # Strict Local Override: If local_only is True, force all cloud requests to run locally
-        if local_only and active_model in ("groq", "gemini", "groq-llama", "llama-3.3-70b-versatile", "gemini-3.5-flash"):
-            logger.info("[TASK_ROUTER] Strict local mode active. Overriding cloud model %s to local auto.", active_model)
+        # Strict Local Override: If local_only is True, force AUTO cloud routing to run locally.
+        # Explicit cloud model selections still route to their cloud provider.
+        if local_only and active_model == "auto":
+            logger.info("[TASK_ROUTER] Strict local mode active. Overriding AUTO to local auto.")
             active_model = "auto"
 
         # If a specific model is explicitly requested, route directly to it
@@ -318,7 +319,7 @@ class TaskRouter:
                     return
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Groq override failed: %s", e)
-            elif active_model in ("gemini", "gemini-3.5-flash"):
+            elif active_model in ("gemini", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
                 provider = GeminiProvider()
                 try:
                     async for chunk in provider.stream(messages, None, intent):

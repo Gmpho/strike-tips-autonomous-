@@ -1,5 +1,13 @@
 # Strike Tips — Full Autonomy Plan
 
+> ⚠️ **STALE — see `BUG_AND_IMPLEMENTATION_PLAN.md` (2026-07-08 audit).**
+> Several gaps listed here are already resolved in code, notably the
+> `duckduckgo_search` / `HAS_DDGS` settlement gap: the current code uses
+> `ddgs==9.11.4` (`requirements.txt`) and `result_tracker.py` calls
+> `search_racing()` — auto-settlement works. Do not re-apply that fix.
+> The remaining live issues are tracked in `BUG_AND_IMPLEMENTATION_PLAN.md`
+> and `FIXES_APPLIED_REPORT.md`.
+
 ## System Architecture
 
 ```

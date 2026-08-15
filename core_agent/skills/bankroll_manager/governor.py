@@ -51,6 +51,7 @@ class BetRecord:
     actual_return: Optional[float] = None
     profit_loss: Optional[float] = None
     notes: str = ""
+    is_paper: bool = False
 
 
 @dataclass
@@ -342,6 +343,7 @@ class BankrollGovernor:
                 status="PENDING",
                 edge_percent=edge_percent,
                 confidence=confidence,
+                is_paper=is_paper,
             )
 
             if is_paper:
@@ -408,6 +410,7 @@ class BankrollGovernor:
                     "ticket_cost": ticket_cost,
                 }),
                 distance=None,
+                is_paper=is_paper,
             )
 
             if is_paper:
@@ -448,7 +451,8 @@ class BankrollGovernor:
                 existing["settlement_notes"] = notes
                 bet.notes = json.dumps(existing)
 
-            if bet.notes and "PAPER" in str(bet.notes):
+            is_paper_bet = getattr(bet, "is_paper", False) or (bet.notes and "PAPER" in str(bet.notes))
+            if is_paper_bet:
                 self.paper_balance += (bet.actual_return or 0.0)
             else:
                 self.current_bankroll += (bet.actual_return or 0.0) - bet.stake
@@ -481,10 +485,14 @@ class BankrollGovernor:
 
             bet.actual_return = actual_return
             bet.profit_loss = actual_return - bet.stake
-            bet.notes = notes
+            is_paper_bet = getattr(bet, "is_paper", False) or (bet.notes and "PAPER" in str(bet.notes))
+            if notes:
+                bet.notes = f"PAPER | {notes}" if is_paper_bet else notes
+            elif is_paper_bet and not bet.notes:
+                bet.notes = "PAPER"
 
             # Update bankroll (paper bets don't affect real balance)
-            if bet.notes == "PAPER":
+            if is_paper_bet:
                 self.paper_balance += actual_return
             else:
                 self.current_bankroll += bet.profit_loss
@@ -620,7 +628,7 @@ class BankrollGovernor:
         results.sort(key=lambda r: r["roi"])
         return results
 
-    def get_settled_bets_by_odds_range(self, min_bets: int = 3) -> List[Dict]:
+    def get_settled_bets_by_odds_range(self, min_bets: int = 0) -> Dict[str, Dict]:
         """Group settled bets by odds bracket and return performance per bracket."""
         settled = [b for b in self._bets if b.status in ("WON", "LOST")]
         from collections import defaultdict
@@ -634,27 +642,31 @@ class BankrollGovernor:
                 return "odds_4_to_7"
             return "odds_7_plus"
 
+        brackets = ["odds_under_2", "odds_2_to_4", "odds_4_to_7", "odds_7_plus"]
         by_bracket: Dict[str, List[BetRecord]] = defaultdict(list)
         for b in settled:
             by_bracket[bracket(b.odds)].append(b)
 
-        results = []
-        for bracket_name, bets in by_bracket.items():
-            if len(bets) < min_bets:
-                continue
+        results = {}
+        for bracket_name in brackets:
+            bets = by_bracket[bracket_name]
             total_stake = sum(b.stake for b in bets)
+            total_returned = sum(b.actual_return or 0.0 for b in bets)
             total_pl = sum(b.profit_loss or 0.0 for b in bets)
             wins = sum(1 for b in bets if b.status == "WON")
+            total = len(bets)
             roi = (total_pl / total_stake * 100) if total_stake > 0 else 0.0
-            results.append({
+            results[bracket_name] = {
                 "bracket": bracket_name,
-                "total_bets": len(bets),
+                "roi": round(roi, 1),
                 "wins": wins,
-                "losses": len(bets) - wins,
-                "win_rate": round((wins / len(bets) * 100) if bets else 0.0, 1),
-                "roi": round(roi, 2),
-            })
-        results.sort(key=lambda r: r["roi"])
+                "losses": total - wins,
+                "total": total,
+                "total_bets": total,
+                "staked": round(total_stake, 2),
+                "returned": round(total_returned, 2),
+                "win_rate": round((wins / total * 100) if total else 0.0, 1),
+            }
         return results
 
     def get_history_stats(self, days: int = 15) -> List[Dict]:

@@ -193,6 +193,22 @@ class ResultTracker:
                     logger.info(
                         f"Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'}"
                     )
+                    profit_loss = (bet.actual_return or 0.0) - bet.stake
+                    try:
+                        from core_agent.core.strike_brain import brain
+                        if brain and brain.strike and brain.strike.telegram:
+                            await brain.strike.telegram.send_bet_result(
+                                horse=bet.horse,
+                                track=bet.track,
+                                race_number=bet.race_number,
+                                won=won,
+                                stake=bet.stake,
+                                returns=bet.actual_return or 0.0,
+                                profit_loss=profit_loss,
+                            )
+                    except Exception as tg_err:
+                        logger.warning(f"Failed to dispatch Telegram result alert: {tg_err}")
+
                     settled.append(
                         {
                             "bet_id": bet.bet_id,

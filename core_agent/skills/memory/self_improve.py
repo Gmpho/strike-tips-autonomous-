@@ -319,10 +319,13 @@ def analyze_performance_and_learn(bankroll) -> List[Dict]:
 
     # 2. Odds-bracket analysis
     bracket_stats = bankroll.get_settled_bets_by_odds_range(min_bets=5)
-    for stat in bracket_stats:
+    for stat in bracket_stats.values():
         bracket = stat["bracket"]
         roi = stat["roi"]
         total = stat["total_bets"]
+
+        if total < 5:
+            continue
 
         if roi < -15.0:
             pattern_name = f"poor_odds_{bracket}"

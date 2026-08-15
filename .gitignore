@@ -62,3 +62,7 @@ __pycache__/
 .gemini/
 gha-creds-*.json
 .vercel
+
+# Performance traces
+*.json.gz
+*.heapsnapshot

@@ -201,31 +201,43 @@ export class DataBridge {
 
   private async runSlow() {
     try {
+      const activeView = typeof localStorage !== 'undefined' ? localStorage.getItem('strike_active_view') : 'dashboard';
+
+      const needStats = ['analytics', 'bankroll'].includes(activeView || '');
+      const needHistory = ['bankroll', 'analytics'].includes(activeView || '');
+      const needRoi = ['analytics'].includes(activeView || '');
+      const needLogs = ['logs'].includes(activeView || '');
+      const needHealing = ['healing'].includes(activeView || '');
+      const needVitals = ['vitals'].includes(activeView || '');
+      const needMemory = ['agents'].includes(activeView || '');
+
       const [historyRes, statsRes, roiRes, roiOddsRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
-        apiFetch(BETTING_ENDPOINTS.history),
-        apiFetch(BETTING_ENDPOINTS.stats),
-        apiFetch('/api/betting/learning/roi-by-track'),
-        apiFetch('/api/betting/learning/roi-by-odds-range'),
-        apiFetch('/api/logs?tail=100'),
-        apiFetch('/api/healing/activity'),
-        apiFetch('/api/healing/selectors'),
-        apiFetch('/api/system/vitals'),
-        apiFetch('/api/betting/bankroll-history'),
-        apiFetch('/api/agent/memory'),
+        needHistory ? apiFetch(BETTING_ENDPOINTS.history) : Promise.resolve(null),
+        needStats ? apiFetch(BETTING_ENDPOINTS.stats) : Promise.resolve(null),
+        needRoi ? apiFetch('/api/betting/learning/roi-by-track') : Promise.resolve(null),
+        needRoi ? apiFetch('/api/betting/learning/roi-by-odds-range') : Promise.resolve(null),
+        needLogs ? apiFetch('/api/logs?tail=100') : Promise.resolve(null),
+        needHealing ? apiFetch('/api/healing/activity') : Promise.resolve(null),
+        needHealing ? apiFetch('/api/healing/selectors') : Promise.resolve(null),
+        needVitals ? apiFetch('/api/system/vitals') : Promise.resolve(null),
+        needHistory || needRoi ? apiFetch('/api/betting/bankroll-history') : Promise.resolve(null),
+        needMemory ? apiFetch('/api/agent/memory') : Promise.resolve(null),
       ]);
 
-      const history = historyRes.ok ? await historyRes.json() : { bets: [] };
-      const stats = statsRes.ok ? await statsRes.json() : null;
-      const roiRaw = roiRes.ok ? await roiRes.json() : {};
+      const currentState = hudStore.getState();
+
+      const history = (historyRes && historyRes.ok) ? await historyRes.json() : { bets: currentState.betHistory };
+      const stats = (statsRes && statsRes.ok) ? await statsRes.json() : currentState.betStats;
+      const roiRaw = (roiRes && roiRes.ok) ? await roiRes.json() : { roiByTrack: currentState.learning?.roiByTrack, accuracy: currentState.learning?.accuracy };
       const roiByTrack = roiRaw.roiByTrack ?? roiRaw;
       const roiAccuracy = roiRaw.accuracy ?? 0;
-      const roiOdds = roiOddsRes.ok ? await roiOddsRes.json() : {};
-      const logs = logsRes.ok ? await logsRes.json() : { logs: [] };
-      const healing = healingRes.ok ? await healingRes.json() : { internal_events: [], github_runs: [] };
-      const selectors = selectorsRes.ok ? await selectorsRes.json() : { report: {} };
-      const vitals = vitalsRes.ok ? await vitalsRes.json() : { vitals: [] };
-      const bankrollHist = bankrollHistRes.ok ? await bankrollHistRes.json() : { history: [] };
-      const memoryData = memoryRes.ok ? await memoryRes.json() : null;
+      const roiOdds = (roiOddsRes && roiOddsRes.ok) ? await roiOddsRes.json() : currentState.learning?.roiByOddsRange;
+      const logs = (logsRes && logsRes.ok) ? await logsRes.json() : { logs: currentState.logs };
+      const healing = (healingRes && healingRes.ok) ? await healingRes.json() : { internal_events: currentState.healing.events, github_runs: currentState.healing.githubRuns };
+      const selectors = (selectorsRes && selectorsRes.ok) ? await selectorsRes.json() : { report: currentState.healing.selectors };
+      const vitals = (vitalsRes && vitalsRes.ok) ? await vitalsRes.json() : { vitals: currentState.vitals.docker };
+      const bankrollHist = (bankrollHistRes && bankrollHistRes.ok) ? await bankrollHistRes.json() : { history: currentState.bankrollHistory };
+      const memoryData = (memoryRes && memoryRes.ok) ? await memoryRes.json() : null;
 
       hudStore.updateState({
         betHistory: history.bets || [],
@@ -244,7 +256,7 @@ export class DataBridge {
           status: memoryData.status || 'no_data_yet',
           context: memoryData.context || '',
           dreamContext: memoryData.dream_context || '',
-        } : null,
+        } : currentState.honcho,
         healing: {
           events: healing.internal_events || [],
           selectors: selectors.report || {},
@@ -256,7 +268,8 @@ export class DataBridge {
       });
 
       this.slowBackoffMs = SLOW_INTERVAL;
-    } catch {
+    } catch (e) {
+      console.error('DataBridge runSlow error:', e);
       this.slowBackoffMs = Math.min(this.slowBackoffMs * 2, MAX_SLOW_BACKOFF);
     } finally {
       this.scheduleSlow();

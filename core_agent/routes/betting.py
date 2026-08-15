@@ -217,7 +217,51 @@ async def get_roi_by_odds_range():
     """Get settled bets ROI and stats grouped by odds range"""
     if brain and brain.strike and brain.strike.bankroll:
         return brain.strike.bankroll.get_settled_bets_by_odds_range()
-    return {}
+
+    # Direct fallback from bet_history.json
+    bets_data = _load_json("bet_history.json") or []
+    settled = [b for b in bets_data if b.get("status") in ("WON", "LOST")]
+    from collections import defaultdict
+
+    def bracket(odds: float) -> str:
+        if odds < 2.0:
+            return "odds_under_2"
+        if odds < 4.0:
+            return "odds_2_to_4"
+        if odds < 7.0:
+            return "odds_4_to_7"
+        return "odds_7_plus"
+
+    brackets = ["odds_under_2", "odds_2_to_4", "odds_4_to_7", "odds_7_plus"]
+    by_bracket: Dict[str, list] = defaultdict(list)
+    for b in settled:
+        try:
+            o = float(b.get("odds", 2.0))
+        except (ValueError, TypeError):
+            o = 2.0
+        by_bracket[bracket(o)].append(b)
+
+    results = {}
+    for bracket_name in brackets:
+        bets = by_bracket[bracket_name]
+        total_stake = sum(float(b.get("stake", 0.0) or 0.0) for b in bets)
+        total_returned = sum(float(b.get("actual_return", 0.0) or 0.0) for b in bets)
+        total_pl = sum(float(b.get("profit_loss", 0.0) or (float(b.get("actual_return", 0.0) or 0.0) - float(b.get("stake", 0.0) or 0.0))) for b in bets)
+        wins = sum(1 for b in bets if b.get("status") == "WON")
+        total = len(bets)
+        roi = (total_pl / total_stake * 100) if total_stake > 0 else 0.0
+        results[bracket_name] = {
+            "bracket": bracket_name,
+            "roi": round(roi, 1),
+            "wins": wins,
+            "losses": total - wins,
+            "total": total,
+            "total_bets": total,
+            "staked": round(total_stake, 2),
+            "returned": round(total_returned, 2),
+            "win_rate": round((wins / total * 100) if total else 0.0, 1),
+        }
+    return results
 
 
 @router.get("/bankroll-history")

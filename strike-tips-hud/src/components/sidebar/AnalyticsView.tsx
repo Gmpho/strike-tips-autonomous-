@@ -334,80 +334,101 @@ export const AnalyticsView: React.FC = () => {
           </h3>
         </div>
         
-        {!learning?.roiByOddsRange || Object.keys(learning.roiByOddsRange).length === 0 ? (
-          <p className="text-xs text-theme-secondary font-bold">No settled odds bracket data yet.</p>
-        ) : (
-          <div className="grid grid-cols-4 gap-4 h-36 items-end pt-4">
-            {Object.entries(learning.roiByOddsRange).map(([key, data]: [string, any]) => {
-              const label = key === 'odds_under_2' ? '< 2.0' : key === 'odds_2_to_4' ? '2.0 - 4.0' : key === 'odds_4_to_7' ? '4.0 - 7.0' : '7.0+';
-              const roiVal = data.roi ?? 0;
-              const wins = data.wins ?? 0;
-              const total = data.total ?? 0;
-              const staked = data.staked ?? 0;
-              const returned = data.returned ?? 0;
-              const wr = total > 0 ? ((wins / total) * 100).toFixed(0) : '0';
-              // Map -50% to +100% to height percentage (min 10%, max 100%)
-              const heightPct = Math.max(10, Math.min(100, ((roiVal + 50) / 150) * 100));
-              
-              return (
-                <div
-                  key={key}
-                  className="flex flex-col items-center h-full justify-end group relative"
-                  onMouseEnter={() => setHoveredBracket(key)}
-                  onMouseLeave={() => setHoveredBracket(null)}
-                >
-                  {/* Floating stats tooltip on hover */}
-                  <AnimatePresence>
-                    {hoveredBracket === key && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -5, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -5, scale: 0.95 }}
-                        transition={{ duration: 0.15 }}
-                        className="absolute z-30 bottom-full mb-3 bg-theme-panel/95 backdrop-blur-xl border border-purple-500/30 p-3 rounded-xl shadow-2xl text-[10px] font-black text-theme-primary text-center w-28 pointer-events-none"
-                      >
-                        <div className="text-purple-400 uppercase tracking-widest text-[8px] mb-1">Stats</div>
-                        <div className="text-theme-secondary">WR: <span className="text-theme-primary">{wr}%</span></div>
-                        <div className="text-theme-secondary">Vol: <span className="text-theme-primary">{total} bets</span></div>
-                        <div className="text-theme-secondary mt-1 border-t border-theme/50 pt-1">
-                          Net: <span className={roiVal >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                            R{(returned - staked).toFixed(0)}
-                          </span>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+        {(() => {
+          const raw = learning?.roiByOddsRange;
+          if (!raw) return <p className="text-xs text-theme-secondary font-bold">No settled odds bracket data yet.</p>;
+          
+          const brackets = ['odds_under_2', 'odds_2_to_4', 'odds_4_to_7', 'odds_7_plus'];
+          let normalized: Record<string, any> = {};
 
-                  <span className={`text-[10px] font-black tabular mb-2 transition-opacity ${roiVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {roiVal >= 0 ? '+' : ''}{roiVal.toFixed(0)}%
-                  </span>
-                  
-                  {/* Cylinder Column Glass Container */}
-                  <div className="w-10 bg-black/35 rounded-t-full relative overflow-hidden border border-white/5 flex items-end h-full max-h-[110px] shadow-inner">
-                    <motion.div
-                      initial={{ height: 0 }}
-                      animate={{ height: `${heightPct}%` }}
-                      transition={{ duration: 0.8, ease: "easeOut" }}
-                      className={`w-full rounded-t-full relative ${
-                        roiVal >= 0
-                          ? 'bg-gradient-to-t from-emerald-600/80 to-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                          : 'bg-gradient-to-t from-red-600/80 to-red-400 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
-                      }`}
-                      style={{ height: `${heightPct}%` }}
-                    >
-                      {/* Vertical highlight glass refraction line */}
-                      <div className="absolute inset-y-0 left-1 w-1 bg-white/20 rounded-full blur-[0.5px]" />
-                    </motion.div>
+          if (Array.isArray(raw)) {
+            raw.forEach((item: any) => {
+              const bKey = item.bracket || 'odds_2_to_4';
+              normalized[bKey] = item;
+            });
+          } else if (typeof raw === 'object') {
+            normalized = raw;
+          }
+
+          const hasData = brackets.some(k => normalized[k] && (normalized[k].total > 0 || normalized[k].total_bets > 0));
+          if (!hasData && Object.keys(normalized).length === 0) {
+            return <p className="text-xs text-theme-secondary font-bold">No settled odds bracket data yet.</p>;
+          }
+
+          return (
+            <div className="grid grid-cols-4 gap-4 h-36 items-end pt-4">
+              {brackets.map((key) => {
+                const data = normalized[key] || {};
+                const label = key === 'odds_under_2' ? '< 2.0' : key === 'odds_2_to_4' ? '2.0 - 4.0' : key === 'odds_4_to_7' ? '4.0 - 7.0' : '7.0+';
+                const roiVal = Number(data.roi ?? 0);
+                const wins = Number(data.wins ?? 0);
+                const total = Number(data.total ?? data.total_bets ?? 0);
+                const staked = Number(data.staked ?? data.total_stake ?? 0);
+                const returned = Number(data.returned ?? data.total_returned ?? (staked + (data.profit_loss || 0)));
+                const wr = total > 0 ? ((wins / total) * 100).toFixed(0) : '0';
+                // Map -50% to +100% to height percentage (min 10%, max 100%)
+                const heightPct = Math.max(10, Math.min(100, ((roiVal + 50) / 150) * 100));
+                
+                return (
+                  <div
+                    key={key}
+                    className="flex flex-col items-center h-full justify-end group relative"
+                    onMouseEnter={() => setHoveredBracket(key)}
+                    onMouseLeave={() => setHoveredBracket(null)}
+                  >
+                    {/* Floating stats tooltip on hover */}
+                    <AnimatePresence>
+                      {hoveredBracket === key && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute z-30 bottom-full mb-3 bg-theme-panel/95 backdrop-blur-xl border border-purple-500/30 p-3 rounded-xl shadow-2xl text-[10px] font-black text-theme-primary text-center w-28 pointer-events-none"
+                        >
+                          <div className="text-purple-400 uppercase tracking-widest text-[8px] mb-1">Stats</div>
+                          <div className="text-theme-secondary">WR: <span className="text-theme-primary">{wr}%</span></div>
+                          <div className="text-theme-secondary">Vol: <span className="text-theme-primary">{total} bets</span></div>
+                          <div className="text-theme-secondary mt-1 border-t border-theme/50 pt-1">
+                            Net: <span className={roiVal >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                              R{(returned - staked).toFixed(0)}
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <span className={`text-[10px] font-black tabular mb-2 transition-opacity ${roiVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {roiVal >= 0 ? '+' : ''}{roiVal.toFixed(0)}%
+                    </span>
+                    
+                    {/* Cylinder Column Glass Container */}
+                    <div className="w-10 bg-black/35 rounded-t-full relative overflow-hidden border border-white/5 flex items-end h-full max-h-[110px] shadow-inner">
+                      <motion.div
+                        initial={{ height: 0 }}
+                        animate={{ height: `${heightPct}%` }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                        className={`w-full rounded-t-full relative ${
+                          roiVal >= 0
+                            ? 'bg-gradient-to-t from-emerald-600/80 to-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                            : 'bg-gradient-to-t from-red-600/80 to-red-400 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                        }`}
+                        style={{ height: `${heightPct}%` }}
+                      >
+                        {/* Vertical highlight glass refraction line */}
+                        <div className="absolute inset-y-0 left-1 w-1 bg-white/20 rounded-full blur-[0.5px]" />
+                      </motion.div>
+                    </div>
+                    
+                    <span className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase mt-2 text-center whitespace-nowrap">
+                      {label}
+                    </span>
                   </div>
-                  
-                  <span className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase mt-2 text-center whitespace-nowrap">
-                    {label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Distribution by Track */}
