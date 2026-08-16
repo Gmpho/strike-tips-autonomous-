@@ -69,6 +69,35 @@ html.light .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,0.03) !impor
 html.light .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.06) !important; }
 html.light .hover\:border-white\/20:hover { border-color: rgba(0,0,0,0.15) !important; }
 
+/* Light mode: legal info pages text/bg/border overrides (scoped to .legal-page) */
+html.light .legal-page .text-white { color: rgba(15,23,42,1) !important; }
+html.light .legal-page .text-white\/90 { color: rgba(15,23,42,0.9) !important; }
+html.light .legal-page .text-white\/80 { color: rgba(15,23,42,0.8) !important; }
+html.light .legal-page .text-white\/75 { color: rgba(15,23,42,0.75) !important; }
+html.light .legal-page .text-white\/70 { color: rgba(15,23,42,0.7) !important; }
+html.light .legal-page .text-white\/65 { color: rgba(15,23,42,0.65) !important; }
+html.light .legal-page .text-white\/60 { color: rgba(15,23,42,0.6) !important; }
+html.light .legal-page .text-white\/55 { color: rgba(15,23,42,0.55) !important; }
+html.light .legal-page .text-white\/50 { color: rgba(15,23,42,0.5) !important; }
+html.light .legal-page .text-white\/40 { color: rgba(15,23,42,0.4) !important; }
+html.light .legal-page .text-white\/35 { color: rgba(15,23,42,0.35) !important; }
+html.light .legal-page .text-white\/30 { color: rgba(15,23,42,0.3) !important; }
+html.light .legal-page .text-white\/20 { color: rgba(15,23,42,0.2) !important; }
+html.light .legal-page .hover\:text-white:hover { color: rgba(15,23,42,1) !important; }
+html.light .legal-page .hover\:text-white\/80:hover { color: rgba(15,23,42,0.8) !important; }
+html.light .legal-page .bg-white\/3 { background-color: rgba(0,0,0,0.03) !important; }
+html.light .legal-page .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.03) !important; }
+html.light .legal-page .hover\:bg-white\/3:hover { background-color: rgba(0,0,0,0.03) !important; }
+html.light .legal-page .border-white\/\[0\.08\] { border-color: rgba(0,0,0,0.08) !important; }
+html.light .legal-page .text-amber-300 { color: #b45309 !important; }
+html.light .legal-page .text-amber-300\/80 { color: rgba(180,83,9,0.8) !important; }
+html.light .legal-page .text-blue-300 { color: #2563eb !important; }
+html.light .legal-page .text-cyan-300 { color: #0e7490 !important; }
+html.light .legal-page .text-emerald-300 { color: #047857 !important; }
+html.light .legal-page .text-purple-300 { color: #7c3aed !important; }
+html.light .legal-page .text-rose-300 { color: #e11d48 !important; }
+html.light .legal-page .text-rose-300\/80 { color: rgba(225,29,72,0.8) !important; }
+
 /* ── CSS Variables fallback (browsers without var() support) ── */
 html, body {
   background-color: #000 !important;

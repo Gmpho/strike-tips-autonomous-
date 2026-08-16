@@ -27,9 +27,16 @@ const DreamingView = React.lazy(() => import('./components/sidebar/DreamingView'
 const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMoversView').then(m => ({ default: m.MarketMoversView })));
 const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
-const LegalPage = React.lazy(() => import('./components/LegalPage').then(m => ({ default: m.LegalPage })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
+const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
+const FAQPage = React.lazy(() => import('./components/pages/FAQPage').then(m => ({ default: m.FAQPage })));
+const BettingRulesPage = React.lazy(() => import('./components/pages/BettingRulesPage').then(m => ({ default: m.BettingRulesPage })));
+const TermsPage = React.lazy(() => import('./components/pages/TermsPage').then(m => ({ default: m.TermsPage })));
+const PrivacyPage = React.lazy(() => import('./components/pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
+const DisclaimerPage = React.lazy(() => import('./components/pages/DisclaimerPage').then(m => ({ default: m.DisclaimerPage })));
+const ResponsiblePage = React.lazy(() => import('./components/pages/ResponsiblePage').then(m => ({ default: m.ResponsiblePage })));
+const ContactPage = React.lazy(() => import('./components/pages/ContactPage').then(m => ({ default: m.ContactPage })));
 
 const ViewFallback = () => (
   <div className="flex-1 flex items-center justify-center min-h-[300px]">
@@ -37,7 +44,7 @@ const ViewFallback = () => (
   </div>
 );
 
-const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible'];
+const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact'];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'market-movers', 'predictor', 'results',
@@ -203,21 +210,23 @@ export const App: React.FC = () => {
       case 'results':
         return <Suspense key="results-view" fallback={<ViewFallback />}><ResultsView /></Suspense>;
       case 'privacy':
-        return <Suspense key="privacy-view" fallback={<ViewFallback />}><LegalPage docId="privacy" title="Privacy Policy" /></Suspense>;
+        return <Suspense key="privacy-view" fallback={<ViewFallback />}><PrivacyPage /></Suspense>;
       case 'terms':
-        return <Suspense key="terms-view" fallback={<ViewFallback />}><LegalPage docId="terms" title="Terms of Service" /></Suspense>;
+        return <Suspense key="terms-view" fallback={<ViewFallback />}><TermsPage /></Suspense>;
       case 'disclaimer':
-        return <Suspense key="disclaimer-view" fallback={<ViewFallback />}><LegalPage docId="disclaimer" title="Disclaimer" /></Suspense>;
+        return <Suspense key="disclaimer-view" fallback={<ViewFallback />}><DisclaimerPage /></Suspense>;
       case 'how-to-bet':
-        return <Suspense key="how-to-bet-view" fallback={<ViewFallback />}><LegalPage docId="how-to-bet" title="How to Bet" /></Suspense>;
+        return <Suspense key="how-to-bet-view" fallback={<ViewFallback />}><HowToBetPage /></Suspense>;
       case 'faq':
-        return <Suspense key="faq-view" fallback={<ViewFallback />}><LegalPage docId="faq" title="FAQ" /></Suspense>;
+        return <Suspense key="faq-view" fallback={<ViewFallback />}><FAQPage /></Suspense>;
       case 'betting-rules':
-        return <Suspense key="betting-rules-view" fallback={<ViewFallback />}><LegalPage docId="betting-rules" title="Betting Rules" /></Suspense>;
+        return <Suspense key="betting-rules-view" fallback={<ViewFallback />}><BettingRulesPage /></Suspense>;
       case 'responsible':
-        return <Suspense key="responsible-view" fallback={<ViewFallback />}><LegalPage docId="responsible" title="Responsible Gambling" /></Suspense>;
+        return <Suspense key="responsible-view" fallback={<ViewFallback />}><ResponsiblePage /></Suspense>;
+      case 'contact':
+        return <Suspense key="contact-view" fallback={<ViewFallback />}><ContactPage /></Suspense>;
       default:
-        return <div key="default-view" className="text-white p-12">Select a module</div>;
+        return <div key="default-view" className="text-theme-primary p-12">Select a module</div>;
     }
   };
 

@@ -7,7 +7,11 @@ const FAST_INTERVAL = 5000;
 const SLOW_INTERVAL = 15000;
 const MAX_FAST_BACKOFF = 60000;
 const MAX_SLOW_BACKOFF = 120000;
-const SSE_URL = '/api/monitoring/stream';
+// Connect directly to the Modal SSE origin to bypass the Vercel Edge middleware
+// runtime cap (~300s). /api/monitoring/stream is in SAFE_PATHS (no API key needed)
+// and the backend CORS allows the production origin.
+const SSE_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run';
+const SSE_URL = `${SSE_ORIGIN}/api/monitoring/stream`;
 
 export class DataBridge {
   private fastTimer: number | null = null;

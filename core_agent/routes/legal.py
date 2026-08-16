@@ -19,6 +19,7 @@ LEGAL_DOCS = {
     "faq": "FAQ.md",
     "betting-rules": "BETTING_RULES.md",
     "responsible": "RESPONSIBLE.md",
+    "contact": "CONTACT.md",
 }
 
 
