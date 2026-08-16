@@ -25,10 +25,15 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
       key={event.id}
       initial={{ x: -20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      transition={{ delay: idx * 0.1 }}
+      transition={{ delay: Math.min(idx * 0.05, 0.4) }}
       className={`hud-card group p-6 relative overflow-hidden border border-theme bg-theme-panel transition-shadow hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] rounded-3xl ${isOpen ? 'col-span-1 md:col-span-2 xl:col-span-3' : ''}`}
     >
-      <div className="flex justify-between items-start mb-6 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        className="w-full flex justify-between items-start mb-6 cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50 rounded-lg"
+      >
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Activity className="w-3 h-3 text-purple-500 animate-pulse" />
@@ -36,7 +41,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
               {event.course} | RACE {event.raceNumber || '---'}
             </span>
           </div>
-          <h3 className="text-2xl font-black text-theme-primary tracking-tighter uppercase">{event.course} R{event.raceNumber}</h3>
+          <h2 className="text-2xl font-black text-theme-primary tracking-tighter uppercase">{event.course} R{event.raceNumber}</h2>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
@@ -47,7 +52,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
           </div>
           {isOpen ? <ChevronUp className="w-5 h-5 text-purple-500" /> : <ChevronDown className="w-5 h-5 text-purple-500" />}
         </div>
-      </div>
+      </button>
 
       {!isOpen ? (
         <div className="bg-theme-panel rounded-2xl p-5 border border-theme group-hover:border-purple-500/20 transition-colors">

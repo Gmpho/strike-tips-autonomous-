@@ -46,9 +46,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Header & Toggle */}
       <div className="flex items-center justify-between mb-10 px-2">
         {!isCollapsed && (
-          <h2 className="text-[10px] font-black text-purple-500 uppercase tracking-widest animate-in fade-in slide-in-from-left-2">
+          <p className="text-[10px] font-black text-purple-500 uppercase tracking-widest animate-in fade-in slide-in-from-left-2">
             Strike Control
-          </h2>
+          </p>
         )}
         <button 
           onClick={onToggle}
@@ -65,6 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             key={item.id}
             onClick={() => setActiveView(item.id)}
             title={isCollapsed ? item.label : ""}
+            aria-label={item.label}
             className={`flex items-center gap-4 px-3 py-2.5 rounded-xl transition-all group shrink-0 ${
               activeView === item.id 
                 ? 'text-theme-primary bg-purple-500/20 shadow-[0_0_15px_rgba(168,85,247,0.2)] border border-purple-500/30' 
@@ -82,7 +83,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className={`mt-6 mb-2 px-3 shrink-0 ${isCollapsed ? 'flex justify-center' : ''}`}>
           {!isCollapsed ? (
-            <h2 className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Racing Intelligence</h2>
+            <p className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Racing Intelligence</p>
           ) : (
             <div className="w-4 h-px bg-theme-secondary opacity-20" />
           )}
@@ -93,6 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             key={item.id}
             onClick={() => setActiveView(item.id)}
             title={isCollapsed ? item.label : ""}
+            aria-label={item.label}
             className={`flex items-center gap-4 px-3 py-2.5 rounded-xl transition-all group shrink-0 ${
               activeView === item.id 
                 ? 'text-theme-primary bg-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)] border border-amber-500/30' 
@@ -110,7 +112,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className={`mt-6 mb-2 px-3 shrink-0 ${isCollapsed ? 'flex justify-center' : ''}`}>
           {!isCollapsed ? (
-            <h2 className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Admin</h2>
+            <p className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Admin</p>
           ) : (
             <div className="w-4 h-px bg-theme-secondary opacity-20" />
           )}
@@ -121,6 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             key={item.id}
             onClick={() => setActiveView(item.id)}
             title={isCollapsed ? item.label : ""}
+            aria-label={item.label}
             className={`flex items-center gap-4 px-3 py-2.5 rounded-xl transition-all group shrink-0 ${
               activeView === item.id 
                 ? 'text-theme-primary bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)] border border-emerald-500/30' 

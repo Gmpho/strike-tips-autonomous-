@@ -162,9 +162,12 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const Toggle = ({ on, onToggle, color }: { on: boolean; onToggle: () => void; color: string }) => (
+  const Toggle = ({ on, onToggle, color, label = 'Toggle setting' }: { on: boolean; onToggle: () => void; color: string; label?: string }) => (
     <button
       onClick={onToggle}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
       className={`w-12 h-6 rounded-full transition-all relative flex-shrink-0 ${on ? color : 'bg-theme-secondary border border-theme'}`}
     >
       <motion.div layout className={`w-4 h-4 rounded-full bg-white absolute top-1 ${on ? 'right-1' : 'left-1'}`} />
@@ -250,6 +253,7 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <Toggle
                   on={settings.alerts[item.id]}
+                  label={item.label}
                   onToggle={() => {
                     const newVal = !settings.alerts[item.id];
                     set('alerts', item.id, newVal);
@@ -304,7 +308,7 @@ export const SettingsView: React.FC = () => {
                   <div className="text-theme-primary font-black uppercase text-sm">Autonomous Mode</div>
                   <div className="text-[10px] text-theme-secondary font-bold mt-1">Run without operator prompt</div>
                 </div>
-                <Toggle on={settings.schedule.autoScanEnabled} onToggle={() => set('schedule', 'autoScanEnabled', !settings.schedule.autoScanEnabled)} color="bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
+                <Toggle on={settings.schedule.autoScanEnabled} label="Autonomous mode" onToggle={() => set('schedule', 'autoScanEnabled', !settings.schedule.autoScanEnabled)} color="bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" />
               </div>
             </div>
           </div>
@@ -429,7 +433,7 @@ export const SettingsView: React.FC = () => {
                   <div className="text-theme-primary font-black uppercase text-sm">Strict Local</div>
                   <div className="text-[10px] text-theme-secondary font-bold mt-1">Disable cloud fallback chain</div>
                 </div>
-                <Toggle on={settings.ai.localModelOnly} onToggle={() => set('ai', 'localModelOnly', !settings.ai.localModelOnly)} color="bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.4)]" />
+                <Toggle on={settings.ai.localModelOnly} label="Strict local mode" onToggle={() => set('ai', 'localModelOnly', !settings.ai.localModelOnly)} color="bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.4)]" />
               </div>
             </div>
           </div>
@@ -448,7 +452,7 @@ export const SettingsView: React.FC = () => {
                   <div className="text-theme-primary font-black uppercase text-sm">Virtual Mode</div>
                   <div className="text-[10px] text-theme-secondary font-bold mt-1">Use virtual money — no real stakes</div>
                 </div>
-                <Toggle on={settings.paper.paperMode} onToggle={() => set('paper', 'paperMode', !settings.paper.paperMode)} color="bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.4)]" />
+                <Toggle on={settings.paper.paperMode} label="Virtual mode (paper trading)" onToggle={() => set('paper', 'paperMode', !settings.paper.paperMode)} color="bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.4)]" />
               </div>
               {settings.paper.paperMode && (
                 <div className="space-y-3">
@@ -475,7 +479,7 @@ export const SettingsView: React.FC = () => {
                   <div className="text-theme-primary font-black uppercase text-sm">Autonomous Betting</div>
                   <div className="text-[10px] text-theme-secondary font-bold mt-1">Agent places bets automatically on value alerts</div>
                 </div>
-                <Toggle on={settings.autonomous.autoBetEnabled} onToggle={() => set('autonomous', 'autoBetEnabled', !settings.autonomous.autoBetEnabled)} color="bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.4)]" />
+                <Toggle on={settings.autonomous.autoBetEnabled} label="Autonomous betting" onToggle={() => set('autonomous', 'autoBetEnabled', !settings.autonomous.autoBetEnabled)} color="bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.4)]" />
               </div>
               {settings.autonomous.autoBetEnabled && (
                 <div className="space-y-3">

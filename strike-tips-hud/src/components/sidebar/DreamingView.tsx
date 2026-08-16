@@ -122,6 +122,7 @@ export const DreamingView: React.FC = () => {
               <button 
                 onClick={triggerPulse}
                 disabled={isPulsing}
+                aria-label={isPulsing ? "Triggering dream pulse" : "Trigger dream pulse"}
                 className={`p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-500 hover:bg-purple-500/20 transition-all cursor-pointer ${isPulsing ? 'animate-pulse' : ''}`}
               >
                 <RefreshCcw className={`w-4 h-4 ${isPulsing ? 'animate-spin' : ''}`} />

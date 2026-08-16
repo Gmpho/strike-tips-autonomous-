@@ -72,6 +72,21 @@ export const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAllRaces, setShowAllRaces] = useState(false);
   const [pendingRaceEvent, setPendingRaceEvent] = useState<RaceEvent | null>(null);
+
+  // The three.js ambient canvas is decorative and heavy (~840KB). Mount it only on
+  // capable desktops, and defer it until after LCP so it never blocks first paint.
+  const canUseAmbient = typeof window !== 'undefined' &&
+    window.innerWidth >= 1024 &&
+    !('ontouchstart' in window) &&
+    !((navigator.maxTouchPoints ?? 0) > 0);
+  const [ambientMounted, setAmbientMounted] = useState(false);
+
+  useEffect(() => {
+    if (!canUseAmbient) return;
+    const t = window.setTimeout(() => setAmbientMounted(true), 1800);
+    return () => window.clearTimeout(t);
+  }, [canUseAmbient]);
+
   const state = useHUD();
   useTelegram();
   const { hasUpdate, updateSW } = usePWA();
@@ -113,9 +128,19 @@ export const App: React.FC = () => {
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (
-        <div key="loading-state" className="flex-1 flex flex-col items-center justify-center p-6 md:p-12">
-          <div className="w-12 h-12 md:w-16 md:h-16 border-4 border-purple-500/20 border-t-purple-500 rounded-full animate-spin mb-4" />
-          <p className="text-slate-500 font-black uppercase tracking-widest animate-pulse text-xs md:text-sm">Initializing Neural Link...</p>
+        <div key="loading-state" className="flex flex-col gap-4 min-h-[55vh] md:min-h-[60vh]">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="hud-card p-6 rounded-3xl border border-theme bg-theme-panel" aria-hidden="true">
+                <div className="w-2/3 h-4 rounded-full bg-white/5 animate-pulse mb-5" />
+                <div className="w-full h-28 rounded-2xl bg-white/5 animate-pulse mb-5" />
+                <div className="w-1/3 h-4 rounded-full bg-white/5 animate-pulse" />
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest animate-pulse text-center">
+            Initializing Neural Link...
+          </p>
         </div>
       );
     }
@@ -127,7 +152,7 @@ export const App: React.FC = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 min-h-[55vh] md:min-h-[60vh]">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
               {visibleEvents.map((event, idx) => (
                 <RaceCard
@@ -203,7 +228,7 @@ export const App: React.FC = () => {
         <WebGLErrorBoundary>
           <Suspense fallback={<div className="absolute inset-0 z-0 pointer-events-none"
             style={{background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.08) 0%, transparent 70%)'}} />}>
-            <AmbientCanvas />
+            {ambientMounted && <AmbientCanvas />}
           </Suspense>
         </WebGLErrorBoundary>
       </div>
@@ -230,6 +255,7 @@ export const App: React.FC = () => {
               <div className="flex justify-end p-4">
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
+                  aria-label="Close menu"
                   className="p-2 rounded-lg bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-500 transition-all border border-theme"
                 >
                   <X size={18} />

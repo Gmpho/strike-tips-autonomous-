@@ -539,6 +539,7 @@ ${compiledContext || 'No context data available.'}`;
                 onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
                 className="absolute right-2 p-1.5 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 rounded-lg border border-white/5"
                 title="Delete chat session"
+                aria-label={`Delete chat session ${s.title}`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -594,7 +595,7 @@ ${compiledContext || 'No context data available.'}`;
           >
             <div className="flex items-center justify-between mb-4 shrink-0">
               <span className="text-xs font-black uppercase text-purple-500 tracking-widest px-1">Sessions</span>
-              <button onClick={() => setIsSidebarOpen(false)} className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white">
+              <button onClick={() => setIsSidebarOpen(false)} aria-label="Close sessions panel" className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -613,6 +614,7 @@ ${compiledContext || 'No context data available.'}`;
                 onClick={() => setIsSidebarOpen(true)}
                 className="md:hidden p-2 hover:bg-white/5 border border-white/10 rounded-xl text-slate-300 transition-colors shrink-0"
                 title="View sessions history"
+                aria-label="Open sessions history"
               >
                 <Menu className="w-4.5 h-4.5" />
               </button>
@@ -641,6 +643,7 @@ ${compiledContext || 'No context data available.'}`;
               <button 
                 onClick={clearActiveSession}
                 title="Clear current chat messages"
+                aria-label="Clear current chat messages"
                 className="p-2 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 rounded-xl text-red-400 hover:text-red-300 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />

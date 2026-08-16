@@ -17,8 +17,8 @@
   --text-primary: var(--tg-theme-text-color, #ffffff);
   --bg-secondary: rgba(255, 255, 255, 0.05);
   --bg-panel: rgba(8, 8, 18, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.7);
-  --text-muted: rgba(255, 255, 255, 0.4);
+  --text-secondary: rgba(255, 255, 255, 0.9);
+  --text-muted: rgba(255, 255, 255, 0.7);
   --border-color: rgba(255, 255, 255, 0.1);
   --accent-glow: rgba(168, 85, 247, 0.2);
 }

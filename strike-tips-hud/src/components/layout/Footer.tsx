@@ -40,12 +40,12 @@ export const Footer: React.FC = () => {
         <div className="bg-theme-secondary border border-theme rounded-xl md:rounded-2xl p-3 md:p-6 mb-4 md:mb-6">
           <div className="flex flex-col md:flex-row gap-3 md:gap-6 items-center">
             <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-rose-500/20 border border-rose-500/30 flex items-center justify-center shrink-0">
-              <span className="text-[10px] md:text-sm font-black text-rose-500">18+</span>
+              <span className="text-[10px] md:text-sm font-black text-rose-400">18+</span>
             </div>
             <div className="flex-1 text-center md:text-left">
               <p className="text-[8px] md:text-[10px] leading-relaxed text-theme-secondary font-bold uppercase tracking-tight">
                 No persons under the age of 18 are permitted to bet. Winners know when to stop.
-                <span className="text-rose-400/80 mx-1">National Responsible Gambling Programme:</span>
+                <span className="text-rose-400 mx-1">National Responsible Gambling Programme:</span>
                 0800 006 008 or WHATSAPP 'HELP' to 076 675 0710.
               </p>
               <p className="text-[7px] md:text-[9px] leading-relaxed text-theme-secondary font-medium mt-1">
