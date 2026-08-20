@@ -21,7 +21,7 @@ class ModelConfig:
     GEMINI_CHAIN = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash"]
 
     # Groq model alias
-    ORCHESTRATOR = "llama-3.3-70b-versatile"  # Better tool calling than 8b
+    ORCHESTRATOR = "openai/gpt-oss-120b"  # Tool calling + reasoning
 
     @classmethod
     def groq_available(cls) -> bool:

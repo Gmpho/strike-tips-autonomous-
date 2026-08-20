@@ -23,7 +23,7 @@ class AIResponse:
 
 class AIProvider:
     ALLOWED_MODELS = {
-        "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+        "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
         "gemini": ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash-lite"],
     }
 
@@ -38,10 +38,10 @@ class AIProvider:
         from core_agent.config.model_factory import get_client
 
         async def _run(prompt: str) -> AIResponse:
-            # Primary: Groq llama-3.3-70b
+            # Primary: Groq gpt-oss-120b
             if ModelConfig.groq_available():
                 try:
-                    client = get_client("llama-3.3-70b-versatile")
+                    client = get_client("openai/gpt-oss-120b")
                     agent = client.as_agent()
                     session = agent.create_session()
                     from agent_framework import Message
@@ -68,7 +68,7 @@ class AIProvider:
     _call_kimi_parallel = _call_parallel
 
     async def direct_chat(
-        self, prompt: str, model_name: str = "groq:llama-3.1-8b-instant"
+        self, prompt: str, model_name: str = "groq:openai/gpt-oss-20b"
     ) -> AIResponse:
         from core_agent.config.model_factory import get_client
 

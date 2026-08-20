@@ -311,7 +311,7 @@ class TaskRouter:
         # If a specific model is explicitly requested, route directly to it
         if active_model and active_model != "auto":
             logger.info("[TASK_ROUTER] explicit model override/preference → %s", active_model)
-            if active_model in ("groq", "groq-llama", "llama-3.3-70b-versatile"):
+            if active_model in ("groq", "groq-llama", "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
                 provider = GroqProvider()
                 try:
                     async for chunk in provider.stream(messages, None, intent):

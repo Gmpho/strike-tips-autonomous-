@@ -198,10 +198,30 @@ class PDFHarvester:
                         st = lines[i + 2].strip() if i + 2 < len(lines) else ""
                         if "Same Trainer" in st:
                             races[rn]["same_trainer"] = st
-                        elif re.search(
-                            r"(BIPOT|PICK6|JACKPOT|PA|SWINGER)\s+LEG", st
-                        ):
-                            races[rn]["leg_info"] = st
+                        pool_match = re.search(
+                            r"(BIPOT|PICK6|JACKPOT|PA|SWINGER)(?:\s*\d+)?\s+LEG", st
+                        )
+                        # Computaform bundles pool info and "Same Trainer" on one line,
+                        # so capture leg_info independently of the same_trainer branch.
+                        if pool_match:
+                            # Collect every pool-leg phrase on the line, e.g.
+                            # "BIPOT LEG 1. PICK6 LEG 1." -> "BIPOT LEG 1. PICK6 LEG 1."
+                            pool_phrases = []
+                            for pm in re.finditer(
+                                r"(BIPOT|PICK6|JACKPOT|PA|SWINGER)(?:\s*\d+)?\s+LEG\s+\d+", st
+                            ):
+                                seg_end = st.find(".", pm.start())
+                                if seg_end == -1:
+                                    seg_end = st.find(" Same", pm.start())
+                                seg = (
+                                    st[pm.start():].strip()
+                                    if seg_end == -1
+                                    else st[pm.start():seg_end].strip() + "."
+                                )
+                                if seg not in pool_phrases:
+                                    pool_phrases.append(seg)
+                            if pool_phrases:
+                                races[rn]["leg_info"] = " ".join(pool_phrases)
                         continue
 
             if not in_horse_table:

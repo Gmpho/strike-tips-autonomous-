@@ -146,13 +146,23 @@ MODEL_REGISTRY: List[ModelInfo] = [
     # CLOUD MODELS - May Have Limits
     # ═══════════════════════════════════════════════════════════
     ModelInfo(
-        id="llama-3.3-70b-versatile",
-        name="Groq Llama 70B",
+        id="openai/gpt-oss-120b",
+        name="Groq GPT-OSS 120B",
         type="cloud",
         provider="Groq",
-        description="Fast cloud model - primary cloud orchestrator.",
+        description="OpenAI OSS 120B on Groq - primary cloud orchestrator (tool calling).",
         taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_ANALYSIS],
-        bestForTaskTypes=[TASK_CHAT, TASK_ANALYSIS],
+        bestForTaskTypes=[TASK_CHAT, TASK_TOOLS, TASK_ANALYSIS],
+        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 20},
+    ),
+    ModelInfo(
+        id="openai/gpt-oss-20b",
+        name="Groq GPT-OSS 20B",
+        type="cloud",
+        provider="Groq",
+        description="OpenAI OSS 20B on Groq - fast lightweight chat.",
+        taskTypes=[TASK_CHAT, TASK_ANALYSIS],
+        bestForTaskTypes=[TASK_CHAT],
         defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 20},
     ),
     ModelInfo(
@@ -242,7 +252,7 @@ def get_best_orchestrator() -> Optional[ModelInfo]:
     local = get_model_by_id("qwen3.5:0.8b")
     if local:
         return local
-    return get_model_by_id("llama-3.3-70b-versatile")
+    return get_model_by_id("openai/gpt-oss-120b")
 
 
 def get_best_tool_model() -> Optional[ModelInfo]:

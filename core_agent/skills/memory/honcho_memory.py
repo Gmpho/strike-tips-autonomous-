@@ -109,6 +109,21 @@ class HonchoMemory:
 
     def add_turn(self, user_message: str, assistant_message: str) -> None:
         """Write to both layers. JSONL is synchronous; Honcho is best-effort."""
+        # Layer 0: curated memory files (agent_notes.md / user_prefs.md)
+        try:
+            from core_agent.skills.memory.curated_memory import curated_memory
+            cu = (user_message or "").strip().lower()
+            CURATED_MARKERS = ("i prefer", "i like", "prefer ", "favourite track", "favorite track",
+                               "don't bet", "never bet", "always bet", "risk", "bankroll", "stake",
+                               "bet saturday", "bet on", "avoid", "my style", "i want", "please ")
+            if cu and any(m in cu for m in CURATED_MARKERS):
+                curated_memory.append_user_pref(user_message.strip()[:280])
+            # Log a lightweight agent note when new betting patterns are seen each day
+            note = f"Conversation turn processed (user={self._user_id}, msgs={len(user_message or '')}+{len(assistant_message or '')})"
+            curated_memory.append_agent_note(note[:200])
+        except Exception as e:
+            logger.debug(f"Curated memory write failed: {e}")
+
         # Layer 1: always write locally
         try:
             self._session.add_message("user", user_message)

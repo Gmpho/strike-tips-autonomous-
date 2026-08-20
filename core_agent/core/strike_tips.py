@@ -482,9 +482,10 @@ class StrikeTips:
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                         json={
-                            "model": "llama-3.3-70b-versatile",
+                            "model": "openai/gpt-oss-120b",
                             "messages": [{"role": "user", "content": card_context}],
                             "temperature": 0.2,
+                            "max_tokens": 1200,
                             "response_format": {"type": "json_object"},
                         },
                     )
@@ -687,7 +688,8 @@ class StrikeTips:
         )
 
         if bet:
-            print(f"[OK] Bet recorded: {horse} @ {odds} for R{stake:.2f}")
+            actual_stake = getattr(bet, "stake", stake)
+            print(f"[OK] Bet recorded: {horse} @ {odds} for R{actual_stake:.2f}")
 
             # Notify
             if self.telegram:
@@ -695,7 +697,7 @@ class StrikeTips:
                     f"[NOTE] <b>Bet Placed</b>\n\n"
                     f"🐎 {horse}\n"
                     f"[LOC] {track} R{race_number}\n"
-                    f"💰 Odds: {odds} | Stake: R{stake:.2f}\n"
+                    f"💰 Odds: {odds} | Stake: R{actual_stake:.2f}\n"
                     f"[STATS] Edge: +{edge_percent}%"
                 ))
 

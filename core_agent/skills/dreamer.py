@@ -95,9 +95,23 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 80, "temperature": 0.7},
+            json={"model": "openai/gpt-oss-20b", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300, "temperature": 0.7},
         )
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        if resp.status_code != 200:
+            logger.warning(f"Groq dream failed: status {resp.status_code}")
+            return "Simulation complete — insight unavailable."
+        data = resp.json()
+        if "choices" not in data or not data["choices"]:
+            logger.warning("Groq dream failed: no 'choices' in response")
+            return "Simulation complete — insight unavailable."
+        content = (data["choices"][0]["message"].get("content") or "").strip()
+        if not content:
+            # Reasoning models may spend the whole budget on "reasoning";
+            # surface it rather than returning a blank insight.
+            reasoning = data["choices"][0]["message"].get("reasoning") or ""
+            if reasoning:
+                content = reasoning.strip()
+        return content[:400]
     except Exception as e:
         logger.warning(f"Groq dream failed: {e}")
         return "Simulation complete — insight unavailable."

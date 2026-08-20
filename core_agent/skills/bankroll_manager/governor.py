@@ -311,6 +311,17 @@ class BankrollGovernor:
                 return None
 
             if is_paper:
+                # Refill the paper account from settings when its ledger has been drained
+                # (e.g. by many unsettled/losing paper bets), so auto-bets keep sizing
+                # stakes on a healthy bankroll instead of recording ~R0 tickets.
+                paper_floor = 5.0 * (paper_settings["paper_balance"] / 100.0) or 5.0
+                if self.paper_balance < paper_floor and paper_settings["paper_balance"] > 0:
+                    logger.info(
+                        f"[GOVERNOR] Paper account drained (R{self.paper_balance:.2f} < "
+                        f"R{paper_floor:.2f}). Refilling from settings to "
+                        f"R{paper_settings['paper_balance']:.2f}."
+                    )
+                    self.paper_balance = float(paper_settings["paper_balance"])
                 max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
             else:
                 max_stake = self.calculate_max_stake(edge_percent, track, race_number)
