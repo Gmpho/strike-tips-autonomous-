@@ -14,6 +14,10 @@ export interface Runner {
   starRating?: number;
   timeForm?: string;
   outcomeName?: string;
+  region?: string;
+  swarmInsight?: string;
+  insightSource?: string;
+  insightTs?: string;
 }
 
 export interface RaceEvent {
@@ -113,6 +117,17 @@ export interface Predictor {
   prediction: string;
 }
 
+export interface NewsItem {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  region: string;
+  summary: string;
+  image_url: string;
+  published: string;
+}
+
 export interface ResultRunner {
   name: string;
   position: string;
@@ -156,5 +171,6 @@ export interface HUDState {
   marketMovers: MarketMover[];
   predictions: Predictor[];
   results: ResultRace[];
+  news: NewsItem[];
   lastUpdate: number;
 }

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { TrendingUp, TrendingDown, Minus, Eye, MapPin, Clock, BarChart2, Flame, Star } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { TrendingUp, TrendingDown, Minus, Eye, MapPin, Clock, BarChart2, Flame, Star, Globe, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import type { MarketMover, RaceEvent, Runner } from '../../types';
@@ -193,11 +193,16 @@ function oddsChangeColor(movement: string, firstShow?: string, currentOdds?: str
 function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number; runner?: Runner }) {
   const fullCourse = getFullCourseName(mover.course);
   const { direction } = parseMovement(mover.movement, mover.first_show, mover.current_odds);
+  const [showFull, setShowFull] = useState(false);
 
   const accentBorder =
     direction === 'shortened' ? 'border-l-emerald-500/60' :
     direction === 'drifted'   ? 'border-l-red-500/60'     :
     'border-l-slate-500/30';
+
+  const hasSwarmInsight = runner && !runner.timeForm && runner.swarmInsight;
+  const reliability = runner?.insightSource === 'web' ? 'verified' : 
+                      runner?.insightSource === 'field_only' ? 'baseline' : 'none';
 
   return (
     <motion.div
@@ -206,11 +211,16 @@ function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number
       transition={{ delay: index * 0.04, duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       className={`rounded-2xl bg-theme-panel border border-theme border-l-4 ${accentBorder} sidebar-card p-4 hover:bg-white/5 transition-all duration-200 hover:border-white/20`}
     >
-      {/* Horse Name + Movement Badge */}
+      {/* Horse Name + Movement Badge + Region */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-black text-theme-primary tracking-tight leading-snug truncate flex items-center gap-1.5">
             {mover.horse}
+            {runner?.region && (
+              <span className="shrink-0 px-1.5 py-0.5 text-[7px] font-black rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase">
+                {runner.region}
+              </span>
+            )}
             {isSteamer(mover) && (
               <span className="shrink-0 text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded animate-pulse flex items-center gap-1">
                 <Flame className="w-2.5 h-2.5" />
@@ -234,11 +244,27 @@ function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number
         </p>
       </div>
 
-      {/* Live snapshot cross-ref: timeForm + stats for matched horses */}
+      {/* Insight strip: Betway timeForm (UK/IRE) or Swarm insight (all other regions) */}
       {runner && runner.timeForm && (
         <div className="flex items-start gap-1.5 mb-2.5 px-3 py-2 rounded-xl bg-amber-500/5 border border-amber-500/15">
           <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-sm font-medium text-slate-300 leading-snug">{runner.timeForm}</p>
+          <p className="text-sm font-medium text-slate-300 leading-snug">{showFull ? runner.timeForm : (runner.timeForm.length > 200 ? runner.timeForm.slice(0, 200) + '…' : runner.timeForm)}</p>
+          {runner.timeForm.length > 200 && (
+            <button onClick={(e)=>{e.stopPropagation();setShowFull(!showFull)}} className="ml-auto text-[9px] text-cyan-400 hover:text-cyan-300 font-bold uppercase tracking-wider">
+              {showFull ? 'Show less' : 'Show full'}
+            </button>
+          )}
+        </div>
+      )}
+      {hasSwarmInsight && (
+        <div className="flex items-start gap-1.5 mb-2.5 px-3 py-2 rounded-xl bg-cyan-500/5 border border-cyan-500/15">
+          <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium text-slate-300 leading-snug">{showFull ? runner.swarmInsight : (runner.swarmInsight!.length > 200 ? runner.swarmInsight!.slice(0, 200) + '…' : runner.swarmInsight!)}</p>
+          {runner.swarmInsight!.length > 200 && (
+            <button onClick={(e)=>{e.stopPropagation();setShowFull(!showFull)}} className="ml-auto text-[9px] text-cyan-400 hover:text-cyan-300 font-bold uppercase tracking-wider">
+              {showFull ? 'Show less' : 'Show full'}
+            </button>
+          )}
         </div>
       )}
       {runner && (typeof runner.draw === 'number' || runner.age || runner.weight || (runner.starRating && runner.starRating > 0)) && (
@@ -255,6 +281,24 @@ function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number
               ))}
             </span>
           ) : null}
+        </div>
+      )}
+
+      {/* Reliability badge for swarm insights */}
+      {hasSwarmInsight && (
+        <div className="flex items-center gap-1.5 mb-2 px-3">
+          {reliability === 'verified' && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[8px] font-black">
+              <ShieldCheck className="w-2.5 h-2.5" />
+              Verified
+            </span>
+          )}
+          {reliability === 'baseline' && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[8px] font-black">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Baseline
+            </span>
+          )}
         </div>
       )}
 

@@ -14,6 +14,20 @@ from core_agent.core.alert_engine import AlertEngine
 from core_agent.core.alert_digester import AlertDigester
 from core_agent.skills.parsers.betway_api import BetwayAPI
 try:
+    from core_agent.skills.swarm_researcher import (
+        enrich_snapshot_with_insights,
+        run_swarm_loop,
+    )
+    _HAS_SWARM = True
+except ImportError:
+    _HAS_SWARM = False
+
+    def enrich_snapshot_with_insights(state):  # no-op fallback
+        return None
+
+    async def run_swarm_loop(interval=600):
+        return None
+try:
     from core_agent.skills.parsers.racing_odds_api import RacingOddsAPI, _normalise
     _HAS_RACING_ODDS = True
 except ImportError:
@@ -397,6 +411,10 @@ class AdaptiveOddsMonitor:
         _memory = RacingMemory()
         asyncio.create_task(run_heartbeat_loop(_memory))
 
+        # Start swarm researcher — fills missing form insights across all regions + polls news
+        if _HAS_SWARM:
+            asyncio.create_task(run_swarm_loop(interval=600))
+
         logger.info("🚀 L7 Monitor Active (Refactored: Pure Python Mode)")
         self._atr_cycle = 0
 
@@ -435,6 +453,12 @@ class AdaptiveOddsMonitor:
 
                 _merge_daily_scan_into(state)
                 _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
+                # Swarm enrichment: zero-cost field insights for every region without
+                # Betway timeForm (USA/Japan/SA/...). Runs inline, never blocks the loop.
+                try:
+                    enrich_snapshot_with_insights(state)
+                except Exception as e:
+                    logger.debug(f"Swarm enrichment skipped: {e}")
                 try:
                     from core_agent.core.snapshot_cache import set_snapshot, publish_snapshot
                     from core_agent.core.task_queue import get_redis

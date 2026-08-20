@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { RaceEvent } from '../types';
-import { Zap, Activity, Timer, ChevronDown, ChevronUp, Flame, Star, CircleDot } from 'lucide-react';
+import { Zap, Activity, Timer, ChevronDown, ChevronUp, Flame, Star, CircleDot, Globe, ChevronRight, ChevronLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface RaceCardProps {
@@ -8,6 +8,34 @@ interface RaceCardProps {
   idx?: number;
   onExecutePosition?: (event: RaceEvent) => void;
 }
+
+const TimeformExpandable: React.FC<{ text: string; label: string; icon: React.ReactNode }> = ({ text, icon }) => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-1">
+      <div className="flex items-start gap-1 text-xs font-semibold text-slate-400 leading-snug">
+        {icon}
+        <span className={expanded ? '' : 'line-clamp-2 max-w-[280px] overflow-hidden'}>{text}</span>
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+        className="mt-0.5 text-[9px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 font-bold uppercase tracking-wider"
+      >
+        {expanded ? (
+          <>
+            <ChevronLeft className="w-3 h-3" />
+            Show less
+          </>
+        ) : (
+          <>
+            Show full
+            <ChevronRight className="w-3 h-3" />
+          </>
+        )}
+      </button>
+    </div>
+  );
+};
 
 export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, onExecutePosition }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -158,12 +186,19 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
             {event.runners.map((r) => (
               <tr key={r.name} className="border-b border-theme hover:bg-purple-500/10 transition-colors align-top">
                 <td className="py-3 px-2">
-                  <div className="font-black text-sm leading-tight">{r.name}</div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="font-black text-sm leading-tight">{r.name}</div>
+                    {r.region && (
+                      <span className="px-1.5 py-0.5 text-[8px] font-black rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase">
+                        {r.region}
+                      </span>
+                    )}
+                  </div>
                   {r.timeForm && (
-                    <div className="flex items-start gap-1 mt-1 text-xs font-semibold text-slate-400 leading-snug">
-                      <Flame className="w-3 h-3 shrink-0 text-amber-400 mt-0.5" aria-label="Timeform comment" />
-                      <span>{r.timeForm}</span>
-                    </div>
+                    <TimeformExpandable text={r.timeForm} label="Timeform" icon={<Flame className="w-3 h-3 shrink-0 text-amber-400 mt-0.5" />} />
+                  )}
+                  {!r.timeForm && r.swarmInsight && (
+                    <TimeformExpandable text={r.swarmInsight} label="Swarm" icon={<Globe className="w-3 h-3 shrink-0 text-cyan-400 mt-0.5" />} />
                   )}
                 </td>
                 <td className="py-3 px-2 text-[10px] opacity-80 whitespace-nowrap">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>

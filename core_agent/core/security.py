@@ -26,6 +26,8 @@ SAFE_PATHS = {
     "/api/legal/",
     "/api/monitoring/stream",
     "/api/racing/exotics",
+    "/api/news",
+    "/api/news/images",
 }
 
 

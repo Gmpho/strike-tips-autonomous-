@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy, Zap } from 'lucide-react';
+import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy, Zap, Globe, ShieldCheck, AlertTriangle, Flame } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import type { Predictor, RaceEvent, Runner } from '../../types';
@@ -250,6 +250,11 @@ function LiveMarketStrip({ runner, horse }: { runner?: Runner; horse: string }) 
       </div>
     );
   }
+
+  const hasSwarm = !runner.timeForm && runner.swarmInsight;
+  const reliability = runner.insightSource === 'web' ? 'verified' :
+                      runner.insightSource === 'field_only' ? 'baseline' : 'none';
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
       <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
@@ -272,6 +277,32 @@ function LiveMarketStrip({ runner, horse }: { runner?: Runner; horse: string }) 
           {runner.starRating && runner.starRating > 0 ? '★'.repeat(Math.min(runner.starRating, 5)) : '-'}
         </p>
       </div>
+      {runner.region && (
+        <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 sm:col-span-2">
+          <p className="text-[9px] font-black text-purple-500/70 uppercase tracking-wider mb-1">Region</p>
+          <p className="text-sm font-black text-purple-400">{runner.region}</p>
+        </div>
+      )}
+      {hasSwarm && (
+        <div className="sm:col-span-4 p-3 rounded-2xl bg-cyan-500/5 border border-cyan-500/15">
+          <div className="flex items-start gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+            <p className="text-sm font-medium text-slate-300 leading-snug">{runner.swarmInsight}</p>
+          </div>
+          {reliability === 'verified' && (
+            <div className="mt-1.5 flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[8px] font-black">
+              <ShieldCheck className="w-2.5 h-2.5" />
+              Verified
+            </div>
+          )}
+          {reliability === 'baseline' && (
+            <div className="mt-1.5 flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[8px] font-black">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Baseline
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -431,6 +462,59 @@ function PredictionDetailModal({
   );
 }
 
+// ─── Insight strip (shared) ────────────────────────────────────────────────────
+function InsightStrip({ runner }: { runner: Runner }) {
+  const hasSwarm = !runner.timeForm && runner.swarmInsight;
+  const reliability = runner.insightSource === 'web' ? 'verified' :
+                      runner.insightSource === 'field_only' ? 'baseline' : 'none';
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Zap className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">
+          Live Market
+        </p>
+      </div>
+      <LiveMarketStrip runner={runner} horse={runner.name} />
+      {runner.timeForm && (
+        <div className="flex items-start gap-1.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/15">
+          <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium text-slate-300 leading-snug">{runner.timeForm}</p>
+        </div>
+      )}
+      {hasSwarm && (
+        <div className="flex items-start gap-1.5 p-3 rounded-xl bg-cyan-500/5 border border-cyan-500/15">
+          <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium text-slate-300 leading-snug">{runner.swarmInsight}</p>
+        </div>
+      )}
+      {(hasSwarm || runner.timeForm) && (
+        <div className="flex items-center gap-1.5">
+          {reliability === 'verified' && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[8px] font-black">
+              <ShieldCheck className="w-2.5 h-2.5" />
+              Verified
+            </span>
+          )}
+          {reliability === 'baseline' && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[8px] font-black">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Baseline
+            </span>
+          )}
+          {reliability === 'none' && runner.timeForm && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[8px] font-black">
+              <Flame className="w-2.5 h-2.5" />
+              Betway
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Wrapper that supports forceExpand from parent ────────────────────────────
 function PredictionCardWrapper({
   pred,
@@ -522,17 +606,20 @@ function PredictionCardWrapper({
 
       {/* Expandable Panel */}
       <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="border-t border-theme/50 px-4 sm:px-5 py-4 space-y-4">
+{expanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-theme/50 px-4 sm:px-5 py-4 space-y-4">
+                {runner && (
+                  <InsightStrip runner={runner} />
+                )}
 
-              {pred.prediction && (
+                {pred.prediction && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <Target className="w-3 h-3 text-purple-400 shrink-0" />

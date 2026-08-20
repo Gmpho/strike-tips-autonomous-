@@ -27,6 +27,7 @@ const DreamingView = React.lazy(() => import('./components/sidebar/DreamingView'
 const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMoversView').then(m => ({ default: m.MarketMoversView })));
 const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
+const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
@@ -47,7 +48,7 @@ const ViewFallback = () => (
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact'];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
-  'healing', 'vitals', 'dreaming', 'market-movers', 'predictor', 'results',
+  'healing', 'vitals', 'dreaming', 'news', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
 
@@ -201,6 +202,8 @@ export const App: React.FC = () => {
         return <Suspense key="healing-view" fallback={<ViewFallback />}><HealingView /></Suspense>;
       case 'vitals':
         return <Suspense key="vitals-view" fallback={<ViewFallback />}><SystemVitalsView /></Suspense>;
+      case 'news':
+        return <Suspense key="news-view" fallback={<ViewFallback />}><NewsView /></Suspense>;
       case 'dreaming':
         return <Suspense key="dreaming-view" fallback={<ViewFallback />}><DreamingView /></Suspense>;
       case 'market-movers':

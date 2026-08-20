@@ -51,6 +51,7 @@ class HUDStore {
     marketMovers: [],
     predictions: [],
     results: [],
+    news: [],
     lastUpdate: Date.now()
   };
 

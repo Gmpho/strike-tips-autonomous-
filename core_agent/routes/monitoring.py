@@ -9,7 +9,9 @@ import json
 import os
 import subprocess
 from datetime import datetime
-from core_agent.config.paths import DATA_DIR, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH, ATR_RESULTS_PATH
+from fastapi import Query
+from fastapi.responses import Response
+from core_agent.config.paths import DATA_DIR, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH, ATR_RESULTS_PATH, NEWS_PATH, NEWS_IMAGES_DIR, NEWS_PATH, NEWS_IMAGES_DIR
 
 import logging
 import psutil
@@ -29,6 +31,7 @@ async def stream_snapshot(request: Request):
         last_movers_hash = ""
         last_pred_hash = ""
         last_results_hash = ""
+        last_news_hash = ""
 
         while True:
             try:
@@ -70,6 +73,14 @@ async def stream_snapshot(request: Request):
                     if r_hash != last_results_hash:
                         last_results_hash = r_hash
                         yield f"event: results\ndata: {json.dumps(res_data.get('results', []))}\n\n"
+
+                # Check news for changes
+                if NEWS_PATH.exists():
+                    news_data = json.loads(NEWS_PATH.read_text())
+                    n_hash = hashlib.md5(json.dumps(news_data, sort_keys=True).encode()).hexdigest()
+                    if n_hash != last_news_hash:
+                        last_news_hash = n_hash
+                        yield f"event: news\ndata: {json.dumps(news_data)}\n\n"
 
                 await asyncio.sleep(2)
             except asyncio.CancelledError:
@@ -217,3 +228,64 @@ async def get_intelligence_vitals():
     )
 
     return {"success": True, "vitals": vitals, "timestamp": datetime.now().isoformat()}
+
+
+@router.get("/news")
+async def get_news():
+    """Latest horse-racing news from free RSS feeds (BBC/Guardian/Mirror)."""
+    if not NEWS_PATH.exists():
+        return {"items": [], "count": 0}
+    try:
+        with open(NEWS_PATH) as f:
+            items = json.load(f)
+        return {"items": items, "count": len(items)}
+    except Exception as e:
+        logger.warning(f"News read failed: {e}")
+        return {"items": [], "count": 0, "error": str(e)}
+
+
+@router.get("/news/images")
+async def proxy_news_image(url: str = Query(...)):
+    """Lazy image proxy — fetch on first view, cache to disk, serve with long TTL."""
+    import hashlib
+    from core_agent.core.http_client import get_async_client
+
+    # Validate URL: must be from our known feed CDNs
+    allowed_hosts = (
+        "ichef.bbci.co.uk",
+        "i.guim.co.uk",
+        "i2-prod.mirror.co.uk",
+        "i.dailymail.co.uk",
+    )
+    if not any(h in url for h in allowed_hosts):
+        return Response(status_code=400, content="Disallowed image source")
+
+    cache_key = hashlib.sha256(url.encode()).hexdigest()[:24] + ".jpg"
+    cache_path = NEWS_IMAGES_DIR / cache_key
+
+    # Serve cached if fresh (7 days)
+    if cache_path.exists() and (os.path.getmtime(cache_path) > (datetime.now().timestamp() - 7 * 86400)):
+        with open(cache_path, "rb") as f:
+            return Response(content=f.read(), media_type="image/jpeg", headers={
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+            })
+
+    # Fetch fresh
+    try:
+        client = get_async_client(timeout=15.0)
+        resp = await client.get(url, headers={"User-Agent": "StrikeTips/1.0 (+news image proxy)"})
+        if resp.status_code != 200:
+            return Response(status_code=404, content="Image not found")
+        content = resp.content
+        # Cache
+        try:
+            with open(cache_path, "wb") as f:
+                f.write(content)
+        except Exception:
+            pass
+        return Response(content=content, media_type="image/jpeg", headers={
+            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+        })
+    except Exception as e:
+        logger.warning(f"Image proxy failed for {url}: {e}")
+        return Response(status_code=502, content="Image fetch failed")
