@@ -47,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
               STRIKE TIPS
             </h1>
             <div className="px-1.5 md:px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-md shrink-0">
-              <span className="text-[7px] md:text-[9px] font-black text-purple-400 uppercase tracking-widest">v10.0 PRO</span>
+              <span className="text-[7px] md:text-[9px] font-black text-purple-400 uppercase tracking-widest">v10.1 PRO</span>
             </div>
           </div>
           <div className="flex items-center gap-1.5 md:gap-2.5 mt-0.5 md:mt-1">
