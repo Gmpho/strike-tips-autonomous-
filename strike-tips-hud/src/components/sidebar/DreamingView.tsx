@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, CloudMoon, Zap, RefreshCcw } from 'lucide-react';
+import { Brain, CloudMoon, Zap, RefreshCcw, Sparkles, Loader2 } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
 import { DreamOrb, DreamOrbFallback } from '../visualizer/DreamOrb';
 import { apiFetch } from '../../lib/api-fetch';
@@ -188,9 +188,13 @@ export const DreamingView: React.FC = () => {
             <button
               type="submit"
               disabled={simulating}
-              className="bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all disabled:opacity-50"
+              className="flex items-center gap-2 bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30 font-black px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-all disabled:opacity-50"
             >
-              {simulating ? 'Running Dream Simulation...' : '⭐ Launch Custom Dream'}
+              {simulating ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running Dream Simulation...</>
+              ) : (
+                <><Sparkles className="w-3.5 h-3.5" /> Launch Custom Dream</>
+              )}
             </button>
           </div>
         </form>

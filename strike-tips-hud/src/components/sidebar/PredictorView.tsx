@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
-import type { Predictor } from '../../types';
+import type { Predictor, RaceEvent, Runner } from '../../types';
 
 // ─── Confidence badge from prediction text ────────────────────────────────────
 function extractConfidence(text: string): { label: string; color: string } | null {
@@ -20,10 +20,23 @@ function extractConfidence(text: string): { label: string; color: string } | nul
   return { label: 'AI Pick', color: 'text-purple-400 bg-purple-500/10 border-purple-500/25' };
 }
 
+// ─── Live-market cross-reference: horse name → matching runner in the Betway snapshot ──
+function buildRunnerIndex(events: Record<string, RaceEvent>): Map<string, Runner> {
+  const index = new Map<string, Runner>();
+  Object.values(events || {}).forEach((event: RaceEvent) => {
+    (event.runners || []).forEach((r) => {
+      const key = r.name.trim().toLowerCase();
+      if (key && !index.has(key)) index.set(key, r);
+    });
+  });
+  return index;
+}
+
 // ─── Main Predictor View ──────────────────────────────────────────────────────
 export const PredictorView: React.FC = () => {
   const store = useHUD();
   const predictions = Array.isArray(store.predictions) ? store.predictions : [];
+  const runnerIndex = useMemo(() => buildRunnerIndex(store.events), [store.events]);
   const [expandAll, setExpandAll] = useState(false);
   const [selectedPrediction, setSelectedPrediction] = useState<Predictor | null>(null);
   
@@ -57,6 +70,7 @@ export const PredictorView: React.FC = () => {
   });
 
   const displayedPredictions = filteredPredictions.slice(0, limit);
+  const runnerFor = (horse: string) => runnerIndex.get(horse.trim().toLowerCase());
 
   return (
     <motion.div
@@ -193,6 +207,7 @@ export const PredictorView: React.FC = () => {
                 pred={pred}
                 index={i}
                 forceExpand={expandAll}
+                runner={runnerFor(pred.horse)}
                 onOpenDetail={openDetail}
               />
             ))}
@@ -218,16 +233,55 @@ export const PredictorView: React.FC = () => {
       )}
 
       {/* Detail Modal */}
-      <PredictionDetailModal pred={selectedPrediction} onClose={closeDetail} />
+      <PredictionDetailModal pred={selectedPrediction} runner={selectedPrediction ? runnerFor(selectedPrediction.horse) : undefined} onClose={closeDetail} />
     </motion.div>
   );
 };
 
+// ─── Live market strip (shared) ──────────────────────────────────────────────
+function LiveMarketStrip({ runner, horse }: { runner?: Runner; horse: string }) {
+  if (!runner) {
+    return (
+      <div className="p-4 rounded-2xl bg-white/5 border border-white/8 flex items-center gap-2">
+        <Zap className="w-4 h-4 text-slate-500 shrink-0" />
+        <p className="text-xs font-semibold text-theme-secondary">
+          No live market data for <span className="font-black text-theme-primary">{horse}</span> in the current snapshot
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+        <p className="text-[9px] font-black text-emerald-500/70 uppercase tracking-wider mb-1">Live Odds</p>
+        <p className="text-sm font-black text-emerald-400 tabular-nums">
+          {(typeof runner.odds === 'number' && runner.odds > 0) ? runner.odds.toFixed(2) : (runner.odds || 'SP')}
+        </p>
+      </div>
+      <div className="p-3 rounded-2xl bg-white/5 border border-white/8">
+        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">Draw</p>
+        <p className="text-sm font-black text-theme-primary">{typeof runner.draw === 'number' ? runner.draw : '-'}</p>
+      </div>
+      <div className="p-3 rounded-2xl bg-white/5 border border-white/8">
+        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">Jockey</p>
+        <p className="text-xs font-black text-theme-primary truncate">{runner.jockeyName || 'TBA'}</p>
+      </div>
+      <div className="p-3 rounded-2xl bg-white/5 border border-white/8">
+        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1">Star</p>
+        <p className="text-sm font-black text-amber-400">
+          {runner.starRating && runner.starRating > 0 ? '★'.repeat(Math.min(runner.starRating, 5)) : '-'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Centered Detail Modal ──
 function PredictionDetailModal({
   pred,
+  runner,
   onClose,
-}: { pred: Predictor | null; onClose: () => void }) {
+}: { pred: Predictor | null; runner?: Runner; onClose: () => void }) {
   if (!pred) return null;
   const confidence = extractConfidence(pred.prediction || pred.raw || '');
 
@@ -284,6 +338,17 @@ function PredictionDetailModal({
                 </span>
               </div>
             )}
+
+            {/* Live Market Cross-reference */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">
+                  Live Market
+                </p>
+              </div>
+              <LiveMarketStrip runner={runner} horse={pred.horse} />
+            </div>
 
             {/* AI Assessment */}
             {pred.prediction && (
@@ -371,11 +436,13 @@ function PredictionCardWrapper({
   pred,
   index,
   forceExpand,
+  runner,
   onOpenDetail,
 }: {
   pred: Predictor;
   index: number;
   forceExpand: boolean;
+  runner?: Runner;
   onOpenDetail: (pred: Predictor) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -405,6 +472,19 @@ function PredictionCardWrapper({
               <h3 className="text-base font-black text-theme-primary group-hover:text-purple-300 transition-colors leading-snug truncate">
                 {pred.horse}
               </h3>
+              {runner && (
+                <p className="flex items-center gap-1.5 mt-1 text-[10px] font-bold tabular-nums">
+                  <Zap className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-400">
+                    {(typeof runner.odds === 'number' && runner.odds > 0) ? runner.odds.toFixed(2) : (runner.odds || 'SP')}
+                  </span>
+                  <span className="text-theme-secondary">
+                    {typeof runner.draw === 'number' && <span className="mr-1">D{runner.draw}</span>}
+                    {runner.jockeyName && <span className="truncate max-w-[100px]">{runner.jockeyName}</span>}
+                  </span>
+                  {runner.starRating ? <span className="text-amber-400">{'★'.repeat(Math.min(runner.starRating, 5))}</span> : null}
+                </p>
+              )}
               {pred.prediction && (
                 <p className="text-xs text-theme-secondary font-medium leading-snug mt-1 line-clamp-2">
                   {pred.prediction}

@@ -1,10 +1,22 @@
-import React from 'react';
-import { TrendingUp, TrendingDown, Minus, Eye, MapPin, Clock, BarChart2 } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { TrendingUp, TrendingDown, Minus, Eye, MapPin, Clock, BarChart2, Flame, Star } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
-import type { MarketMover } from '../../types';
+import type { MarketMover, RaceEvent, Runner } from '../../types';
 
 import { getFullCourseName } from '../../lib/course-names';
+
+// ─── Live-snapshot cross-reference: horse name → matching runner (for timeForm/star/age/weight) ──
+function buildRunnerIndex(events: Record<string, RaceEvent>): Map<string, Runner> {
+  const index = new Map<string, Runner>();
+  Object.values(events || {}).forEach((event: RaceEvent) => {
+    (event.runners || []).forEach((r) => {
+      const key = (r.outcomeName || r.name).trim().toLowerCase();
+      if (key && !index.has(key)) index.set(key, r);
+    });
+  });
+  return index;
+}
 
 // ─── Robust Movement Direction Parser ────────────────────────────────────────
 interface MovementInfo {
@@ -178,7 +190,7 @@ function oddsChangeColor(movement: string, firstShow?: string, currentOdds?: str
 }
 
 // ─── Single Mover Card ────────────────────────────────────────────────────────
-function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
+function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number; runner?: Runner }) {
   const fullCourse = getFullCourseName(mover.course);
   const { direction } = parseMovement(mover.movement, mover.first_show, mover.current_odds);
 
@@ -200,8 +212,9 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
           <h3 className="text-sm font-black text-theme-primary tracking-tight leading-snug truncate flex items-center gap-1.5">
             {mover.horse}
             {isSteamer(mover) && (
-              <span className="shrink-0 text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded animate-pulse">
-                🔥 STEAMER
+              <span className="shrink-0 text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded animate-pulse flex items-center gap-1">
+                <Flame className="w-2.5 h-2.5" />
+                Steamer
               </span>
             )}
           </h3>
@@ -220,6 +233,30 @@ function MoverCard({ mover, index }: { mover: MarketMover; index: number }) {
           {fullCourse}
         </p>
       </div>
+
+      {/* Live snapshot cross-ref: timeForm + stats for matched horses */}
+      {runner && runner.timeForm && (
+        <div className="flex items-start gap-1.5 mb-2.5 px-3 py-2 rounded-xl bg-amber-500/5 border border-amber-500/15">
+          <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-sm font-medium text-slate-300 leading-snug">{runner.timeForm}</p>
+        </div>
+      )}
+      {runner && (typeof runner.draw === 'number' || runner.age || runner.weight || (runner.starRating && runner.starRating > 0)) && (
+        <div className="flex items-center gap-2 flex-wrap mb-2 px-3 text-[10px] font-black">
+          {typeof runner.draw === 'number' && (
+            <span className="border border-theme rounded px-1.5 py-0.5 text-theme-primary">D{runner.draw}</span>
+          )}
+          {runner.weight && <span className="text-slate-400">{runner.weight}</span>}
+          {runner.age && <span className="text-slate-400">{runner.age.replace(' years', 'yo')}</span>}
+          {runner.starRating ? (
+            <span className="flex items-center gap-0.5 text-amber-400">
+              {Array.from({ length: Math.min(runner.starRating, 5) }).map((_, i) => (
+                <Star key={i} className="w-2.5 h-2.5 fill-amber-400" />
+              ))}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       {/* Odds Row */}
       <div className="flex items-center gap-3 bg-black/20 rounded-xl px-3 py-2 border border-white/5">
@@ -260,7 +297,8 @@ function MarketLegend() {
         Drifted (Eased)
       </span>
       <span className="flex items-center gap-1.5 text-amber-400">
-        <span className="animate-pulse">🔥 STEAMER</span> (Price Collapse ≥30%)
+        <Flame className="w-3 h-3 animate-pulse" />
+        Steamer (Price Collapse ≥30%)
       </span>
     </div>
   );
@@ -270,6 +308,8 @@ function MarketLegend() {
 export const MarketMoversView: React.FC = () => {
   const store = useHUD();
   const marketMovers = Array.isArray(store.marketMovers) ? store.marketMovers : [];
+  const runnerIndex = useMemo(() => buildRunnerIndex(store.events), [store.events]);
+  const runnerFor = (m: MarketMover) => runnerIndex.get((m.horse || '').trim().toLowerCase());
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [trackFilter, setTrackFilter] = React.useState('ALL');
@@ -399,7 +439,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {shortened.slice(0, limitShortened).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={i} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={i} runner={runnerFor(mover)} />
                 ))}
                 {shortened.length > limitShortened && (
                   <button
@@ -428,7 +468,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {drifted.slice(0, limitDrifted).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + i} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + i} runner={runnerFor(mover)} />
                 ))}
                 {drifted.length > limitDrifted && (
                   <button
@@ -457,7 +497,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {stable.slice(0, limitStable).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + drifted.length + i} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + drifted.length + i} runner={runnerFor(mover)} />
                 ))}
                 {stable.length > limitStable && (
                   <button

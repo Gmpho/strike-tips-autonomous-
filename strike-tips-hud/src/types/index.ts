@@ -7,6 +7,13 @@ export interface Runner {
   impliedProbability?: number;
   jockeyName?: string;
   trainerName?: string;
+  age?: string;
+  weight?: string;
+  draw?: number;
+  number?: string;
+  starRating?: number;
+  timeForm?: string;
+  outcomeName?: string;
 }
 
 export interface RaceEvent {

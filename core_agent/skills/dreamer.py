@@ -126,8 +126,8 @@ SCENARIO_TEMPLATES = [
     "Simulating rain delay effect on {course} Race {race} odds.",
     "What if the distance was extended by 200m at {course}?",
     "Analysing outsider value if top trainer is suspended at {course}.",
-    "What if the favourite was a late scratch in Race {race}?",
-    "Evaluating jockey substitution impact at {course} Race {race}.",
+    "What if the going turned Heavy while the draw bias shifted to gate 1 at {course}?",
+    "Simulating a mid-race 4-runner reduction re-costing the market at {course} Race {race}.",
 ]
 
 

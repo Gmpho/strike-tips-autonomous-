@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Ticket, Coins, Trophy, Calendar, Activity, Loader2 } from 'lucide-react';
+import { Ticket, Coins, Trophy, Calendar, Activity, Loader2, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../hooks/useHUD';
 import { apiFetch } from '../lib/api-fetch';
@@ -167,7 +167,8 @@ export const ExoticsView: React.FC = () => {
                                 <div className="flex flex-wrap gap-1.5 flex-1 items-center">
                                   {/* Banker */}
                                   <span className="text-[11px] font-black text-amber-300 bg-amber-500/10 px-2 py-0.5 border border-amber-500/30 rounded-lg flex items-center gap-1">
-                                    ⭐ Horse {combo.banker} (Banker)
+                                    <Star className="w-3 h-3 fill-amber-300" />
+                                    Horse {combo.banker} (Banker)
                                   </span>
                                   {/* Savers */}
                                   {combo.savers.map(s => (
