@@ -29,6 +29,7 @@ export class DataBridge {
     this.refCount++;
     if (this.refCount > 1) return;
     this.connectSSE();
+    this.hydrateNews();
     this.scheduleFast();
     this.scheduleSlow();
   }
@@ -85,6 +86,17 @@ export class DataBridge {
       }
     });
 
+    this.sse.addEventListener('news', (e: MessageEvent) => {
+      try {
+        const items = JSON.parse(e.data);
+        if (Array.isArray(items)) {
+          hudStore.updateState({ news: items });
+        }
+      } catch (err) {
+        console.error('SSE news parse error:', err);
+      }
+    });
+
     this.sse.onerror = () => {
       this.disconnectSSE();
       setTimeout(() => this.connectSSE(), this.sseReconnectMs);
@@ -100,6 +112,24 @@ export class DataBridge {
     if (this.sse) {
       this.sse.close();
       this.sse = null;
+    }
+  }
+
+  async refreshNews() {
+    await this.hydrateNews();
+  }
+
+  private async hydrateNews() {
+    try {
+      const res = await fetch('/api/news');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          hudStore.updateState({ news: data.items });
+        }
+      }
+    } catch {
+      // SSE news events cover this path when REST is unavailable
     }
   }
 

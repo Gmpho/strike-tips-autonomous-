@@ -2,11 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Newspaper, ExternalLink, Clock, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
+import { dataBridge } from '../../engine/data-bridge';
 import type { NewsItem } from '../../types';
-
-const NEWS_API = '/api/news';
-const SSE_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run';
-const SSE_URL = `${SSE_ORIGIN}/api/monitoring/stream`;
 
 function formatRelativeTime(published: string): string {
   if (!published) return 'Unknown time';
@@ -25,6 +22,18 @@ function formatRelativeTime(published: string): string {
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   } catch {
     return published;
+  }
+}
+
+function cleanSummary(text: string): string {
+  if (!text) return '';
+  try {
+    // Guardian RSS embeds HTML (<ul><li>...) in summaries; DOMParser strips
+    // tags and decodes entities in one pass.
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+  } catch {
+    return text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   }
 }
 
@@ -77,7 +86,7 @@ function NewsCard({ item }: { item: NewsItem }) {
         </h3>
         {item.summary && (
           <p className="text-[10px] text-theme-secondary leading-snug line-clamp-3">
-            {item.summary}
+            {cleanSummary(item.summary)}
           </p>
         )}
         <div className="flex items-center gap-2 pt-2 border-t border-theme/30">
@@ -94,61 +103,17 @@ function NewsCard({ item }: { item: NewsItem }) {
 export const NewsView: React.FC = () => {
   const { news } = useHUD();
   const [isLoading, setIsLoading] = useState(news.length === 0);
-  const [sseReconnectMs, setSseReconnectMs] = useState(2000);
 
-  // Initial REST fetch
+  // DataBridge hydrates the store via REST + SSE 'news' events.
+  // Stop spinning once data lands, or after a safety timeout.
   useEffect(() => {
-    let mounted = true;
-    async function fetchNews() {
-      try {
-        const res = await fetch(NEWS_API);
-        if (res.ok) {
-          const data = await res.json();
-          if (mounted && Array.isArray(data.items)) {
-            // DataBridge handles store update via SSE
-            setIsLoading(false);
-          }
-        }
-      } catch (e) {
-        console.error('News fetch failed:', e);
-        setIsLoading(false);
-      }
-    }
-    fetchNews();
-    return () => { mounted = false; };
+    if (news.length > 0) setIsLoading(false);
+  }, [news.length]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsLoading(false), 8000);
+    return () => window.clearTimeout(timer);
   }, []);
-
-  // SSE live updates - DataBridge handles this
-  useEffect(() => {
-    let source: EventSource | null = null;
-    let reconnectTimer: number | null = null;
-
-    const connect = () => {
-      if (source) source.close();
-      source = new EventSource(SSE_URL);
-      source.addEventListener('news', (e: MessageEvent) => {
-        try {
-          const items = JSON.parse(e.data);
-          if (Array.isArray(items)) {
-            // DataBridge will update the store
-          }
-        } catch (err) {
-          console.error('SSE news parse error:', err);
-        }
-      });
-      source.onopen = () => setSseReconnectMs(2000);
-      source.onerror = () => {
-        source?.close();
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        reconnectTimer = window.setTimeout(() => {
-          setSseReconnectMs(prev => Math.min(prev * 2, 30000));
-          connect();
-        }, sseReconnectMs);
-      };
-    };
-    connect();
-    return () => { if (reconnectTimer) clearTimeout(reconnectTimer); source?.close(); };
-  }, [sseReconnectMs]);
 
   if (isLoading) {
     return (
@@ -192,7 +157,11 @@ export const NewsView: React.FC = () => {
           </p>
         </div>
         <button
-          onClick={() => setIsLoading(true)}
+          onClick={async () => {
+            setIsLoading(true);
+            await dataBridge.refreshNews();
+            setIsLoading(false);
+          }}
           disabled={isLoading}
           className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-theme-secondary hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
