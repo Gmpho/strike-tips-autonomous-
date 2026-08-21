@@ -130,8 +130,10 @@ def list_supported_tracks() -> List[str]:
 
 class RaceScheduleService:
     """
-    Dynamically fetches today's racing schedule from TAB API.
-    Always returns all 7 SA tracks + any live international tracks.
+    Dynamically discovers today's racing schedule from multiple sources.
+    Always returns all 7 SA tracks + international tracks merged from
+    TAB schedule, live Betway events, and the RacingOddsAPI snapshot —
+    so discovery never depends on a single upstream.
     """
 
     TAB_SCHEDULE_URL = "https://www.tab.co.za/api/racing/schedule?date={date}"
@@ -143,7 +145,8 @@ class RaceScheduleService:
     async def get_todays_tracks(self) -> Dict[str, Dict]:
         """
         Return all tracks racing today.
-        SA tracks always included; international tracks fetched from API.
+        SA tracks always included; international tracks merged from
+        TAB API + live bookmaker/data feeds.
         """
         today = date.today().isoformat()
 
@@ -153,15 +156,18 @@ class RaceScheduleService:
 
         tracks = dict(SA_TRACKS_ALWAYS)  # Always include all SA tracks
 
-        # Try to fetch international tracks
-        international = await self._fetch_international_schedule(today)
-        tracks.update(international)
+        # Source 1: TAB international schedule
+        tracks.update(await self._fetch_international_schedule(today))
+
+        # Sources 2 & 3: live Betway + RacingOddsAPI venue coverage
+        for key, meta in await self._discover_live_tracks():
+            tracks.setdefault(key, meta)
 
         self._today_cache = tracks
         self._cache_date = today
 
         logger.info(
-            f"[SCHEDULE] Today's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)"
+            f"[SCHEDULE] Today's tracks: {', '.join(sorted(tracks.keys()))} ({len(tracks)} total)"
         )
         return tracks
 
@@ -181,6 +187,53 @@ class RaceScheduleService:
             f"[SCHEDULE] Tomorrow's tracks: {', '.join(tracks.keys())} ({len(tracks)} total)"
         )
         return tracks
+
+    async def _discover_live_tracks(self) -> List[tuple]:
+        """Discover additional racing venues from live Betway and RacingOddsAPI
+        event feeds, so schedule discovery survives a TAB outage."""
+        discovered: List[tuple] = []
+        seen = set()
+
+        def _add(name: str, region_hint: str = "") -> None:
+            name = (name or "").strip()
+            if not name:
+                return
+            key = _normalize_track_text(name)
+            if not key or key in SA_TRACKS_ALWAYS or key in seen:
+                return
+            region = region_hint or TRACK_ALIAS_INDEX.get(key, {}).get(
+                "region", "International"
+            )
+            seen.add(key)
+            discovered.append(
+                (key, {"region": region, "code": key[:3].upper(), "location": name.title()})
+            )
+
+        try:
+            from core_agent.skills.parsers.betway_api import BetwayAPI
+
+            for r in await BetwayAPI().get_races():
+                _add(getattr(r, "track", ""))
+        except Exception as e:
+            logger.debug(f"Betway track discovery failed: {e}")
+
+        try:
+            from core_agent.skills.parsers.racing_odds_api import RacingOddsAPI
+
+            snap = await RacingOddsAPI().get_snapshot_format()
+            for ev in (snap.get("events") or {}).values():
+                if not isinstance(ev, dict):
+                    continue
+                region = ev.get("region")
+                _add(
+                    ev.get("course") or ev.get("venue") or "",
+                    region if isinstance(region, str) else "",
+                )
+        except Exception as e:
+            logger.debug(f"RacingOdds track discovery failed: {e}")
+
+        logger.info(f"[SCHEDULE] Discovered {len(discovered)} extra venues from live feeds")
+        return discovered
 
     async def _fetch_international_schedule(self, date_str: str) -> Dict[str, Dict]:
         """Fetch live international racing schedule from TAB API"""

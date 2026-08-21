@@ -58,7 +58,46 @@ RSS_FEEDS = [
         "region": "UK/IRE",
         "url": "https://www.mirror.co.uk/sport/horse-racing/rss.xml",
     },
+    {
+        "source": "Thoroughbred Daily News",
+        "region": "USA",
+        "url": "https://www.thoroughbreddailynews.com/feed/",
+    },
+    {
+        "source": "Sporting Post",
+        "region": "South Africa",
+        "url": "https://sportingpost.co.za/feed/",
+    },
+    {
+        "source": "Gold Circle",
+        "region": "South Africa",
+        "url": "https://www.goldcircle.co.za/feed",
+    },
+    {
+        "source": "Dubai Racing Club",
+        "region": "UAE",
+        "url": "https://dubairacingclub.com/feed/",
+    },
+    {
+        "source": "SCMP",
+        "region": "Hong Kong",
+        "url": "https://www.scmp.com/rss/92/feed",
+        # Broad all-sport feed — keep only racing-relevant items
+        "keywords": (
+            "racing", "jockey", "horse", "sha tin", "happy valley",
+            "racecourse", "trainer", "favourite", "handicap",
+        ),
+    },
+    {
+        "source": "Just Horse Racing",
+        "region": "Australia",
+        "url": "https://www.justhorseracing.com.au/feed/",
+    },
 ]
+
+# Global cap across all regions; sorted by parsed publish time so the
+# freshest stories from every region surface first.
+NEWS_MAX_ITEMS = 80
 
 REGION_PREFIXES = {
     "USA": ("usa", "united states", "north america"),
@@ -383,18 +422,52 @@ async def backfill_form_insights(state: Dict) -> int:
 _MRSS = {"media": "http://search.yahoo.com/mrss/", "content": "http://purl.org/rss/1.0/modules/content/"}
 
 
+def _upscale_image_url(url: str) -> str:
+    """Rewrite known CDN thumbnail URLs to higher-resolution variants.
+
+    News cards render ~560px wide; s98 (Mirror) / 240px (BBC) sources look
+    blurry when upscaled by the browser.
+    """
+    try:
+        # Reach titles (Mirror / Daily Star): /ALTERNATES/sNNN/ variants
+        m = re.search(r"/ALTERNATES/s(\d+)/", url)
+        if m and int(m.group(1)) < 810:
+            return url.replace(f"/ALTERNATES/s{m.group(1)}/", "/ALTERNATES/s810/", 1)
+        # BBC: /ace/standard/NNN/ (unsigned CDN — safe to request larger)
+        m = re.search(r"(ichef\.bbci\.co\.uk/ace/standard/)(\d+)(/)", url)
+        if m and int(m.group(2)) < 810:
+            return url[: m.start()] + m.group(1) + "810" + m.group(3) + url[m.end():]
+    except Exception:
+        pass
+    return url
+
+
 def _feed_image(item, ns) -> str:
-    """Best-guess image URL from item media elements (media:thumbnail/content)."""
+    """Best-guess image URL from item media elements (media:thumbnail/content).
+
+    Feeds ship multiple pre-signed sizes (e.g. Guardian: 140/460/700px);
+    pick the widest so cards don't stretch a tiny thumbnail. Guardian URLs
+    are signature-bound per-variant, so upscaling must come from the feed
+    itself, not URL param edits.
+    """
+    candidates = []
     for tag in ("thumbnail", "content"):
-        el = item.find(f"media:{tag}", ns)
-        if el is not None:
+        for el in item.findall(f"media:{tag}", ns):
             url = el.get("url") or el.get("medium")
-            if url:
-                return url
-    return ""
+            if not url:
+                continue
+            try:
+                width = int(el.get("width") or 0)
+            except ValueError:
+                width = 0
+            candidates.append((width, url))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    return _upscale_image_url(candidates[0][1])
 
 
-def _parse_feed(xml_text: str, source: str, region: str) -> List[Dict]:
+def _parse_feed(xml_text: str, source: str, region: str, keywords: tuple = ()) -> List[Dict]:
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml_text)
     items = []
@@ -403,6 +476,10 @@ def _parse_feed(xml_text: str, source: str, region: str) -> List[Dict]:
         link = (it.findtext("link") or "").strip()
         if not title or not link:
             continue
+        if keywords:
+            haystack = (title + " " + (it.findtext("description") or "")).lower()
+            if not any(kw in haystack for kw in keywords):
+                continue
         items.append({
             "id": hashlib.sha1(link.encode()).hexdigest()[:12],
             "title": title[:200],
@@ -424,10 +501,32 @@ async def _fetch_feed(feed: Dict) -> List[Dict]:
         if resp.status_code != 200:
             logger.debug(f"Feed {feed['source']} returned {resp.status_code}")
             return []
-        return _parse_feed(resp.text, feed["source"], feed["region"])
+        return _parse_feed(resp.text, feed["source"], feed["region"], tuple(feed.get("keywords", ())))
     except Exception as e:
         logger.debug(f"Feed {feed['source']} failed: {e}")
         return []
+
+
+def _published_sort_key(item: Dict) -> float:
+    """Parse an RSS published date (RFC 822 or ISO 8601) to a timestamp.
+
+    Unparseable/missing dates sort oldest so stale entries never bury fresh news.
+    """
+    raw = (item.get("published") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        from email.utils import parsedate_to_datetime
+
+        dt = parsedate_to_datetime(raw)
+        if dt is not None:
+            return dt.timestamp()
+    except Exception:
+        pass
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
 
 
 async def poll_news() -> int:
@@ -443,8 +542,11 @@ async def poll_news() -> int:
             continue
         seen.add(it["url"])
         deduped.append(it)
-    deduped.sort(key=lambda x: x.get("published") or "", reverse=True)
-    deduped = deduped[:50]
+    # Sort by parsed timestamp, not the raw string: feeds mix RFC 822
+    # ("Wed, 29 Jul 2026 ...") and ISO 8601 ("2026-08-19T...") formats, and
+    # string-sorting them interleaves stale items at the top.
+    deduped.sort(key=_published_sort_key, reverse=True)
+    deduped = deduped[:NEWS_MAX_ITEMS]
 
     prev = []
     if os.path.exists(NEWS_PATH):

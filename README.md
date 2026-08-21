@@ -31,6 +31,7 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📊 Dream Stress Index (DSI)** - Scales Half-Kelly staking defensively: DSI < 20% → 1.0x, 20-50% → 0.75x, > 50% → 0.50x (Quarter-Kelly)
 - **🌐 WebGPU Search Grounding** - Local browser models fetch live context (odds, runners, ChromaDB insights, DDG search) via `/api/agent/context` before inference
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
+- **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
 
 ---
 
@@ -104,6 +105,29 @@ Search ranks by keyword match (10x title/tags, 5x body, + per-occurrence).
 - **Ingestion**: `POST /api/ingest-snapshot` for odds, `POST /api/ingest-insight` for form
 
 See [`docs/CLOUDFLARE_MCP_EDGE.md`](docs/CLOUDFLARE_MCP_EDGE.md) for full details.
+
+---
+
+## 📰 Racing News Pipeline
+
+Zero-cost, key-free news pipeline powering the HUD **News** sidebar (`/news`):
+
+```
+RSS Feeds (BBC Sport / Guardian / Mirror)
+        │  poll_news() — every 10 min (Swarm Researcher background loop,
+        │  started by AdaptiveOddsMonitor; no LLM calls on the news path)
+        ▼
+data/news_latest.json  (deduped, capped, atomic tmp+rename writes)
+        │
+        ├─► GET /api/news            → { items: [...], count }   (REST, initial hydration)
+        ├─► GET /api/monitoring/stream → SSE event: news          (live updates on change)
+        └─► GET /api/news/images?url= → lazy image proxy          (allow-listed CDN hosts,
+                                       fetched on first view, cached to disk 7 days)
+```
+
+**Frontend flow:** `DataBridge` is the single source of truth — it hydrates the store via REST on startup, then keeps it fresh from the SSE `news` event. `NewsView` renders from the store only (no duplicate fetching). Summaries are HTML-stripped client-side (Guardian embeds markup).
+
+Both `/api/news`, `/api/news/images` and the SSE stream are in `SAFE_PATHS` (no API key) since `EventSource` cannot send custom headers.
 
 ---
 
@@ -524,7 +548,7 @@ strike = StrikeTips(bankroll_config=custom_config)
 ## 🧪 Testing
 
 ```bash
-# Run all tests (6 tests — 5 governor + 1 DSI staking)
+# Run all tests (30 tests — governor, DSI staking, exotics, selections, pool legs, auto-bet odds)
 pytest
 
 # Test specific component

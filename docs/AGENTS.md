@@ -25,7 +25,7 @@ cd core_agent
 # Install dependencies
 pip install -r requirements.txt
 
-# Run all tests (6 total — 5 governor + 1 DSI staking)
+# Run all tests (30 total — governor, DSI staking, exotics, selections, pool legs, auto-bet odds)
 pytest
 
 # Run single test file

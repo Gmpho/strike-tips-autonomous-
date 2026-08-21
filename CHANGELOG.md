@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-21 — News Feed Fix + Money-Math & Stability Fixes
+
+### News Feed Blank on Production (Root Cause Fix)
+
+- **Root cause**: `NewsView.tsx` fetched `/api/news` but discarded the response ("DataBridge handles store update via SSE"), and its SSE handler also no-op'd — while `DataBridge` (the designated store updater) had **no `news` listener at all**. The store's `news` array was never written → permanent "No News Yet" state.
+- **`data-bridge.ts`**: added `news` SSE event listener (backend stream already emitted `event: news`) + `hydrateNews()` REST fetch on startup for instant load; exposed `refreshNews()` for the Refresh button.
+- **`NewsView.tsx`**: converted to a dumb render component — removed the dead fetch effect and duplicate EventSource connection (DataBridge owns all fetching per architecture); loading resolves when data lands or after an 8s safety timeout.
+- **HTML summaries**: Guardian RSS embeds markup (`<ul><li>…`) — added `cleanSummary()` (DOMParser-based tag strip + entity decode) in `NewsCard`.
+- **Backend**: `/api/news` (REST) and `event: news` (SSE) were always correct — polling via `swarm_researcher.poll_news()` writes `data/news_latest.json`.
+
+### 🔴 Money-Correctness
+
+- **Exotic double-deduction** (`governor.py`): real-mode exotic bets deducted ticket cost at placement AND again inside settlement credit (net `return − 2×stake`). Settlement now credits dividend only; peak bankroll updates on exotic wins.
+- **DSI staking was inert**: every caller except one invoked `calculate_max_stake(edge)` without `track`/`race_number`, so Dream Stress Index never scaled stakes. Now wired through `place_bet`, Telegram advised-stake (daily scan + midday rescan), and the MCP `calculate_max_position` tool.
+- **Paper mode now uses full Kelly×DSI sizing** against paper balance (was flat 5%) — paper results become meaningful previews of live behavior. `calculate_max_stake()` gained a `balance` override.
+- **Phantom odds blocked**: auto-bet paths defaulted missing odds to an assumed 2.0, corrupting stake sizing/settlement/learning stats. New `resolve_auto_bet_odds()` helper skips bets without a real market price (>1.01).
+
+### 🔴 Broken Features
+
+- **"Recent results" query** (`task_router.py`): built the results list then returned "No results found" anyway (dedented return). Fixed.
+- **Telegram N+1 flood**: AgentLoop streams deltas AND a final message; TelegramChannel sent every delta as its own message plus the full duplicate. Deltas are now skipped for Telegram (one clean message per reply).
+- **Exotic pool leg-counts**: extraction codes (`JP1`, `BI1`, `P6`, `PA`) never matched long-name keys (`"JACKPOT 1"`, `"PICK 6"`…) so every pool fell back to 4 legs. New `resolve_pool_legs()` in `skills/exotics/builder.py`: JP→4, BI→6, P6→6, PA→7.
+
+### 🟡 Resource / Robustness
+
+- **Undrained `MessageBus.outbound` queue** deleted — it was written on every outbound message and consumed by nothing (unbounded memory growth).
+- **Rate-limit store leak** (`api_pkg/__init__.py`): stale ip:path keys now evicted + 10k hard cap.
+- **Dream mock pollution**: custom dreams for races missing from the snapshot fabricated a "Mock Runner" race and persisted it to ChromaDB/LearningEngine, polluting DSI queries. Now returns a clean no-persist placeholder.
+
+### 🟢 Minor
+
+- Local-only mode actually routes AUTO to local Ollama (was a no-op assignment).
+- Telegram falls back to plain text when Markdown parsing fails (message no longer lost).
+- FastAPI lifespan None-guards (monitor/tg_channel/bg_task) prevent NameError in shutdown.
+- Dreamer reads jockey/odds/form from the favorite runner instead of nonexistent event-level fields.
+
+### Tests
+
+- Suite grew 16 → **30 tests**: exotic settlement regression (real + paper), Kelly balance override, paper Kelly staking, pool leg mapping, auto-bet odds resolution.
+
 ## 2026-07-09 — Real-Time Dashboard & Auto-Betting
 
 ### Data Freshness (Dashboard No Longer Stale)

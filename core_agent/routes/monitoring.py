@@ -255,7 +255,9 @@ async def proxy_news_image(url: str = Query(...)):
         "ichef.bbci.co.uk",
         "i.guim.co.uk",
         "i2-prod.mirror.co.uk",
+        "i2-prod.dailystar.co.uk",
         "i.dailymail.co.uk",
+        "www.justhorseracing.com.au",
     )
     if not any(h in url for h in allowed_hosts):
         return Response(status_code=400, content="Disallowed image source")
