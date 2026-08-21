@@ -32,6 +32,7 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **🌐 WebGPU Search Grounding** - Local browser models fetch live context (odds, runners, ChromaDB insights, DDG search) via `/api/agent/context` before inference
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
 - **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
+- **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
 
 ---
 
@@ -128,6 +129,41 @@ data/news_latest.json  (deduped, capped, atomic tmp+rename writes)
 **Frontend flow:** `DataBridge` is the single source of truth — it hydrates the store via REST on startup, then keeps it fresh from the SSE `news` event. `NewsView` renders from the store only (no duplicate fetching). Summaries are HTML-stripped client-side (Guardian embeds markup).
 
 Both `/api/news`, `/api/news/images` and the SSE stream are in `SAFE_PATHS` (no API key) since `EventSource` cannot send custom headers.
+
+---
+
+## 🐝 Swarm Researcher — Form Insights for Every Region
+
+Betway only publishes Timeform prose (`timeForm`) + star ratings for **UK/Ireland** cards — USA, Japan, South Africa, Australia, NZ and Hong Kong runners arrive with empty commentary. The Swarm Researcher (`core_agent/skills/swarm_researcher.py`) fills that gap for **all regions**, on a strict no-waste budget:
+
+```
+AdaptiveOddsMonitor (every 10 min, alongside heartbeat)
+        │
+        ├─ Pass A: backfill_form_insights()
+        │    1. Chroma freshness gate  — skip horses with today's insight already stored
+        │    2. Field blurb (FREE)     — deterministic facts from live runner fields:
+        │                               form string, draw, age/weight, jockey, trainer, odds
+        │    3. Web grounding (GATED)  — ONLY aiSelections + movers + odds ≤ 6.0:
+        │                               search_racing_data() → Groq factual summary
+        │                               (max 6 Groq calls/cycle, cached by horse+date)
+        │    ▼
+        │    data/swarm_insights.json (per-outcomeId) + ChromaDB form_insights
+        │    metadata {type:"racing_insight", region, source:"field_only"|"web", ts}
+        │    + curated_memory.append_agent_note()
+        │
+        └─ Pass B: poll_news()  → see News Pipeline above
+
+Snapshot enrichment (inline, every monitor cycle):
+enrich_snapshot_with_insights(state) injects per-runner
+region / swarmInsight / insightSource before set_snapshot → SSE push
+```
+
+**Region detection:** derived from the Betway display prefix (`"USA: Saratoga"`, `"South Africa: Turffontein"`) with course-keyword fallbacks — covers USA, Japan, South Africa, UK/IRE, Australia, New Zealand, France, Hong Kong, UAE.
+
+**HUD surfaces:**
+- **RaceCard** — region chip + expandable insight (🔥 Timeform for UK/IRE, 🌐 Swarm for everywhere else)
+- **Market Movers** — insight strip + reliability badge (✅ Verified = web-grounded, ⚠️ Baseline = field-only)
+- **Predictor** — LiveMarketStrip shows region + swarm insight in the detail modal and expanded cards
 
 ---
 

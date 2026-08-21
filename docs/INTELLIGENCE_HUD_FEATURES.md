@@ -30,6 +30,13 @@ Modern, high-fidelity interface designed for "Zero-Delay" oversight.
 *   **Instant-Load Persistence**: State hydration via `localStorage` ensures the dashboard is populated immediately upon refresh (zero-spinner experience).
 *   **Framer Motion 3D Layers**: Smooth "Blur-Slide" transitions and micro-animations for a premium feel.
 
+### 5. Swarm Researcher Insight Surfaces (v10.2 PRO)
+The **Swarm Researcher** (`core_agent/skills/swarm_researcher.py`) backfills form insights for every Betway region the Timeform feed doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong, France, UAE) and streams them into the HUD:
+*   **Region Chips**: Purple badges on RaceCards, Mover cards and Predictor strips identify each runner's region (`USA`, `Japan`, `South Africa`…), derived from the Betway display prefix.
+*   **Dual Insight Rows**: 🔥 **Timeform** prose for UK/IRE runners, 🌐 **Swarm** insight (deterministic field facts, upgraded to web-grounded Groq summaries for aiSelections/movers/short-priced runners) everywhere else — both expandable with Show full/less.
+*   **Reliability Badges**: ✅ *Verified* (web-grounded) vs ⚠️ *Baseline* (field-only) on Market Movers and Predictor views — backed by ChromaDB `racing_insight` metadata (`source`, `ts`) with a per-day freshness gate so no insight is ever paid for twice.
+*   **📰 News Tab** (`/news`): live racing headlines from BBC Sport / The Guardian / Daily Mirror RSS — polled free every 10 min by the same researcher loop, pushed over SSE `event: news`, images served through a lazy disk-cached proxy (7-day TTL). See the [Racing News Pipeline](../README.md#-racing-news-pipeline) section in the README.
+
 ---
 
 ## 🛠️ Tech Stack & Integration

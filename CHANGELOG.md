@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-21 — Swarm Researcher (All-Region Form Insights) + HUD Insight Surfaces
+
+### 🐝 Swarm Researcher (`core_agent/skills/swarm_researcher.py` — new)
+
+- **Problem**: Betway only publishes Timeform prose (`timeForm`) + star ratings for UK/Ireland — USA, Japan, South Africa, Australia, NZ, Hong Kong runners arrived with empty commentary (~482/981 runners in a typical snapshot).
+- **Pass A — form backfill** (every 10 min via `run_swarm_loop`, started by `AdaptiveOddsMonitor` alongside heartbeat):
+  - Deterministic **field blurb** (zero cost) built from live runner fields — form string, draw, age/weight, jockey, trainer, odds — for every runner missing `timeForm`, in every region.
+  - **Web-grounded Groq summary** strictly gated to aiSelections + movers + odds ≤ 6.0; capped at 6 Groq calls/cycle; cached per horse+date.
+  - Persisted to ChromaDB `form_insights` (`type:"racing_insight"`, `region`, `source:"field_only"|"web"`, `ts`) + `data/swarm_insights.json`; agent notes appended via `curated_memory`.
+  - Chroma freshness gate skips horses already holding today's insight (no double spend).
+- **Region detection**: from Betway display prefix (`"USA: Saratoga"`) with course-keyword fallbacks — USA, Japan, South Africa, UK/IRE, Australia, New Zealand, France, Hong Kong, UAE.
+- **Snapshot enrichment**: `enrich_snapshot_with_insights()` runs inline in every monitor cycle (before `set_snapshot`/SSE push), injecting `region` / `swarmInsight` / `insightSource` onto each runner.
+
+### 🖥️ HUD Insight Surfaces (v10.2 PRO, sw v2.4.0)
+
+- **RaceCard**: region chip (purple) + expandable insight rows — 🔥 Timeform (UK/IRE) or 🌐 Swarm (all other regions) with Show full/less toggle.
+- **Market Movers**: swarm insight strip + reliability badges (✅ Verified = web-grounded, ⚠️ Baseline = field-only) + region chips.
+- **Predictor**: `LiveMarketStrip` extended with region + swarm insight + reliability badges; new `InsightStrip` in expanded prediction cards and detail modal.
+- **News tab**: new sidebar item (`/news`) — thumbnail grid via lazy image proxy, source/region badges, relative timestamps, SSE live updates + REST fallback.
+- Types: `Runner` gains `region?/swarmInsight?/insightSource?/insightTs?`; new `NewsItem`; `HUDState.news`.
+
+### 🔌 Backend plumbing
+
+- `GET /api/news` + `GET /api/news/images?url=` added to `monitoring.py` routes; both plus the SSE stream are in `SAFE_PATHS` (EventSource can't send custom headers).
+- Image proxy: allow-listed CDN hosts only, sha256-keyed disk cache (7-day TTL), `Cache-Control: public, max-age=86400, stale-while-revalidate`.
+- SSE stream gained `event: news` (hash-check pattern shared with market-movers/predictor/results).
+- New data paths in `config/paths.py`: `NEWS_PATH`, `NEWS_IMAGES_DIR`, `SWARM_INSIGHTS_PATH`.
+
 ## 2026-08-21 — News Feed Fix + Money-Math & Stability Fixes
 
 ### News Feed Blank on Production (Root Cause Fix)
