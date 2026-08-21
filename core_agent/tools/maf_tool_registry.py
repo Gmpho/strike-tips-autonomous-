@@ -241,12 +241,12 @@ def calculate_probability_edge(
         return {"error": str(e)}
 
 
-def calculate_max_position(edge_percent: float, strike=None, **kwargs) -> Dict:
-    """Calculate max stake using Half-Kelly, capped at 5% of bankroll."""
+def calculate_max_position(edge_percent: float, strike=None, track: Optional[str] = None, race_number: Optional[int] = None, **kwargs) -> Dict:
+    """Calculate max stake using Half-Kelly (DSI-scaled), capped at 5% of bankroll."""
     if not strike:
         return {"error": "StrikeTips not initialized"}
     try:
-        max_stake = strike.bankroll.calculate_max_stake(edge_percent)
+        max_stake = strike.bankroll.calculate_max_stake(edge_percent, track, race_number)
         return {
             "max_position_allowed": max_stake,
             "current_balance": strike.bankroll.current_bankroll,

@@ -19,7 +19,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 
-from core_agent.core.strike_tips import StrikeTips
+from core_agent.core.strike_tips import StrikeTips, resolve_auto_bet_odds
 from core_agent.config.settings import TRACKS, NOTIFICATIONS
 
 
@@ -409,14 +409,17 @@ class StrikeTipsScheduler:
                                 edge *= 100
                             if edge < min_edge:
                                 continue
-                            raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
-                            
+                            odds = resolve_auto_bet_odds(vb)
+                            if odds is None:
+                                print(f"[AUTO-BET] Skip {horse} @ {track} R{race.get('race_number')}: no bettable market odds")
+                                continue
+
                             # Place the bet!
                             brain.strike.place_bet(
                                 horse=horse,
                                 track=track,
                                 race_number=race.get("race_number", 0),
-                                odds=float(raw_odds),
+                                odds=odds,
                                 edge_percent=edge,
                                 confidence="AUTO_MIDDAY",
                                 distance=race.get("distance"),
@@ -455,7 +458,9 @@ class StrikeTipsScheduler:
                                     odds = float(raw_odds)
 
                                     # Calculate advised stake using Half-Kelly for the notification
-                                    max_stake = brain.strike.bankroll.calculate_max_stake(edge)
+                                    max_stake = brain.strike.bankroll.calculate_max_stake(
+                                        edge, track, race.get("race_number")
+                                    )
                                     advised_stake = min(max_stake, brain.strike.bankroll.current_bankroll * 0.05)
 
                                     # Determine confidence category

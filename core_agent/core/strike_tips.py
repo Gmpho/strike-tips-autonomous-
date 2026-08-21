@@ -29,6 +29,27 @@ def _fire_async(coro):
     except RuntimeError:
         asyncio.run(coro)
 
+
+def resolve_auto_bet_odds(value_bet: Dict) -> Optional[float]:
+    """Return a bettable decimal odd for a value bet, or None if missing/invalid.
+
+    Auto-betting must never assume a price (e.g. defaulting to 2.0): an
+    assumed odd corrupts stake sizing, settlement math, and learning stats.
+    """
+    raw = (
+        value_bet.get("odds_decimal")
+        or value_bet.get("offered_odds")
+        or value_bet.get("bookmaker_odds")
+        or value_bet.get("odds")
+    )
+    if not raw:
+        return None
+    try:
+        odds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return odds if odds > 1.01 else None
+
 try:
     import logging_loki
 except ImportError:
@@ -102,7 +123,7 @@ import sys
 if "/app" not in sys.path:
     sys.path.append("/app")
 
-from core_agent.config.settings import BANKROLL, TRACKS
+from core_agent.config.settings import TRACKS
 
 
 class StrikeTips:
@@ -509,14 +530,10 @@ class StrikeTips:
         # Deterministic Fallback: Generate structured exotic permutations from race runners
         fallback_plays = []
         try:
-            pool_legs_map = {
-                "JACKPOT 1": 4, "JACKPOT 2": 4, "BIPOT 1": 6, "BIPOT 2": 6,
-                "PICK 6": 6, "PLACE ACCUMULATOR": 7,
-            }
+            from core_agent.skills.exotics.builder import resolve_pool_legs
+
             for pool_name, start_race in pool_starts.items():
-                clean_name = pool_name.upper()
-                matched_pool = next((k for k in pool_legs_map if clean_name in k or k in clean_name), "JACKPOT 1")
-                num_legs = pool_legs_map.get(matched_pool, 4)
+                matched_pool, num_legs = resolve_pool_legs(pool_name)
                 
                 legs_list = list(range(start_race, start_race + num_legs))
                 combinations = []
@@ -671,9 +688,9 @@ class StrikeTips:
         if override_stake:
             stake = override_stake
         else:
-            # Use Kelly-based stake from analyzer
-            max_stake = self.bankroll.calculate_max_stake(edge_percent)
-            stake = min(max_stake, BANKROLL.total_bankroll * 0.05)
+            # Use Kelly-based stake from analyzer (DSI-scaled via track/race)
+            max_stake = self.bankroll.calculate_max_stake(edge_percent, track, race_number)
+            stake = min(max_stake, self.bankroll.current_bankroll * 0.05)
 
         # Record the bet
         bet = self.bankroll.record_bet(
@@ -924,8 +941,10 @@ class StrikeTips:
                                 odds = float(raw_odds)
 
                                 # Calculate advised stake using Half-Kelly for the notification
-                                max_stake = self.bankroll.calculate_max_stake(edge)
-                                advised_stake = min(max_stake, BANKROLL.total_bankroll * 0.05)
+                                max_stake = self.bankroll.calculate_max_stake(
+                                    edge, track, race.get("race_number")
+                                )
+                                advised_stake = min(max_stake, self.bankroll.current_bankroll * 0.05)
 
                                 # Determine confidence category
                                 confidence = "STRONG_VALUE" if edge >= 15.0 else "VALUE" if edge >= 8.0 else "MARGINAL"
@@ -1006,12 +1025,18 @@ class StrikeTips:
                                     edge *= 100
                                 if edge < min_edge:
                                     continue
-                                raw_odds = vb.get("odds_decimal") or vb.get("offered_odds") or vb.get("bookmaker_odds") or vb.get("odds") or 2.0
+                                odds = resolve_auto_bet_odds(vb)
+                                if odds is None:
+                                    logger.info(
+                                        "Auto-bet skip %s R%s: no bettable market odds for %s",
+                                        track, race.get("race_number", 0), horse,
+                                    )
+                                    continue
                                 bet = self.place_bet(
                                     horse=horse,
                                     track=track,
                                     race_number=race.get("race_number", 0),
-                                    odds=float(raw_odds),
+                                    odds=odds,
                                     edge_percent=edge,
                                     confidence="AUTO",
                                 )

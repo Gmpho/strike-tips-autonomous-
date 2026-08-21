@@ -7,7 +7,6 @@ from core_agent.bus.events import InboundMessage, OutboundMessage
 class MessageBus:
     def __init__(self) -> None:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
-        self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
         self._subscribers: list[asyncio.Queue[OutboundMessage]] = []
 
     async def publish(self, msg: InboundMessage) -> None:
@@ -46,5 +45,4 @@ class MessageBus:
                 self.inbound.task_done()
 
     async def publish_outbound(self, msg: OutboundMessage) -> None:
-        await self.outbound.put(msg)
         await self._broadcast(msg)

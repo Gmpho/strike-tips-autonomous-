@@ -26,9 +26,11 @@ class AgentLoop:
 
         while state != TurnState.DONE:
             if state == TurnState.RESTORE:
+                # TODO: restore persisted session state (currently in-memory only)
                 state = TurnState.COMPACT
 
             elif state == TurnState.COMPACT:
+                # TODO: implement history compaction (history is hard-capped at 20 in RUN)
                 state = TurnState.COMMAND
 
             elif state == TurnState.COMMAND:

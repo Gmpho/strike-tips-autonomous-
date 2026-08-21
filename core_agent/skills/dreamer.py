@@ -200,12 +200,15 @@ class DreamEngine:
         race = _pick_race(snap)
         course = race.get("course", "Unknown Track")
         race_num = race.get("raceNumber", "?")
-        jockey = race.get("jockey", "")
-        odds = race.get("odds", "")
+        # Jockey/odds/form live on runners, not on the event itself
+        runners = race.get("runners", [])
+        fav = runners[0] if runners else {}
+        jockey = fav.get("jockeyName", fav.get("jockey", ""))
+        odds = fav.get("decimalOdds", fav.get("odds", ""))
         distance = race.get("distance", "")
-        trainer = race.get("trainer", "")
-        weight = race.get("weight", "")
-        form = race.get("form", "")
+        trainer = fav.get("trainerName", fav.get("trainer", ""))
+        weight = fav.get("weight", "")
+        form = fav.get("form", "")
 
 
         scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
@@ -299,13 +302,19 @@ class DreamEngine:
                 target_race = ev
                 break
 
-        if not target_race:
-            # Fallback to a mock race structure if not found in live snapshot
-            target_race = {
-                "course": track.title(),
-                "raceNumber": str(race_num),
-                "runners": [{"name": "Mock Runner", "odds": "5.0", "jockey": "Mock Jockey", "trainer": "Mock Trainer"}]
-            }
+        # Never persist fabricated races: mock data would pollute DSI queries
+        # and LearningEngine priors for this track/race.
+        if target_race is None:
+            return Dream(
+                id=f"dream-{int(datetime.now().timestamp())}",
+                timestamp=datetime.now().isoformat(),
+                scenario=scenario_override,
+                probability_shift=0.0,
+                insight=f"No live race data found for {track.title()} R{race_num} — simulation skipped to protect staking integrity.",
+                vividness=0.0,
+                track=track.title(),
+                race=str(race_num),
+            )
 
         course = target_race.get("course", track.title())
         # Pick the favorite or first runner for context

@@ -216,6 +216,7 @@ class TaskRouter:
                                 lines.append(f"  {r.get('title','').strip()[:80]}")
                                 for h in r.get("runners", [])[:3]:
                                     lines.append(f"  • {h.get('name','?')} — {h.get('position','?')} ({h.get('odds','?')})")
+                            return "\n".join(lines)
                         return f"No results found{f' for {course_filter.title()}' if course_filter else ''}."
 
             # Races / odds — match any track dynamically from the live snapshot
@@ -302,11 +303,19 @@ class TaskRouter:
         if active_model == "auto" and pref_model and pref_model != "auto":
             active_model = pref_model
 
-        # Strict Local Override: If local_only is True, force AUTO cloud routing to run locally.
-        # Explicit cloud model selections still route to their cloud provider.
+        # Strict Local Override: In local-only mode, AUTO routes directly to the
+        # local Ollama model instead of racing cloud providers. Explicit cloud
+        # model selections still route to their cloud provider.
         if local_only and active_model == "auto":
-            logger.info("[TASK_ROUTER] Strict local mode active. Overriding AUTO to local auto.")
-            active_model = "auto"
+            logger.info("[TASK_ROUTER] Strict local mode active. Routing AUTO to local Ollama.")
+            try:
+                async for chunk in self.ollama.stream(messages, None, intent):
+                    yield chunk
+                return
+            except Exception as e:
+                logger.warning("[TASK_ROUTER] Local Ollama unavailable: %s", e)
+                yield "Local model is unavailable. Start Ollama or disable Local-Only mode in settings."
+                return
 
         # If a specific model is explicitly requested, route directly to it
         if active_model and active_model != "auto":

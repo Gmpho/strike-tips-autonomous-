@@ -119,3 +119,82 @@ def test_generate_daily_report(temp_data_dir):
     assert "Horse A" in report
     assert "Today's Open Bets:" in report
     assert "Horse B" in report
+
+def test_exotic_settlement_no_double_deduction(temp_data_dir):
+    """Regression: real-mode exotic bets deducted the stake at placement AND
+    again inside the settlement credit (net return - 2x stake)."""
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    bet = gov.record_exotic_bet(
+        track="Kenilworth",
+        pool_type="PICK 6",
+        pool_legs=[1, 2, 3, 4, 5, 6],
+        combinations=[{"race": 1, "banker": "Horse A", "savers": ["Horse B"]}],
+        ticket_cost=2.0,
+        estimated_dividend=850.0,
+    )
+    assert bet is not None
+    # Placement deducts ticket cost (1 combo x R2.00)
+    assert gov.current_bankroll == pytest.approx(998.0)
+
+    gov.settle_exotic_bet(bet.bet_id, pool_return=850.0)
+
+    # Net must be exactly: start - cost + return (stake deducted once only)
+    assert gov.current_bankroll == pytest.approx(1000.0 - 2.0 + 850.0)
+    assert gov.total_profit_loss == pytest.approx(848.0)
+    # Winning exotic must lift the peak bankroll
+    assert gov.peak_bankroll == pytest.approx(1848.0)
+
+
+def test_exotic_settlement_paper_mode(temp_data_dir):
+    """Paper-mode exotics: balance deducts cost at placement, credits full
+    dividend at settlement."""
+    settings_path = os.path.join(temp_data_dir, "settings.json")
+    with open(settings_path, "w") as f:
+        json.dump({"paper_mode": True, "paper_balance": 1000.0}, f)
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    bet = gov.record_exotic_bet(
+        track="Vaal",
+        pool_type="JACKPOT",
+        pool_legs=[3, 4, 5, 6],
+        combinations=[{"race": 3, "banker": "Horse C", "savers": []}],
+        ticket_cost=1.2,
+        estimated_dividend=450.0,
+    )
+    assert bet is not None
+    assert bet.is_paper is True
+    assert gov.paper_balance == pytest.approx(1000.0 - 1.2)
+
+    gov.settle_exotic_bet(bet.bet_id, pool_return=450.0)
+    assert gov.paper_balance == pytest.approx(1000.0 - 1.2 + 450.0)
+    # Real bankroll untouched in paper mode
+    assert gov.current_bankroll == pytest.approx(1000.0)
+
+
+def test_calculate_max_stake_balance_override(temp_data_dir):
+    """The balance override lets paper mode size stakes against paper_balance."""
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    # 6% edge on a R500 base: kelly = 500*0.06*0.5 = 15, cap = 500*0.05 = 25
+    assert gov.calculate_max_stake(6.0, balance=500.0) == 15.0
+    # Real bankroll unchanged as default base
+    assert gov.calculate_max_stake(6.0) == 30.0
+
+
+def test_paper_record_bet_uses_kelly_staking(temp_data_dir):
+    """Regression: paper mode previously staked a flat 5% of paper balance,
+    ignoring Kelly/DSI sizing entirely."""
+    settings_path = os.path.join(temp_data_dir, "settings.json")
+    with open(settings_path, "w") as f:
+        json.dump({"paper_mode": True, "paper_balance": 1000.0}, f)
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    # Oversized stake request gets capped to Kelly x DSI against paper balance:
+    # kelly = 1000 * 0.10 * 0.5 = 50, capped at 5% = 50
+    bet = gov.record_bet("Greyville", 1, "Paper Horse", 3.0, 1000.0, 10.0, "HIGH")
+    assert bet is not None
+    assert bet.stake == pytest.approx(50.0)
+    assert gov.paper_balance == pytest.approx(950.0)
+
+    # Sub-minimum edge still rejected in paper mode
+    assert gov.record_bet("Greyville", 2, "Weak Horse", 3.0, 10.0, 4.0, "LOW") is None

@@ -237,13 +237,21 @@ class BankrollGovernor:
         edge_percent: float,
         track: Optional[str] = None,
         race_number: Optional[int] = None,
+        balance: Optional[float] = None,
     ) -> float:
-        """Calculate maximum allowed stake using Half-Kelly, scaled by Dream Stress Index (DSI)"""
+        """Calculate maximum allowed stake using Half-Kelly, scaled by Dream Stress Index (DSI)
+
+        Args:
+            balance: Bankroll base for sizing. Defaults to the real current
+                bankroll; pass ``paper_balance`` for paper-mode sizing so
+                simulated bets mirror live Kelly/DSI logic.
+        """
         if edge_percent < self.MIN_EDGE_PERCENT:
             return 0.0
-            
+
+        base_balance = balance if balance is not None else self.current_bankroll
         edge_fraction = edge_percent / 100.0
-        kelly_stake = self.current_bankroll * edge_fraction * self.KELLY_FRACTION
+        kelly_stake = base_balance * edge_fraction * self.KELLY_FRACTION
         
         # Calculate Dream Stress Index (DSI) from ChromaDB simulations
         dsi_scale = 1.0
@@ -282,7 +290,7 @@ class BankrollGovernor:
                 logger.warning(f"Failed to query ChromaDB for DSI calculation: {e}")
                 
         scaled_kelly = kelly_stake * dsi_scale
-        max_stake = self.current_bankroll * (self.MAX_BET_PERCENT / 100.0)
+        max_stake = base_balance * (self.MAX_BET_PERCENT / 100.0)
         return round(min(scaled_kelly, max_stake), 2)
 
     # ─── Bet Operations ─────────────────────────────────────────────────────
@@ -322,7 +330,9 @@ class BankrollGovernor:
                         f"R{paper_settings['paper_balance']:.2f}."
                     )
                     self.paper_balance = float(paper_settings["paper_balance"])
-                max_stake = self.paper_balance * (self.MAX_BET_PERCENT / 100.0)
+                max_stake = self.calculate_max_stake(
+                    edge_percent, track, race_number, balance=self.paper_balance
+                )
             else:
                 max_stake = self.calculate_max_stake(edge_percent, track, race_number)
             if stake > max_stake:
@@ -466,8 +476,13 @@ class BankrollGovernor:
             if is_paper_bet:
                 self.paper_balance += (bet.actual_return or 0.0)
             else:
-                self.current_bankroll += (bet.actual_return or 0.0) - bet.stake
-                self.total_profit_loss += (bet.actual_return or 0.0) - bet.stake
+                # Stake (ticket cost) was already deducted from the bankroll
+                # AND from total_profit_loss at placement, so settlement
+                # credits only the actual dividend on both.
+                self.current_bankroll += (bet.actual_return or 0.0)
+                self.total_profit_loss += (bet.actual_return or 0.0)
+                if self.current_bankroll > self.peak_bankroll:
+                    self.peak_bankroll = self.current_bankroll
 
             logger.info(
                 f"Exotic bet settled: {bet.horse} - {'WON' if won else 'LOST'} "

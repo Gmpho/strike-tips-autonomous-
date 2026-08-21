@@ -43,6 +43,7 @@ async def security_headers_middleware(request: Request, call_next):
 
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 30
+RATE_LIMIT_MAX_KEYS = 10_000  # hard cap on tracked ip:path keys (memory guard)
 _rate_store: dict = {}
 
 
@@ -56,15 +57,23 @@ async def rate_limit_middleware(request: Request, call_next):
     key = f"{client_ip}:{path}"
     now = time.time()
 
-    if key not in _rate_store:
-        _rate_store[key] = []
+    timestamps = _rate_store.get(key)
+    if timestamps is None:
+        # Evict expired/empty keys when the store grows unbounded
+        if len(_rate_store) >= RATE_LIMIT_MAX_KEYS:
+            stale = [k for k, v in _rate_store.items() if not v or now - v[-1] >= RATE_LIMIT_WINDOW]
+            for k in stale:
+                _rate_store.pop(k, None)
+            while len(_rate_store) >= RATE_LIMIT_MAX_KEYS:
+                _rate_store.pop(next(iter(_rate_store)))
+        timestamps = _rate_store[key] = []
 
-    _rate_store[key] = [t for t in _rate_store[key] if now - t < RATE_LIMIT_WINDOW]
+    timestamps[:] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
 
-    if len(_rate_store[key]) >= RATE_LIMIT_MAX:
+    if len(timestamps) >= RATE_LIMIT_MAX:
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again later."})
 
-    _rate_store[key].append(now)
+    timestamps.append(now)
     return await call_next(request)
 
 
@@ -97,10 +106,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Alert condition cleanup skipped: {e}")
 
-    from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
-    monitor = AdaptiveOddsMonitor()
-    bg_task = asyncio.create_task(monitor.run())
-    logger.info("AdaptiveOddsMonitor started as background task")
+    monitor = None
+    tg_channel = None
+    bg_task = None
+    try:
+        from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
+        monitor = AdaptiveOddsMonitor()
+        bg_task = asyncio.create_task(monitor.run())
+        logger.info("AdaptiveOddsMonitor started as background task")
+    except Exception as e:
+        logger.warning("AdaptiveOddsMonitor startup failed: %s", e)
 
     async def start_task_worker():
         from core_agent.core.task_worker import run_worker_loop
@@ -164,33 +179,39 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(warmup_context())
 
-    from core_agent.channels.telegram import TelegramChannel
-    tg_channel = TelegramChannel(bus)
-    await tg_channel.start()
-    logger.info("Telegram channel registered")
+    try:
+        from core_agent.channels.telegram import TelegramChannel
+        tg_channel = TelegramChannel(bus)
+        await tg_channel.start()
+        logger.info("Telegram channel registered")
+    except Exception as e:
+        logger.warning("Telegram channel startup failed: %s", e)
 
     logger.info("Strike Tips Bot fully initialized")
     try:
         yield
     finally:
-        bg_task.cancel()
-        try:
-            await bg_task
-        except asyncio.CancelledError:
-            pass
+        if bg_task is not None:
+            bg_task.cancel()
+            try:
+                await bg_task
+            except asyncio.CancelledError:
+                pass
         if hasattr(app.state, "bus_task"):
             app.state.bus_task.cancel()
             try:
                 await app.state.bus_task
             except asyncio.CancelledError:
                 pass
-        await monitor.close()
-        logger.info("AdaptiveOddsMonitor stopped")
-        try:
-            await tg_channel.stop()
-            logger.info("Telegram channel stopped")
-        except Exception:
-            pass
+        if monitor is not None:
+            await monitor.close()
+            logger.info("AdaptiveOddsMonitor stopped")
+        if tg_channel is not None:
+            try:
+                await tg_channel.stop()
+                logger.info("Telegram channel stopped")
+            except Exception:
+                pass
 
 
 app = FastAPI(title="Strike Bot API", lifespan=lifespan)

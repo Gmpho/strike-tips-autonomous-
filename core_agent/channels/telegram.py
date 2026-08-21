@@ -93,15 +93,30 @@ class TelegramChannel:
                 out: OutboundMessage = await sub.get()
                 if out.channel != "telegram":
                     continue
+                # Streaming deltas are for WS/REST clients; Telegram has no
+                # streaming UX, so send only the final complete message.
+                if out.delta and not out.done:
+                    continue
                 if out.done and not out.content:
                     continue
                 try:
                     prefixed_content = f"{PAPER_MODE_PREFIX}{out.content}"
-                    await self._bot.send_message(
-                        chat_id=out.chat_id,
-                        text=prefixed_content,
-                        parse_mode=out.parse_mode or "Markdown",
-                    )
+                    try:
+                        await self._bot.send_message(
+                            chat_id=out.chat_id,
+                            text=prefixed_content,
+                            parse_mode=out.parse_mode or "Markdown",
+                        )
+                    except Exception as parse_err:
+                        # Unbalanced Markdown entities crash Telegram's parser;
+                        # retry once as plain text so the message isn't lost.
+                        if "parse" in str(parse_err).lower():
+                            await self._bot.send_message(
+                                chat_id=out.chat_id,
+                                text=prefixed_content,
+                            )
+                        else:
+                            raise
                 except Exception as e:
                     logger.warning("Telegram send error to %s: %s", out.chat_id, e)
         except asyncio.CancelledError:

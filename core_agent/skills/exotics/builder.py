@@ -1,5 +1,23 @@
 from typing import Dict, List, Tuple, Any
 
+# Canonical SA pool codes (as extracted from Computaform leg_info) → leg counts.
+# BI1/BI2 = Bipot, JP1/JP2/JP3 = Jackpot, P6 = Pick 6, PA = Place Accumulator.
+POOL_LEG_COUNTS: Dict[str, int] = {"BI": 6, "JP": 4, "P6": 6, "PA": 7}
+POOL_LABELS: Dict[str, str] = {
+    "BI": "BIPOT",
+    "JP": "JACKPOT",
+    "P6": "PICK 6",
+    "PA": "PLACE ACCUMULATOR",
+}
+
+
+def resolve_pool_legs(pool_code: str) -> Tuple[str, int]:
+    """Resolve an extracted pool code (e.g. 'JP1', 'BI2', 'P6', 'PA') to
+    (display_label, leg_count). Unknown codes default to a 4-leg Jackpot."""
+    code = (pool_code or "").upper()
+    prefix = next((p for p in POOL_LEG_COUNTS if code.startswith(p)), None)
+    return POOL_LABELS.get(prefix, "JACKPOT"), POOL_LEG_COUNTS.get(prefix, 4)
+
 
 def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
     total_races = len(races)
