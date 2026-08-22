@@ -2,6 +2,8 @@
 
 Deconstructing the Design Patterns of Modern Algorithmic Wagering
 
+> **Revised August 22, 2026** — updated for the current production architecture: global multi-region coverage, the autonomous Swarm Researcher, triple-source RAG (dreams / research / live news), Dream Stress Index (DSI) staking, and money-correctness hardening in the Governor Gate.
+
 ## Modern AI Betting Systems Fall into Three Architectural Categories
 
 **Monolithic Advisory** — Systems that rely on a single large LLM for analysis (e.g., ChatGPT or Claude for betting). These prioritize general reasoning but lack specialized execution layers.
@@ -25,6 +27,13 @@ Deconstructing the Design Patterns of Modern Algorithmic Wagering
 ```
 Classifier → Qwen-Fast / Gemma-Ops / LFM-Analysis → Cloud-Fallback
 ```
+
+**🆕 Beyond inference: autonomous research agents.** The swarm now includes non-LLM-routing agents that operate continuously on Modal:
+- **Swarm Researcher** (`swarm_researcher.py`, 10-min loop) — backfills form insights for every race region Betway's Timeform doesn't cover (USA, Japan, SA, Australia, NZ, Hong Kong, France, UAE), gated web-grounded Groq summaries (max 6/cycle, cached per horse+day), and polls free RSS news feeds. All output lands in ChromaDB learning memory.
+- **Dream Engine heartbeat** (5-min loop) — speculative scenario simulations persisted to vector memory.
+- **Snapshot enrichment** — every monitor cycle injects region tags + insights onto each runner before the SSE push, so the HUD renders global coverage with zero extra client fetches.
+
+Coverage is now genuinely multi-jurisdiction (~30 tracks/day across nine regions), versus the June report's South-Africa-only framing.
 
 ---
 
@@ -68,10 +77,14 @@ GPT-4o / Claude 3.5 / Gemini 1.5 / Llama 3.1 → Consensus Engine → Majority V
 
 **The Solution**: A deterministic Python layer (The Governor) acts as a Hard Validation Gate. It intercepts every AI suggestion and subjects it to immutable mathematical rules before execution.
 
-**Implementation**: Strike Tips enforces Half-Kelly Criterion limits and a strict 5% Bankroll Cap. If the AI suggests 10%, the Governor automatically truncates it to 5% or rejects it.
+**Implementation**: Strike Tips enforces Half-Kelly Criterion limits and a strict 5% Bankroll Cap. If the AI suggests 10%, the Governor automatically truncates it to 5% or rejects it. Trading halts entirely if daily losses exceed 20%.
+
+**🆕 Dream Stress Index (DSI) — forward-looking stake scaling.** Static caps only limit *how much*; DSI adds a second dimension: *how confident are we under stress?* Stakes scale by how badly speculative scenario simulations destabilize the AI's probability estimates — DSI < 20% → 1.0× (full Half-Kelly), 20–50% → 0.75×, > 50% → 0.50× (Quarter-Kelly). A selection that looks strong statically but collapses under "what if the going turns heavy?" stress is sized down automatically, before any money moves.
+
+**🆕 Money-correctness hardening.** An August 2026 audit closed the class of silent accounting bugs that plague naive betting bots: exotic-bet double-deduction at settlement (fixed — dividends credited once), phantom-odds rejection (`resolve_auto_bet_odds` refuses bets without a real market price instead of assuming 2.0), true Kelly × DSI sizing in paper mode, and correct exotic pool leg-count resolution. All covered by regression tests (suite: 16 → 30).
 
 ```
-AI Reasoning (Non-Deterministic) → GOVERNOR GATE (Deterministic Validation) → Execution (API / Wallet)
+AI Reasoning (Non-Deterministic) → GOVERNOR GATE (Deterministic Validation + DSI Scaling) → Execution (API / Wallet)
 ```
 
 ---
@@ -86,6 +99,26 @@ AI Reasoning (Non-Deterministic) → GOVERNOR GATE (Deterministic Validation) �
 
 ```
 LIVE MARKET DATA FEED → DREAM ENGINE LOOP → CHROMADB / RAG INJECTION
+```
+
+---
+
+## 🆕 Triple-Source RAG: Dreams + Swarm Research + Live News
+
+The June architecture had one synthetic memory source. The production system now fuses **three**, all written through a single `save_racing_insight()` path into the same ChromaDB collection that grounds every live query:
+
+| Source | Cadence | Cost | Content |
+|--------|---------|------|---------|
+| **Dream Insights** | Heartbeat, 5 min | Groq (capped) | Speculative scenario simulations with probability-shift deltas |
+| **Swarm Research** | 10-min loop | Free (field facts) + gated Groq (≤6/cycle) | Per-horse form insights across all regions; `source:"field_only"\|"web"`, region-tagged, freshness-gated per day |
+| **News RAG** | 10-min loop | **Zero** (verbatim RSS) | Real headlines from BBC Sport / The Guardian / Daily Mirror — jockey injuries, scratchings, market moves stored unmodified so the LLM never fabricates news |
+
+**Design principle**: research happens *between* bets at near-zero cost, then compounds — each insight permanently upgrades future analysis via retrieval. Competing systems re-poll paid APIs on every query instead.
+
+```
+DREAM LOOP ─┐
+SWARM RESEARCHER ─┼→ save_racing_insight() → CHROMADB form_insights → RAG GROUNDING
+NEWS POLLER ─┘            (+ curated_memory agent notes)
 ```
 
 ---
@@ -108,7 +141,7 @@ Bet Result → ROI Segment Tracker → Bayesian Engine → Prob Adjustment
 
 | System | Best For | Core Strength | Architectural Trade-off |
 |--------|----------|---------------|------------------------|
-| **Strike Tips** | Autonomous Swarm | Specialized markets requiring high autonomy and low latency. Local-first hybrid swarm with deterministic risk governance. | High initial engineering complexity; requires specialized local hardware (GPU). |
+| **Strike Tips** | Autonomous Swarm | Specialized markets requiring high autonomy and low latency. Local-first hybrid swarm with deterministic risk governance. 🆕 Now multi-region (nine racing jurisdictions) with autonomous form research, triple-source RAG and DSI-scaled staking. | High initial engineering complexity; requires specialized local hardware (GPU). |
 | **WagerGPT** | Consensus Arena | High-confidence betting across multiple mainstream sports. Multi-model consensus reduces individual AI hallucinations. | Significant API costs and increased latency due to parallel cloud inference. |
 | **ParlaySavant** | Conversational Python | User-driven exploration and custom model backtesting. Direct integration of LLM with a live Python execution environment. | Vulnerable to zero-shot code generation errors; requires manual execution. |
 | **OddsJam** | Math Scanner | High-velocity arbitrage and market inefficiency detection. Massive scale; monitors 400+ books with real-time normalization. | Lacks generative reasoning; cannot analyze qualitative game factors (e.g., injuries). |
@@ -122,5 +155,7 @@ Bet Result → ROI Segment Tracker → Bayesian Engine → Prob Adjustment
 **Trend 2**: Deep integration of deterministic risk layers. The "Governor" pattern becomes standard to prevent AI hallucinations from impacting real capital.
 
 **Trend 3**: Speculative simulation (Dreaming) as a standard RAG component. Agents will ground their reasoning in synthetic tactical futures, not just historical data.
+
+**🆕 Trend 4 — already shipped here**: Autonomous research agents that fill data gaps *between* bets at zero marginal cost (Swarm Researcher + free RSS news RAG), rather than re-paying for context on every query. Memory compounds; spend doesn't.
 
 > "Architecture, not just the model, determines the winner in efficient markets."
