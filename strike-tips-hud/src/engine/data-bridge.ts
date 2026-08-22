@@ -29,7 +29,7 @@ export class DataBridge {
     this.refCount++;
     if (this.refCount > 1) return;
     this.connectSSE();
-    this.hydrateNews();
+    this.hydrateFeeds();
     this.scheduleFast();
     this.scheduleSlow();
   }
@@ -89,6 +89,28 @@ export class DataBridge {
     this.sse.addEventListener('news', (e: MessageEvent) => {
       try {
         const items = JSON.parse(e.data);
+        if (Array.isArray(items)) hudStore.updateState({ news: items });
+      } catch (err) {
+        console.error('SSE news parse error:', err);
+      }
+    });
+
+    this.sse.addEventListener('telemetry', (e: MessageEvent) => {
+      try {
+        const fresh = JSON.parse(e.data) as Array<{ engine: string; badge: string; message: string; ts: number }>;
+        if (!Array.isArray(fresh)) return;
+        const existing = hudStore.getState().telemetry || [];
+        const seen = new Set(existing.map(t => `${t.engine}|${t.message}|${t.ts}`));
+        const merged = [...fresh.filter(t => !seen.has(`${t.engine}|${t.message}|${t.ts}`)), ...existing].slice(0, 30);
+        hudStore.updateState({ telemetry: merged });
+      } catch (err) {
+        console.error('SSE telemetry parse error:', err);
+      }
+    });
+
+    this.sse.addEventListener('news', (e: MessageEvent) => {
+      try {
+        const items = JSON.parse(e.data);
         if (Array.isArray(items)) {
           hudStore.updateState({ news: items });
         }
@@ -112,6 +134,20 @@ export class DataBridge {
     if (this.sse) {
       this.sse.close();
       this.sse = null;
+    }
+  }
+
+  /** One-shot REST hydration for news + telemetry before SSE events arrive. */
+  private async hydrateFeeds() {
+    await this.hydrateNews();
+    try {
+      const telRes = await apiFetch('/api/telemetry');
+      if (telRes.ok) {
+        const data = await telRes.json();
+        if (Array.isArray(data.events)) hudStore.updateState({ telemetry: data.events.slice(0, 30) });
+      }
+    } catch (err) {
+      console.error('Telemetry hydration failed:', err);
     }
   }
 

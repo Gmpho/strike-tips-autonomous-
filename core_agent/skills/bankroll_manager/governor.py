@@ -30,6 +30,40 @@ def _load_paper_settings(data_dir: str) -> dict:
 
 logger = logging.getLogger("bankroll-governor")
 
+_DSI_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "dsi_cache.json")
+
+
+def _cache_dsi(track: str, race_number: Optional[int], dsi: float, scale: float) -> None:
+    """Persist last-computed DSI per track:race for HUD badges + emit telemetry."""
+    try:
+        cache = {}
+        if os.path.exists(_DSI_CACHE_PATH):
+            with open(_DSI_CACHE_PATH) as f:
+                cache = json.load(f)
+        key = f"{str(track).lower()}:{race_number}"
+        prev = cache.get(key, {}).get("scale")
+        cache[key] = {"dsi": round(dsi, 3), "scale": scale, "ts": datetime.now().isoformat()}
+        # Cap file at 200 most-recent entries (dict order ≈ insertion).
+        if len(cache) > 200:
+            cache = dict(sorted(cache.items(), key=lambda kv: kv[1].get("ts", ""), reverse=True)[:200])
+        tmp = _DSI_CACHE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cache, f)
+        os.replace(tmp, _DSI_CACHE_PATH)
+
+        from core_agent.core.telemetry import emit
+        pct = round(dsi * 100)
+        if scale == 1.0:
+            if prev != 1.0:
+                emit("governor", f"🛡️ DSI {pct}% @ {track} R{race_number} — low stress, full Half-Kelly")
+        else:
+            emit(
+                "governor",
+                f"⚖️ DSI Stake Adjusted @ {track} R{race_number}: stress {pct}% → sizing ×{scale:g}",
+            )
+    except Exception as e:
+        logger.debug(f"DSI cache write failed: {e}")
+
 
 @dataclass
 class BetRecord:
@@ -274,18 +308,21 @@ class BankrollGovernor:
                         
                         if dsi < 0.20:
                             dsi_scale = 1.0
+                            _cache_dsi(track, race_number, dsi, dsi_scale)
                         elif dsi <= 0.50:
                             dsi_scale = 0.75
                             logger.info(
                                 f"[GOVERNOR] DSI = {dsi*100:.1f}% (moderate stress). "
                                 f"Staking scaled by 0.75x"
                             )
+                            _cache_dsi(track, race_number, dsi, dsi_scale)
                         else:
                             dsi_scale = 0.50
                             logger.info(
                                 f"[GOVERNOR] DSI = {dsi*100:.1f}% (high stress under adverse scenarios). "
                                 f"Staking scaled by 0.50x (Quarter-Kelly)"
                             )
+                            _cache_dsi(track, race_number, dsi, dsi_scale)
             except Exception as e:
                 logger.warning(f"Failed to query ChromaDB for DSI calculation: {e}")
                 

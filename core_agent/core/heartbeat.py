@@ -48,6 +48,16 @@ async def _run_heartbeat_tick(memory=None):
         # 3. Update heartbeat.md
         _update_heartbeat_md(dream)
 
+        # 4. Telemetry push for the HUD sidebar stream
+        try:
+            from core_agent.core.telemetry import emit
+            emit(
+                "dream",
+                f"🌀 {dream.track} R{dream.race} — {dream.scenario[:80]} → shift {dream.probability_shift:+.1%}",
+            )
+        except Exception:
+            pass
+
         logger.info(f"💓 Heartbeat tick: {dream.track} — {dream.scenario[:60]}")
 
     except Exception as e:

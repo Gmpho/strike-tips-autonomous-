@@ -3,7 +3,7 @@ import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X } from 'lucide-re
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
-import type { RaceEvent } from '../types';
+import type { RaceEvent, Runner } from '../types';
 
 const SESSIONS_STORAGE_KEY = 'strike_chat_sessions';
 const ACTIVE_SESSION_KEY = 'strike_active_chat_session';
@@ -21,7 +21,7 @@ interface Message {
   activity?: string;
 }
 
-function formatRaceCardPrompt(event: RaceEvent): string {
+function formatRaceCardPrompt(event: RaceEvent, focusRunner?: Runner): string {
   const runnersText = event.runners
     .map((r, i) => {
       const odds = typeof r.odds === 'number' ? r.odds.toFixed(2) : r.odds || 'SP';
@@ -30,20 +30,22 @@ function formatRaceCardPrompt(event: RaceEvent): string {
       return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}`;
     })
     .join('\n');
+  const focusLine = focusRunner ? `\nFOCUS RUNNER: ${focusRunner.name}${typeof focusRunner.odds === 'number' ? ` @ ${focusRunner.odds.toFixed(2)}` : ''} — analyse this runner's value case in depth (form, draw, jockey/trainer stats, and how it compares to the field below).\n` : '';
   return `Analyse this race for value betting opportunities:
 
-Course: ${event.course} | Race ${event.raceNumber} | Off Time: ${event.t}
+Course: ${event.course} | Race ${event.raceNumber} | Off Time: ${event.t}${focusLine}
 Runners:
 ${runnersText}
 
-Identify the best value selection, estimate the probability edge, and flag any high-strike-rate jockey/trainer combos.`;
+${focusRunner ? `Assess whether ${focusRunner.name} represents a value bet versus the rest of the field, then flag any alternative selections.` : 'Identify the best value selection, estimate the probability edge, and flag any high-strike-rate jockey/trainer combos.'}`;
 }
 
 export interface AIChatProps {
   initialRaceEvent?: RaceEvent;
+  initialRunner?: Runner;
 }
 
-export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
+export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner }) => {
   // 1. Sessions State Management
 
   const [sessions, setSessions] = useState<Session[]>(() => {
@@ -89,8 +91,8 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
   // Pre-fill textarea with race card prompt when launched from Execute Position
   useEffect(() => {
     if (!initialRaceEvent) return;
-    const prompt = formatRaceCardPrompt(initialRaceEvent);
-    const sessionTitle = `${initialRaceEvent.course} R${initialRaceEvent.raceNumber}`;
+    const prompt = formatRaceCardPrompt(initialRaceEvent, initialRunner);
+    const sessionTitle = `${initialRaceEvent.course} R${initialRaceEvent.raceNumber}${initialRunner ? ` · ${initialRunner.name}` : ''}`;
     const newId = `race_${initialRaceEvent.id}_${Date.now()}`;
     const newSession: Session = { id: newId, title: sessionTitle, timestamp: Date.now() };
     setSessions(prev => [newSession, ...prev]);
@@ -103,7 +105,7 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent }) => {
         textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
       }
     }, 50);
-  }, [initialRaceEvent]);
+  }, [initialRaceEvent, initialRunner]);
 
 
   // Dispatch WebGPU activity event to pause Three.js rendering during local inference

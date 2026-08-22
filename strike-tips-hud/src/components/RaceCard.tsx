@@ -1,55 +1,128 @@
-import React, { useState } from 'react';
-import type { RaceEvent } from '../types';
-import { Zap, Activity, Timer, ChevronDown, ChevronUp, Flame, Star, CircleDot, Globe, ChevronRight, ChevronLeft } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import type { RaceEvent, Runner } from '../types';
+import { Zap, Activity, Timer, ChevronDown, ChevronUp, ChevronUp as SortAsc, ChevronDown as SortDesc, Flame, Star, CircleDot, Globe } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface RaceCardProps {
   event: RaceEvent;
   idx?: number;
   onExecutePosition?: (event: RaceEvent) => void;
+  onExecuteRunner?: (event: RaceEvent, runner: Runner) => void;
 }
 
-const TimeformExpandable: React.FC<{ text: string; label: string; icon: React.ReactNode }> = ({ text, icon }) => {
-  const [expanded, setExpanded] = useState(false);
+type SortKey = 'name' | 'age' | 'draw' | 'starRating' | 'form' | 'edge' | 'odds';
+
+interface SortState {
+  key: SortKey;
+  dir: 1 | -1;
+}
+
+const COLUMNS = 10;
+
+function sortValue(r: Runner, key: SortKey): number | string {
+  switch (key) {
+    case 'name':
+      return (r.name || '').toLowerCase();
+    case 'age': {
+      const m = (r.age || '').match(/\d+/);
+      return m ? parseInt(m[0], 10) : 999;
+    }
+    case 'draw':
+      return typeof r.draw === 'number' ? r.draw : 999;
+    case 'starRating':
+      return r.starRating || 0;
+    case 'form':
+      return r.form || '';
+    case 'edge':
+      return typeof r.edge === 'number' ? r.edge : -999;
+    case 'odds': {
+      const o = typeof r.odds === 'number' ? r.odds : parseFloat(String(r.odds)) || 0;
+      return o > 0 ? o : 99999;
+    }
+  }
+}
+
+function InsightBanner({ text, kind }: { text: string; kind: 'timeform' | 'swarm' }) {
+  const isTimeform = kind === 'timeform';
   return (
-    <div className="mt-1">
-      <div className="flex items-start gap-1 text-xs font-semibold text-slate-400 leading-snug">
-        {icon}
-        <span className={expanded ? '' : 'line-clamp-2 max-w-[280px] overflow-hidden'}>{text}</span>
+    <div
+      className={`flex items-start gap-2 px-3 py-2 rounded-xl border ${
+        isTimeform
+          ? 'bg-amber-500/5 border-amber-500/15'
+          : 'bg-cyan-500/5 border-cyan-500/15'
+      }`}
+    >
+      {isTimeform ? (
+        <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+      ) : (
+        <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+      )}
+      <div className="min-w-0">
+        <p className={`text-[8px] font-black uppercase tracking-widest mb-0.5 ${isTimeform ? 'text-amber-400/70' : 'text-cyan-400/70'}`}>
+          {isTimeform ? 'Timeform Comment' : 'Swarm Insight'}
+        </p>
+        <p className="text-xs font-medium text-slate-300 leading-snug">{text}</p>
       </div>
-      <button
-        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-        className="mt-0.5 text-[9px] text-cyan-400 hover:text-cyan-300 flex items-center gap-0.5 font-bold uppercase tracking-wider"
-      >
-        {expanded ? (
-          <>
-            <ChevronLeft className="w-3 h-3" />
-            Show less
-          </>
-        ) : (
-          <>
-            Show full
-            <ChevronRight className="w-3 h-3" />
-          </>
-        )}
-      </button>
     </div>
   );
-};
+}
 
-export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, onExecutePosition }) => {
+export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, onExecutePosition, onExecuteRunner }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'value' | 'favourite' | 'outsider'>('value');
-  
+  const [sort, setSort] = useState<SortState | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
+
   const topHorse = event.runners?.[0];
   const hasMarketData = topHorse && typeof topHorse.odds === 'number' && topHorse.odds > 0;
-  
+
   // Resolve runner based on selectedCategory
   const selections = event.aiSelections || {};
   const selectedRunner = selections[selectedCategory] || selections['value'] || selections['favourite'] || selections['outsider'] || topHorse;
-  
+
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 1 };
+      if (prev.dir === 1) return { key, dir: -1 };
+      return null;
+    });
+  };
+
+  const sortedRunners = useMemo(() => {
+    const runners = [...(event.runners || [])];
+    if (!sort) return runners;
+    return runners.sort((a, b) => {
+      const va = sortValue(a, sort.key);
+      const vb = sortValue(b, sort.key);
+      let cmp: number;
+      if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+      else cmp = String(va).localeCompare(String(vb));
+      return cmp * sort.dir;
+    });
+  }, [event.runners, sort]);
+
+  const SortHeader: React.FC<{ label: React.ReactNode; sortKey: SortKey; className?: string }> = ({ label, sortKey, className = '' }) => {
+    const active = sort?.key === sortKey;
+    return (
+      <th className={`py-3 px-2 cursor-pointer select-none hover:text-theme-primary transition-colors ${active ? 'text-purple-400' : ''} ${className}`}>
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleSort(sortKey); }}
+          className="inline-flex items-center gap-0.5 uppercase font-black"
+          aria-label={`Sort by ${sortKey}`}
+        >
+          {label}
+          {active ? (
+            sort?.dir === 1 ? <SortAsc className="w-2.5 h-2.5" /> : <SortDesc className="w-2.5 h-2.5" />
+          ) : (
+            <ChevronDown className="w-2.5 h-2.5 opacity-30" />
+          )}
+        </button>
+      </th>
+    );
+  };
+
   return (
-    <motion.div 
+    <motion.div
       key={event.id}
       initial={{ x: -20, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
@@ -68,6 +141,17 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
             <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em]">
               {event.course} | RACE {event.raceNumber || '---'}
             </span>
+            {typeof event.dsi === 'number' && event.dsi > 0 && (
+              <span className={`px-1.5 py-0.5 text-[8px] font-black rounded border uppercase ${
+                event.dsi < 0.2
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : event.dsi <= 0.5
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                    : 'bg-red-500/10 text-red-400 border-red-500/30'
+              }`}>
+                DSI {Math.round(event.dsi * 100)}%
+              </span>
+            )}
           </div>
           <h2 className="text-2xl font-black text-theme-primary tracking-tighter uppercase">{event.course} R{event.raceNumber}</h2>
         </div>
@@ -170,56 +254,97 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
       ) : (
         <div className="mt-4 overflow-x-auto animate-in fade-in slide-in-from-top-4 duration-500">
           <table className="w-full text-[11px] text-left border-collapse">
-            <thead className="sticky top-0 bg-theme-secondary">
+            <thead className="sticky top-0 bg-theme-secondary z-10">
               <tr className="text-theme-secondary border-b border-theme uppercase font-black">
-                <th className="py-3 px-2">Horse</th>
+                <SortHeader label="Horse" sortKey="name" />
                 <th className="py-3 px-2">Jockey/Trainer</th>
-                <th className="py-3 px-2">Age</th>
+                <SortHeader label="Age" sortKey="age" />
                 <th className="py-3 px-2">Wgt</th>
-                <th className="py-3 px-2">Draw</th>
-                <th className="py-3 px-2"><Star className="w-3 h-3 inline" /></th>
-                <th className="py-3 px-2">Form</th>
-                <th className="py-3 px-2 text-right">Odds</th>
+                <SortHeader label="Draw" sortKey="draw" className="text-center" />
+                <SortHeader label={<Star className="w-3 h-3 inline" />} sortKey="starRating" className="text-center" />
+                <SortHeader label="Form" sortKey="form" />
+                <SortHeader label="Edge" sortKey="edge" className="text-right" />
+                <SortHeader label="Odds" sortKey="odds" className="text-right" />
+                <th className="py-3 px-2 text-right"><Zap className="w-3 h-3 inline opacity-50" /></th>
               </tr>
             </thead>
             <tbody className="text-theme-primary font-mono">
-            {event.runners.map((r) => (
-              <tr key={r.name} className="border-b border-theme hover:bg-purple-500/10 transition-colors align-top">
-                <td className="py-3 px-2">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <div className="font-black text-sm leading-tight">{r.name}</div>
-                    {r.region && (
-                      <span className="px-1.5 py-0.5 text-[8px] font-black rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase">
-                        {r.region}
-                      </span>
-                    )}
-                  </div>
-                  {r.timeForm && (
-                    <TimeformExpandable text={r.timeForm} label="Timeform" icon={<Flame className="w-3 h-3 shrink-0 text-amber-400 mt-0.5" />} />
+            {sortedRunners.map((r) => {
+              const insightText = r.timeForm || r.swarmInsight || '';
+              const insightKind: 'timeform' | 'swarm' = r.timeForm ? 'timeform' : 'swarm';
+              const isExpanded = expandedRow === r.name;
+              const hasInsight = Boolean(insightText);
+              const edgeVal = typeof r.edge === 'number' ? r.edge : null;
+              return (
+                <React.Fragment key={r.name}>
+                  <tr className={`border-b border-theme hover:bg-purple-500/10 transition-colors ${isExpanded ? 'bg-purple-500/5' : ''}`}>
+                    <td className="py-2.5 px-2 align-middle">
+                      <button
+                        onClick={() => hasInsight && setExpandedRow(isExpanded ? null : r.name)}
+                        disabled={!hasInsight}
+                        className={`flex items-center gap-1.5 text-left ${hasInsight ? 'cursor-pointer group/row' : 'cursor-default'}`}
+                        aria-expanded={isExpanded}
+                        title={hasInsight ? (isExpanded ? 'Hide insight' : 'Show insight') : undefined}
+                      >
+                        {hasInsight && (isExpanded
+                          ? <ChevronUp className="w-3 h-3 shrink-0 text-purple-400" />
+                          : <ChevronDown className="w-3 h-3 shrink-0 text-slate-500 group-hover/row:text-purple-400 transition-colors" />)}
+                        <span className="font-black text-sm leading-tight whitespace-nowrap">{r.name}</span>
+                        {r.region && (
+                          <span className="px-1.5 py-0.5 text-[8px] font-black rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase shrink-0">
+                            {r.region}
+                          </span>
+                        )}
+                      </button>
+                    </td>
+                    <td className="py-2.5 px-2 text-[10px] opacity-80 whitespace-nowrap align-middle">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
+                    <td className="py-2.5 px-2 font-bold whitespace-nowrap align-middle">{r.age ? r.age.replace(' years', 'yo') : '-'}</td>
+                    <td className="py-2.5 px-2 whitespace-nowrap align-middle">{r.weight || '-'}</td>
+                    <td className="py-2.5 px-2 text-center font-black align-middle">{typeof r.draw === 'number' ? r.draw : '-'}</td>
+                    <td className="py-2.5 px-2 text-center text-amber-400 align-middle">
+                      {r.starRating && r.starRating > 0 ? (
+                        <span className="flex items-center justify-center gap-0.5">
+                          {Array.from({ length: Math.min(r.starRating, 5) }).map((_, si) => (
+                            <Star key={si} className="w-2.5 h-2.5 fill-amber-400" />
+                          ))}
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td className="py-2.5 px-2 font-bold align-middle">{r.form || '-'}</td>
+                    <td className="py-2.5 px-2 text-right align-middle whitespace-nowrap">
+                      {edgeVal !== null && edgeVal > 0 ? (
+                        <span className="font-black text-emerald-400 tabular-nums" title={r.winProbability ? `Model win probability: ${(r.winProbability * 100).toFixed(1)}%` : undefined}>
+                          +{edgeVal.toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-2 text-right font-black text-purple-500 text-sm whitespace-nowrap align-middle">
+                      {(typeof r.odds === 'number' && r.odds > 0) ? r.odds.toFixed(2) : (r.odds || 'SP')}
+                    </td>
+                    <td className="py-2.5 px-2 text-right align-middle">
+                      <button
+                        onClick={() => onExecuteRunner?.(event, r)}
+                        disabled={!onExecuteRunner}
+                        className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-purple-300 transition-all active:scale-90 disabled:opacity-40"
+                        aria-label={`Analyze ${r.name} with AI chat`}
+                        title={`Analyze ${r.name}`}
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                  {isExpanded && hasInsight && (
+                    <tr className="border-b border-theme">
+                      <td colSpan={COLUMNS} className="py-2 px-2">
+                        <InsightBanner text={insightText} kind={insightKind} />
+                      </td>
+                    </tr>
                   )}
-                  {!r.timeForm && r.swarmInsight && (
-                    <TimeformExpandable text={r.swarmInsight} label="Swarm" icon={<Globe className="w-3 h-3 shrink-0 text-cyan-400 mt-0.5" />} />
-                  )}
-                </td>
-                <td className="py-3 px-2 text-[10px] opacity-80 whitespace-nowrap">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
-                <td className="py-3 px-2 font-bold whitespace-nowrap">{r.age || '-'}</td>
-                <td className="py-3 px-2 whitespace-nowrap">{r.weight || '-'}</td>
-                <td className="py-3 px-2 text-center font-black">{typeof r.draw === 'number' ? r.draw : '-'}</td>
-                <td className="py-3 px-2 text-center text-amber-400">
-                  {r.starRating && r.starRating > 0 ? (
-                    <span className="flex items-center justify-center gap-0.5">
-                      {Array.from({ length: Math.min(r.starRating, 5) }).map((_, si) => (
-                        <Star key={si} className="w-2.5 h-2.5 fill-amber-400" />
-                      ))}
-                    </span>
-                  ) : '-'}
-                </td>
-                <td className="py-3 px-2 font-bold">{r.form || '-'}</td>
-                <td className="py-3 px-2 text-right font-black text-purple-500 text-sm whitespace-nowrap">
-                  {(typeof r.odds === 'number' && r.odds > 0) ? r.odds.toFixed(2) : (r.odds || 'SP')}
-                </td>
-              </tr>
-            ))}
+                </React.Fragment>
+              );
+            })}
             </tbody>
             </table>
             </div>
@@ -244,4 +369,3 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
             </motion.div>
             );
             });
-            

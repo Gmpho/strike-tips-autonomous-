@@ -28,6 +28,7 @@ SAFE_PATHS = {
     "/api/racing/exotics",
     "/api/news",
     "/api/news/images",
+    "/api/telemetry",
 }
 
 

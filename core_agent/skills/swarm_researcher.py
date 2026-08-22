@@ -320,10 +320,17 @@ def enrich_snapshot_with_insights(state: Dict) -> None:
 
     Any runner without timeForm prose gets a deterministic field blurb instantly.
     Pre-existing swarm/web insights (keyed by outcomeId) take priority.
+    Also stamps the last-known Dream Stress Index per track:race onto events.
     """
     swarm = load_swarm_insights()
+    dsi_cache = _load_dsi_cache()
     for eid, event in state.get("events", {}).items():
         region = _detect_region(event)
+        course_key = (event.get("course") or "").lower()
+        race_num = str(event.get("raceNumber", "")).strip()
+        dsi_entry = dsi_cache.get(f"{course_key}:{race_num}")
+        if dsi_entry and isinstance(dsi_entry.get("dsi"), (int, float)):
+            event["dsi"] = float(dsi_entry["dsi"])
         for runner in event.get("runners", []):
             if not runner.get("timeForm"):
                 oid = str(runner.get("outcomeId") or "")
@@ -337,6 +344,17 @@ def enrich_snapshot_with_insights(state: Dict) -> None:
                     existing.get("source") or "field_only"
                 )
                 runner["insightTs"] = existing.get("ts") or datetime.now().isoformat()
+
+
+def _load_dsi_cache() -> Dict:
+    path = os.path.join(DATA_DIR, "dsi_cache.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
 
 async def backfill_form_insights(state: Dict) -> int:
@@ -414,6 +432,16 @@ async def backfill_form_insights(state: Dict) -> int:
             logger.info(f"[SWARM] Web-grounded insight: {name} ({region})")
 
     save_swarm_insights(swarm)
+
+    if groq_calls or len(swarm):
+        try:
+            from core_agent.core.telemetry import emit
+            emit(
+                "swarm",
+                f"🐝 Form backfill: {len(swarm)} runners tracked, {groq_calls} web-grounded this cycle",
+            )
+        except Exception:
+            pass
     return groq_calls
 
 
@@ -572,7 +600,124 @@ async def poll_news() -> int:
 
     if new_count:
         logger.info(f"[SWARM] News polled: {len(deduped)} items, {new_count} new")
+    try:
+        from core_agent.core.telemetry import emit
+        if new_count:
+            emit("news", f"📰 {new_count} new stories ({len(deduped)} cached) — BBC/Guardian/Mirror")
+    except Exception:
+        pass
+
+    # Link stories to live snapshot horses/tracks → ChromaDB learning memory.
+    today = datetime.now().strftime("%Y-%m-%d")
+    linked = _link_news_to_insights(
+        deduped, seen_path=os.path.join(DATA_DIR, f"news_linked_{today}.json")
+    )
+    if linked:
+        try:
+            from core_agent.core.telemetry import emit
+            emit("news", f"🏷️ {linked} stories linked to racecards in learning memory")
+        except Exception:
+            pass
     return new_count
+
+
+def _link_news_to_insights(items: List[Dict], seen_path: Optional[str] = None) -> int:
+    """ChromaDB link: store news verbatim when it names a horse/track in the live snapshot.
+
+    Zero LLM cost — headline + summary stored as-is so retrieval grounds the AI
+    in real current events without fabrication risk. Returns count linked.
+
+    Args:
+        items: normalised news items (id/title/summary/...).
+        seen_path: optional persistence file for already-linked ids. When None
+            the function is pure/stateless (used by tests).
+    """
+    if not items:
+        return 0
+    try:
+        from core_agent.core.snapshot_cache import get_snapshot
+        snap = get_snapshot() or {}
+        events = snap.get("events", {})
+        if not events:
+            return 0
+    except Exception:
+        return 0
+
+    # Build lookup sets: normalised horse names + course names per region.
+    def _n(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    horses: Dict[str, Dict] = {}
+    courses: Dict[str, Dict] = {}
+    for ev in events.values():
+        course = _n(ev.get("course", ""))
+        region = ev.get("en", "").split(":")[0].strip() or "Unknown"
+        if course:
+            courses[course] = {"course": ev.get("course", ""), "region": region}
+        for r in ev.get("runners", []):
+            hn = _n(r.get("name", ""))
+            if hn:
+                horses[hn] = {
+                    "horse": r.get("name", ""),
+                    "course": ev.get("course", ""),
+                    "region": region,
+                }
+
+    linked_ids: set = set()
+    if seen_path and os.path.exists(seen_path):
+        try:
+            with open(seen_path) as f:
+                linked_ids = set(json.load(f))
+        except Exception:
+            linked_ids = set()
+
+    linked = 0
+    for item in items:
+        iid = item.get("id") or ""
+        if not iid or iid in linked_ids:
+            continue
+        hay = _n(f"{item.get('title', '')} {item.get('summary', '')}")
+        if len(hay) < 6:
+            continue
+        match = horses.get(hay)
+        if not match:
+            for hn, meta in horses.items():
+                if len(hn) >= 5 and hn in hay:
+                    match = meta
+                    break
+        if not match:
+            for cn, meta in courses.items():
+                if len(cn) >= 4 and cn in hay:
+                    match = {"horse": f"track_{meta['course']}", "course": meta["course"], "region": meta["region"]}
+                    break
+        if not match:
+            continue
+        ok = save_racing_insight(
+            match["horse"],
+            insight=f"[NEWS {item.get('published', '')[:16]}] {item.get('title', '')} | {(item.get('summary') or '')[:200]}",
+            metadata={
+                "type": "racing_insight",
+                "horse": match["horse"],
+                "course": match["course"],
+                "region": match["region"],
+                "source": "news",
+                "url": item.get("url", ""),
+                "ts": datetime.now().isoformat(),
+            },
+        )
+        if ok:
+            linked += 1
+            linked_ids.add(iid)
+
+    if linked and seen_path:
+        tmp = seen_path + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(sorted(linked_ids), f)
+            os.replace(tmp, seen_path)
+        except Exception:
+            pass
+    return linked
 
 
 async def run_swarm_loop(interval: int = 600):

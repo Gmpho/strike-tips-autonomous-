@@ -28,6 +28,7 @@ export interface RaceEvent {
   runners: Runner[];
   complexity?: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
   predictionConfidence?: number;
+  dsi?: number;
   aiSelections?: {
     value?: Runner;
     favourite?: Runner;
@@ -128,6 +129,13 @@ export interface NewsItem {
   published: string;
 }
 
+export interface TelemetryEvent {
+  ts: number;
+  engine: 'swarm' | 'news' | 'dream' | 'governor' | 'system' | string;
+  badge: string;
+  message: string;
+}
+
 export interface ResultRunner {
   name: string;
   position: string;
@@ -172,5 +180,6 @@ export interface HUDState {
   predictions: Predictor[];
   results: ResultRace[];
   news: NewsItem[];
+  telemetry: TelemetryEvent[];
   lastUpdate: number;
 }

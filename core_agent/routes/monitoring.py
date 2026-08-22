@@ -32,6 +32,7 @@ async def stream_snapshot(request: Request):
         last_pred_hash = ""
         last_results_hash = ""
         last_news_hash = ""
+        last_telemetry_count = 0
 
         while True:
             try:
@@ -81,6 +82,17 @@ async def stream_snapshot(request: Request):
                     if n_hash != last_news_hash:
                         last_news_hash = n_hash
                         yield f"event: news\ndata: {json.dumps(news_data)}\n\n"
+
+                # Check engine telemetry for new events
+                try:
+                    from core_agent.core.telemetry import get_events
+                    events_now = get_events(30)
+                    if len(events_now) > last_telemetry_count:
+                        fresh = events_now[: len(events_now) - last_telemetry_count]
+                        last_telemetry_count = len(events_now)
+                        yield f"event: telemetry\ndata: {json.dumps(fresh)}\n\n"
+                except Exception:
+                    pass
 
                 await asyncio.sleep(2)
             except asyncio.CancelledError:
@@ -242,6 +254,16 @@ async def get_news():
     except Exception as e:
         logger.warning(f"News read failed: {e}")
         return {"items": [], "count": 0, "error": str(e)}
+
+
+@router.get("/telemetry")
+async def get_telemetry():
+    """Recent engine telemetry events (swarm/news/dream/governor), newest-first."""
+    try:
+        from core_agent.core.telemetry import get_events
+        return {"events": get_events(30)}
+    except Exception as e:
+        return {"events": [], "error": str(e)}
 
 
 @router.get("/news/images")

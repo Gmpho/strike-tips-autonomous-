@@ -52,6 +52,7 @@ class HUDStore {
     predictions: [],
     results: [],
     news: [],
+    telemetry: [],
     lastUpdate: Date.now()
   };
 

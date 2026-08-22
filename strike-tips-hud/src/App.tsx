@@ -5,7 +5,7 @@ import { useTelegram } from './hooks/useTelegram';
 import { usePWA } from './hooks/usePWA';
 import { UpdateToast } from './components/UpdateToast';
 import { apiFetch } from './lib/api-fetch';
-import type { RaceEvent } from './types';
+import type { RaceEvent, Runner } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
@@ -28,6 +28,7 @@ const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMov
 const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
 const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
+const TelemetryView = React.lazy(() => import('./components/sidebar/TelemetryView').then(m => ({ default: m.TelemetryView })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
@@ -48,7 +49,7 @@ const ViewFallback = () => (
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact'];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
-  'healing', 'vitals', 'dreaming', 'news', 'market-movers', 'predictor', 'results',
+  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
 
@@ -80,6 +81,7 @@ export const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAllRaces, setShowAllRaces] = useState(false);
   const [pendingRaceEvent, setPendingRaceEvent] = useState<RaceEvent | null>(null);
+  const [pendingRunner, setPendingRunner] = useState<Runner | undefined>(undefined);
 
   // The three.js ambient canvas is decorative and heavy (~840KB). Mount it only on
   // capable desktops, and defer it until after LCP so it never blocks first paint.
@@ -168,6 +170,12 @@ export const App: React.FC = () => {
                   event={event as RaceEvent}
                   idx={idx}
                   onExecutePosition={(ev) => {
+                    setPendingRunner(undefined);
+                    setPendingRaceEvent(ev);
+                    navigate('chat');
+                  }}
+                  onExecuteRunner={(ev, runner) => {
+                    setPendingRunner(runner);
                     setPendingRaceEvent(ev);
                     navigate('chat');
                   }}
@@ -187,7 +195,7 @@ export const App: React.FC = () => {
       case 'agents':
         return <Suspense key="agents-view" fallback={<ViewFallback />}><AgentDashboard /></Suspense>;
       case 'chat':
-        return <Suspense key="chat-view" fallback={<ViewFallback />}><AIChat initialRaceEvent={pendingRaceEvent ?? undefined} /></Suspense>;
+        return <Suspense key="chat-view" fallback={<ViewFallback />}><AIChat initialRaceEvent={pendingRaceEvent ?? undefined} initialRunner={pendingRunner} /></Suspense>;
       case 'exotics':
         return <Suspense key="exotics-view" fallback={<ViewFallback />}><ExoticsView /></Suspense>;
       case 'bankroll':
@@ -204,6 +212,8 @@ export const App: React.FC = () => {
         return <Suspense key="vitals-view" fallback={<ViewFallback />}><SystemVitalsView /></Suspense>;
       case 'news':
         return <Suspense key="news-view" fallback={<ViewFallback />}><NewsView /></Suspense>;
+      case 'telemetry':
+        return <Suspense key="telemetry-view" fallback={<ViewFallback />}><TelemetryView /></Suspense>;
       case 'dreaming':
         return <Suspense key="dreaming-view" fallback={<ViewFallback />}><DreamingView /></Suspense>;
       case 'market-movers':
