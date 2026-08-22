@@ -33,6 +33,8 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
 - **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
 - **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
+- **📡 Live Ops Telemetry** - Dedicated sidebar tab streaming real-time engine activity (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments) over SSE — engine status cards + live activity stream, zero polling ([docs](docs/LIVE_OPS_TELEMETRY.md))
+- **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header
 
 ---
 
@@ -129,6 +131,25 @@ data/news_latest.json  (deduped, capped, atomic tmp+rename writes)
 **Frontend flow:** `DataBridge` is the single source of truth — it hydrates the store via REST on startup, then keeps it fresh from the SSE `news` event. `NewsView` renders from the store only (no duplicate fetching). Summaries are HTML-stripped client-side (Guardian embeds markup).
 
 Both `/api/news`, `/api/news/images` and the SSE stream are in `SAFE_PATHS` (no API key) since `EventSource` cannot send custom headers.
+
+---
+
+## 📡 Live Ops — Engine Telemetry
+
+Dedicated sidebar tab (`/telemetry`, 📡 next to News) streaming real-time background-engine activity:
+
+```
+emit(engine, message) from Swarm Researcher / News poller / Dream heartbeat / Governor
+        │  core_agent/core/telemetry.py — in-memory ring buffer (100 events)
+        │  + best-effort Redis fanout on agent:telemetry
+        ▼
+GET /api/monitoring/stream → SSE event: telemetry   (one shared connection)
+GET /api/telemetry         → REST hydration         (newest-first, max 30)
+        ▼
+DataBridge → hudStore.telemetry → Live Ops tab
+```
+
+The tab shows one **status card per engine** (Active/Idle + relative time + latest message) for the four engines — Swarm Researcher, News RAG, Dreaming Engine, Governor — plus a chronological activity stream. The Governor's DSI adjustments are also persisted per track:race (`data/dsi_cache.json`) and stamped onto snapshot events, rendering a stress chip (🟢 <20% / 🟠 20–50% / 🔴 >50%) on RaceCards. Full details: [`docs/LIVE_OPS_TELEMETRY.md`](docs/LIVE_OPS_TELEMETRY.md).
 
 ---
 

@@ -36,6 +36,7 @@ The **Swarm Researcher** (`core_agent/skills/swarm_researcher.py`) backfills for
 *   **Dual Insight Rows**: 🔥 **Timeform** prose for UK/IRE runners, 🌐 **Swarm** insight (deterministic field facts, upgraded to web-grounded Groq summaries for aiSelections/movers/short-priced runners) everywhere else — both expandable with Show full/less.
 *   **Reliability Badges**: ✅ *Verified* (web-grounded) vs ⚠️ *Baseline* (field-only) on Market Movers and Predictor views — backed by ChromaDB `racing_insight` metadata (`source`, `ts`) with a per-day freshness gate so no insight is ever paid for twice.
 *   **📰 News Tab** (`/news`): live racing headlines from BBC Sport / The Guardian / Daily Mirror RSS — polled free every 10 min by the same researcher loop, pushed over SSE `event: news`, images served through a lazy disk-cached proxy (7-day TTL). See the [Racing News Pipeline](../README.md#-racing-news-pipeline) section in the README.
+*   **📡 Live Ops Tab** (`/telemetry`): dedicated "Agents in Action" view — one status card per background engine (Swarm Researcher, News RAG, Dreaming Engine, Governor) with Active/Idle badges, relative timestamps and latest message, plus a chronological activity stream. Pushed over SSE `event: telemetry`; the Agent Pipeline widget stays untouched. RaceCards additionally render a DSI stress chip when the Governor has computed dream stress for that track:race. See [`docs/LIVE_OPS_TELEMETRY.md`](LIVE_OPS_TELEMETRY.md).
 
 ---
 

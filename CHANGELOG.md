@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-22 — Live Ops Telemetry + RaceCard Table UX + News-Linking Fix
+
+### 📡 Live Ops — Engine Telemetry Stream (new sidebar tab)
+
+- **`core_agent/core/telemetry.py` (new)**: in-memory ring buffer (100 events, newest-first) + best-effort Redis fanout on `agent:telemetry`. `emit(engine, message, badge)` never raises; works in sync or async contexts. Events from four engines: `swarm` / `news` / `dream` / `governor`.
+- **Emit points wired**: Swarm form backfill (runners tracked + Groq calls used), news polls (+ per-cycle link counts), Dream heartbeat ticks (track/race/scenario/shift), Governor DSI adjustments ("⚖️ DSI 42% → sizing ×0.75").
+- **Transport**: SSE stream gained `event: telemetry` (same hash/count-check pattern as the other events) — one connection for everything; plus REST `GET /api/telemetry` for initial hydration. Both in `SAFE_PATHS`.
+- **HUD — dedicated "Live Ops" tab** (`TelemetryView.tsx`, 📡 next to News): four tidy engine cards (Swarm Researcher / News RAG / Dreaming Engine / Governor) each with Active/Idle badge, relative timestamp and last message — plus a live Activity Stream below. The Agent Pipeline widget stays untouched (an earlier draft injected badges there; reverted after review).
+
+### 🖥️ RaceCard Expanded-Table UX
+
+- **Collapsible insight banners**: Timeform/Swarm commentary moved out of the horse cell into a full-width sub-row banner (`colSpan`) toggled by a chevron on the horse name — primary rows now keep uniform height, no more narrow-strip text squeeze on mobile.
+- **Sortable headers**: click-to-sort on Horse / Age / Draw / ★ / Form / Odds with asc→desc→off cycling; default stays snapshot order.
+- **Edge column**: new column before Odds shows model value `+X.X%` (emerald, tooltip = model win probability) where daily-scan value-bet data exists, em-dash otherwise.
+- **Per-row ⚡ execution**: lightning button on every row opens AI Chat prefilled with that race *and focused on that specific runner* (`FOCUS RUNNER:` prompt section + session title suffix). Same safe review-in-chat flow as the card-level Execute button.
+
+### 🔗 Governor DSI surfaced to HUD
+
+- `calculate_max_stake` now persists last-computed DSI/scale per track:race to `data/dsi_cache.json` (capped 200 entries); snapshot enrichment stamps `event.dsi` so RaceCards show a stress chip — 🟢 <20% / 🟠 20–50% / 🔴 >50%.
+
+### 🐛 News-linking statefulness bug (caught by Docker testing)
+
+- `_link_news_to_insights()` read/wrote a global seen-ids file, making it stateful across runs — a first run persisted ids that silently blocked all future links (and broke tests). Refactored to a **pure function** with optional `seen_path`; `poll_news()` passes the daily file, tests stay stateless. Added persistence regression test.
+
+### Tests
+
+- Suite grew 30 → **44**: telemetry ring buffer/badges/cap/latest-per-engine (7) + news-linking matching, course fallbacks, short-name guard, dedupe, seen-path persistence (7). All green locally and inside Docker.
+
 ## 2026-08-21 — Swarm Researcher (All-Region Form Insights) + HUD Insight Surfaces
 
 ### 🐝 Swarm Researcher (`core_agent/skills/swarm_researcher.py` — new)
