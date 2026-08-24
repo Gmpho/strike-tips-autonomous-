@@ -6,18 +6,21 @@ const CLOUDFLARE_ENDPOINTS = new Set([
 ])
 
 // Backend origins in priority order. Primary (Modal) fails → next origin serves,
-// so a Modal credit outage degrades to Cloud Run instead of going dark.
-// Set BACKEND_FALLBACK_ORIGIN in Vercel env vars to your Cloud Run URL.
+// so a Modal credit outage degrades to Cloud Run / tunnel instead of going dark.
+// Set BACKEND_FALLBACK_ORIGIN in Vercel env vars to your backup URL.
 const FALLBACK_ORIGIN = (process.env.BACKEND_FALLBACK_ORIGIN || '').replace(/\/$/, '')
 const BACKEND_ORIGINS: string[] = [
   'https://gmpho--strike-tips-racing-serve-api.modal.run',
   ...(FALLBACK_ORIGIN ? [FALLBACK_ORIGIN] : []),
 ]
 
-// Remember the last healthy origin for 60s to avoid probing on every request.
+// A dark backend (e.g. suspended Modal function) answers 404 quickly — that is
+// NOT health. Origins are validated with a real /api/system/health probe.
 let healthyOrigin: string | null = null
 let healthyAt = 0
 const HEALTH_TTL_MS = 60_000
+const PROBE_TIMEOUT_MS = 3_000
+const FORWARD_TIMEOUT_MS = 25_000
 
 export const config = {
   matcher: ['/api/:path*', '/v1/:path*', '/mcp'],
@@ -30,6 +33,15 @@ async function fetchWithTimeout(targetUrl: string, init: RequestInit, ms: number
     return await fetch(targetUrl, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+  }
+}
+
+async function probeHealthy(origin: string): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${origin}/api/system/health`, { method: 'GET' }, PROBE_TIMEOUT_MS)
+    return res.ok
+  } catch {
+    return false
   }
 }
 
@@ -54,35 +66,33 @@ export default async function middleware(request: Request) {
     const response = await fetchWithTimeout(
       `${healthyOrigin}${url.pathname}${url.search}`,
       { method: request.method, headers, body: request.body },
-      25_000,
+      FORWARD_TIMEOUT_MS,
     )
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
 
-  // Probe origins in priority order — first success wins and is cached.
+  // Validate origins with a real health probe — first healthy one wins.
   for (const origin of BACKEND_ORIGINS) {
-    try {
+    if (await probeHealthy(origin)) {
+      healthyOrigin = origin
+      healthyAt = Date.now()
       headers.set('X-API-KEY', process.env.STRIKE_TIPS_API_KEY || '')
       const response = await fetchWithTimeout(
         `${origin}${url.pathname}${url.search}`,
         { method: request.method, headers, body: request.body },
-        25_000,
+        FORWARD_TIMEOUT_MS,
       )
-      // Origin answered — treat as healthy even for 4xx (auth handled downstream).
-      if (response.status < 500 || response.status === 401 || response.status === 404) {
-        healthyOrigin = origin
-        healthyAt = Date.now()
-        return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
-      }
-      // 5xx → try next origin
-    } catch {
-      // Network error / timeout → try next origin
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
     }
   }
 
-  // All origins failed — surface a clean 503 instead of hanging.
-  return new Response(JSON.stringify({ detail: 'All backend origins unavailable' }), {
-    status: 503,
-    headers: { 'content-type': 'application/json' },
-  })
+  // No origin healthy — forward to primary as last resort so behaviour
+  // degrades identically to the pre-failover middleware.
+  headers.set('X-API-KEY', process.env.STRIKE_TIPS_API_KEY || '')
+  const response = await fetchWithTimeout(
+    `${BACKEND_ORIGINS[0]}${url.pathname}${url.search}`,
+    { method: request.method, headers, body: request.body },
+    FORWARD_TIMEOUT_MS,
+  )
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
 }
