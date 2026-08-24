@@ -7,11 +7,47 @@ const FAST_INTERVAL = 5000;
 const SLOW_INTERVAL = 15000;
 const MAX_FAST_BACKOFF = 60000;
 const MAX_SLOW_BACKOFF = 120000;
-// Connect directly to the Modal SSE origin to bypass the Vercel Edge middleware
-// runtime cap (~300s). /api/monitoring/stream is in SAFE_PATHS (no API key needed)
+// Connect directly to the backend SSE origin (bypasses the Vercel Edge
+// middleware runtime cap). /api/monitoring/stream is in SAFE_PATHS (no API key)
 // and the backend CORS allows the production origin.
-const SSE_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run';
-const SSE_URL = `${SSE_ORIGIN}/api/monitoring/stream`;
+// Origins are probed in priority order — when Modal is dark (e.g. credit gap),
+// the bridge fails over to the next origin automatically.
+const SSE_ORIGINS = [
+  // Dev: same-origin first — Vite proxy forwards /api/* to the local backend.
+  ...(import.meta.env.DEV ? [''] : []),
+  'https://gmpho--strike-tips-racing-serve-api.modal.run',
+  ...((import.meta as any).env?.VITE_SSE_FALLBACK_ORIGIN
+    ? [(import.meta as any).env.VITE_SSE_FALLBACK_ORIGIN.replace(/\/$/, '')]
+    : []),
+];
+let activeSseOrigin: string | null = null;
+// Remember recently-failed origins so reconnects skip the 4s probe stall.
+const failedOrigins = new Map<string, number>();
+const ORIGIN_RETRY_MS = 60_000;
+
+async function pickSseOrigin(): Promise<string> {
+  if (activeSseOrigin) return activeSseOrigin;
+  const now = Date.now();
+  for (const origin of SSE_ORIGINS) {
+    const failedAt = failedOrigins.get(origin);
+    if (failedAt && now - failedAt < ORIGIN_RETRY_MS) continue;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`${origin}/api/system/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok || res.status === 401 || res.status === 404) {
+        activeSseOrigin = origin;
+        failedOrigins.delete(origin);
+        return origin;
+      }
+      failedOrigins.set(origin, now);
+    } catch {
+      failedOrigins.set(origin, now);
+    }
+  }
+  return SSE_ORIGINS[0]; // none healthy yet; default and retry on reconnect
+}
 
 export class DataBridge {
   private fastTimer: number | null = null;
@@ -44,9 +80,10 @@ export class DataBridge {
     this.disconnectSSE();
   }
 
-  private connectSSE() {
+  private async connectSSE() {
     this.disconnectSSE();
-    this.sse = new EventSource(SSE_URL);
+    const origin = await pickSseOrigin();
+    this.sse = new EventSource(`${origin}/api/monitoring/stream`);
 
     this.sse.addEventListener('snapshot', (e: MessageEvent) => {
       try {
