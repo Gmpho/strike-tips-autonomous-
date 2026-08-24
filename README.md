@@ -153,6 +153,18 @@ The tab shows one **status card per engine** (Active/Idle + relative time + late
 
 ---
 
+## 🔌 Backend Failover (Modal ↔ Tunnel ↔ Local)
+
+The HUD survives backend outages (e.g. Modal credit gaps) via automatic origin failover:
+
+- **`middleware.ts`** validates each backend with a real `/api/system/health` probe (a suspended Modal answers 404 fast — that's *not* healthy) and routes to `BACKEND_FALLBACK_ORIGIN` when the primary is dark.
+- **`data-bridge.ts`** probes SSE origins in order (dev same-origin → Modal → `VITE_SSE_FALLBACK_ORIGIN`) with a 60s negative cache on dark origins.
+- Current bridge: **Cloudflare tunnel → local Docker** (same FastAPI, same scrapers). Cloud Run deploy is prepared in `deploy-cloud-run.sh`, pending GCP billing.
+
+⚠️ During a failover window, bet history/analytics shown come from the **fallback's** data copy — the canonical Modal Volume (`strike-tips-data`) and ChromaDB Cloud persist untouched and return automatically when Modal does. Full details + Sept-1 reconciliation checklist: [`docs/FAILOVER_BRIDGE.md`](docs/FAILOVER_BRIDGE.md).
+
+---
+
 ## 🐝 Swarm Researcher — Form Insights for Every Region
 
 Betway only publishes Timeform prose (`timeForm`) + star ratings for **UK/Ireland** cards — USA, Japan, South Africa, Australia, NZ and Hong Kong runners arrive with empty commentary. The Swarm Researcher (`core_agent/skills/swarm_researcher.py`) fills that gap for **all regions**, on a strict no-waste budget:

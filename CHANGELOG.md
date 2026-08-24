@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-23 — Modal Credit-Gap Failover (Cloud Run attempt → Cloudflare Tunnel bridge)
+
+### 🚨 Situation
+Modal credits exhausted until Sep 1 — production API dark. Built a failover bridge so the HUD keeps working off the local Docker stack.
+
+### 🔌 HUD Automatic Failover
+- **`middleware.ts` rewritten**: proxies `/api/*`+`/v1/*` with **real health-probe validation** (`GET /api/system/health`, 3s timeout) before trusting an origin — a suspended Modal answers `404` fast, which a naive check mistakes for healthy (bug caught pre-deploy). Healthy origin cached 60s; falls back to `BACKEND_FALLBACK_ORIGIN`.
+- **`data-bridge.ts`**: SSE origins probed in priority order — dev same-origin (Vite proxy → local Docker) first, then Modal, then `VITE_SSE_FALLBACK_ORIGIN`; dark origins negative-cached 60s so reconnects don't stall.
+- **Dev SSE fix**: `/predictor`, `/market-movers`, `/results` were blank in dev because SSE hardcoded to dark Modal while the dashboard showed stale localStorage. Dev now routes SSE through the Vite proxy to the local backend — verified live: 44 races, 306 movers, 42 predictions, 1,050 result races.
+- Vercel env vars added: `BACKEND_FALLBACK_ORIGIN`, `VITE_SSE_FALLBACK_ORIGIN`. Production verified serving live UK/IRE card through the bridge.
+
+### 🥅 Cloudflare Tunnel bridge
+- Local Docker (`strike-bot-new`) exposed via `cloudflared` quick tunnel under a supervisor loop (`/tmp/opencode/tunnel-supervisor.sh`).
+- Backend CORS: added `allow_origin_regex` for rotating `*.trycloudflare.com` hosts (`api_pkg/__init__.py`).
+- Known limitation: quick-tunnel URLs rotate on restart → named tunnel (needs a CF domain) or Cloud Run are the durable options.
+
+### ☁️ Cloud Run attempt (blocked, fully prepared)
+- gcloud CLI installed via apt (snap version has broken OAuth — `redirect_uri` 400s).
+- `deploy-cloud-run.sh`: one-command deploy (Cloud Build from repo Dockerfile, env from `.env`, SSE-compatible timeouts, `MIN_INSTANCES` toggle for background loops).
+- Blocked on Google billing (`OR_BACR2_44` — closed billing profile, new-profile creation rejected). Resume checklist in `docs/FAILOVER_BRIDGE.md`.
+
+### 💾 Data-divergence finding (important)
+- Modal Volume `strike-tips-data` + ChromaDB Cloud **persist through the credit gap** — no production data lost. The fallback serves local Docker's own `data/` copy, so analytics/history look different until Sep 1. Bets placed during the gap land in the local copy only — reconcile into the Modal volume on return (checklist in docs).
+
+### 📚 Docs
+- New `docs/FAILOVER_BRIDGE.md` — architecture, Cloud Run resume checklist, data-divergence table, Sep 1 return checklist.
+
 ## 2026-08-22 — Live Ops Telemetry + RaceCard Table UX + News-Linking Fix
 
 ### 📡 Live Ops — Engine Telemetry Stream (new sidebar tab)
