@@ -1,0 +1,109 @@
+{
+  "url": "https://strike-tips-hud.vercel.app/",
+  "timestamp": "2026-07-14 20:00:44",
+  "metrics": {
+    "ttfb": 128.10000000009313,
+    "domContentLoaded": 1492.2999999998137,
+    "loadTime": 1497.1000000000931,
+    "webglInfo": {
+      "supported": true,
+      "vendor": "Google Inc. (Google)",
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "isSoftware": true
+    },
+    "lcp": 5748,
+    "lcpEntries": [
+      {
+        "startTime": 5748,
+        "duration": 0,
+        "size": 23012,
+        "id": "",
+        "url": ""
+      }
+    ]
+  },
+  "errors": [],
+  "console_logs": [
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_set_header_color {color_key: bg_color}",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_set_bottom_bar_color {color: #ffffff}",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_request_theme ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_request_viewport ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_request_safe_area ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_request_content_safe_area ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_ready ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[Telegram.WebView] > postEvent web_app_expand ",
+      "location": {
+        "url": "https://telegram.org/js/telegram-web-app.js",
+        "lineNumber": 134,
+        "columnNumber": 12
+      }
+    },
+    {
+      "type": "log",
+      "text": "[SW] Registered successfully: https://strike-tips-hud.vercel.app/",
+      "location": {
+        "url": "https://strike-tips-hud.vercel.app/",
+        "lineNumber": 26,
+        "columnNumber": 33
+      }
+    }
+  ]
+}

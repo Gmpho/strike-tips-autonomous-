@@ -277,7 +277,7 @@ python deploy_modal.py
 
 **Cost:** ~$0.60/month (well within Modal's free $30 credit)
 
-See [MODAL_README.md](MODAL_README.md) for details.
+See [docs/MODAL_README.md](docs/MODAL_README.md) for details.
 
 ---
 
@@ -694,7 +694,7 @@ MIT License - see [LICENSE](LICENSE) file
 | [`docs/AGENTS.md`](docs/AGENTS.md) | Agent coding guidelines, build commands, project structure |
 | [`docs/MCP_INTEGRATION_GUIDE.md`](docs/MCP_INTEGRATION_GUIDE.md) | MCP protocol, n8n integration, Claude Desktop setup |
 | [`docs/MODAL_README.md`](docs/MODAL_README.md) | Modal serverless deployment |
-| [`walkthrough.md`](walkthrough.md) | Execution logs and test verification |
+| [`docs/MODAL_README.md`](docs/MODAL_README.md) | Modal serverless deployment |
 | [`docs/PRIVACY.md`](docs/PRIVACY.md) | Privacy policy |
 | [`docs/TERMS.md`](docs/TERMS.md) | Terms of service |
 | [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md) | Legal disclaimer |

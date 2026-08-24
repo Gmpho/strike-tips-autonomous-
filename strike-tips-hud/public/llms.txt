@@ -1,0 +1,23 @@
+# STRIKE TIPS | HUD
+
+> Strike Tips is a real-time horse racing intelligence platform for South African racing. It combines AI-driven race analysis, market scanning, predictive pricing, and an automated betting assistant, surfaced through a live HUD dashboard and a Telegram bot.
+
+## Key Features
+
+- **Racing Intelligence**: Live race cards for South African courses (Greyville, Turffontein, Fairview, Kenilworth, Vaal, Scottsville, Durbanville, and more) with AI selections for Value, Favourite, and Outsider picks.
+- **AI Predictions**: Edge-based pricing models, form analysis, jockey/trainer stats, and predicted win probabilities.
+- **Market Movers**: Track live market movement and drifting/steaming horses across bookmakers.
+- **Bankroll & ROI analytics**: Kelly-criterion stake sizing, daily limits, exposure tracking, and ROI-by-odds-bracket analytics.
+- **Exotics Planning**: Exacta, Trifecta, and multi-leg planning tools.
+- **Telegram Integration**: Push notifications for settled bets, value alerts, and daily tips.
+- **PWA HUD**: Works offline via service worker, installable on mobile and desktop, with a three.js ambient background (desktop only).
+
+## Product Docs
+
+- [Documentation](https://strike-tips-hud.vercel.app/)
+
+## Notes
+
+- 18+ individuals only. No persons under the age of 18 are permitted to bet.
+- All betting events are fixed-odds and involve risk. Gambling is a national programme concern in South Africa — the National Responsible Gambling Programme can be reached at 0800 006 008 or WhatsApp "HELP" to 076 675 0710.
+- Licensed with the MPUMALANGA ECONOMIC REGULATOR.
