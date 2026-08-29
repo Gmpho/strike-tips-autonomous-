@@ -10,8 +10,9 @@ const MAX_SLOW_BACKOFF = 120000;
 // Connect directly to the backend SSE origin (bypasses the Vercel Edge
 // middleware runtime cap). /api/monitoring/stream is in SAFE_PATHS (no API key)
 // and the backend CORS allows the production origin.
-// Origins are probed in priority order — when Modal is dark (e.g. credit gap),
-// the bridge fails over to the next origin automatically.
+// Modal is the primary origin. A fallback (e.g. Cloud Run / self-hosted) is
+// optional and only used when VITE_SSE_FALLBACK_ORIGIN is set — it is never
+// hard-coded, so the primary stays Modal unless you opt in.
 const SSE_ORIGINS = [
   // Dev: same-origin first — Vite proxy forwards /api/* to the local backend.
   ...(import.meta.env.DEV ? [''] : []),

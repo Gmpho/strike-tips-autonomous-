@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-27 — Backend cleanup: remove Cloudflare quick-tunnel, Modal stays primary
+
+### 🔧 Routing simplified (Modal-only by default)
+- Removed the Cloudflare **quick-tunnel** (`trycloudflare`/`cloudflared`) from the active code path — no tunnel in `middleware.ts`, `data-bridge.ts`, or backend CORS.
+- **Modal remains the primary backend** (`serve-api`), first in priority and wins whenever healthy.
+- **Cloudflare Worker MCP kept** — the fixed read/MCP endpoint set still routes to the always-on Worker, separate from the primary backend.
+- Fallback is now **strictly opt-in**: set `BACKEND_FALLBACK_ORIGIN` / `VITE_SSE_FALLBACK_ORIGIN` in Vercel env (e.g. a Cloud Run URL). Nothing hard-coded.
+- Backend CORS: removed the `*.trycloudflare.com` `allow_origin_regex` from `core_agent/api_pkg/__init__.py`.
+- Docs rewritten with placeholders (no hardcoded URLs): `docs/FAILOVER_BRIDGE.md` + README backend section.
+
 ## 2026-08-23 — Modal Credit-Gap Failover (Cloud Run attempt → Cloudflare Tunnel bridge)
 
 ### 🚨 Situation

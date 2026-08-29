@@ -1,3 +1,5 @@
+// Cloudflare Worker MCP endpoints — these are served by the Cloudflare
+// Worker (always-on, free) and are separate from the primary backend.
 const CLOUDFLARE_ENDPOINTS = new Set([
   '/api/health', '/api/edge', '/api/kelly', '/api/circuit',
   '/api/bayesian', '/api/keywords', '/api/evaluate', '/api/verify-card',
@@ -5,17 +7,20 @@ const CLOUDFLARE_ENDPOINTS = new Set([
   '/api/knowledge',
 ])
 
-// Backend origins in priority order. Primary (Modal) fails → next origin serves,
-// so a Modal credit outage degrades to Cloud Run / tunnel instead of going dark.
-// Set BACKEND_FALLBACK_ORIGIN in Vercel env vars to your backup URL.
+// PRIMARY backend — Modal is always preferred.
+const MODAL_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run'
+// Optional fallback origin (Cloud Run / self-hosted). Leave unset to run on
+// Modal only. Set BACKEND_FALLBACK_ORIGIN in Vercel env vars to enable it.
+// No fallback URL is hard-coded here — Modal is always primary.
 const FALLBACK_ORIGIN = (process.env.BACKEND_FALLBACK_ORIGIN || '').replace(/\/$/, '')
 const BACKEND_ORIGINS: string[] = [
-  'https://gmpho--strike-tips-racing-serve-api.modal.run',
+  MODAL_ORIGIN,
   ...(FALLBACK_ORIGIN ? [FALLBACK_ORIGIN] : []),
 ]
 
 // A dark backend (e.g. suspended Modal function) answers 404 quickly — that is
-// NOT health. Origins are validated with a real /api/system/health probe.
+// NOT health. Origins are validated with a real /api/system/health probe, and
+// the first *healthy* one wins, so Modal stays primary automatically.
 let healthyOrigin: string | null = null
 let healthyAt = 0
 const HEALTH_TTL_MS = 60_000
@@ -60,7 +65,7 @@ export default async function middleware(request: Request) {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
 
-  // Fast path: cached healthy origin within TTL
+  // Fast path: cached healthy origin within TTL (Modal by default).
   if (healthyOrigin && Date.now() - healthyAt < HEALTH_TTL_MS) {
     headers.set('X-API-KEY', process.env.STRIKE_TIPS_API_KEY || '')
     const response = await fetchWithTimeout(
@@ -71,7 +76,7 @@ export default async function middleware(request: Request) {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
 
-  // Validate origins with a real health probe — first healthy one wins.
+  // Probe origins in priority order — first healthy one wins (Modal first).
   for (const origin of BACKEND_ORIGINS) {
     if (await probeHealthy(origin)) {
       healthyOrigin = origin
@@ -86,8 +91,7 @@ export default async function middleware(request: Request) {
     }
   }
 
-  // No origin healthy — forward to primary as last resort so behaviour
-  // degrades identically to the pre-failover middleware.
+  // No origin healthy — forward to the primary (Modal) as a last resort.
   headers.set('X-API-KEY', process.env.STRIKE_TIPS_API_KEY || '')
   const response = await fetchWithTimeout(
     `${BACKEND_ORIGINS[0]}${url.pathname}${url.search}`,

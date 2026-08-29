@@ -2,6 +2,19 @@
 
 This document provides guidelines for AI agents working in this repository.
 
+> **Spec is truth — read it first.** This repo now uses **OpenSpec (v1.11.0, spec-driven)**. The Brain lives in `openspec/project.md` — it describes the 3-layer racing stack, constraints, and conventions so agents don't hallucinate structure. All new features/changes go through `openspec/changes/<kebab-name>/` deltas.
+
+**OpenSpec workflow (use these, not ad-hoc edits):**
+- `openspec/project.md` — project snapshot (tech stack, architecture, key paths) — **agents must read before proposing/implementing**
+- `/opsx:explore` — zero-risk investigation (read-only) before coding
+- `/opsx:propose` — scaffold `proposal.md` + `specs/<capability>/spec.md` + `design.md` + `tasks.md` under `openspec/changes/<name>/`
+- `/opsx:apply` — execute `tasks.md` checklist step-by-step
+- `openspec archive --yes` — merge deltas into `openspec/specs/` and clean up change folder
+- Check status: `openspec status --change <name> --json` ; Instructions: `openspec instructions <artifact> --change <name> --json`
+- CLI: `openspec --version` (now 1.11.0), `openspec update --force` to refresh prompts
+
+Current active change: `add-swarm-researcher` (swarm-researcher specs at `openspec/changes/add-swarm-researcher/specs/swarm-researcher/spec.md`). Next features queue feature-by-feature — ask which one to propose next.
+
 ---
 
 ## Project Overview

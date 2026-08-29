@@ -153,15 +153,25 @@ The tab shows one **status card per engine** (Active/Idle + relative time + late
 
 ---
 
-## 🔌 Backend Failover (Modal ↔ Tunnel ↔ Local)
+## 🔌 Backend Routing (Modal primary · optional self-hosted fallback)
 
-The HUD survives backend outages (e.g. Modal credit gaps) via automatic origin failover:
+The HUD keeps **Modal as the primary backend** at all times, with an optional
+opt-in fallback for developers who want extra resilience (e.g. Cloud Run):
 
-- **`middleware.ts`** validates each backend with a real `/api/system/health` probe (a suspended Modal answers 404 fast — that's *not* healthy) and routes to `BACKEND_FALLBACK_ORIGIN` when the primary is dark.
-- **`data-bridge.ts`** probes SSE origins in order (dev same-origin → Modal → `VITE_SSE_FALLBACK_ORIGIN`) with a 60s negative cache on dark origins.
-- Current bridge: **Cloudflare tunnel → local Docker** (same FastAPI, same scrapers). Cloud Run deploy is prepared in `deploy-cloud-run.sh`, pending GCP billing.
+- **`middleware.ts`** — Modal is first and wins whenever healthy. A fixed set of
+  read/MCP endpoints goes to the always-on **Cloudflare Worker**; everything else
+  goes to Modal. Each backend is validated with a real `/api/system/health`
+  probe (a suspended Modal answers 404 fast — that's *not* healthy). An explicit
+  `BACKEND_FALLBACK_ORIGIN` env var (never hard-coded) adds a fallback origin.
+- **`data-bridge.ts`** — SSE probes origins in order (dev same-origin → Modal →
+  optional `VITE_SSE_FALLBACK_ORIGIN`) with a 60s negative cache on dark origins.
+- No Cloudflare **quick-tunnel** is used in the active path. Cloud Run remains an
+  **optional** companion — deploy script ready in `deploy-cloud-run.sh`.
 
-⚠️ During a failover window, bet history/analytics shown come from the **fallback's** data copy — the canonical Modal Volume (`strike-tips-data`) and ChromaDB Cloud persist untouched and return automatically when Modal does. Full details + Sept-1 reconciliation checklist: [`docs/FAILOVER_BRIDGE.md`](docs/FAILOVER_BRIDGE.md).
+⚠️ During a failover window, bet history/analytics shown come from the fallback's
+data copy — the canonical Modal Volume (`strike-tips-data`) and ChromaDB Cloud
+persist untouched and return automatically when Modal does. Full details (with
+placeholders, no hardcoded URLs): [`docs/FAILOVER_BRIDGE.md`](docs/FAILOVER_BRIDGE.md).
 
 ---
 
