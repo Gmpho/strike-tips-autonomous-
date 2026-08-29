@@ -15,6 +15,9 @@ This document provides guidelines for AI agents working in this repository.
 
 Current active change: `add-swarm-researcher` (swarm-researcher specs at `openspec/changes/add-swarm-researcher/specs/swarm-researcher/spec.md`). Next features queue feature-by-feature — ask which one to propose next.
 
+**Full guide:** `docs/openspec-usage.md` — lifecycle, `tasks.md` checkbox format, spec/convention rules, worked example, and CLI cheat sheet. Read it before running propose/apply/archive.
+**Refference:** 'Readme' with docs.
+
 ---
 
 ## Project Overview
