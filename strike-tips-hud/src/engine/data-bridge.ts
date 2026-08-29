@@ -146,17 +146,6 @@ export class DataBridge {
       }
     });
 
-    this.sse.addEventListener('news', (e: MessageEvent) => {
-      try {
-        const items = JSON.parse(e.data);
-        if (Array.isArray(items)) {
-          hudStore.updateState({ news: items });
-        }
-      } catch (err) {
-        console.error('SSE news parse error:', err);
-      }
-    });
-
     this.sse.onerror = () => {
       this.disconnectSSE();
       setTimeout(() => this.connectSSE(), this.sseReconnectMs);
@@ -177,7 +166,12 @@ export class DataBridge {
 
   /** One-shot REST hydration for news + telemetry before SSE events arrive. */
   private async hydrateFeeds() {
-    await this.hydrateNews();
+    // Run news + telemetry hydration in parallel — the sequential await here
+    // delayed telemetry by however long the (slow) news fetch took.
+    await Promise.all([this.hydrateNews(), this.hydrateTelemetry()]);
+  }
+
+  private async hydrateTelemetry() {
     try {
       const telRes = await apiFetch('/api/telemetry');
       if (telRes.ok) {

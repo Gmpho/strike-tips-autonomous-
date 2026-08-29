@@ -20,6 +20,17 @@ export default defineConfig(({ mode }) => {
     resolve: {
       tsconfigPaths: true
     },
+    // Pre-bundle heavy deps at server START (not lazily on the first client
+    // request), so the first page load isn't blocked by on-demand dep
+    // optimization + re-parse of lucide/framer/three on the critical path.
+    optimizeDeps: {
+      include: [
+        'react', 'react-dom', 'react/jsx-runtime',
+        'framer-motion', 'lucide-react',
+        'three', '@react-three/fiber', '@react-three/drei',
+        'react-markdown', 'swr', 'clsx', 'tailwind-merge',
+      ],
+    },
     build: {
       target: 'es2020',
       cssCodeSplit: true,
@@ -36,9 +47,31 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      // COEP: `credentialless` (Chrome 96+) keeps WebLLM/SharedArrayBuffer
+      // threading protected (COOP same-origin + COEP) WHILE allowing
+      // cross-origin, no-CORP third-party scripts — e.g. the Telegram WebApp
+      // SDK in index.html — to load. `require-corp` blocks them with
+      // ERR_BLOCKED_BY_RESPONSE...Coep, so window.Telegram === undefined.
       headers: {
         'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
+      },
+      // Warm-transform the entry + initially-rendered heavy modules at server
+      // start so first-load time isn't consumed by on-demand transforms.
+      warmup: {
+        clientFiles: [
+          './src/main.tsx',
+          './src/App.tsx',
+          './src/components/sidebar/Sidebar.tsx',
+          './src/components/sidebar/AgentStatus.tsx',
+          './src/components/RaceCard.tsx',
+          './src/components/layout/Header.tsx',
+          './src/components/layout/Footer.tsx',
+          './src/store/hud-store.ts',
+          './src/engine/data-bridge.ts',
+          './src/hooks/useHUD.ts',
+          './src/lib/api-fetch.ts',
+        ],
       },
       proxy: {
         '/ollama': {
