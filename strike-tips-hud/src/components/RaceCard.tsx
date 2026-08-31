@@ -10,14 +10,19 @@ interface RaceCardProps {
   onExecuteRunner?: (event: RaceEvent, runner: Runner) => void;
 }
 
-type SortKey = 'name' | 'age' | 'draw' | 'starRating' | 'form' | 'edge' | 'odds';
+type SortKey = 'name' | 'age' | 'draw' | 'starRating' | 'form' | 'edge' | 'odds' | 'daysSinceRun';
 
 interface SortState {
   key: SortKey;
   dir: 1 | -1;
 }
 
-const COLUMNS = 10;
+const COLUMNS = 11;
+
+function isMissingForSort(r: Runner, key: SortKey): boolean {
+  if (key === 'daysSinceRun') return typeof r.daysSinceRun !== 'number';
+  return false;
+}
 
 function sortValue(r: Runner, key: SortKey): number | string {
   switch (key) {
@@ -39,6 +44,9 @@ function sortValue(r: Runner, key: SortKey): number | string {
       const o = typeof r.odds === 'number' ? r.odds : parseFloat(String(r.odds)) || 0;
       return o > 0 ? o : 99999;
     }
+    case 'daysSinceRun':
+      // Absent/unknown sorts last regardless of direction (sentinel via +Infinity)
+      return typeof r.daysSinceRun === 'number' ? r.daysSinceRun : Number.POSITIVE_INFINITY;
   }
 }
 
@@ -78,7 +86,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
 
   // Resolve runner based on selectedCategory
   const selections = event.aiSelections || {};
-  const selectedRunner = selections[selectedCategory] || selections['value'] || selections['favourite'] || selections['outsider'] || topHorse;
+  const selectedRunner = selections[selectedCategory] || topHorse;
 
   const toggleSort = (key: SortKey) => {
     setSort((prev) => {
@@ -92,6 +100,12 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
     const runners = [...(event.runners || [])];
     if (!sort) return runners;
     return runners.sort((a, b) => {
+      // Absent values sort last regardless of direction (spec contract).
+      const aMissing = isMissingForSort(a, sort.key);
+      const bMissing = isMissingForSort(b, sort.key);
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
       const va = sortValue(a, sort.key);
       const vb = sortValue(b, sort.key);
       let cmp: number;
@@ -101,7 +115,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
     });
   }, [event.runners, sort]);
 
-  const SortHeader: React.FC<{ label: React.ReactNode; sortKey: SortKey; className?: string }> = ({ label, sortKey, className = '' }) => {
+  const SortHeader: React.FC<{ label: React.ReactNode; sortKey: SortKey; className?: string; title?: string }> = ({ label, sortKey, className = '', title }) => {
     const active = sort?.key === sortKey;
     return (
       <th className={`py-3 px-2 cursor-pointer select-none hover:text-theme-primary transition-colors ${active ? 'text-purple-400' : ''} ${className}`}>
@@ -109,6 +123,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
           onClick={(e) => { e.stopPropagation(); toggleSort(sortKey); }}
           className="inline-flex items-center gap-0.5 uppercase font-black"
           aria-label={`Sort by ${sortKey}`}
+          title={title}
         >
           {label}
           {active ? (
@@ -262,7 +277,9 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
                 <th className="py-3 px-2">Wgt</th>
                 <SortHeader label="Draw" sortKey="draw" className="text-center" />
                 <SortHeader label={<Star className="w-3 h-3 inline" />} sortKey="starRating" className="text-center" />
+                <th className="py-3 px-2">Gear</th>
                 <SortHeader label="Form" sortKey="form" />
+                <SortHeader label="Days" sortKey="daysSinceRun" className="text-center" title="Days since last run" />
                 <SortHeader label="Edge" sortKey="edge" className="text-right" />
                 <SortHeader label="Odds" sortKey="odds" className="text-right" />
                 <th className="py-3 px-2 text-right"><Zap className="w-3 h-3 inline opacity-50" /></th>
@@ -310,7 +327,26 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
                         </span>
                       ) : '-'}
                     </td>
+                    <td className="py-2.5 px-2 align-middle" title={r.gear || 'No gear data'}>
+                      {r.gear ? (
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {r.gear.split(' · ').map((tok, ti) => (
+                            <span
+                              key={ti}
+                              className="px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide rounded border border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                            >
+                              {tok}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
                     <td className="py-2.5 px-2 font-bold align-middle">{r.form || '-'}</td>
+                    <td className="py-2.5 px-2 text-center text-theme-secondary tabular-nums align-middle">
+                      {typeof r.daysSinceRun === 'number' ? r.daysSinceRun : <span className="text-slate-600">—</span>}
+                    </td>
                     <td className="py-2.5 px-2 text-right align-middle whitespace-nowrap">
                       {edgeVal !== null && edgeVal > 0 ? (
                         <span className="font-black text-emerald-400 tabular-nums" title={r.winProbability ? `Model win probability: ${(r.winProbability * 100).toFixed(1)}%` : undefined}>

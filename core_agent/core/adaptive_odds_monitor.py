@@ -51,6 +51,18 @@ except ImportError:
         async def get_results(self, date): return []
         async def get_market_movers(self): return []
         async def get_predictor(self): return []
+try:
+    from core_agent.skills.parsers.betfair_sa import BetfairSA, _normalise as _bf_normalise
+    _HAS_BETFAIR_SA = True
+except ImportError:
+    _HAS_BETFAIR_SA = False
+
+    def _bf_normalise(name: str) -> str:
+        return "".join(c for c in name.lower() if c.isalnum())
+
+    class BetfairSA:
+        async def get_form_format(self) -> dict:
+            return {"events": {}, "count": 0}
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
 HEALING_EVENTS_PATH = os.path.join("data", "healing_events.json")
@@ -183,6 +195,106 @@ def _merge_ro_into(betway_state: dict, ro_snapshot: dict):
     )
 
 
+def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
+    """Inject Betfair SA form data (gear + days since last run) into matching
+    Betway events/runners. Adds two optional fields per runner; never modifies
+    existing snapshot fields, never raises.
+
+    Matching: scope per (course, time). Horse names: exact-first (whitespace/
+    case-normalized) then ``difflib`` fuzzy (0.6 cutoff). One-to-one
+    assignment: already-matched Betfair runners are excluded from later
+    candidate pools so two SA horses with similar names can't swap gear.
+    """
+    bf_events = bf_snapshot.get("events") if isinstance(bf_snapshot, dict) else None
+    if not bf_events:
+        logger.info("Betfair SA returned no events -- skipping merge")
+        return
+
+    merged_races = 0
+    fuzzy_horse_matches = 0
+    for event in betway_state.get("events", {}).values():
+        course_key = _norm_course(event.get("course", ""))
+        time_key = _norm_time(event.get("t", ""))
+        if not course_key or not time_key:
+            continue
+
+        bf_match = None
+        for bf in bf_events.values():
+            if not isinstance(bf, dict):
+                continue
+            if _norm_course(bf.get("course", "")) != course_key:
+                continue
+            if _norm_time(bf.get("t", "")) != time_key:
+                continue
+            bf_match = bf
+            break
+        if not bf_match:
+            continue
+
+        bf_runners = bf_match.get("runners") or []
+        if not bf_runners:
+            continue
+
+        matched_bf_indices: set = set()
+        for bw_runner in event.get("runners") or []:
+            bw_name = (bw_runner.get("name") or bw_runner.get("outcomeName") or "").strip()
+            if not bw_name:
+                continue
+            bw_norm = _bf_normalise(bw_name)
+
+            # 1. Exact match (case + whitespace insensitive)
+            chosen_idx = -1
+            for i, r in enumerate(bf_runners):
+                if i in matched_bf_indices:
+                    continue
+                bf_name = (r.get("name") or "").strip()
+                if bf_name and _bf_normalise(bf_name) == bw_norm:
+                    chosen_idx = i
+                    break
+
+            # 2. Fuzzy fallback (0.6 cutoff, one-to-one)
+            if chosen_idx < 0:
+                candidates = [
+                    (i, _bf_normalise(r.get("name") or ""))
+                    for i, r in enumerate(bf_runners)
+                    if i not in matched_bf_indices and r.get("name")
+                ]
+                if not candidates:
+                    continue
+                matches = difflib.get_close_matches(
+                    bw_norm,
+                    [n for _, n in candidates],
+                    n=1,
+                    cutoff=0.6,
+                )
+                if matches:
+                    target_norm = matches[0]
+                    for i, n in candidates:
+                        if n == target_norm:
+                            chosen_idx = i
+                            fuzzy_horse_matches += 1
+                            break
+
+            if chosen_idx < 0:
+                continue
+            matched_bf_indices.add(chosen_idx)
+            bf_runner = bf_runners[chosen_idx]
+
+            # 3. Attach (additive only; never overwrite existing fields)
+            gear = bf_runner.get("gear")
+            days = bf_runner.get("daysSinceRun")
+            if gear and "gear" not in bw_runner:
+                bw_runner["gear"] = gear
+            if days is not None and "daysSinceRun" not in bw_runner:
+                bw_runner["daysSinceRun"] = days
+        merged_races += 1
+
+    logger.info(
+        "Betfair SA merged into %d/%d Betway races (fuzzy horse matches: %d)",
+        merged_races, len(betway_state.get("events", {})), fuzzy_horse_matches,
+    )
+
+
 def _merge_daily_scan_into(state: dict):
     """Merge today's daily scan value bets, favorites, and outsiders into active events."""
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -305,7 +417,6 @@ def _merge_daily_scan_into(state: dict):
         }
 
 
-
 def _atomic_write_json(path: str, data: any, indent: int = 2):
     """Write data to a JSON file atomically to prevent corruption on crash"""
     tmp_path = str(path) + ".tmp"
@@ -368,11 +479,86 @@ class AdaptiveOddsMonitor:
         )
         self.betway = BetwayAPI()
         self.racing_odds = RacingOddsAPI()
+        self.betfair = BetfairSA()
         self.at_races = AtTheRacesAPI()
+        # Last-good cache path for Betfair form data (used when a cycle fails
+        # so the snapshot still carries gear/days from the most recent good fetch).
+        self._bf_last_good_path = os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
 
         self.monitoring_active = True
         self._last_alert_ts: float = 0
         self._alert_cooldown: float = 120.0
+
+    async def _fetch_betfair_form_safely(self) -> dict:
+        """Fetch Betfair SA form data with last-good-cache reuse.
+
+        On success: persist to ``_bf_last_good_path`` so a future failed cycle
+        can fall back to the most recent good snapshot. On failure: read the
+        last-good cache; if missing or stale (>6h), log a healing event and
+        return an empty snapshot so the merge is a no-op (never breaks the
+        main cycle).
+        """
+        empty = {"events": {}, "count": 0}
+        cache_max_age = 6 * 60 * 60  # 6 hours
+        try:
+            form = await self.betfair.get_form_format()
+        except Exception as e:
+            _write_healing_event(
+                "BETFAIR_FETCH_FAIL",
+                f"Betfair SA fetch raised: {e!r}",
+                agent="OddsMonitor",
+                status="WARN",
+            )
+            return self._load_bf_last_good(cache_max_age) or empty
+
+        if not form or not form.get("events"):
+            _write_healing_event(
+                "BETFAIR_EMPTY",
+                "Betfair SA returned no events this cycle",
+                agent="OddsMonitor",
+                status="WARN",
+            )
+            return self._load_bf_last_good(cache_max_age) or empty
+
+        # Persist the good snapshot for fallback on future failure.
+        try:
+            import json as _json
+            with open(self._bf_last_good_path, "w") as f:
+                _json.dump(
+                    {"saved_at": datetime.now().isoformat(), "events": form.get("events", {})},
+                    f,
+                )
+        except Exception as e:
+            logger.debug("Betfair SA last-good cache write failed: %s", e)
+        return form
+
+    def _load_bf_last_good(self, max_age_secs: int) -> Optional[dict]:
+        try:
+            import json as _json
+            import time as _time
+            if not os.path.exists(self._bf_last_good_path):
+                return None
+            with open(self._bf_last_good_path) as f:
+                cached = _json.load(f)
+            saved_at = cached.get("saved_at")
+            ts = (
+                datetime.fromisoformat(saved_at).timestamp() if saved_at else 0
+            )
+            if _time.time() - ts > max_age_secs:
+                _write_healing_event(
+                    "BETFAIR_CACHE_STALE",
+                    f"Betfair SA last-good cache older than {max_age_secs}s",
+                    agent="OddsMonitor",
+                    status="WARN",
+                )
+                return None
+            return {
+                "events": cached.get("events") or {},
+                "count": len(cached.get("events") or {}),
+            }
+        except Exception as e:
+            logger.debug("Betfair SA last-good cache read failed: %s", e)
+            return None
 
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
@@ -427,6 +613,7 @@ class AdaptiveOddsMonitor:
                 # 1. Fetch Betway + Racing-Odds in parallel
                 bw_task = asyncio.create_task(self.betway.get_snapshot_format())
                 ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
+                bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
                 state = await bw_task
                 try:
                     ro_snapshot = await ro_task
@@ -434,8 +621,17 @@ class AdaptiveOddsMonitor:
                     ro_snapshot = {"events": {}, "count": 0}
                     logger.debug("Racing-Odds snapshot failed, skipping merge")
 
+                try:
+                    bf_snapshot = await bf_task
+                except Exception:
+                    bf_snapshot = {"events": {}, "count": 0}
+                    logger.debug("Betfair SA form fetch failed, skipping merge")
+
                 # 1b. Merge Racing-Odds data into Betway events where race/horse match
                 _merge_ro_into(state, ro_snapshot)
+
+                # 1c. Merge Betfair SA form (gear + days since last run) -- additive only
+                _merge_bf_into(state, bf_snapshot)
 
                 # 2. Persistence & Pruning
                 # Remove Betway-finished races and normalize names

@@ -18,6 +18,10 @@ export interface Runner {
   swarmInsight?: string;
   insightSource?: string;
   insightTs?: string;
+  /** Betfair SA normalized gear tokens, e.g. "Hood · Blinkers". Absent when unknown. */
+  gear?: string;
+  /** Days since the horse's last run (Betfair SA). Absent when unknown. */
+  daysSinceRun?: number;
 }
 
 export interface RaceEvent {
