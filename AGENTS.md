@@ -13,7 +13,7 @@ This document provides guidelines for AI agents working in this repository.
 - Check status: `openspec status --change <name> --json` ; Instructions: `openspec instructions <artifact> --change <name> --json`
 - CLI: `openspec --version` (now 1.11.0), `openspec update --force` to refresh prompts
 
-Current active change: `add-swarm-researcher` (swarm-researcher specs at `openspec/changes/add-swarm-researcher/specs/swarm-researcher/spec.md`). Next features queue feature-by-feature — ask which one to propose next.
+Last archived change: `add-betfair-form-data` (2026-08-31 — Betfair SA gear + days-since-run merged into the market snapshot; spec now live at `openspec/specs/betfair-form-data/spec.md`). Remaining change folder: `core-value-bet-analyzer` (tasks 11/11 complete, pending archive). Next features queue feature-by-feature — ask which one to propose next.
 
 **Full guide:** `docs/openspec-usage.md` — lifecycle, `tasks.md` checkbox format, spec/convention rules, worked example, and CLI cheat sheet. Read it before running propose/apply/archive.
 **Refference:** 'Readme' with docs.
