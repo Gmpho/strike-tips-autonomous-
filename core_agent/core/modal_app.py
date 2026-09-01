@@ -12,6 +12,7 @@ Usage:
 
 import modal
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger("modal-app")
@@ -30,12 +31,13 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=512,
+    memory=256,
     timeout=3600,
-    env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"},
-    scaledown_window=120,
+    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
+    scaledown_window=60,
     startup_timeout=120,
     min_containers=0,
+    max_containers=3,
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app()
@@ -308,8 +310,9 @@ def register_webhook():
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=2048,
-    timeout=3600,
+    memory=1024,
+    timeout=1800,
+    max_containers=1,
     schedule=modal.Cron("0 5 * * *", timezone="Africa/Johannesburg"),
 )
 def daily_scan():
@@ -332,8 +335,9 @@ def daily_scan():
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=2048,
-    timeout=3600,
+    memory=1024,
+    timeout=1800,
+    max_containers=1,
     schedule=modal.Cron("30 9 * * *", timezone="Africa/Johannesburg"),
 )
 def value_scan():
@@ -352,12 +356,64 @@ def value_scan():
     return {"status": "complete"}
 
 
+# ── Daily spend report (budget guard at 06:00 SAST) ─────────────────────
+@app.function(
+    image=image,
+    secrets=secrets,
+    timeout=120,
+    # schedule removed for free-tier 5-cron limit — run manually or re-enable on paid plan
+)
+def daily_spend_report():
+    """Emit yesterday's Modal spend to logs + Telegram if > threshold."""
+    import json
+    import subprocess
+
+    threshold = float(os.getenv("MODAL_SPEND_ALERT_THRESHOLD", "1.50"))
+    try:
+        result = subprocess.run(
+            ["modal", "billing", "report", "--for", "yesterday", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning(f"Spend report failed: {result.stderr[:200]}")
+            return {"status": "failed", "error": result.stderr[:200]}
+        data = json.loads(result.stdout or "[]")
+        total = sum(float(r.get("cost", 0)) for r in data if isinstance(r, dict))
+        logger.info(f"Yesterday Modal spend: ${total:.2f} (threshold ${threshold:.2f})")
+        if total > threshold:
+            try:
+                import telegram
+
+                token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+                chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+                if token and chat_id:
+                    bot = telegram.Bot(token=token)
+                    import asyncio
+
+                    asyncio.run(
+                        bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ *Modal spend alert*\nYesterday: ${total:.2f} (threshold ${threshold:.2f})",
+                            parse_mode="Markdown",
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"Spend alert Telegram failed: {e}")
+        return {"status": "ok", "yesterday_spend": round(total, 4)}
+    except Exception as e:
+        logger.warning(f"Spend report error: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 @app.function(
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=2048,
-    timeout=3600,
+    memory=1024,
+    timeout=1800,
+    max_containers=1,
 )
 async def run_scan(chat_id: Optional[int] = None):
     """Run strike-tips daily scan for all tracks (manual one-shot or via /scan)."""
@@ -400,21 +456,43 @@ async def run_scan(chat_id: Optional[int] = None):
     return {"status": "complete", **result}
 
 
-# ── Odds Monitor (24/7 on Modal, pushes to Cloudflare KV) ──────────────
+# ── Odds Monitor (scheduled every 5 min, replaces 24/7 min_containers=1) ─
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
     volumes={"/app/data": data_volume},
-    memory=512,
-    timeout=43200,
-    min_containers=1,
-    scaledown_window=120,
-    env={"OLLAMA_HOST": "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"}
+    memory=256,
+    timeout=300,
+    max_containers=1,
+    scaledown_window=60,
+    schedule=modal.Cron("*/5 * * * *", timezone="Africa/Johannesburg"),
+    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
 )
 async def run_odds_monitor():
-    """Continuous odds monitoring 24/7 on Modal."""
+    """Scheduled odds sync — one cycle every 5 min (05:00-23:00 SAST effective)."""
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
-    logger.info("Odds monitor started — running 24/7 on Modal")
-    await monitor.run()
+    await monitor.initialize()
+    await monitor.run_single_cycle()
+    logger.info("Odds monitor single cycle complete")
+
+
+# ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
+@app.function(
+    image=image,
+    secrets=secrets,
+    timeout=30,
+    # schedule removed for free-tier 5-cron limit — keep via run_odds_monitor cadence
+)
+def keep_warm():
+    """Ping serve_api health every 10 min during racing hours — prevents cold start."""
+    import httpx
+
+    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/health"
+    try:
+        httpx.get(url, timeout=10)
+        logger.info("keep_warm ping ok")
+    except Exception as e:
+        logger.debug(f"keep_warm ping failed: {e}")
+    return {"status": "pinged"}

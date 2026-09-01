@@ -586,6 +586,101 @@ class AdaptiveOddsMonitor:
         await self.alert_engine.initialize()
         self.events_cache = self.intel_cache.rehydrate()
 
+    async def run_single_cycle(self):
+        """Execute ONE odds sync cycle — for Modal scheduled cron (no infinite loop)."""
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            bw_task = asyncio.create_task(self.betway.get_snapshot_format())
+            ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
+            bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
+            state = await bw_task
+            try:
+                ro_snapshot = await ro_task
+            except Exception:
+                ro_snapshot = {"events": {}, "count": 0}
+            try:
+                bf_snapshot = await bf_task
+            except Exception:
+                bf_snapshot = {"events": {}, "count": 0}
+            _merge_ro_into(state, ro_snapshot)
+            _merge_bf_into(state, bf_snapshot)
+            active = {
+                eid: {**e, "en": " ".join(e.get("en", "").split())}
+                for eid, e in state.get("events", {}).items()
+                if not e.get("isFinished")
+            }
+            state["events"] = _close_overdue_races(active)
+            state["count"] = len(state["events"])
+            state["timestamp"] = datetime.now().isoformat()
+            active_ids = list(state["events"].keys())
+            _merge_daily_scan_into(state)
+            _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
+            try:
+                enrich_snapshot_with_insights(state)
+            except Exception as e:
+                logger.debug(f"Swarm enrichment skipped: {e}")
+            try:
+                from core_agent.core.snapshot_cache import set_snapshot, publish_snapshot
+                from core_agent.core.task_queue import get_redis
+                set_snapshot(state)
+                redis_client = await get_redis()
+                await publish_snapshot(redis_client, state)
+            except Exception:
+                pass
+            try:
+                import httpx
+                cf_url = os.environ.get("CLOUDFLARE_MCP_URL", "")
+                cf_key = os.environ.get("CLOUDFLARE_API_KEY", "")
+                if cf_url and cf_key:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        resp = await client.post(
+                            f"{cf_url.rstrip('/')}/api/ingest-snapshot",
+                            headers={"x-api-key": cf_key, "content-type": "application/json"},
+                            json=state,
+                        )
+                        if resp.status_code not in (200, 201):
+                            logger.warning("Cloudflare push returned %d: %.100s", resp.status_code, resp.text)
+            except Exception as exc:
+                logger.debug("Cloudflare push skipped: %s", exc)
+            # ATR quick refresh
+            try:
+                atr_results_yesterday = await self.at_races.get_results("yesterday")
+            except Exception:
+                atr_results_yesterday = None
+            try:
+                atr_results_today = await self.at_races.get_results("today")
+            except Exception:
+                atr_results_today = None
+            all_results = (atr_results_yesterday or []) + (atr_results_today or [])
+            if all_results:
+                _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
+            try:
+                atr_movers = await self.at_races.get_market_movers()
+                if atr_movers:
+                    _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
+            except Exception:
+                pass
+            try:
+                atr_predictions = await self.at_races.get_predictor()
+                if atr_predictions:
+                    _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
+            except Exception:
+                pass
+            await self._check_atr_staleness()
+            await self._cleanup_atr_snapshots()
+            for event_id in active_ids:
+                self.intel_cache.update_baseline(event_id, state["events"][event_id].get("runners", []))
+            self.intel_cache.prune_stale_data(active_ids)
+            logger.info(f"👻 Single cycle synced {state.get('count')} races.")
+            for event in state.get("events", {}).values():
+                await self.alert_engine.evaluate_odds_update(event, cache=self.intel_cache)
+            return state
+        except Exception as e:
+            logger.warning(f"⚠️ Single cycle error: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return None
+
     async def run(self):
         await self.initialize()
         if self._digester:

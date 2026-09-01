@@ -33,12 +33,12 @@ image = (
 
 @app.function(
     image=image,
-    cpu=2.0,
+    cpu=1.0,
     memory=2048,
     min_containers=0,
-    scaledown_window=300,
-    max_containers=2,
-    timeout=3600,
+    scaledown_window=60,
+    max_containers=1,
+    timeout=600,
     env={"OLLAMA_HOST": "0.0.0.0:11434"},
 )
 @modal.web_server(11434, startup_timeout=120)
@@ -46,3 +46,14 @@ def ollama():
     """Run Ollama server (non-blocking — Modal manages the process via @web_server)."""
     import subprocess
     subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@app.function()  # schedule removed for free-tier limit — rely on scaledown 60
+def wake_ollama():
+    """Warm Ollama at 05:00 SAST — keep single container ready for racing hours."""
+    import httpx
+
+    try:
+        httpx.get("https://gmpho--strike-tips-ollama-cloud-ollama.modal.run/api/tags", timeout=30)
+    except Exception:
+        pass

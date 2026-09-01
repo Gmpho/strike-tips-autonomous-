@@ -33,14 +33,16 @@ secrets = [
 ]
 
 
-# 4. Shared Task Logic
+# 4. Shared Task Logic (optimized for $30 credit — see docs/openspec-usage.md billing notes)
 def get_shared_args():
     return {
         "image": image,
         "secrets": secrets,
         "volumes": {"/app/data": data_volume},
-        "memory": 1536,
-        "timeout": 3600,
+        "memory": 1024,
+        "timeout": 1800,
+        "max_containers": 1,
+        "scaledown_window": 60,
     }
 
 
