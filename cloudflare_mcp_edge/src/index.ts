@@ -18,18 +18,37 @@ export interface Env {
 const MAX_STR = 500;
 
 function isAuthorized(request: Request, env: Env): boolean {
-  return !env.BACKEND_API_KEY || request.headers.get("x-api-key") === env.BACKEND_API_KEY;
+  return !!env.BACKEND_API_KEY && request.headers.get("x-api-key") === env.BACKEND_API_KEY;
 }
 
-function json(data: unknown, status = 200): Response {
+const ALLOWED_ORIGINS = new Set([
+  "https://strike-tips-hud.vercel.app",
+  "https://www.strike-tips-hud.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+]);
+
+function corsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin") || "";
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.vercel.app";
+  return {
+    "Access-Control-Allow-Origin": allow,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key, X-API-KEY, Authorization",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+}
+
+function json(data: unknown, status = 200, request?: Request): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.vercel.app" }) },
   });
 }
 
-function error(msg: string, status = 400): Response {
-  return json({ error: msg }, status);
+function error(msg: string, status = 400, request?: Request): Response {
+  return json({ error: msg }, status, request);
 }
 
 function getNum(search: URLSearchParams, key: string): number | null {
@@ -177,7 +196,7 @@ async function ingestInsight(db: D1Database, body: InsightBody) {
 
 // ── ROUTE HANDLERS ──────────────────────────────────────────────────
 
-async function handleGET(url: URL, env: Env): Promise<Response> {
+async function handleGET(request: Request, url: URL, env: Env): Promise<Response> {
   const { pathname, searchParams: q } = url;
   const path = pathname.toLowerCase();
 
@@ -540,25 +559,37 @@ export default {
     const { pathname } = url;
     const method = request.method.toUpperCase();
 
+    // CORS preflight
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
+    }
+
     try {
       if (pathname === "/mcp") {
-        return await handleMCP(request, env);
+        const resp = await handleMCP(request, env);
+        // Add CORS headers to MCP response
+        Object.entries(corsHeaders(request)).forEach(([k, v]) => resp.headers.set(k, v));
+        return resp;
       }
 
       if (pathname.startsWith("/api/")) {
         if (method === "POST") {
-          return await handlePOST(request, url, env);
+          const resp = await handlePOST(request, url, env);
+          Object.entries(corsHeaders(request)).forEach(([k, v]) => resp.headers.set(k, v));
+          return resp;
         }
-        return await handleGET(url, env);
+        const resp = await handleGET(request, url, env);
+        Object.entries(corsHeaders(request)).forEach(([k, v]) => resp.headers.set(k, v));
+        return resp;
       }
 
       if (pathname === "/") {
-        return json({ service: "striketips-mcp", version: "2.0.0" });
+        return json({ service: "striketips-mcp", version: "2.0.0" }, 200, request);
       }
 
-      return json({ error: "not found" }, 404);
+      return json({ error: "not found" }, 404, request);
     } catch {
-      return json({ error: "internal error" }, 500);
+      return json({ error: "internal error" }, 500, request);
     }
   },
 };

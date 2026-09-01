@@ -27,6 +27,39 @@ const HEALTH_TTL_MS = 60_000
 const PROBE_TIMEOUT_MS = 3_000
 const FORWARD_TIMEOUT_MS = 25_000
 
+// ── Security: rate limiting (fixed window, in-memory) ───────────────
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 100; // 100 req/min per IP
+const rateStore = new Map<string, { count: number; resetAt: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateStore.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateStore.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) return true;
+  return false;
+}
+
+// ── Security: auth check for sensitive endpoints ────────────────────
+const SENSITIVE_PATHS = [
+  '/api/agent/kill',
+  '/api/agent/reset',
+];
+function isSensitive(pathname: string): boolean {
+  return SENSITIVE_PATHS.some(p => pathname.startsWith(p));
+}
+function isAuthorizedRequest(req: Request): boolean {
+  const key = req.headers.get('x-api-key') || req.headers.get('X-API-KEY') || req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
+  const expected = process.env.STRIKE_TIPS_API_KEY || '';
+  // If no expected key configured, deny by default (fail-closed) for sensitive paths
+  if (!expected) return false;
+  return key === expected;
+}
+
 export const config = {
   matcher: ['/api/:path*', '/v1/:path*', '/mcp'],
 }
@@ -52,6 +85,24 @@ async function probeHealthy(origin: string): Promise<boolean> {
 
 export default async function middleware(request: Request) {
   const url = new URL(request.url)
+
+  // ── Rate limiting ─────────────────────────────────────────────
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
+  if (isRateLimited(ip)) {
+    return new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+    });
+  }
+
+  // ── Auth for sensitive endpoints (fail-closed) ────────────────
+  if (isSensitive(url.pathname) && !isAuthorizedRequest(request)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const isCloudflare = Array.from(CLOUDFLARE_ENDPOINTS).some(ep => url.pathname.startsWith(ep)) ||
                        url.pathname.startsWith('/api/racing/evaluate/') ||
                        url.pathname === '/mcp'
