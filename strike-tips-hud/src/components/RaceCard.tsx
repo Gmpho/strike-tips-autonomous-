@@ -29,7 +29,7 @@ function sortValue(r: Runner, key: SortKey): number | string {
     case 'name':
       return (r.name || '').toLowerCase();
     case 'age': {
-      const m = (r.age || '').match(/\d+/);
+      const m = String(r.age || '').match(/\d+/);
       return m ? parseInt(m[0], 10) : 999;
     }
     case 'draw':
@@ -239,11 +239,11 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
                     )}
                   </div>
                   {(selectedRunner.draw !== undefined || selectedRunner.age || selectedRunner.weight || (selectedRunner.starRating && selectedRunner.starRating > 0)) && (
-                    <div className="flex items-center gap-2 mt-1.5 text-[10px] font-bold text-theme-secondary">
+                      <div className="flex items-center gap-2 mt-1.5 text-[10px] font-bold text-theme-secondary">
                       {typeof selectedRunner.draw === 'number' && (
                         <span className="border border-theme rounded px-1">D{selectedRunner.draw}</span>
                       )}
-                      {selectedRunner.age && <span>{selectedRunner.age.replace(' years', 'yo')}</span>}
+                      {selectedRunner.age && <span>{String(selectedRunner.age).replace(' years', 'yo')}</span>}
                       {selectedRunner.weight && <span>{selectedRunner.weight}</span>}
                       {selectedRunner.starRating ? (
                       <span className="flex items-center gap-0.5 text-amber-400">
@@ -291,19 +291,21 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
               const insightKind: 'timeform' | 'swarm' = r.timeForm ? 'timeform' : 'swarm';
               const isExpanded = expandedRow === r.name;
               const hasInsight = Boolean(insightText);
+              const hasEnriched = Boolean(r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim);
+              const hasExpandable = hasInsight || hasEnriched;
               const edgeVal = typeof r.edge === 'number' ? r.edge : null;
               return (
                 <React.Fragment key={r.name}>
                   <tr className={`border-b border-theme hover:bg-purple-500/10 transition-colors ${isExpanded ? 'bg-purple-500/5' : ''}`}>
                     <td className="py-2.5 px-2 align-middle">
                       <button
-                        onClick={() => hasInsight && setExpandedRow(isExpanded ? null : r.name)}
-                        disabled={!hasInsight}
-                        className={`flex items-center gap-1.5 text-left ${hasInsight ? 'cursor-pointer group/row' : 'cursor-default'}`}
+                        onClick={() => hasExpandable && setExpandedRow(isExpanded ? null : r.name)}
+                        disabled={!hasExpandable}
+                        className={`flex items-center gap-1.5 text-left ${hasExpandable ? 'cursor-pointer group/row' : 'cursor-default'}`}
                         aria-expanded={isExpanded}
-                        title={hasInsight ? (isExpanded ? 'Hide insight' : 'Show insight') : undefined}
+                        title={hasExpandable ? (isExpanded ? 'Hide details' : 'Show details') : undefined}
                       >
-                        {hasInsight && (isExpanded
+                        {hasExpandable && (isExpanded
                           ? <ChevronUp className="w-3 h-3 shrink-0 text-purple-400" />
                           : <ChevronDown className="w-3 h-3 shrink-0 text-slate-500 group-hover/row:text-purple-400 transition-colors" />)}
                         <span className="font-black text-sm leading-tight whitespace-nowrap">{r.name}</span>
@@ -315,7 +317,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
                       </button>
                     </td>
                     <td className="py-2.5 px-2 text-[10px] opacity-80 whitespace-nowrap align-middle">{r.jockeyName || 'TBA'} / {r.trainerName || 'TBA'}</td>
-                    <td className="py-2.5 px-2 font-bold whitespace-nowrap align-middle">{r.age ? r.age.replace(' years', 'yo') : '-'}</td>
+                    <td className="py-2.5 px-2 font-bold whitespace-nowrap align-middle">{r.age ? String(r.age).replace(' years', 'yo') : '-'}</td>
                     <td className="py-2.5 px-2 whitespace-nowrap align-middle">{r.weight || '-'}</td>
                     <td className="py-2.5 px-2 text-center font-black align-middle">{typeof r.draw === 'number' ? r.draw : '-'}</td>
                     <td className="py-2.5 px-2 text-center text-amber-400 align-middle">
@@ -375,6 +377,20 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, idx = 0, o
                     <tr className="border-b border-theme">
                       <td colSpan={COLUMNS} className="py-2 px-2">
                         <InsightBanner text={insightText} kind={insightKind} />
+                      </td>
+                    </tr>
+                  )}
+                  {isExpanded && (r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim) && (
+                    <tr className="border-b border-theme">
+                      <td colSpan={COLUMNS} className="py-2 px-2">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                          {r.runner_comments && <div><span className="font-black text-purple-400 uppercase text-[9px]">Comments:</span> <span className="text-slate-300">{r.runner_comments}</span></div>}
+                          {r.verdict && <div><span className="font-black text-emerald-400 uppercase text-[9px]">Verdict:</span> <span className="text-slate-300">{r.verdict}</span></div>}
+                          {r.official_rating !== undefined && <div><span className="font-black text-amber-400 uppercase text-[9px]">Rating:</span> <span className="text-slate-300">{r.official_rating}</span></div>}
+                          {r.jockey_claim && <div><span className="font-black text-cyan-400 uppercase text-[9px]">Claim:</span> <span className="text-slate-300">{r.jockey_claim}</span></div>}
+                          {r.pedigree && <div><span className="font-black text-slate-400 uppercase text-[9px]">Pedigree:</span> <span className="text-slate-300">{r.pedigree}</span></div>}
+                          {r.owner && <div><span className="font-black text-slate-400 uppercase text-[9px]">Owner:</span> <span className="text-slate-300">{r.owner}</span></div>}
+                        </div>
                       </td>
                     </tr>
                   )}

@@ -1,15 +1,15 @@
 """
-Betfair SA Form-Data Parser -- gear + days since last run per runner.
+Betfair Form-Data Parser -- enriched runner fields per market.
 
 Public JSON API (no auth cookies needed):
     GET /api/horse-racing/7/all?timeRange=TODAY|TOMORROW   -> regional groups -> events -> markets
-    GET /api/market/{marketId}                             -> runners[].metadata.wearing + .days_since_last_run
+    GET /api/market/{marketId}                             -> runners[].metadata (gear, days, comments, rating, pedigree, owner, verdict...)
 
 Integration:
     api = BetfairSA()
     form = await api.get_form_format()
     # form["events"] returns the same (course,time)->runners shape the merge expects,
-    # so _merge_bf_into() can fuzzy-match horses and attach gear + daysSinceRun.
+    # so _merge_bf_into() can fuzzy-match horses and attach enriched fields.
 """
 
 import asyncio
@@ -44,7 +44,7 @@ _CANONICAL_GEAR = [
 _TIME_RANGES = ["TODAY", "TOMORROW"]
 
 # Focus: SA races. Set to None to ingest every region (more API calls).
-_COUNTRY_FILTER = {"ZA"}
+_COUNTRY_FILTER = None
 
 # Race times are always reported in South African Standard Time (UTC+2, no DST)
 # regardless of the host container's TZ, so the HUD shows consistent times.
@@ -80,12 +80,32 @@ def _parse_days(raw: Any) -> Optional[int]:
         return None
 
 
+def _clean_str(raw: Any) -> Optional[str]:
+    if not raw or not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    return s if s else None
+
+
+def _parse_int_field(raw: Any) -> Optional[int]:
+    if raw is None:
+        return None
+    try:
+        s = str(raw).strip()
+        if not s:
+            return None
+        n = int(float(s))
+        return n
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _normalise(name: str) -> str:
     return "".join(c for c in name.lower() if c.isalnum())
 
 
 class BetfairSA:
-    """Betfair SA form-data source: wearing gear + days since last run."""
+    """Betfair form-data source: enriched runner fields (gear, days, comments, rating...)."""
 
     def __init__(
         self,
@@ -123,8 +143,8 @@ class BetfairSA:
         }
 
         # 1. Collect marketIds across timeRange buckets + regional groups.
-        market_ids: List[str] = [
-        ]
+        market_ids: List[str] = []
+        market_info: Dict[str, Dict[str, str]] = {}
         seen: set = set()
         for tr in self.time_ranges:
             try:
@@ -147,10 +167,16 @@ class BetfairSA:
                     continue
                 for event in grp.get("events", []) or []:
                     for market in event.get("markets", []) or []:
-                        mid = str(market.get("marketId", ""))
+                        mid = str(market.get("marketId") or market.get("id") or "")
                         if mid and mid not in seen:
                             seen.add(mid)
                             market_ids.append(mid)
+                            # Store course/time for later (avoids relying on market payload)
+                            market_info[mid] = {
+                                "course": (event.get("name") or grp.get("name") or "Unknown").strip(),
+                                "t": (market.get("timeLabel") or market.get("time") or "").strip(),
+                                "raceName": (market.get("name") or "").strip(),
+                            }
 
         if not market_ids:
             logger.info("Betfair SA: no markets found for country_filter=%s", self.country_filter)
@@ -172,6 +198,14 @@ class BetfairSA:
             cache_payload["markets"][mid] = data
             event = self._parse_market(mid, data)
             if event:
+                # Override with stored info from /all (more reliable than market payload inference)
+                info = market_info.get(mid, {})
+                if info.get("course") and info["course"] != "Unknown":
+                    event["course"] = info["course"]
+                if info.get("t"):
+                    event["t"] = info["t"]
+                if info.get("raceName"):
+                    event["raceName"] = info["raceName"]
                 events[mid] = event
 
         # 4. Cache raw responses for debugging / last-good reuse.
@@ -205,23 +239,88 @@ class BetfairSA:
         return market_id, None
 
     def _parse_market(self, market_id: str, data: Optional[Dict]) -> Optional[Dict]:
-        """Convert a market response into the flat event shape."""
+        """Convert a market response into the flat event shape (enriched)."""
         if not data:
             return None
         runners_raw = data.get("runners", []) or []
         runners: List[Dict] = []
         for r in runners_raw:
             meta = r.get("metadata", {}) or {}
-            name = r.get("runnername") or meta.get("runnername")
+            # Normalize keys to lower for case-insensitive lookup (Betfair uses UPPER)
+            meta_low = {str(k).lower(): v for k, v in meta.items()} if isinstance(meta, dict) else {}
+            r_low = {str(k).lower(): v for k, v in r.items()} if isinstance(r, dict) else {}
+
+            def _get(*keys):
+                for k in keys:
+                    lk = k.lower()
+                    if lk in meta_low and meta_low[lk] not in (None, ""):
+                        return meta_low[lk]
+                    if lk in r_low and r_low[lk] not in (None, ""):
+                        return r_low[lk]
+                return None
+
+            name = _get("runnerName", "runnername", "name") or r.get("runnerName") or r.get("runnername")
             if not name:
                 continue
-            gear = _normalize_gear(meta.get("wearing"))
-            days = _parse_days(meta.get("days_since_last_run"))
+            gear = _normalize_gear(_get("wearing"))
+            days = _parse_days(_get("days_since_last_run"))
+            comments = _clean_str(_get("runner_comments", "comments", "runnercomments"))
+            claim = _clean_str(_get("jockey_claim", "jockeyclaim"))
+            rating = _parse_int_field(_get("official_rating", "officialrating"))
+            # Pedigree: construct from sire/dam if not explicit
+            pedigree = _clean_str(_get("pedigree"))
+            if not pedigree:
+                sire = _clean_str(_get("sire_name", "sirename"))
+                dam = _clean_str(_get("dam_name", "damname"))
+                damsire = _clean_str(_get("damsire_name", "damsirename"))
+                if sire or dam:
+                    parts = []
+                    if sire:
+                        parts.append(sire)
+                    if dam:
+                        parts.append(f"x {dam}")
+                    if damsire:
+                        parts.append(f"({damsire})")
+                    pedigree = " ".join(parts) if parts else None
+            owner = _clean_str(_get("owner_name", "owner"))
+            verdict = _clean_str(_get("verdict"))
+            trainer = _clean_str(_get("trainer_name", "trainer"))
+            age = _parse_int_field(_get("age"))
+            weight_val = _get("weight_value", "weight")
+            weight_units = _get("weight_units")
+            weight = None
+            if weight_val is not None and str(weight_val).strip() not in ("", "null", "None"):
+                w = str(weight_val).strip()
+                # Betfair weight in pounds, keep as is; HUD expects string
+                weight = f"{w} {weight_units}" if weight_units else w
+                weight = weight.strip()
+            form = _clean_str(_get("form"))
+
             runner: Dict[str, Any] = {"name": name}
             if gear:
                 runner["gear"] = gear
             if days is not None:
                 runner["daysSinceRun"] = days
+            if comments:
+                runner["runner_comments"] = comments
+            if claim:
+                runner["jockey_claim"] = claim
+            if rating is not None:
+                runner["official_rating"] = rating
+            if pedigree:
+                runner["pedigree"] = pedigree
+            if owner:
+                runner["owner"] = owner
+            if verdict:
+                runner["verdict"] = verdict
+            if trainer:
+                runner["trainer"] = trainer
+            if age is not None:
+                runner["age"] = age
+            if weight:
+                runner["weight"] = weight
+            if form:
+                runner["form"] = form
             runners.append(runner)
 
         if not runners:

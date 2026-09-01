@@ -281,12 +281,23 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
             bf_runner = bf_runners[chosen_idx]
 
             # 3. Attach (additive only; never overwrite existing fields)
-            gear = bf_runner.get("gear")
-            days = bf_runner.get("daysSinceRun")
-            if gear and "gear" not in bw_runner:
-                bw_runner["gear"] = gear
-            if days is not None and "daysSinceRun" not in bw_runner:
-                bw_runner["daysSinceRun"] = days
+            for key in (
+                "gear",
+                "daysSinceRun",
+                "runner_comments",
+                "jockey_claim",
+                "official_rating",
+                "pedigree",
+                "owner",
+                "verdict",
+                "trainer",
+                "age",
+                "weight",
+                "form",
+            ):
+                val = bf_runner.get(key)
+                if val is not None and val != "" and key not in bw_runner:
+                    bw_runner[key] = val
         merged_races += 1
 
     logger.info(

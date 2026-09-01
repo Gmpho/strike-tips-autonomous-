@@ -41,6 +41,15 @@ class ScrapedRunner:
     form: Optional[str] = None
     age: Optional[int] = None
     sex: Optional[str] = None
+    # Betfair form-data enrichment (optional, additive)
+    gear: Optional[str] = None
+    days_since_run: Optional[int] = None
+    runner_comments: Optional[str] = None
+    jockey_claim: Optional[str] = None
+    official_rating: Optional[int] = None
+    pedigree: Optional[str] = None
+    owner: Optional[str] = None
+    verdict: Optional[str] = None
 
 
 @dataclass

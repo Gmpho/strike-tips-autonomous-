@@ -145,6 +145,16 @@ class RacingService:
                     barrier=sr.barrier,
                     weight=sr.weight,
                     last_5_runs=form,
+                    age=sr.age,
+                    sex=sr.sex,
+                    gear=sr.gear,
+                    days_since_run=sr.days_since_run,
+                    runner_comments=sr.runner_comments,
+                    jockey_claim=sr.jockey_claim,
+                    official_rating=sr.official_rating,
+                    pedigree=sr.pedigree,
+                    owner=sr.owner,
+                    verdict=sr.verdict,
                 )
             )
             probs[sr.horse_name] = prob

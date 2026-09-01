@@ -7,7 +7,7 @@ export interface Runner {
   impliedProbability?: number;
   jockeyName?: string;
   trainerName?: string;
-  age?: string;
+  age?: string | number;
   weight?: string;
   draw?: number;
   number?: string;
@@ -22,6 +22,16 @@ export interface Runner {
   gear?: string;
   /** Days since the horse's last run (Betfair SA). Absent when unknown. */
   daysSinceRun?: number;
+  /** Enriched Betfair form fields (all regions, optional) */
+  runner_comments?: string;
+  jockey_claim?: string;
+  official_rating?: number;
+  pedigree?: string;
+  owner?: string;
+  verdict?: string;
+  // Aliases for Betfair-enriched trainer/age/weight/form when not from TAB
+  trainer?: string;
+  ageNum?: number;
 }
 
 export interface RaceEvent {

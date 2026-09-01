@@ -273,7 +273,7 @@ function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number
             <span className="border border-theme rounded px-1.5 py-0.5 text-theme-primary">D{runner.draw}</span>
           )}
           {runner.weight && <span className="text-slate-400">{runner.weight}</span>}
-          {runner.age && <span className="text-slate-400">{runner.age.replace(' years', 'yo')}</span>}
+          {runner.age && <span className="text-slate-400">{String(runner.age).replace(' years', 'yo')}</span>}
           {runner.starRating ? (
             <span className="flex items-center gap-0.5 text-amber-400">
               {Array.from({ length: Math.min(runner.starRating, 5) }).map((_, i) => (
