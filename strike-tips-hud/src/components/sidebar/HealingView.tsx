@@ -11,15 +11,15 @@ export const HealingView: React.FC = () => {
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="p-6 space-y-8"
+      className="p-3.5 sm:p-6 space-y-6 sm:space-y-8 w-full"
     >
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold bg-linear-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+          <h2 className="text-xl sm:text-2xl font-bold bg-linear-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
             Healing Swarm
           </h2>
-          <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
+          <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             Autonomous Agent Pipeline Monitoring
           </p>
         </div>

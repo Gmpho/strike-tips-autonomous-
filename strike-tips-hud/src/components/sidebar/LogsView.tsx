@@ -149,7 +149,7 @@ export const LogsView: React.FC = () => {
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="p-4 md:p-6 space-y-4 md:space-y-6 h-[calc(100vh-160px)] md:h-[calc(100vh-200px)] min-h-[500px] flex flex-col"
+      className="p-3.5 sm:p-6 space-y-3.5 sm:space-y-6 h-[calc(100dvh-200px)] md:h-[calc(100vh-200px)] min-h-[420px] flex flex-col w-full"
     >
       {/* Header and Mode Toggle */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">

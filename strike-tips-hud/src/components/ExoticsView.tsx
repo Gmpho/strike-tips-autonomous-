@@ -61,16 +61,16 @@ export const ExoticsView: React.FC = () => {
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="p-6 space-y-8"
+      className="p-3.5 sm:p-6 space-y-6 sm:space-y-8 w-full"
     >
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
         <div>
-          <h2 className="text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent flex items-center gap-2">
-            <Ticket className="w-7 h-7 text-purple-400" />
+          <h2 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent flex items-center gap-2">
+            <Ticket className="w-6 h-6 sm:w-7 sm:h-7 text-purple-400" />
             Exotic Betting Hub
           </h2>
-          <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
+          <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             Multi-Leg Permutation & Coverage Analysis
           </p>
         </div>

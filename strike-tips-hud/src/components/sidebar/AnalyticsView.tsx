@@ -263,19 +263,19 @@ export const AnalyticsView: React.FC = () => {
       initial={{ opacity: 0, scale: 0.98, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="p-6 space-y-8"
+      className="p-3.5 sm:p-6 space-y-5 sm:space-y-8 w-full"
     >
       <div>
-        <h2 className="text-2xl font-bold bg-linear-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+        <h2 className="text-xl sm:text-2xl font-bold bg-linear-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
           Intelligence Analytics
         </h2>
-        <p className="text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
+        <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
           Strategy Performance Metrics
         </p>
       </div>
 
       {/* KPI Grid — 6 cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
         {kpis.map((stat, i) => (
           <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme group hover:border-theme-primary transition-colors">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />

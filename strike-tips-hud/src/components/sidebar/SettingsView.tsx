@@ -179,10 +179,10 @@ export const SettingsView: React.FC = () => {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="p-6 h-full overflow-y-auto custom-scrollbar"
+      exit={{ opacity: 0, y: -15 }}
+      className="p-3.5 sm:p-6 w-full min-h-0"
     >
       {/* Header */}
       <div className="flex items-center justify-between max-w-4xl mx-auto w-full mb-6">

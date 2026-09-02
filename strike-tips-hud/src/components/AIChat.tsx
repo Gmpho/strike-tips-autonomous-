@@ -563,9 +563,9 @@ ${compiledContext || 'No context data available.'}`;
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
+      initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex h-full min-h-[500px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] w-full relative"
+      className="flex h-[calc(100dvh-190px)] md:h-[calc(100vh-200px)] min-h-[460px] bg-white/5 border border-white/10 rounded-2xl sm:rounded-3xl overflow-hidden backdrop-blur-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] w-full relative"
     >
       {/* 1. Desktop Session Sidebar */}
       <div className="hidden md:flex w-52 border-r border-white/10 p-4 bg-black/20 flex-col gap-2 shrink-0">

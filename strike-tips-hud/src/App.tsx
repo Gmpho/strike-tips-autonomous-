@@ -10,6 +10,7 @@ import { Sidebar } from './components/sidebar/Sidebar.tsx';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
+import { BottomNav } from './components/layout/BottomNav';
 import { RaceCard } from './components/RaceCard.tsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
@@ -76,7 +77,9 @@ export const App: React.FC = () => {
     setActiveView(view);
     window.history.pushState(null, '', `/${view}`);
     localStorage.setItem('strike_active_view', view);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAllRaces, setShowAllRaces] = useState(false);
@@ -138,17 +141,17 @@ export const App: React.FC = () => {
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (
-        <div key="loading-state" className="flex flex-col gap-4 min-h-[55vh] md:min-h-[60vh]">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
+        <div key="loading-state" className="flex flex-col gap-4 min-h-[50vh] w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-4 md:gap-6 w-full">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="hud-card p-6 rounded-3xl border border-theme bg-theme-panel" aria-hidden="true">
+              <div key={i} className="hud-card p-5 sm:p-6 rounded-2xl sm:rounded-3xl border border-theme bg-theme-panel" aria-hidden="true">
                 <div className="w-2/3 h-4 rounded-full bg-white/5 animate-pulse mb-5" />
                 <div className="w-full h-28 rounded-2xl bg-white/5 animate-pulse mb-5" />
                 <div className="w-1/3 h-4 rounded-full bg-white/5 animate-pulse" />
               </div>
             ))}
           </div>
-          <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest animate-pulse text-center">
+          <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest animate-pulse text-center mt-4">
             Initializing Neural Link...
           </p>
         </div>
@@ -162,8 +165,8 @@ export const App: React.FC = () => {
     switch (activeView) {
       case 'dashboard':
         return (
-          <div className="flex flex-col gap-4 min-h-[55vh] md:min-h-[60vh]">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
+          <div className="flex flex-col gap-4 w-full">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-4 md:gap-6 w-full">
               {visibleEvents.map((event, idx) => (
                 <RaceCard
                   key={event.id}
@@ -185,7 +188,7 @@ export const App: React.FC = () => {
             {events.length > MAX_VISIBLE_CARDS && !showAllRaces && (
               <button
                 onClick={() => setShowAllRaces(true)}
-                className="mx-auto py-3 px-8 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 rounded-2xl text-purple-300 hover:text-white transition-all text-xs font-black uppercase tracking-wider"
+                className="mx-auto py-3 px-8 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 rounded-2xl text-purple-300 hover:text-white transition-all text-xs font-black uppercase tracking-wider mt-4"
               >
                 Show All {events.length} Races
               </button>
@@ -239,12 +242,12 @@ export const App: React.FC = () => {
       case 'contact':
         return <Suspense key="contact-view" fallback={<ViewFallback />}><ContactPage /></Suspense>;
       default:
-        return <div key="default-view" className="text-theme-primary p-12">Select a module</div>;
+        return <div key="default-view" className="text-theme-primary p-6 sm:p-12">Select a module</div>;
     }
   };
 
   return (
-    <div className="min-h-screen bg-theme-primary text-theme-primary selection:bg-purple-500/30">
+    <div className="min-h-screen min-h-[100dvh] w-full max-w-full overflow-x-hidden bg-theme-primary text-theme-primary selection:bg-purple-500/30 relative flex flex-col">
       {/* Ambient Background Layer (Fixed) */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <WebGLErrorBoundary>
@@ -263,7 +266,7 @@ export const App: React.FC = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm md:hidden"
+            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md md:hidden"
             onClick={() => setIsMobileMenuOpen(false)}
           >
             <motion.aside
@@ -271,14 +274,15 @@ export const App: React.FC = () => {
               animate={{ x: 0 }}
               exit={{ x: -320 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="w-72 h-full bg-theme-panel border-r border-theme overflow-y-auto"
+              className="w-72 max-w-[80vw] h-full bg-theme-panel border-r border-theme overflow-y-auto custom-scrollbar"
               onClick={e => e.stopPropagation()}
             >
-              <div className="flex justify-end p-4">
+              <div className="flex justify-between items-center p-4 border-b border-theme">
+                <span className="text-xs font-black text-purple-400 uppercase tracking-widest">Navigation</span>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
                   aria-label="Close menu"
-                  className="p-2 rounded-lg bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-500 transition-all border border-theme"
+                  className="p-2 rounded-lg bg-theme-secondary hover:bg-purple-500/10 text-theme-secondary hover:text-purple-400 transition-all border border-theme"
                 >
                   <X size={18} />
                 </button>
@@ -294,9 +298,9 @@ export const App: React.FC = () => {
         )}
       </AnimatePresence>
 
-      <div className="flex flex-col md:flex-row">
+      <div className="flex flex-col md:flex-row flex-1 w-full max-w-full min-h-0">
         {/* Desktop sidebar */}
-        <aside className="hidden md:block">
+        <aside className="hidden md:block shrink-0">
           <div className={`${isSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 px-0' : 'w-64'} h-screen sticky top-0 shrink-0 border-r border-theme bg-theme-panel transition-all duration-300 ease-in-out z-30`}>
             <Sidebar
               activeView={activeView}
@@ -307,26 +311,25 @@ export const App: React.FC = () => {
           </div>
         </aside>
 
-        <main className="flex-1 min-w-0 relative z-10 flex flex-col">
+        <main className="flex-1 min-w-0 relative z-10 flex flex-col w-full max-w-full">
           {/* Header */}
-          <div className="sticky top-0 z-20 px-4 md:px-8 lg:px-12 pt-4 md:pt-6 lg:pt-8 pb-3 md:pb-4 bg-theme-panel border-b border-theme">
+          <div className="sticky top-0 z-20 px-3 sm:px-6 md:px-8 lg:px-12 pt-3 sm:pt-4 md:pt-6 pb-2.5 sm:pb-3 md:pb-4 bg-theme-panel/95 backdrop-blur-xl border-b border-theme w-full shadow-xs">
             <Header
               onToggleSidebar={() => setIsMobileMenuOpen(true)}
               isSidebarCollapsed={isSidebarCollapsed}
             />
           </div>
 
-          {/* Main Content */}
-          <div className="px-4 md:px-8 lg:px-12 py-4 md:py-8 flex-1 flex flex-col min-h-0">
-            <div className="w-full flex-1 flex flex-col min-h-0">
-              <AnimatePresence mode="wait">
+          {/* Main Content Area: Responsive padding with safe bottom space for mobile navigation dock */}
+          <div className="px-3 sm:px-6 md:px-8 lg:px-12 py-4 sm:py-6 md:py-8 pb-24 md:pb-8 flex-1 flex flex-col min-h-0 w-full max-w-full">
+            <div className="w-full flex-1 flex flex-col min-h-0 max-w-7xl mx-auto">
+              <AnimatePresence>
                 <motion.div
                   key={activeView}
-                  className="flex-1 flex flex-col min-h-0"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
+                  className="flex-1 flex flex-col min-h-0 w-full"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.12 }}
                 >
                   {renderView()}
                 </motion.div>
@@ -338,6 +341,14 @@ export const App: React.FC = () => {
           <Footer />
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Dock */}
+      <BottomNav
+        activeView={activeView}
+        setActiveView={navigate}
+        onOpenMenu={() => setIsMobileMenuOpen(true)}
+        liveRacesCount={Object.keys(state.events).length}
+      />
 
       <UpdateToast visible={hasUpdate} onUpdate={updateSW} />
     </div>
