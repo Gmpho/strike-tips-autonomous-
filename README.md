@@ -37,8 +37,6 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header
 - **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Vercel middleware `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
 - **📊 Betfair Enriched Form (All Regions)** - 12 fields per runner (`gear`, `daysSinceRun`, `official_rating`, `pedigree` via `SIRE x DAM`, `owner`, `trainer`, `age`, `weight`, `form`, `jockey_claim`, `runner_comments`, `verdict`) across RSA/AUS/USA/GB/IRE/FRA/NZL (`_COUNTRY_FILTER=None`, case-insensitive `WEARING`/`DAYS_SINCE_LAST_RUN`, `marketId`/`id` fix; 169 events for TOMORROW vs 0 before)
-- **📱 Mobile HUD Polish** - Viewport `overflow-x:hidden` + `BottomNav` glass dock (<768px) + `Table`/`Cards` toggle with sticky horse col (`#0c0817`/`#ffffff` solid) + `content-visibility:auto` LCP + instant tab switch
-
 ---
 
 ## 🏛️ Architecture
