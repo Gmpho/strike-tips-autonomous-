@@ -321,7 +321,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecuteP
                 const insightKind: 'timeform' | 'swarm' = r.timeForm ? 'timeform' : 'swarm';
                 const isExpanded = expandedRow === r.name;
                 const hasInsight = Boolean(insightText);
-                const hasEnriched = Boolean(r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim);
+                const hasEnriched = Boolean(r.gear || typeof r.daysSinceRun === 'number' || r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim);
                 const hasExpandable = hasInsight || hasEnriched;
                 const edgeVal = typeof r.edge === 'number' ? r.edge : null;
 
@@ -358,7 +358,14 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecuteP
                           {typeof r.daysSinceRun === 'number' && (
                             <span>Days: <strong className="text-slate-300 font-mono">{r.daysSinceRun}d</strong></span>
                           )}
+                          {r.gear && <span>Gear: <strong className="text-cyan-300">{r.gear}</strong></span>}
                         </div>
+                        {(r.owner || r.pedigree) && (
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-[8px] text-theme-secondary">
+                            {r.owner && <span className="truncate max-w-[140px]">Owner: <strong className="text-slate-300">{r.owner}</strong></span>}
+                            {r.pedigree && <span className="truncate max-w-[160px]">Ped: <strong className="text-slate-300">{r.pedigree}</strong></span>}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex flex-col items-end gap-2 shrink-0">
@@ -394,10 +401,14 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecuteP
                         {hasInsight && <InsightBanner text={insightText} kind={insightKind} />}
                         {hasEnriched && (
                           <div className="grid grid-cols-1 gap-1.5 text-[10px] bg-black/20 p-2.5 rounded-xl border border-white/5">
+                            {r.gear && <div><span className="font-black text-cyan-400 uppercase text-[8px]">Gear:</span> <span className="text-cyan-300">{r.gear}</span></div>}
+                            {typeof r.daysSinceRun === 'number' && <div><span className="font-black text-slate-400 uppercase text-[8px]">Days:</span> <span className="text-slate-300">{r.daysSinceRun} days</span></div>}
                             {r.runner_comments && <div><span className="font-black text-purple-400 uppercase text-[8px]">Comments:</span> <span className="text-slate-300">{r.runner_comments}</span></div>}
                             {r.verdict && <div><span className="font-black text-emerald-400 uppercase text-[8px]">Verdict:</span> <span className="text-slate-300">{r.verdict}</span></div>}
                             {r.official_rating !== undefined && <div><span className="font-black text-amber-400 uppercase text-[8px]">Rating:</span> <span className="text-slate-300">{r.official_rating}</span></div>}
                             {r.jockey_claim && <div><span className="font-black text-cyan-400 uppercase text-[8px]">Claim:</span> <span className="text-slate-300">{r.jockey_claim}</span></div>}
+                            {r.pedigree && <div><span className="font-black text-slate-400 uppercase text-[8px]">Pedigree:</span> <span className="text-slate-300">{r.pedigree}</span></div>}
+                            {r.owner && <div><span className="font-black text-slate-400 uppercase text-[8px]">Owner:</span> <span className="text-slate-300">{r.owner}</span></div>}
                           </div>
                         )}
                       </div>
@@ -432,7 +443,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecuteP
                     const insightKind: 'timeform' | 'swarm' = r.timeForm ? 'timeform' : 'swarm';
                     const isExpanded = expandedRow === r.name;
                     const hasInsight = Boolean(insightText);
-                    const hasEnriched = Boolean(r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim);
+                    const hasEnriched = Boolean(r.gear || typeof r.daysSinceRun === 'number' || r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim);
                     const hasExpandable = hasInsight || hasEnriched;
                     const edgeVal = typeof r.edge === 'number' ? r.edge : null;
 
@@ -522,10 +533,12 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecuteP
                             </td>
                           </tr>
                         )}
-                        {isExpanded && (r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim) && (
+                        {isExpanded && (r.gear || typeof r.daysSinceRun === 'number' || r.runner_comments || r.official_rating || r.pedigree || r.owner || r.verdict || r.jockey_claim) && (
                           <tr className="border-b border-theme">
                             <td colSpan={COLUMNS} className="py-2 px-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                                {r.gear && <div><span className="font-black text-cyan-400 uppercase text-[9px]">Gear:</span> <span className="text-cyan-300">{r.gear}</span></div>}
+                                {typeof r.daysSinceRun === 'number' && <div><span className="font-black text-slate-400 uppercase text-[9px]">Days:</span> <span className="text-slate-300">{r.daysSinceRun} days</span></div>}
                                 {r.runner_comments && <div><span className="font-black text-purple-400 uppercase text-[9px]">Comments:</span> <span className="text-slate-300">{r.runner_comments}</span></div>}
                                 {r.verdict && <div><span className="font-black text-emerald-400 uppercase text-[9px]">Verdict:</span> <span className="text-slate-300">{r.verdict}</span></div>}
                                 {r.official_rating !== undefined && <div><span className="font-black text-amber-400 uppercase text-[9px]">Rating:</span> <span className="text-slate-300">{r.official_rating}</span></div>}

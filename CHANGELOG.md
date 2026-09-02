@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-02 — Security Hardening, Betfair Enrichment (All Regions) & Mobile HUD Polish
+
+### 🔒 Security — Cloudflare Worker & Vercel Middleware
+- **Cloudflare `isAuthorized` fail-closed** (`cloudflare_mcp_edge/src/index.ts:20`): `!!env.BACKEND_API_KEY && header===env.BACKEND_API_KEY` (was `!env.BACKEND_API_KEY ||` open when secret empty); `ALLOWED_ORIGINS` allowlist `https://strike-tips-hud.vercel.app` + `OPTIONS 204` + `Vary: Origin`; secret `BACKEND_API_KEY` rotated to `7a70...a125` via `wrangler secret put`.
+- **Vercel middleware rate limiting + kill protection** (`strike-tips-hud/middleware.ts:14`): fixed-window `100 req/min` per IP (`429`), `SENSITIVE_PATHS` (`/api/agent/kill`, `/api/agent/reset`) now require `x-api-key` (`401` without, was `EMERGENCY STOP ACTIVATED`); IP via `x-forwarded-for`.
+- Verified: `curl POST /api/agent/kill` → `401`, `curl -I Origin: https://evil.com` → `allow-origin: https://strike-tips-hud.vercel.app` (not `*`).
+
+### 📊 Betfair Form-Data — 12 Fields, All Regions
+- **`_COUNTRY_FILTER=None`** (`betfair_sa.py:47`) — was `{"ZA"}`, now ingests RSA/AUS/FRA/NZL/USA/IRE/GB (TOMORROW 169 events vs 0 before; TODAY SA correctly empty after 17:00). `marketId` now `market.get("marketId") or market.get("id")` (`betfair_sa.py:169`) — was `None` for SA/TOMORROW.
+- **Case-insensitive + pedigree build** (`betfair_sa.py:236`): `WEARING`/`DAYS_SINCE_LAST_RUN`/`OFFICIAL_RATING` etc. via `meta_low`, pedigree `SIRE_NAME x DAM_NAME (DAMSIRE_NAME)`, `WEIGHT_VALUE` + `WEIGHT_UNITS`, `market_info` stores `course`/`timeLabel` from `/all` (fixes `Unknown` + `13:07` vs `11:07`).
+- **Data model:** `ScrapedRunner` (`tab4racing.py:31`) + `Runner` (`analyzer.py:14`) + `racing_service.py:115` passthrough for `gear`, `days_since_run`, `runner_comments`, `jockey_claim`, `official_rating`, `pedigree`, `owner`, `verdict`.
+- **Merge:** `_merge_bf_into` (`adaptive_odds_monitor.py:284`) now 12 keys additive one-to-one (`difflib 0.6`).
+- **HUD:** `types/index.ts:21` + `RaceCard.tsx:81` — table Gear badges + Days sortable + expanded 8-field grid (`Gear`/`Days`/`Comments`/`Verdict`/`Rating`/`Claim`/`Pedigree`/`Owner`); cards collapsed shows Gear/Owner/Pedigree, expanded same grid; `hasEnriched` includes `gear`/`days`.
+- Tests: `test_betfair_enriched.py` (22) + existing 31 → `53 passed` (`PYTHONPATH=. pytest -q`).
+
+### 📱 Mobile, Tablet & Performance
+- **Viewport lock** (`index.html`, `style.css`): `overflow-x:hidden; max-width:100vw; overscroll-behavior-x:none` stops 12-col table panning body.
+- **RaceCard sticky col** (`RaceCard.tsx:441`): solid `bg #0c0817/#ffffff` + high `z-index`; removed `tracking-tighter`.
+- **Table/Cards toggle** (`RaceCard.tsx:86` `viewMode` + `LayoutList`/`TableIcon`): `sm:hidden` cards (no horizontal scroll) vs `min-w-[720px]` sticky `left-0` table.
+- **BottomNav** (`BottomNav.tsx`): glass dock <768px (Races/AI Chat/Exotics/Bankroll/More) + `pb-24 md:pb-8` + `env(safe-area-inset-bottom)`.
+- **LCP:** `content-visibility:auto; contain-intrinsic-size:0 160px` on cards, no stagger delay, `App.tsx` removed `mode="wait"` → instant tab switch. Verified `vercel deploy --prod` (`bhtrxej6j`/`i05ikjx79`) `YTZ8twO5` 74.9kB, `tsc --noEmit --skipLibCheck` clean.
+
+### Deployments
+`modal deploy modal_app.py` (390s), `vercel deploy --cwd strike-tips-hud --prod --force` (47-49s, aliased `strike-tips-hud.vercel.app`), `wrangler deploy` (66cf38a3, 159 KiB), secrets rotated.
+
+### Docs
+New `docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md`; `openspec/specs/betfair-form-data/spec.md` updated for 12 fields + all-regions + expanded HUD scenario.
+
 ## 2026-08-27 — Backend cleanup: remove Cloudflare quick-tunnel, Modal stays primary
 
 ### 🔧 Routing simplified (Modal-only by default)
