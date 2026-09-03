@@ -40,6 +40,10 @@ RUN playwright install-deps chromium 2>&1 || echo "System deps install failed"
 # Pre-download Playwright browsers at build time (CDN is reachable from buildkit now)
 RUN playwright install chromium 2>&1 || echo "Playwright browsers pre-download failed — will retry at runtime"
 
+# Pre-download Patchright (scrapling's Chromium fork) browser — StealthyFetcher
+# needs its own binary (ms-playwright/chromium-1234), Playwright's copy is separate
+RUN python -m patchright install chromium 2>&1 || patchright install chromium 2>&1 || echo "Patchright browser pre-download failed — StealthyFetcher will fall back to Fetcher/httpx"
+
 # Pre-download ChromaDB ONNX embedding model (all-MiniLM-L6-v2, ~79MB)
 COPY prewarm_chroma.py .
 RUN python prewarm_chroma.py 2>&1 || echo "Chroma ONNX pre-download failed — will download at startup"

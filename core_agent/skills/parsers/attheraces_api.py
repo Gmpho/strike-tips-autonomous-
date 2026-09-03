@@ -25,19 +25,35 @@ _STEALTH_AVAILABLE = False
 
 try:
     from scrapling.fetchers import Fetcher, StealthyFetcher
-    from scrapling.parser import Selector
     _SCRAPLING_AVAILABLE = True
     _STEALTH_AVAILABLE = True
 except ImportError:
+    _STEALTH_AVAILABLE = False
     try:
         from scrapling.fetchers import Fetcher
-        from scrapling.parser import Selector
         _SCRAPLING_AVAILABLE = True
     except ImportError:
+        _SCRAPLING_AVAILABLE = False
+
         class Fetcher:
             @staticmethod
             def get(url, **kwargs):
                 return type("Page", (), {"status": 200, "body": b"", "headers": {}})()
+
+# Selector imported independently — a fetcher-only failure (e.g. missing
+# `patchright` on Modal) must never kill HTML parsing (lxml/bs4 path).
+try:
+    from scrapling.parser import Selector
+    _SELECTOR_AVAILABLE = True
+except ImportError:
+    _SELECTOR_AVAILABLE = False
+
+    class Selector:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def css(self, *args, **kwargs):
+            return []
 
 BROWSER_PROFILE = "/app/data/browser_profile"
 
@@ -74,8 +90,22 @@ def _text(el) -> str:
 class AtTheRacesAPI:
     BASE_URL = "https://www.attheraces.com"
 
+    @staticmethod
+    def _is_challenge_page(body: bytes) -> bool:
+        """Detect bot-challenge shells (Fastly/Cloudflare) with no real content."""
+        if not body:
+            return True
+        low = body[:8000].lower()
+        markers = (b"_fs-ch-", b"just a moment", b"cf-challenge", b"attention required", b"enable javascript to proceed")
+        return any(m in low for m in markers)
+
     def _fetch(self, path: str) -> Optional[bytes]:
-        """Fetch page with tiered fallback: StealthyFetcher → Fetcher → None."""
+        """Fetch page with tiered fallback: StealthyFetcher → Fetcher → httpx.
+
+        Each tier must return HTTP 200 with a non-challenge body, otherwise the
+        next tier is tried. A 200 challenge shell (e.g. Fastly 3KB page) is NOT
+        accepted as success.
+        """
         url = f"{self.BASE_URL}{path}"
 
         # DNS pre-check — skip Scrapling entirely if domain can't resolve (avoids noisy retries)
@@ -100,19 +130,42 @@ class AtTheRacesAPI:
                     retries=1,
                     retry_delay=1,
                 )
-                if page and page.status == 200:
+                if page and page.status == 200 and not self._is_challenge_page(page.body):
                     return page.body
+                if page and page.status == 200:
+                    logger.debug("Stealth fetch returned challenge shell for %s — trying next tier", path)
             except Exception as e:
                 logger.debug("Stealth fetch failed for %s: %s", path, e)
 
         # Tier 2: Basic Fetcher — fast HTTP impersonation (curl_cffi)
         if _SCRAPLING_AVAILABLE:
             try:
-                page = Fetcher.get(url, impersonate="chrome131", timeout=15)
-                if page and page.status == 200:
+                page = Fetcher.get(url, impersonate="chrome131", timeout=30)
+                if page and page.status == 200 and not self._is_challenge_page(page.body):
                     return page.body
+                if page and page.status == 200:
+                    logger.debug("Basic fetch returned challenge shell for %s — trying next tier", path)
             except Exception as e:
                 logger.debug("Basic fetch failed for %s: %s", path, e)
+
+        # Tier 3: httpx fallback (Modal-friendly, no Chromium, no curl impersonation)
+        try:
+            import httpx
+
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            with httpx.Client(timeout=30, follow_redirects=True) as client:
+                resp = client.get(url, headers=headers)
+                if resp.status_code == 200 and resp.content and len(resp.content) > 1000:
+                    if self._is_challenge_page(resp.content):
+                        logger.debug("httpx fallback returned challenge shell for %s", path)
+                    else:
+                        return resp.content
+        except Exception as e:
+            logger.debug("httpx fallback failed for %s: %s", path, e)
 
         logger.debug("All fetch tiers failed for %s", url)
         return None
@@ -197,12 +250,17 @@ class AtTheRacesAPI:
         }
 
     async def get_results(self, date: str = "yesterday") -> List[Dict]:
-        """Scrape race results via Scrapling with self-healing selectors + retry."""
+        """Scrape race results via Scrapling with self-healing selectors + retry.
+
+        Timeout is 150s (not 60s): on a cold Modal container Tier 1 StealthyFetcher
+        launches Chromium + solves the Fastly challenge (~40-60s) before Tier 2/3
+        get a turn. Worst case 2×150s (yesterday+today) still fits the 600s cron.
+        """
         for attempt in range(3):
             try:
-                html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=60)
+                html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=150)
             except asyncio.TimeoutError:
-                logger.warning("ATR results fetch timed out after 60s: %s", date)
+                logger.warning("ATR results fetch timed out after 150s: %s", date)
                 return []
 
             if html and len(html) < 10_000:
