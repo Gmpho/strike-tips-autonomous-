@@ -6,11 +6,14 @@ import { useHUD } from '../../hooks/useHUD';
 interface HeaderProps {
   onToggleSidebar?: () => void;
   isSidebarCollapsed?: boolean;
+  onNavigate?: (view: string) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
+export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) => {
   const state = useHUD();
   const isOnline = state.systemHealth.status === 'ONLINE';
+  const edgeRoi = Number(state.learning?.totalRoi ?? 0);
+  const edgeIsPositive = edgeRoi >= 0;
 
   return (
     <header className="flex justify-between items-center pointer-events-auto w-full gap-2">
@@ -85,13 +88,17 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           <div className="h-7 md:h-9 w-px bg-theme-secondary opacity-10" />
           <div className="flex flex-col">
             <span className="text-[8px] md:text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Edge</span>
-            <span className="text-[10px] md:text-xs font-mono font-bold text-emerald-400 flex items-center gap-1 justify-end">
-              <Zap className="w-2.5 h-2.5 md:w-3 md:h-3 fill-emerald-400" /> {state.learning?.totalRoi.toFixed(1) || '0.0'}%
+            <span className={`text-[10px] md:text-xs font-mono font-bold flex items-center gap-1 justify-end ${edgeIsPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+              <Zap className={`w-2.5 h-2.5 md:w-3 md:h-3 ${edgeIsPositive ? 'fill-emerald-400' : 'fill-red-400'}`} /> {edgeRoi.toFixed(1)}%
             </span>
           </div>
         </div>
 
-        <div className="bg-theme-secondary border border-theme px-2 sm:px-3.5 md:px-4 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl flex items-center gap-1.5 sm:gap-3 hover:border-theme transition-all cursor-pointer group shrink-0">
+        <div
+          onClick={() => onNavigate?.('bankroll')}
+          title="Governor & DSI Status — Click to view Bankroll"
+          className="bg-theme-secondary border border-theme px-2 sm:px-3.5 md:px-4 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl flex items-center gap-1.5 sm:gap-3 hover:border-purple-500/40 transition-all cursor-pointer group shrink-0"
+        >
           <div>
             <div className="text-[7px] sm:text-[8px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter">Capital</div>
             <div className="text-[10px] sm:text-xs md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">

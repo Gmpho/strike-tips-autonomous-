@@ -125,7 +125,11 @@ export const ExoticsView: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 {activePlays.map((play, index) => {
-                  const estCost = play.combinations.length * 1.20; // Suggested R1.20 unit cost
+                  const permutations = play.estimated_combinations || (play.combinations || []).reduce(
+                    (acc, c) => acc * (1 + (Array.isArray(c.savers) ? c.savers.length : 0)),
+                    1
+                  );
+                  const estCost = permutations * 1.20; // Suggested R1.20 unit cost
                   return (
                     <motion.div
                       key={index}
@@ -148,7 +152,7 @@ export const ExoticsView: React.FC = () => {
                           <div className="text-right">
                             <div className="text-[9px] text-theme-secondary font-black">EST. DIVIDEND</div>
                             <div className="text-xl font-black text-emerald-400 tabular leading-none mt-1">
-                              R{play.estimated_dividend?.toLocaleString()}
+                              R{play.estimated_dividend?.toLocaleString() || '0'}
                             </div>
                           </div>
                         </div>
@@ -160,7 +164,7 @@ export const ExoticsView: React.FC = () => {
                             Multi-Leg Structure
                           </h4>
                           <div className="space-y-3">
-                            {play.combinations.map((combo, idx) => (
+                            {(play.combinations || []).map((combo, idx) => (
                               <div key={idx} className="flex items-center gap-3 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
                                 <div className="text-[10px] font-black text-purple-400 w-12 shrink-0">LEG {idx + 1}</div>
                                 <div className="text-[9px] text-slate-500 uppercase w-14 shrink-0 font-bold">RACE {combo.race}</div>
@@ -168,12 +172,12 @@ export const ExoticsView: React.FC = () => {
                                   {/* Banker */}
                                   <span className="text-[11px] font-black text-amber-300 bg-amber-500/10 px-2 py-0.5 border border-amber-500/30 rounded-lg flex items-center gap-1">
                                     <Star className="w-3 h-3 fill-amber-300" />
-                                    Horse {combo.banker} (Banker)
+                                    #{typeof combo.banker === 'object' ? (combo.banker as any)?.name || (combo.banker as any)?.number : combo.banker} (Banker)
                                   </span>
                                   {/* Savers */}
-                                  {combo.savers.map(s => (
-                                    <span key={s} className="text-[11px] font-black text-slate-300 bg-white/5 px-2 py-0.5 border border-theme rounded-lg">
-                                      Horse {s} (Saver)
+                                  {(combo.savers || []).map((s, sIdx) => (
+                                    <span key={sIdx} className="text-[11px] font-black text-slate-300 bg-white/5 px-2 py-0.5 border border-theme rounded-lg">
+                                      #{typeof s === 'object' ? (s as any)?.name || (s as any)?.number : s} (Saver)
                                     </span>
                                   ))}
                                 </div>
@@ -188,7 +192,7 @@ export const ExoticsView: React.FC = () => {
                         <div className="flex gap-4">
                           <div>
                             <div className="text-[9px] text-theme-secondary font-black uppercase">Permutations</div>
-                            <div className="text-sm font-black text-theme-primary tabular">{play.combinations.length}</div>
+                            <div className="text-sm font-black text-theme-primary tabular">{permutations}</div>
                           </div>
                           <div>
                             <div className="text-[9px] text-theme-secondary font-black uppercase">Est. Cost</div>

@@ -317,6 +317,7 @@ export const App: React.FC = () => {
             <Header
               onToggleSidebar={() => setIsMobileMenuOpen(true)}
               isSidebarCollapsed={isSidebarCollapsed}
+              onNavigate={navigate}
             />
           </div>
 

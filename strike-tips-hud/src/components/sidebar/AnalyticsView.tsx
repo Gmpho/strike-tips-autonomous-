@@ -235,14 +235,16 @@ export const AnalyticsView: React.FC = () => {
 
   const openBetsValue = bankroll?.totalExposure?.toFixed(2) ?? '0.00';
 
-  const tracks = Object.entries(learning?.roiByTrack || {}).map(([name, roi]) => ({
+  const allTracks = Object.entries(learning?.roiByTrack || {}).map(([name, roi]) => ({
     name: name.charAt(0).toUpperCase() + name.slice(1),
-    roi: roi as number
+    roi: Number(roi) || 0
   }));
 
-  const sortedTracks = [...tracks].sort((a, b) => b.roi - a.roi);
-  const bestTrack = sortedTracks[0];
-  const worstTrack = sortedTracks[sortedTracks.length - 1];
+  const nonZeroTracks = allTracks.filter(t => t.roi !== 0);
+  const tracks = (nonZeroTracks.length > 0 ? nonZeroTracks : allTracks.slice(0, 7)).sort((a, b) => b.roi - a.roi);
+
+  const bestTrack = tracks.length > 0 && tracks[0].roi > 0 ? tracks[0] : null;
+  const worstTrack = tracks.length > 0 && tracks[tracks.length - 1].roi < 0 ? tracks[tracks.length - 1] : null;
 
   const chartBalances = bankrollHistory.map(p => p.balance);
   const chartTrend = chartBalances.length >= 2
@@ -307,19 +309,19 @@ export const AnalyticsView: React.FC = () => {
 
       {/* Best / Worst Track */}
       {(bestTrack || worstTrack) && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className={`grid ${bestTrack && worstTrack ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
           {bestTrack && (
             <div className="p-4 rounded-2xl bg-theme-panel border border-emerald-500/20">
               <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Best Track</div>
               <div className="text-theme-primary font-black">{bestTrack.name}</div>
-              <div className="text-emerald-400 font-black tabular">+{bestTrack.roi}% ROI</div>
+              <div className="text-emerald-400 font-black tabular">+{bestTrack.roi.toFixed(1)}% ROI</div>
             </div>
           )}
-          {worstTrack && worstTrack.name !== bestTrack?.name && (
+          {worstTrack && (
             <div className="p-4 rounded-2xl bg-theme-panel border border-red-500/20">
               <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Worst Track</div>
               <div className="text-theme-primary font-black">{worstTrack.name}</div>
-              <div className="text-red-400 font-black tabular">{worstTrack.roi}% ROI</div>
+              <div className="text-red-400 font-black tabular">{worstTrack.roi.toFixed(1)}% ROI</div>
             </div>
           )}
         </div>
@@ -443,24 +445,37 @@ export const AnalyticsView: React.FC = () => {
           <p className="text-xs text-theme-secondary font-bold">No settled bets yet — ROI will populate after results are recorded.</p>
         ) : (
           <div className="space-y-6">
-            {tracks.map((track) => (
-              <div key={track.name} className="space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-theme-primary font-black uppercase tracking-tight">{track.name}</span>
-                  <span className={`font-black tabular ${track.roi >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {track.roi >= 0 ? '+' : ''}{track.roi}% ROI
-                  </span>
+            {tracks.map((track) => {
+              const isPositive = track.roi > 0;
+              const isNegative = track.roi < 0;
+              const barWidth = isPositive
+                ? Math.min(100, Math.max(8, track.roi))
+                : isNegative
+                ? Math.min(100, Math.max(8, Math.abs(track.roi)))
+                : 4;
+              return (
+                <div key={track.name} className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-theme-primary font-black uppercase tracking-tight">{track.name}</span>
+                    <span className={`font-black tabular ${isPositive ? 'text-emerald-400' : isNegative ? 'text-red-400' : 'text-slate-400'}`}>
+                      {isPositive ? '+' : ''}{track.roi.toFixed(1)}% ROI
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${barWidth}%` }}
+                      transition={{ duration: 0.8, ease: "easeOut" }}
+                      className={`h-full rounded-full ${
+                        isPositive ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]' :
+                        isNegative ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' :
+                        'bg-slate-600'
+                      }`}
+                    />
+                  </div>
                 </div>
-                <div className="h-1.5 w-full bg-theme-secondary rounded-full overflow-hidden border border-theme/50">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${Math.max(5, Math.min(100, 50 + (track.roi * 2)))}%` }}
-                    transition={{ duration: 1, ease: "easeOut" }}
-                    className={`h-full rounded-full ${track.roi >= 0 ? 'bg-emerald-500' : 'bg-red-500'} shadow-[0_0_8px_rgba(16,185,129,0.2)]`}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
