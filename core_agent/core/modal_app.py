@@ -462,7 +462,7 @@ async def run_scan(chat_id: Optional[int] = None):
     secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
     volumes={"/app/data": data_volume},
     memory=1024,
-    timeout=600,
+    timeout=900,
     max_containers=1,
     scaledown_window=60,
     schedule=modal.Cron("*/5 * * * *", timezone="Africa/Johannesburg"),

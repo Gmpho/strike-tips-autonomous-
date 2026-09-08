@@ -428,6 +428,43 @@ def _merge_daily_scan_into(state: dict):
         }
 
 
+# ATR content changes slowly (movers a few times/day, results 1-2x/day) but the
+# 5-min cron was hitting 4 ATR pages every cycle (~1150 fetches/day from Modal
+# egress IPs). On 2026-09-03 that volume got us rate-limited into Fastly
+# challenge shells for 18h straight. Refresh ATR at most every 45 min.
+ATR_REFRESH_MIN_GAP_SECS = 45 * 60
+
+
+def _atr_snapshot_fresh(max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
+    """True when ALL three ATR snapshots were written within max_age_secs."""
+    import time as _time
+    try:
+        mtimes = [
+            Path(p).stat().st_mtime
+            for p in (ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH)
+            if Path(p).exists()
+        ]
+        if len(mtimes) < 3:
+            return False
+        return (_time.time() - min(mtimes)) < max_age_secs
+    except Exception:
+        return False
+
+
+def _atr_file_fresh(path, max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
+    """True when a single ATR snapshot file was written within max_age_secs.
+
+    Used for per-file gating: when only one feed (e.g. movers) is stale, retry
+    just that feed instead of re-hammering all four ATR pages every cycle.
+    """
+    import time as _time
+    try:
+        p = Path(path)
+        return p.exists() and (_time.time() - p.stat().st_mtime) < max_age_secs
+    except Exception:
+        return False
+
+
 def _atomic_write_json(path: str, data: any, indent: int = 2):
     """Write data to a JSON file atomically to prevent corruption on crash"""
     tmp_path = str(path) + ".tmp"
@@ -653,30 +690,46 @@ class AdaptiveOddsMonitor:
                             logger.warning("Cloudflare push returned %d: %.100s", resp.status_code, resp.text)
             except Exception as exc:
                 logger.debug("Cloudflare push skipped: %s", exc)
-            # ATR quick refresh
-            try:
-                atr_results_yesterday = await self.at_races.get_results("yesterday")
-            except Exception:
-                atr_results_yesterday = None
-            try:
-                atr_results_today = await self.at_races.get_results("today")
-            except Exception:
-                atr_results_today = None
-            all_results = (atr_results_yesterday or []) + (atr_results_today or [])
-            if all_results:
-                _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
-            try:
-                atr_movers = await self.at_races.get_market_movers()
-                if atr_movers:
-                    _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
-            except Exception:
-                pass
-            try:
-                atr_predictions = await self.at_races.get_predictor()
-                if atr_predictions:
-                    _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
-            except Exception:
-                pass
+            # ATR refresh — per-file, at most every 45 min (see
+            # ATR_REFRESH_MIN_GAP_SECS). ATR content moves slowly; hammering all
+            # four pages every 5-min cycle got our egress IPs challenge-walled
+            # for 18h on 2026-09-03. A stale feed retries alone without
+            # re-hammering the fresh ones.
+            if _atr_snapshot_fresh():
+                logger.debug("ATR snapshots fresh (<45min) — skipping ATR fetch this cycle")
+            else:
+                if _atr_file_fresh(ATR_RESULTS_PATH):
+                    logger.debug("ATR results fresh — skipping results fetch")
+                else:
+                    try:
+                        atr_results_yesterday = await self.at_races.get_results("yesterday")
+                    except Exception:
+                        atr_results_yesterday = None
+                    try:
+                        atr_results_today = await self.at_races.get_results("today")
+                    except Exception:
+                        atr_results_today = None
+                    all_results = (atr_results_yesterday or []) + (atr_results_today or [])
+                    if all_results:
+                        _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
+                if _atr_file_fresh(ATR_MOVERS_PATH):
+                    logger.debug("ATR movers fresh — skipping movers fetch")
+                else:
+                    try:
+                        atr_movers = await self.at_races.get_market_movers()
+                        if atr_movers:
+                            _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
+                    except Exception:
+                        pass
+                if _atr_file_fresh(ATR_PREDICTOR_PATH):
+                    logger.debug("ATR predictor fresh — skipping predictor fetch")
+                else:
+                    try:
+                        atr_predictions = await self.at_races.get_predictor()
+                        if atr_predictions:
+                            _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
+                    except Exception:
+                        pass
             await self._check_atr_staleness()
             await self._cleanup_atr_snapshots()
             for event_id in active_ids:
@@ -789,37 +842,48 @@ class AdaptiveOddsMonitor:
                 except Exception as exc:
                     logger.debug("Cloudflare push skipped: %s", exc)
 
-                # 1c. ATR data — fetch every cycle for maximum freshness
-                if True:
-                    try:
-                        atr_results_yesterday = await self.at_races.get_results("yesterday")
-                    except Exception as e:
-                        atr_results_yesterday = None
-                        logger.debug("ATR yesterday results fetch skipped: %s", e)
-                    try:
-                        atr_results_today = await self.at_races.get_results("today")
-                    except Exception as e:
-                        atr_results_today = None
-                        logger.debug("ATR today results fetch skipped: %s", e)
-                    all_results = (atr_results_yesterday or []) + (atr_results_today or [])
-                    if all_results:
-                        _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
-
-                    try:
-                        atr_movers = await self.at_races.get_market_movers()
-                        if atr_movers:
-                            _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
-                    except Exception as e:
-                        logger.debug("ATR movers fetch skipped: %s", e)
-
-                    try:
-                        atr_predictions = await self.at_races.get_predictor()
-                        if atr_predictions:
-                            _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
-                    except Exception as e:
-                        logger.debug("ATR predictor fetch skipped: %s", e)
+                # 1c. ATR data — per-file, at most every 45 min (see
+                # ATR_REFRESH_MIN_GAP_SECS). Fetching every cycle got our egress
+                # IPs challenge-walled for 18h on 2026-09-03.
+                if _atr_snapshot_fresh():
+                    logger.debug("Skipping ATR fetches (snapshots fresh <45min, cycle %d)", self._atr_cycle)
                 else:
-                    logger.debug("Skipping ATR fetches (no active races, cycle %d)", self._atr_cycle)
+                    if _atr_file_fresh(ATR_RESULTS_PATH):
+                        logger.debug("ATR results fresh — skipping results fetch (cycle %d)", self._atr_cycle)
+                    else:
+                        try:
+                            atr_results_yesterday = await self.at_races.get_results("yesterday")
+                        except Exception as e:
+                            atr_results_yesterday = None
+                            logger.debug("ATR yesterday results fetch skipped: %s", e)
+                        try:
+                            atr_results_today = await self.at_races.get_results("today")
+                        except Exception as e:
+                            atr_results_today = None
+                            logger.debug("ATR today results fetch skipped: %s", e)
+                        all_results = (atr_results_yesterday or []) + (atr_results_today or [])
+                        if all_results:
+                            _atomic_write_json(ATR_RESULTS_PATH, {"results": all_results, "timestamp": datetime.now().isoformat()})
+
+                    if _atr_file_fresh(ATR_MOVERS_PATH):
+                        logger.debug("ATR movers fresh — skipping movers fetch (cycle %d)", self._atr_cycle)
+                    else:
+                        try:
+                            atr_movers = await self.at_races.get_market_movers()
+                            if atr_movers:
+                                _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
+                        except Exception as e:
+                            logger.debug("ATR movers fetch skipped: %s", e)
+
+                    if _atr_file_fresh(ATR_PREDICTOR_PATH):
+                        logger.debug("ATR predictor fresh — skipping predictor fetch (cycle %d)", self._atr_cycle)
+                    else:
+                        try:
+                            atr_predictions = await self.at_races.get_predictor()
+                            if atr_predictions:
+                                _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
+                        except Exception as e:
+                            logger.debug("ATR predictor fetch skipped: %s", e)
 
                 # Check ATR snapshot staleness and alert if needed
                 await self._check_atr_staleness()

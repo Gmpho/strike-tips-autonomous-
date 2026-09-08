@@ -18,5 +18,7 @@ COPY . .
 # Persist Scrapling cache under host-mounted volume
 RUN mkdir -p /app/data/.scrapling && ln -sfn /app/data/.scrapling /root/.scrapling
 
-# Install browsers at runtime (CDN reachable from containers, not Docker build daemon)
-CMD playwright install chromium 2>&1 || true && python core_agent/core/adaptive_odds_monitor.py
+# Install browsers at runtime (CDN reachable from containers, not Docker build daemon).
+# Patchright (scrapling's Chromium fork) needs its OWN binary — Playwright's copy
+# lives elsewhere. Without it StealthyFetcher fails and ATR parsing degrades.
+CMD playwright install chromium 2>&1 || true && (python -m patchright install chromium 2>&1 || patchright install chromium 2>&1 || true) && python core_agent/core/adaptive_odds_monitor.py
