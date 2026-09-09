@@ -9,6 +9,7 @@ import {
   type MtLang,
 } from '../lib/offline-models';
 import { callWorker, getSharedWorker } from '../lib/worker-client';
+import TranslateWorker from '../workers/translate.worker.ts?worker';
 
 // In-memory translations per (lang, text). News/tips churn; recompute is cheap.
 const cache = new Map<string, string | null>();
@@ -72,14 +73,10 @@ export function useTranslation(): TranslationState {
     if (!isModelEnabled(lang.model)) setModelEnabled(lang.model, true);
     setTranslating(true);
     try {
-      const w = await getSharedWorker(
-        'translate',
-        () => new URL('../workers/translate.worker.ts', import.meta.url),
-        (p, t) => {
-          progressRef.current.setProgress(p);
-          progressRef.current.setProgressText(t);
-        }
-      );
+      const w = await getSharedWorker('translate', () => new TranslateWorker(), (p, t) => {
+        progressRef.current.setProgress(p);
+        progressRef.current.setProgressText(t);
+      });
       if (!w) return null;
       const msg = await callWorker<{ type: string; translation?: string }>(
         w,

@@ -6,6 +6,10 @@ import {
   type OfflineModelId,
 } from './offline-models';
 import { callWorker, dropSharedWorker, getSharedWorker } from './worker-client';
+import SentimentWorker from '../workers/sentiment.worker.ts?worker';
+import TtsWorker from '../workers/tts.worker.ts?worker';
+import TrocrWorker from '../workers/trocr.worker.ts?worker';
+import TranslateWorker from '../workers/translate.worker.ts?worker';
 
 export interface PackProgress {
   done: number;
@@ -14,18 +18,18 @@ export interface PackProgress {
   detail: string;
 }
 
-function workerUrlFor(id: string): URL {
-  // Static strings only — Vite must resolve worker URLs at build time.
+function makeWorkerFor(id: string): () => Worker {
+  // Static constructors only — Vite must resolve worker chunks at build time.
   switch (id) {
     case 'sentiment':
-      return new URL('../workers/sentiment.worker.ts', import.meta.url);
+      return () => new SentimentWorker();
     case 'tts':
-      return new URL('../workers/tts.worker.ts', import.meta.url);
+      return () => new TtsWorker();
     case 'trocr':
-      return new URL('../workers/trocr.worker.ts', import.meta.url);
+      return () => new TrocrWorker();
     case 'mt-af':
     case 'mt-mul':
-      return new URL('../workers/translate.worker.ts', import.meta.url);
+      return () => new TranslateWorker();
     default:
       throw new Error(`No worker for offline model: ${id}`);
   }
@@ -68,7 +72,7 @@ export async function downloadPack(
     }
     if (!isModelEnabled(id)) setModelEnabled(id, true);
     try {
-      const w = await getSharedWorker(id, () => workerUrlFor(id), (p, t) =>
+      const w = await getSharedWorker(id, makeWorkerFor(id), (p, t) =>
         onProgress({
           done,
           total: ids.length,

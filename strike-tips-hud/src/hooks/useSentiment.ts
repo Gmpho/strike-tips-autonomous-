@@ -7,6 +7,7 @@ import {
   setModelEnabled,
 } from '../lib/offline-models';
 import { callWorker, getSharedWorker } from '../lib/worker-client';
+import SentimentWorker from '../workers/sentiment.worker.ts?worker';
 
 export type SentimentLabel = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL';
 
@@ -52,14 +53,10 @@ export function useSentiment(): SentimentState {
   progressRef.current = { setProgress, setProgressText };
 
   const boot = useCallback(async (): Promise<boolean> => {
-    const w = await getSharedWorker(
-      'sentiment',
-      () => new URL('../workers/sentiment.worker.ts', import.meta.url),
-      (p, t) => {
-        progressRef.current.setProgress(p);
-        progressRef.current.setProgressText(t);
-      }
-    );
+    const w = await getSharedWorker('sentiment', () => new SentimentWorker(), (p, t) => {
+      progressRef.current.setProgress(p);
+      progressRef.current.setProgressText(t);
+    });
     if (!w) return false;
     const msg = await callWorker<{ type: string }>(w, { type: 'LOAD' }, 10000);
     return !!msg && msg.type !== 'ERROR';
@@ -91,9 +88,7 @@ export function useSentiment(): SentimentState {
       if (cache.has(key)) return cache.get(key) ?? null;
       const gate = await ensureStorageFor('sentiment');
       if (!gate.ok) return null;
-      const w = await getSharedWorker('sentiment', () =>
-        new URL('../workers/sentiment.worker.ts', import.meta.url)
-      );
+      const w = await getSharedWorker('sentiment', () => new SentimentWorker());
       if (!w) return null;
       const msg = await callWorker<{ type: string; label?: string; score?: number }>(
         w,

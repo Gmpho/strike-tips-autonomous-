@@ -37,7 +37,11 @@ function attach(worker: Worker, onProgress?: ProgressFn): void {
 
 export function getSharedWorker(
   key: string,
-  makeUrl: () => URL,
+  // NOTE: pass a `() => new XxxWorker()` closure where XxxWorker comes from
+  // a static `?worker` import. Vite only emits worker chunks for statically
+  // analyzable constructors — a `new URL()` passed through a helper is left
+  // as a dead runtime URL and the worker 404s.
+  makeWorker: () => Worker,
   onProgress?: ProgressFn
 ): Promise<Worker | null> {
   const existing = workers.get(key);
@@ -46,7 +50,7 @@ export function getSharedWorker(
   if (inflight) return inflight;
   const p = (async (): Promise<Worker | null> => {
     try {
-      const w = new Worker(makeUrl(), { type: 'module' });
+      const w = makeWorker();
       attach(w, onProgress);
       workers.set(key, w);
       return w;

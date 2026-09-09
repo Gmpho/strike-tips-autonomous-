@@ -9,6 +9,7 @@ import {
   setModelEnabled,
 } from '../lib/offline-models';
 import { callWorker, getSharedWorker } from '../lib/worker-client';
+import TtsWorker from '../workers/tts.worker.ts?worker';
 
 const VOICE_KEY = 'strike_tts_voice';
 const VOICE_CACHE = 'tts-voices';
@@ -122,14 +123,10 @@ export function useTTS(): TTSState {
     if (!isModelEnabled('tts')) setModelEnabled('tts', true);
     setBusy(true);
     try {
-      const w = await getSharedWorker(
-        'tts',
-        () => new URL('../workers/tts.worker.ts', import.meta.url),
-        (p, t) => {
-          setProgress(p);
-          setProgressText(t);
-        }
-      );
+      const w = await getSharedWorker('tts', () => new TtsWorker(), (p, t) => {
+        setProgress(p);
+        setProgressText(t);
+      });
       if (!w) return false;
       const voice = TTS_VOICES.find((v) => v.id === voiceRef.current) ?? TTS_VOICES[0];
       const bytes = await voiceBytes(voice.file);

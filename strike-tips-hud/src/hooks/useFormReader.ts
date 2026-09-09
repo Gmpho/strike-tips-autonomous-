@@ -7,6 +7,7 @@ import {
   setModelEnabled,
 } from '../lib/offline-models';
 import { callWorker, getSharedWorker } from '../lib/worker-client';
+import TrocrWorker from '../workers/trocr.worker.ts?worker';
 
 export interface FormReaderState {
   reading: boolean;
@@ -40,14 +41,10 @@ export function useFormReader(): FormReaderState {
     if (!isModelEnabled('trocr')) setModelEnabled('trocr', true);
     setReading(true);
     try {
-      const w = await getSharedWorker(
-        'trocr',
-        () => new URL('../workers/trocr.worker.ts', import.meta.url),
-        (p, t) => {
-          progressRef.current.setProgress(p);
-          progressRef.current.setProgressText(t);
-        }
-      );
+      const w = await getSharedWorker('trocr', () => new TrocrWorker(), (p, t) => {
+        progressRef.current.setProgress(p);
+        progressRef.current.setProgressText(t);
+      });
       if (!w) return null;
       const msg = await callWorker<{ type: string; text?: string }>(
         w,
