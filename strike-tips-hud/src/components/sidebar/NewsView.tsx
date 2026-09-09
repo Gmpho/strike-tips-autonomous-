@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Newspaper, ExternalLink, Clock, Loader2, RefreshCw } from 'lucide-react';
+import { Newspaper, ExternalLink, Clock, Loader2, RefreshCw, Brain } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import { dataBridge } from '../../engine/data-bridge';
+import { useSentiment, type SentimentResult } from '../../hooks/useSentiment';
+import { OFFLINE_MODELS } from '../../lib/offline-models';
 import type { NewsItem } from '../../types';
 
 function formatRelativeTime(published: string): string {
@@ -37,9 +39,44 @@ function cleanSummary(text: string): string {
   }
 }
 
-function NewsCard({ item }: { item: NewsItem }) {
+function SentimentBadge({ result }: { result: SentimentResult }) {
+  const weak = result.score < 0.6;
+  const cls = weak
+    ? 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+    : result.label === 'POSITIVE'
+      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+      : 'bg-red-500/10 text-red-400 border-red-500/25';
+  const text = weak ? 'NEUTRAL' : result.label;
+  return (
+    <span
+      title={`On-device mood score ${(result.score * 100).toFixed(0)}% — computed on your phone, nothing uploaded`}
+      className={`px-2 py-0.5 text-[8px] font-black rounded border uppercase shrink-0 ${cls}`}
+    >
+      {text}
+    </span>
+  );
+}
+
+function NewsCard({
+  item,
+  analyze,
+}: {
+  item: NewsItem;
+  analyze: (text: string) => Promise<SentimentResult | null>;
+}) {
   const [imgError, setImgError] = useState(false);
+  const [sentiment, setSentiment] = useState<SentimentResult | null>(null);
   const imgUrl = item.image_url ? `/api/news/images?url=${encodeURIComponent(item.image_url)}` : null;
+
+  useEffect(() => {
+    let live = true;
+    analyze(`${item.title}. ${item.summary ?? ''}`).then((r) => {
+      if (live) setSentiment(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [item.id, item.title, item.summary, analyze]);
 
   return (
     <motion.div
@@ -70,6 +107,7 @@ function NewsCard({ item }: { item: NewsItem }) {
                 {item.region}
               </span>
             )}
+            {sentiment && <SentimentBadge result={sentiment} />}
           </div>
           <a
             href={item.url}
@@ -103,6 +141,7 @@ function NewsCard({ item }: { item: NewsItem }) {
 export const NewsView: React.FC = () => {
   const { news } = useHUD();
   const [isLoading, setIsLoading] = useState(news.length === 0);
+  const sentiment = useSentiment();
 
   // DataBridge hydrates the store via REST + SSE 'news' events.
   // Stop spinning once data lands, or after a safety timeout.
@@ -170,6 +209,30 @@ export const NewsView: React.FC = () => {
         </button>
       </div>
 
+      {!sentiment.enabled && (
+        <div className="shrink-0 flex items-center gap-2.5 p-3 rounded-2xl bg-white/[0.03] border border-white/10">
+          <Brain className="w-4 h-4 text-purple-400 shrink-0" />
+          <p className="text-[10px] text-theme-secondary font-semibold flex-1 leading-snug">
+            On-device mood tags ({OFFLINE_MODELS.sentiment.blurb})
+            {sentiment.downloading && (
+              <span className="block text-purple-300 font-bold mt-0.5">
+                Downloading {Math.round(sentiment.progress * 100)}% — {sentiment.progressText}
+              </span>
+            )}
+            {sentiment.deniedReason && (
+              <span className="block text-red-400 font-bold mt-0.5">{sentiment.deniedReason}</span>
+            )}
+          </p>
+          <button
+            onClick={() => void sentiment.enable()}
+            disabled={sentiment.downloading}
+            className="shrink-0 px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[9px] font-black uppercase tracking-wider hover:bg-purple-500/30 transition-all disabled:opacity-50"
+          >
+            {sentiment.downloading ? 'Loading…' : 'Enable'}
+          </button>
+        </div>
+      )}
+
       {news.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-theme-secondary">
           <div className="p-8 rounded-3xl bg-white/5 border border-white/10 flex flex-col items-center gap-4 max-w-xs text-center">
@@ -186,7 +249,7 @@ export const NewsView: React.FC = () => {
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-container pr-1 -mr-1">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {news.map((item) => (
-              <NewsCard key={item.id} item={item} />
+              <NewsCard key={item.id} item={item} analyze={sentiment.analyze} />
             ))}
           </div>
         </div>

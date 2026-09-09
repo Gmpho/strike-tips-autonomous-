@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Save, Bell, Clock, Cpu, DollarSign, RefreshCw, Settings as SettingsIcon, FlaskConical, Zap, Smartphone } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { apiFetch } from '../../lib/api-fetch';
 import { initAudio, playAlertTone, playValueBetTone } from '../../engine/audio';
 import { checkWebGPUSupport, getStorageEstimate, clearWebLLMStorage, StorageEstimateInfo } from '../../lib/webllm';
+import { OFFLINE_MODELS, formatMB, isModelEnabled } from '../../lib/offline-models';
+import { downloadPack, type PackProgress } from '../../lib/offline-pack';
 import { usePWA } from '../../hooks/usePWA';
 
 interface Settings {
@@ -31,6 +33,10 @@ export const SettingsView: React.FC = () => {
   const [storageEstimate, setStorageEstimate] = useState<StorageEstimateInfo | null>(null);
   const [clearingStorage, setClearingStorage] = useState(false);
   const [clearingSwCache, setClearingSwCache] = useState(false);
+  const [pack, setPack] = useState<(PackProgress & { failed: string[] }) | null>(null);
+  const [packRunning, setPackRunning] = useState(false);
+  const [packTick, setPackTick] = useState(0);
+  const packCancelRef = useRef(false);
   const { isInstallable, isInstalled, installPWA } = usePWA();
 
   const loadStorageInfo = () => {
@@ -441,6 +447,72 @@ export const SettingsView: React.FC = () => {
                 >
                   {clearingStorage ? "Resetting..." : "Reset"}
                 </button>
+              </div>
+
+              {/* Offline AI Pack — bulk Wi-Fi download of every on-device model */}
+              <div className="p-5 bg-indigo-950/20 rounded-2xl border border-indigo-500/20 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-indigo-300 font-black uppercase text-sm">Offline AI Pack</div>
+                    <div className="text-[10px] text-slate-500 font-bold mt-1">
+                      Grab every on-device model on Wi-Fi — voice, form reader, translators, sentiment
+                    </div>
+                  </div>
+                  {packRunning ? (
+                    <button
+                      onClick={() => { packCancelRef.current = true; }}
+                      className="bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-slate-200 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shrink-0 min-h-[36px]"
+                    >
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        packCancelRef.current = false;
+                        setPackRunning(true);
+                        setPack({ done: 0, total: Object.keys(OFFLINE_MODELS).length, label: '', detail: 'starting…', failed: [] });
+                        const res = await downloadPack(
+                          Object.keys(OFFLINE_MODELS),
+                          (p) => setPack({ ...p, failed: [] }),
+                          () => packCancelRef.current
+                        );
+                        setPack((prev) => (prev ? { ...prev, detail: res.ok ? 'All models ready — fully offline.' : `Finished with failures: ${res.failed.join(', ')}` } : prev));
+                        setPackTick((t) => t + 1);
+                        setPackRunning(false);
+                      }}
+                      className="bg-indigo-900/60 hover:bg-indigo-800 border border-indigo-500/30 text-indigo-200 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shrink-0 min-h-[36px]"
+                    >
+                      Download all
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1.5" key={packTick}>
+                  {Object.values(OFFLINE_MODELS).map((m) => (
+                    <div key={m.id} className="flex items-center justify-between text-[10px] font-bold">
+                      <span className="text-theme-secondary">{m.label} <span className="opacity-60">· {formatMB(m.bytes)}</span></span>
+                      <span className={isModelEnabled(m.id) ? 'text-emerald-400 uppercase' : 'text-slate-500 uppercase'}>
+                        {isModelEnabled(m.id) ? 'Ready' : 'Not downloaded'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {pack && packRunning && (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[10px] font-black uppercase tracking-wider">
+                      <span className="text-indigo-300 truncate">{pack.label} — {pack.detail}</span>
+                      <span className="text-theme-secondary shrink-0">{pack.done}/{pack.total}</span>
+                    </div>
+                    <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden border border-white/5">
+                      <div
+                        className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                        style={{ width: `${pack.total > 0 ? Math.round((pack.done / pack.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {pack && !packRunning && pack.detail && pack.done >= pack.total && (
+                  <div className="text-[10px] font-bold text-theme-secondary">{pack.detail}</div>
+                )}
               </div>
 
               <div className="flex items-center justify-between p-5 bg-theme-secondary/30 rounded-2xl border border-theme">

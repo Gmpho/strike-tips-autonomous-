@@ -24,6 +24,11 @@ export default defineConfig(({ mode }) => {
     // request), so the first page load isn't blocked by on-demand dep
     // optimization + re-parse of lucide/framer/three on the critical path.
     optimizeDeps: {
+      // web-llm and transformers.js ship their own workers/WASM/ONNX
+      // runtimes — esbuild pre-bundling corrupts them into an unfetchable
+      // .vite/deps chunk ("Failed to fetch dynamically imported module").
+      // Excluding forces native ESM serving, which is what both libs expect.
+      exclude: ['@mlc-ai/web-llm', '@huggingface/transformers'],
       include: [
         'react', 'react-dom', 'react/jsx-runtime',
         'framer-motion', 'lucide-react',

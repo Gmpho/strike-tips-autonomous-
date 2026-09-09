@@ -1,4 +1,19 @@
 {
+  "headers": [
+    {
+      "source": "/((?!api/|v1/|mcp).*)",
+      "headers": [
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin-allow-popups"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "credentialless"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!api/|v1/|mcp|sw\\.js|manifest\\.json|offline\\.html|robots\\.txt|llms\\.txt|assets/).*)",

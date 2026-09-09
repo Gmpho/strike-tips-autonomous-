@@ -9,6 +9,27 @@ export const MODEL_MAPPING: Record<string, string> = {
 let engineInstance: any = null;
 let currentModelId = "";
 
+// raw.githubusercontent.com intermittently 503s (Sep-2026, multiple
+// networks) which kills every model load at the WASM runtime fetch.
+// jsDelivr mirrors the same repo byte-for-byte with open CORS, so rewrite
+// model_lib URLs to it. Single constant to flip back if raw recovers.
+const RAW_LIB_BASE = 'https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs';
+const LIB_MIRROR_BASE = 'https://cdn.jsdelivr.net/gh/mlc-ai/binary-mlc-llm-libs@main';
+
+function mirrorLibUrl(url: string): string {
+  // raw URLs embed the branch: .../binary-mlc-llm-libs/main/web-llm-models/...
+  // jsDelivr takes it after @: .../binary-mlc-llm-libs@main/web-llm-models/...
+  // (Do NOT leave the branch segment in place — that 404s with a doubled path.)
+  const withBranch = `${RAW_LIB_BASE}/main`;
+  if (typeof url === 'string' && url.startsWith(withBranch)) {
+    return LIB_MIRROR_BASE + url.slice(withBranch.length);
+  }
+  if (typeof url === 'string' && url.startsWith(RAW_LIB_BASE)) {
+    return LIB_MIRROR_BASE + url.slice(RAW_LIB_BASE.length);
+  }
+  return url;
+}
+
 export interface LoadProgress {
   progress: number;
   text: string;
@@ -175,9 +196,12 @@ export async function getWebLLMEngine(
   const { CreateWebWorkerMLCEngine, prebuiltAppConfig } = await import("@mlc-ai/web-llm");
 
   const allowedModelIds = Object.values(MODEL_MAPPING);
-  const filteredModelList = prebuiltAppConfig.model_list.filter((m) =>
-    allowedModelIds.includes(m.model_id)
-  );
+  const filteredModelList = prebuiltAppConfig.model_list
+    .filter((m) => allowedModelIds.includes(m.model_id))
+    .map((m) => ({
+      ...m,
+      model_lib: mirrorLibUrl((m as any).model_lib),
+    }));
 
   // Initialize the worker in the background URL
   const worker = new Worker(

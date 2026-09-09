@@ -1,12 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X } from 'lucide-react';
+import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, Languages, ImagePlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
+import { useTTS } from '../hooks/useTTS';
+import { useTranslation } from '../hooks/useTranslation';
+import { useFormReader } from '../hooks/useFormReader';
 import type { RaceEvent, Runner } from '../types';
 
 const SESSIONS_STORAGE_KEY = 'strike_chat_sessions';
 const ACTIVE_SESSION_KEY = 'strike_active_chat_session';
+
+// Summarize mode: reuses whatever model is selected (on-device Qwen when
+// available — zero download, zero server cost) with a summarizer brief
+// instead of the racing-analyst brief. No RAG context is fetched.
+const SUMMARIZER_SYSTEM_PROMPT = `You are a precise summarizer. Summarize the user's pasted text in 3-6 tight bullet points, then one single-line bottom line. No betting advice, no preamble.`;
 
 interface Session {
   id: string;
@@ -70,6 +78,51 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
+  const [summarizeMode, setSummarizeMode] = useState(false);
+  const [toolNote, setToolNote] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const tts = useTTS();
+  const mt = useTranslation();
+  const formReader = useFormReader();
+
+  const flashNote = (text: string | null) => {
+    setToolNote(text);
+    if (text) {
+      window.setTimeout(() => {
+        setToolNote((cur) => (cur === text ? null : cur));
+      }, 5000);
+    }
+  };
+
+  const onSpeakMessage = async (content: string) => {
+    const ok = await tts.speak(content);
+    if (!ok) flashNote('Voice not ready — first use downloads ~220MB.');
+  };
+
+  const onTranslateMessage = async (index: number, content: string) => {
+    const out = await mt.translate(content);
+    if (!out) {
+      flashNote('Translation unavailable offline right now.');
+      return;
+    }
+    const label = mt.langs.find((l) => l.id === mt.langId)?.label ?? mt.langId;
+    setMessages((prev) =>
+      prev.map((m, i) => (i === index ? { ...m, content: `${m.content}\n\n[${label}]\n${out}` } : m))
+    );
+  };
+
+  const onImagePicked = async (file: File | undefined) => {
+    if (!file) return;
+    if (fileRef.current) fileRef.current.value = '';
+    flashNote('Reading form image on-device…');
+    const text = await formReader.readImage(file);
+    if (text) {
+      setInput((prev) => (prev ? `${prev}\n\n` : '') + `[Form image]\n${text}`);
+      flashNote(null);
+    } else {
+      flashNote('Could not read that image — try a closer crop of the text.');
+    }
+  };
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const [webGpuSupported, setWebGpuSupported] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile Drawer State
@@ -292,7 +345,10 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
       try {
         // Fetch server-compiled context (snapshot events, vector guides, web search results)
         let compiledContext = '';
-        if (prefetchedContextRef.current) {
+        if (summarizeMode) {
+          // Summaries run on the pasted text alone — no RAG fetch, no history.
+          prefetchedContextRef.current = null;
+        } else if (prefetchedContextRef.current) {
           compiledContext = prefetchedContextRef.current;
           prefetchedContextRef.current = null;
         } else {
@@ -313,7 +369,9 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
 
         if (controller.signal.aborted) return;
 
-        const systemPrompt = `You are Strike Tips Racing AI, a helpful, private on-device assistant. Answer concisely and accurately.
+        const systemPrompt = summarizeMode
+          ? SUMMARIZER_SYSTEM_PROMPT
+          : `You are Strike Tips Racing AI, a helpful, private on-device assistant. Answer concisely and accurately.
 Rules:
 1. ALWAYS base your answers on the live compiled context provided below.
 2. Answer in a clean, professional, and concise betting format.
@@ -355,10 +413,15 @@ ${compiledContext || 'No context data available.'}`;
           content: m.content
         }));
 
-        const chatMessages = [
-          { role: 'system' as const, content: systemPrompt },
-          ...chatHistory
-        ];
+        const chatMessages = summarizeMode
+          ? [
+              { role: 'system' as const, content: systemPrompt },
+              { role: 'user' as const, content: userMsg },
+            ]
+          : [
+              { role: 'system' as const, content: systemPrompt },
+              ...chatHistory
+            ];
 
         const chatCompletion = await engine.chat.completions.create({
           messages: chatMessages,
@@ -434,10 +497,15 @@ ${compiledContext || 'No context data available.'}`;
         },
         signal: controller.signal,
         body: JSON.stringify({
-          messages: updatedMessages.map(m => ({
-            role: m.role === 'ai' ? 'assistant' : 'user',
-            content: m.content
-          })),
+          messages: [
+            ...(summarizeMode
+              ? [{ role: 'system', content: SUMMARIZER_SYSTEM_PROMPT }]
+              : []),
+            ...updatedMessages.map(m => ({
+              role: m.role === 'ai' ? 'assistant' : 'user',
+              content: m.content
+            })),
+          ],
           model: modelVal,
           stream: true,
         }),
@@ -713,8 +781,76 @@ ${compiledContext || 'No context data available.'}`;
                     </div>
                     {m.role === 'user' && <User className="w-5 h-5 text-slate-500 shrink-0 mt-1" />}
                 </div>
+                {m.role === 'ai' && m.content && !m.content.startsWith('Loading:') && !m.content.startsWith('Initializing') && (
+                  <div className="flex gap-1.5 pl-8">
+                    <button
+                      onClick={() => void onSpeakMessage(m.content)}
+                      title={`Read aloud (${tts.voiceId.toUpperCase()} voice)`}
+                      aria-label="Read this verdict aloud"
+                      className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => void onTranslateMessage(i, m.content)}
+                      title={`Translate to ${mt.langs.find((l) => l.id === mt.langId)?.label ?? mt.langId} on-device`}
+                      aria-label="Translate this verdict"
+                      className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+                    >
+                      <Languages className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
             </div>
             ))}
+        </div>
+
+        {/* On-device AI toolbar: target language, voice, form-image reader */}
+        <div className="px-4 pt-3 flex items-center gap-2 text-xs shrink-0">
+          <select
+            value={mt.langId}
+            onChange={(e) => mt.setLangId(e.target.value as 'af' | 'zu' | 'st')}
+            title="Translate verdicts to… (downloaded once, then offline)"
+            aria-label="Translation language"
+            className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+          >
+            {mt.langs.map((l) => (
+              <option key={l.id} value={l.id} className="bg-[#0c0817]">
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={tts.cycleVoice}
+            title="Tap to switch voice (2 female, 1 male — English)"
+            aria-label="Switch voice"
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all font-black text-[11px]"
+          >
+            {tts.voiceId.toUpperCase()}
+          </button>
+          <button
+            onClick={() => fileRef.current?.click()}
+            title="Attach a form/racecard image to read its text"
+            aria-label="Attach form image"
+            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+          >
+            <ImagePlus className="w-4 h-4" />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(e) => void onImagePicked(e.target.files?.[0])}
+          />
+          {(tts.busy || tts.speaking || mt.translating || formReader.reading) && (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+          )}
+          {toolNote && (
+            <span className="text-[11px] text-slate-400 font-semibold truncate">{toolNote}</span>
+          )}
         </div>
 
         {/* Input box */}
@@ -749,6 +885,18 @@ ${compiledContext || 'No context data available.'}`;
               </select>
               
             <div className="flex gap-2 flex-1 w-full min-w-0 items-start">
+              <button
+                onClick={() => setSummarizeMode(v => !v)}
+                aria-pressed={summarizeMode}
+                title={summarizeMode ? 'Summarize mode on: pasted text gets bullet summaries' : 'Turn on summarize mode for pasted articles and reports'}
+                className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center self-start ${
+                  summarizeMode
+                    ? 'bg-purple-500/25 border-purple-500/50 text-purple-200'
+                    : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+              </button>
               <textarea 
                 ref={textareaRef}
                 value={input}
@@ -759,7 +907,7 @@ ${compiledContext || 'No context data available.'}`;
                     sendMessage();
                   }
                 }}
-                placeholder="Type command..."
+                placeholder={summarizeMode ? "Paste article or report to summarize..." : "Type command..."}
                 aria-label="Chat input"
                 className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all min-h-[48px] max-h-[150px] resize-none overflow-y-auto custom-scrollbar leading-relaxed"
                 style={{ height: '48px' }}
