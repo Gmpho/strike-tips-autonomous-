@@ -140,6 +140,12 @@ class StrikeTipsScheduler:
             replace_existing=True,
         )
         self.scheduler.add_job(
+            self._morning_report,
+            CronTrigger(hour=7, minute=0, timezone="Africa/Johannesburg"),
+            id="morning_report",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
             self.update_learning_job,
             CronTrigger(hour=21, minute=0, timezone="Africa/Johannesburg"),
             id="update_learning",
@@ -221,26 +227,8 @@ class StrikeTipsScheduler:
             async def _check_and_settle():
                 from core_agent.skills.result_tracker import ResultTracker
 
-                tracker = ResultTracker()
-                settled = []
-                for bet in open_bets:
-                    result_text = await tracker._search_result(
-                        bet.track, bet.race_number
-                    )
-                    if not result_text:
-                        continue
-                    winner, confidence = tracker._extract_winner(
-                        result_text, [bet.horse]
-                    )
-                    if winner and confidence >= 0.55:
-                        won = winner == bet.horse
-                        brain.strike.settle_bet(
-                            bet_id=bet.bet_id,
-                            won=won,
-                            notes=f"Auto-settled (confidence={confidence:.0%})",
-                        )
-                        settled.append(bet)
-                return settled
+                tracker = ResultTracker(bankroll_governor=brain.strike.bankroll)
+                return await tracker.check_and_settle_open_bets()
 
             settled = asyncio.run(_check_and_settle())
             if settled:
@@ -494,13 +482,39 @@ class StrikeTipsScheduler:
         except Exception as e:
             print(f"[ERR] Learning update failed: {e}")
 
-    async def _send_eod_report_async(self, report: str):
+    async def _send_report_async(self, report: str, title: str):
         from core_agent.core.strike_brain import brain
         if not brain or not brain.strike or not brain.strike.telegram:
             return
         await brain.strike.telegram.send_message(
-            f"📊 <b>End of Day Report</b>\n\n<pre>{report[:2000]}</pre>"
+            f"📊 <b>{title}</b>\n\n<pre>{report[:2000]}</pre>"
         )
+
+    async def _send_eod_report_async(self, report: str):
+        await self._send_report_async(report, "End of Day Report")
+
+    def _morning_report(self):
+        """Morning recap (07:00 SAST): yesterday's settled performance."""
+        try:
+            from core_agent.core.strike_brain import brain
+            if not brain or not brain.strike:
+                return
+            yesterday = (date.today() - timedelta(days=1)).isoformat()
+            report = brain.strike.generate_report(report_date=yesterday)
+            print(f"\n{'='*60}\n[REPORT] Morning Recap for {yesterday}\n{'='*60}")
+            print(report)
+            if brain.strike.telegram:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(
+                        self._send_report_async(report, f"Morning Recap — {yesterday}")
+                    )
+                finally:
+                    loop.close()
+            print("[OK] Morning recap sent")
+        except Exception as e:
+            print(f"[ERR] Morning recap failed: {e}")
 
     def _end_of_day_report(self):
         """Generate and send end-of-day performance report + auto-learn from results."""

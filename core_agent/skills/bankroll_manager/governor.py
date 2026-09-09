@@ -592,28 +592,46 @@ class BankrollGovernor:
 
         return stats
 
-    def generate_daily_report(self) -> str:
-        """Generate a structured performance report for the day"""
-        today = date.today().isoformat()
-        today_stats = self.get_today_stats()
+    def generate_daily_report(self, report_date: Optional[str] = None) -> str:
+        """Generate a structured performance report for a day (default: today).
+
+        Passing an explicit ISO date renders that day's report — used by the
+        07:00 morning recap for yesterday. Lifetime/bankroll lines always
+        reflect the current state.
+        """
+        from core_agent.skills.result_tracker import MAX_SETTLE_AGE_DAYS
+
+        target = report_date or date.today().isoformat()
+        day_bets = [b for b in self._bets if b.date == target]
+        day_stats = DailyStats(date=target)
+        for bet in day_bets:
+            day_stats.bets_placed += 1
+            day_stats.total_staked += bet.stake
+            if bet.status in ("WON", "LOST"):
+                pl = bet.profit_loss or 0.0
+                day_stats.profit_loss += pl
+                day_stats.total_returned += bet.actual_return or 0.0
+                if bet.status == "WON":
+                    day_stats.wins += 1
+                else:
+                    day_stats.losses += 1
         overall = self.get_performance_summary()
-        
-        today_bets = [b for b in self._bets if b.date == today]
-        settled_today = [b for b in today_bets if b.status in ("WON", "LOST")]
-        open_today = [b for b in today_bets if b.status == "PENDING"]
-        
+
+        settled_day = [b for b in day_bets if b.status in ("WON", "LOST")]
+        open_day = [b for b in day_bets if b.status == "PENDING"]
+
         report_lines = [
-            f"📅 DAILY REPORT FOR {today}",
+            f"📅 DAILY REPORT FOR {target}",
             "==========================================",
             f"🏦 Bankroll Balance : R{self.current_bankroll:.2f} (Peak: R{self.peak_bankroll:.2f})",
             f"📈 Total P&L        : {'+' if self.total_profit_loss >= 0 else ''}R{self.total_profit_loss:.2f}",
             "",
-            "📊 Today's Performance:",
+            f"📊 Performance ({target}):",
             "------------------------------------------",
-            f"👉 Bets Placed      : {today_stats.bets_placed} (Wins: {today_stats.wins} | Losses: {today_stats.losses})",
-            f"💰 Total Staked     : R{today_stats.total_staked:.2f}",
-            f"💵 Total Returned   : R{today_stats.total_returned:.2f}",
-            f"📉 Net Profit/Loss  : {'+' if today_stats.profit_loss >= 0 else ''}R{today_stats.profit_loss:.2f}",
+            f"👉 Bets Placed      : {day_stats.bets_placed} (Wins: {day_stats.wins} | Losses: {day_stats.losses})",
+            f"💰 Total Staked     : R{day_stats.total_staked:.2f}",
+            f"💵 Total Returned   : R{day_stats.total_returned:.2f}",
+            f"📉 Net Profit/Loss  : {'+' if day_stats.profit_loss >= 0 else ''}R{day_stats.profit_loss:.2f}",
             "",
             "📊 Lifetime Statistics:",
             "------------------------------------------",
@@ -621,25 +639,52 @@ class BankrollGovernor:
             f"🎯 Win Rate         : {overall['win_rate']:.1f}%",
             f"💸 ROI              : {overall['roi']:.1f}%",
         ]
-        
-        if settled_today:
-            report_lines.append("\n✅ Today's Settled Bets:")
-            for b in settled_today:
+
+        if settled_day:
+            report_lines.append(f"\n✅ Settled Bets ({target}):")
+            for b in settled_day:
                 res = "WON" if b.status == "WON" else "LOST"
                 pl_sign = "+" if (b.profit_loss or 0) >= 0 else ""
                 report_lines.append(
                     f"  - R{b.race_number} @ {b.track}: {b.horse} ({b.odds:.1f}x) "
                     f"| Stake: R{b.stake:.2f} | [{res}] {pl_sign}R{b.profit_loss or 0.0:.2f}"
                 )
-                
-        if open_today:
-            report_lines.append("\n⏳ Today's Open Bets:")
-            for b in open_today:
+
+        if open_day:
+            report_lines.append(f"\n⏳ Open Bets ({target}):")
+            for b in open_day:
                 report_lines.append(
                     f"  - R{b.race_number} @ {b.track}: {b.horse} ({b.odds:.1f}x) | Stake: R{b.stake:.2f} [PENDING]"
                 )
-                
+
+        # Aged backlog: PENDING bets past the auto-settle age need manual review.
+        aged = []
+        for b in self.get_open_bets():
+            placed = self._parse_iso_date(getattr(b, "date", None))
+            if placed is not None and (date.today() - placed).days > MAX_SETTLE_AGE_DAYS:
+                aged.append(b)
+        if aged:
+            report_lines.append(
+                f"\n🔎 Aged Open Bets — {len(aged)} older than {MAX_SETTLE_AGE_DAYS}d, needs manual review:"
+            )
+            for b in aged[:20]:
+                report_lines.append(
+                    f"  - {b.date} R{b.race_number} @ {b.track}: {b.horse} | Stake: R{b.stake:.2f} [PENDING]"
+                )
+            if len(aged) > 20:
+                report_lines.append(f"  ... and {len(aged) - 20} more")
+
         return "\n".join(report_lines)
+
+    @staticmethod
+    def _parse_iso_date(value: Optional[str]):
+        """Parse an ISO date string to a date, or None if unparseable."""
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except (ValueError, TypeError):
+            return None
 
     def get_open_bets(self) -> List[BetRecord]:
         """Return all pending (unsettled) bets"""
@@ -731,6 +776,49 @@ class BankrollGovernor:
                 "win_rate": round((wins / total * 100) if total else 0.0, 1),
             }
         return results
+
+    def get_bankroll_history(self, days: int = 30) -> List[Dict]:
+        """Running balance history for the ACTIVE ledger: [{t, balance}].
+
+        Reconstructs the starting point as (current - lifetime settled P&L)
+        so the chart always ends at today's real balance. Paper-mode charts
+        use only paper bets against paper_balance.
+        """
+        paper_settings = _load_paper_settings(self.data_dir)
+        paper = bool(paper_settings["paper_mode"])
+        settled = sorted(
+            [
+                b
+                for b in self._bets
+                if b.status in ("WON", "LOST")
+                and bool(getattr(b, "is_paper", False)) == paper
+            ],
+            key=lambda b: (b.date, b.timestamp),
+        )
+        current = self.paper_balance if paper else self.current_bankroll
+        if not settled:
+            return [{"t": "Start", "balance": round(max(0.0, current), 2)}]
+        from collections import defaultdict
+        daily_pl: Dict[str, float] = defaultdict(float)
+        for b in settled:
+            daily_pl[b.date] += b.profit_loss or 0.0
+        # Walk BACKWARD from the live balance so the series always ends exactly
+        # at it. Paper refills (free injections with no ledger entry) can push
+        # implied earlier points below zero — a balance can't be negative, so
+        # floor at 0.
+        dates = sorted(daily_pl.keys())[-days:]
+        points = [(d, daily_pl[d]) for d in dates]
+        history = [{"t": "Start", "balance": 0.0}]  # placeholder, fixed below
+        suffix = 0.0
+        dated: List[Dict] = []
+        for d, pl in reversed(points):
+            bal = max(0.0, round(current - suffix, 2))
+            dated.append({"t": d, "balance": bal})
+            suffix += pl
+        dated.reverse()
+        history[0]["balance"] = max(0.0, round(current - suffix, 2))
+        history.extend(dated)
+        return history
 
     def get_history_stats(self, days: int = 15) -> List[Dict]:
         """Return cumulative profit/loss history for charting"""

@@ -115,9 +115,9 @@ def test_generate_daily_report(temp_data_dir):
     assert "DAILY REPORT FOR" in report
     assert "Bankroll Balance : R1100.00" in report
     assert "Total P&L        : +R100.00" in report
-    assert "Today's Settled Bets:" in report
+    assert "Settled Bets (" in report
     assert "Horse A" in report
-    assert "Today's Open Bets:" in report
+    assert "Open Bets (" in report
     assert "Horse B" in report
 
 def test_exotic_settlement_no_double_deduction(temp_data_dir):

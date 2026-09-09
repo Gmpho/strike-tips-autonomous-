@@ -1,12 +1,13 @@
 """Tests for Betfair enriched form fields (all regions, 12 fields)."""
+import importlib.util
 import sys
 from unittest.mock import MagicMock
 
-# Mock polars if not installed (CI without heavy deps)
-if "polars" not in sys.modules:
-    sys.modules["polars"] = MagicMock()
-for _m in ["fitz", "bs4", "PyMuPDF", "reportlab", "chromadb", "honcho"]:
-    if _m not in sys.modules:
+# Stub ONLY genuinely-missing heavy deps. Never blind-stub an installed
+# package: an unconditional chromadb stub once leaked into sys.modules and
+# silently broke test_dsi_staking (zero-vector Chroma queries -> DSI 1.0).
+for _m in ["polars", "fitz", "bs4", "PyMuPDF", "reportlab", "chromadb", "honcho"]:
+    if importlib.util.find_spec(_m) is None and _m not in sys.modules:
         sys.modules[_m] = MagicMock()
 
 import pytest

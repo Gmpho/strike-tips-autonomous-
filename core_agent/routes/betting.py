@@ -164,7 +164,7 @@ async def get_open_bets():
 
 @router.get("/stats")
 async def get_bet_stats():
-    """Get daily/all-time betting statistics"""
+    """Get daily/all-time betting statistics on settled and total bets"""
     bets_data = _load_json("bet_history.json")
     if not bets_data or not isinstance(bets_data, list):
         return {
@@ -177,19 +177,24 @@ async def get_bet_stats():
         }
 
     total_bets = len(bets_data)
-    wins = sum(1 for b in bets_data if b.get("status") == "WON")
-    losses = sum(1 for b in bets_data if b.get("status") == "LOST")
-    stake_total = sum(b.get("stake", 0.0) for b in bets_data)
+    settled = [b for b in bets_data if b.get("status") in ("WON", "LOST")]
+    wins = sum(1 for b in settled if b.get("status") == "WON")
+    losses = sum(1 for b in settled if b.get("status") == "LOST")
+    settled_stake_total = sum(b.get("stake", 0.0) for b in settled)
     payout_total = sum(
-        b.get("actual_return", 0.0) for b in bets_data if b.get("status") == "WON"
+        b.get("actual_return", 0.0) for b in settled if b.get("status") == "WON"
     )
-    roi = ((payout_total - stake_total) / stake_total * 100) if stake_total > 0 else 0.0
+    all_stake_total = sum(b.get("stake", 0.0) for b in bets_data)
+    roi = ((payout_total - settled_stake_total) / settled_stake_total * 100) if settled_stake_total > 0 else 0.0
 
     return {
         "totalBets": total_bets,
+        "settledBets": len(settled),
+        "pendingBets": total_bets - len(settled),
         "wins": wins,
         "losses": losses,
-        "stakeTotal": stake_total,
+        "stakeTotal": settled_stake_total,
+        "allStakeTotal": all_stake_total,
         "payoutTotal": payout_total,
         "roi": round(roi, 2),
     }
@@ -209,19 +214,50 @@ async def get_roi_by_track():
         actual_wr = wins / len(settled)
         avg_implied = sum(1.0 / max(b.get("odds", 1.0), 1.01) for b in settled) / len(settled)
         accuracy = round((actual_wr - avg_implied) * 100, 1)
-    return {"roiByTrack": roi, "accuracy": accuracy}
+
+    # Fallback to direct calculation from settled bets if learning summary is empty
+    if not roi and settled:
+        track_stats: dict[str, dict] = {}
+        for b in settled:
+            t = b.get("track", "").lower()
+            if not t:
+                continue
+            if t not in track_stats:
+                track_stats[t] = {"staked": 0.0, "returned": 0.0}
+            track_stats[t]["staked"] += b.get("stake", 0.0)
+            if b.get("status") == "WON":
+                track_stats[t]["returned"] += b.get("actual_return", 0.0)
+        roi = {
+            t: round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
+            for t, v in track_stats.items()
+            if v["staked"] > 0
+        }
+
+    top_track = None
+    if roi:
+        top_track = max(roi.items(), key=lambda x: x[1])[0]
+    elif settled:
+        track_counts: dict[str, int] = {}
+        for b in settled:
+            t = b.get("track", "")
+            if t:
+                track_counts[t] = track_counts.get(t, 0) + 1
+        if track_counts:
+            top_track = max(track_counts.items(), key=lambda x: x[1])[0]
+
+    return {
+        "roiByTrack": roi,
+        "accuracy": accuracy,
+        "topTrack": top_track.title() if top_track else "Kenilworth",
+    }
 
 
 @router.get("/learning/roi-by-odds-range")
 async def get_roi_by_odds_range():
     """Get settled bets ROI and stats grouped by odds range"""
-    if brain and brain.strike and brain.strike.bankroll:
-        return brain.strike.bankroll.get_settled_bets_by_odds_range()
-
-    # Direct fallback from bet_history.json
+    from collections import defaultdict
     bets_data = _load_json("bet_history.json") or []
     settled = [b for b in bets_data if b.get("status") in ("WON", "LOST")]
-    from collections import defaultdict
 
     def bracket(odds: float) -> str:
         if odds < 2.0:
@@ -232,56 +268,44 @@ async def get_roi_by_odds_range():
             return "odds_4_to_7"
         return "odds_7_plus"
 
-    brackets = ["odds_under_2", "odds_2_to_4", "odds_4_to_7", "odds_7_plus"]
-    by_bracket: Dict[str, list] = defaultdict(list)
+    groups: dict[str, dict] = defaultdict(
+        lambda: {"total": 0, "wins": 0, "staked": 0.0, "returned": 0.0, "roi": 0.0}
+    )
     for b in settled:
-        try:
-            o = float(b.get("odds", 2.0))
-        except (ValueError, TypeError):
-            o = 2.0
-        by_bracket[bracket(o)].append(b)
+        b_name = bracket(b.get("odds", 0.0))
+        g = groups[b_name]
+        g["total"] += 1
+        g["staked"] += b.get("stake", 0.0)
+        if b.get("status") == "WON":
+            g["wins"] += 1
+            g["returned"] += b.get("actual_return", 0.0)
 
-    results = {}
-    for bracket_name in brackets:
-        bets = by_bracket[bracket_name]
-        total_stake = sum(float(b.get("stake", 0.0) or 0.0) for b in bets)
-        total_returned = sum(float(b.get("actual_return", 0.0) or 0.0) for b in bets)
-        total_pl = sum(float(b.get("profit_loss", 0.0) or (float(b.get("actual_return", 0.0) or 0.0) - float(b.get("stake", 0.0) or 0.0))) for b in bets)
-        wins = sum(1 for b in bets if b.get("status") == "WON")
-        total = len(bets)
-        roi = (total_pl / total_stake * 100) if total_stake > 0 else 0.0
-        results[bracket_name] = {
-            "bracket": bracket_name,
-            "roi": round(roi, 1),
-            "wins": wins,
-            "losses": total - wins,
-            "total": total,
-            "total_bets": total,
-            "staked": round(total_stake, 2),
-            "returned": round(total_returned, 2),
-            "win_rate": round((wins / total * 100) if total else 0.0, 1),
-        }
-    return results
+    for g in groups.values():
+        if g["staked"] > 0:
+            g["roi"] = round((g["returned"] - g["staked"]) / g["staked"] * 100, 1)
+
+    return dict(groups)
 
 
 @router.get("/bankroll-history")
 async def get_bankroll_history():
-    """Return running bankroll balance over time from bet history"""
+    """Get bankroll balance history points for charts"""
+    if brain and brain.strike and brain.strike.bankroll:
+        return {"history": brain.strike.bankroll.get_bankroll_history()}
+
+    # Fallback from bet_history.json
     bets_data = _load_json("bet_history.json") or []
-    state = _load_json("bankroll_state.json") or {}
-    settled = sorted(
-        [b for b in bets_data if b.get("status") in ("WON", "LOST")],
-        key=lambda b: b.get("timestamp", "")
-    )
-    current = state.get("current_bankroll", 1000.0)
-    total_pl = sum((b.get("actual_return", 0) or 0) - b.get("stake", 0) for b in settled)
-    starting = current - total_pl
-    points = [{"t": "Start", "balance": round(starting, 2)}]
-    running = starting
-    for b in settled:
-        running += (b.get("actual_return", 0) or 0) - b.get("stake", 0)
-        points.append({"t": b.get("timestamp", "")[:10], "balance": round(running, 2)})
-    return {"history": points}
+    start_balance = 1000.0
+    history = [{"t": "Start", "balance": start_balance}]
+    running = start_balance
+    for b in bets_data:
+        if b.get("status") in ("WON", "LOST"):
+            running += b.get("profit_loss", 0.0) or 0.0
+            history.append({
+                "t": b.get("date") or b.get("timestamp", "")[:10],
+                "balance": round(running, 2)
+            })
+    return {"history": history}
 
 
 @router.get("/bankroll")
@@ -289,13 +313,27 @@ async def get_bankroll_history():
 async def get_bankroll_state():
     """Get current bankroll state - reads from bankroll_state.json"""
     data = _load_json("bankroll_state.json")
+    _settings_path = os.path.join(DATA_DIR, "settings.json")
+    _settings = {}
+    if os.path.exists(_settings_path):
+        try:
+            with open(_settings_path) as _f:
+                _settings = json.load(_f)
+        except Exception:
+            pass
+    paper_mode = _settings.get("paper_mode", False)
+
     if not data:
+        base_bal = 1000.0
         return {
-            "balance": 1000.0,
+            "balance": base_bal,
             "dailyLimit": 200.0,
             "dailyLoss": 0.0,
             "maxStake": 50.0,
             "totalExposure": 0.0,
+            "paperMode": paper_mode,
+            "paperBalance": base_bal,
+            "realBalance": base_bal,
         }
 
     # Use brain if available for more accurate data
@@ -304,36 +342,35 @@ async def get_bankroll_state():
         today_stats = bankroll.get_today_stats()
         open_bets = bankroll.get_open_bets()
         total_exposure = sum(b.stake for b in open_bets)
-        # Load paper settings
-        import json as _json
-        _settings_path = os.path.join(DATA_DIR, "settings.json")
-        _settings = {}
-        if os.path.exists(_settings_path):
-            try:
-                with open(_settings_path) as _f:
-                    _settings = _json.load(_f)
-            except Exception:
-                pass
+        active_balance = (
+            getattr(bankroll, "paper_balance", _settings.get("paper_balance", 1000.0))
+            if paper_mode
+            else bankroll.current_bankroll
+        )
 
         result = BankrollState(
-            balance=bankroll.current_bankroll,
-            dailyLimit=bankroll.current_bankroll
-            * (bankroll.DAILY_LOSS_LIMIT_PERCENT / 100.0),
-            dailyLoss=(
-                abs(today_stats.profit_loss) if today_stats.profit_loss < 0 else 0.0
-            ),
-            maxStake=bankroll.current_bankroll * (bankroll.MAX_BET_PERCENT / 100.0),
-            totalExposure=total_exposure,
+            balance=round(active_balance, 2),
+            dailyLimit=round(active_balance * (bankroll.DAILY_LOSS_LIMIT_PERCENT / 100.0), 2),
+            dailyLoss=round(abs(today_stats.profit_loss) if today_stats.profit_loss < 0 else 0.0, 2),
+            maxStake=round(active_balance * (bankroll.MAX_BET_PERCENT / 100.0), 2),
+            totalExposure=round(total_exposure, 2),
         ).model_dump(by_alias=True)
-        result["paperMode"] = _settings.get("paper_mode", False)
+        result["paperMode"] = paper_mode
         result["paperBalance"] = getattr(bankroll, "paper_balance", _settings.get("paper_balance", 1000.0))
+        result["realBalance"] = bankroll.current_bankroll
         return result
 
     # Fallback to JSON file
+    active_balance = data.get("paper_balance", 1000.0) if paper_mode else data.get("current_bankroll", 1000.0)
+    tpl = data.get("total_profit_loss", 0.0)
+    daily_loss = abs(tpl) if tpl < 0 else 0.0
     return {
-        "balance": data.get("current_bankroll", 1000.0),
-        "dailyLimit": 200.0,
-        "dailyLoss": abs(data.get("total_profit_loss", 0.0)),
-        "maxStake": 50.0,
+        "balance": round(active_balance, 2),
+        "dailyLimit": round(active_balance * 0.20, 2),
+        "dailyLoss": round(daily_loss, 2),
+        "maxStake": round(active_balance * 0.05, 2),
         "totalExposure": 0.0,
+        "paperMode": paper_mode,
+        "paperBalance": data.get("paper_balance", 1000.0),
+        "realBalance": data.get("current_bankroll", 1000.0),
     }

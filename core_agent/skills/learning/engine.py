@@ -201,10 +201,7 @@ class LearningEngine:
             track_stats[track]["returned"] += stats["total_returned"]
 
         return {
-            track: (
-                round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
-                if v["staked"] > 0
-                else 0.0
-            )
+            track: round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
             for track, v in track_stats.items()
+            if v["staked"] > 0
         }
