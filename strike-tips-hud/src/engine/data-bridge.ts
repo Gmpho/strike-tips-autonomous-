@@ -283,6 +283,11 @@ export class DataBridge {
           dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
           maxStake: bankroll.maxStake || bankroll.max_stake,
           totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0,
+          // Preserve ledger identity on every poll — dropping these flips the
+          // UI to LIVE and hides the paper/real split (Sep-2026 bug).
+          paperMode: bankroll.paperMode,
+          paperBalance: bankroll.paperBalance,
+          realBalance: bankroll.realBalance,
         } : current.bankroll,
       });
 
@@ -306,7 +311,8 @@ export class DataBridge {
       const activeView = typeof localStorage !== 'undefined' ? localStorage.getItem('strike_active_view') : 'dashboard';
 
       const needStats = ['analytics', 'bankroll'].includes(activeView || '');
-      const needHistory = ['bankroll', 'analytics'].includes(activeView || '');
+      // NOTE: 'exotics' must stay here — its Settle Ledger reads betHistory.
+      const needHistory = ['bankroll', 'analytics', 'exotics'].includes(activeView || '');
       const needRoi = ['analytics'].includes(activeView || '');
       const needLogs = ['logs'].includes(activeView || '');
       const needHealing = ['healing'].includes(activeView || '');

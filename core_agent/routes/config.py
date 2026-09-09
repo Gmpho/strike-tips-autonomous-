@@ -46,12 +46,15 @@ async def get_config():
     """Get current system configuration merged with persisted settings"""
     from core_agent.config.settings import BANKROLL
     saved = _load_settings()
+    # Overlay saved flat keys (what the HUD POSTs) onto the bankroll block.
+    # Without this, Starting Balance / Max Stake % / Daily Stop % / Min Edge
+    # always reloaded as hardcoded defaults no matter what was saved.
     return {
         "bankroll": {
-            "total_bankroll": BANKROLL.total_bankroll,
-            "max_bet_percent": BANKROLL.max_bet_percent,
-            "daily_loss_limit": BANKROLL.daily_loss_limit,
-            "min_edge_threshold": BANKROLL.min_edge_threshold,
+            "total_bankroll": saved.get("startingBalance", BANKROLL.total_bankroll),
+            "max_bet_percent": saved.get("maxBetPercent", BANKROLL.max_bet_percent),
+            "daily_loss_limit": saved.get("dailyLossLimit", BANKROLL.daily_loss_limit),
+            "min_edge_threshold": saved.get("minEdgeThreshold", BANKROLL.min_edge_threshold),
             "kelly_fraction": BANKROLL.kelly_fraction,
         },
         "tracks": TRACKS,
@@ -68,6 +71,7 @@ async def save_config(payload: Dict[str, Any]):
     _save_settings(existing)
 
     new_balance = payload.get("startingBalance")
+    prev_balance = existing.get("startingBalance")
     if new_balance is not None:
         import json as _json
         state_path = str(DATA_DIR / "bankroll_state.json")
@@ -78,19 +82,35 @@ async def save_config(payload: Dict[str, Any]):
                     state = _json.load(f)
             except Exception:
                 pass
-        # Only reset live balance if no bets have changed it yet
-        if state.get("total_profit_loss", 0.0) == 0.0:
-            state["current_bankroll"] = float(new_balance)
-            state["peak_bankroll"] = float(new_balance)
+        paper_mode = bool(existing.get("paper_mode", False))
+        # Only touch live balances when the base actually changed — every HUD
+        # save POSTs startingBalance, and an unrelated toggle-save must not
+        # wipe the paper bank (or real bank) as a side effect.
+        base_changed = prev_balance is None or float(prev_balance) != float(new_balance)
+        if paper_mode:
+            # Paper ledger has no lifetime P&L accumulator: when the base
+            # changed, reset the sim bank AND the refill target together.
+            if base_changed:
+                state["paper_balance"] = float(new_balance)
+                existing["paper_balance"] = float(new_balance)
+                _save_settings(existing)
+                if brain and brain.strike and brain.strike.bankroll:
+                    brain.strike.bankroll.paper_balance = float(new_balance)
+                    brain.strike.bankroll._save_state()
+        else:
+            # Only reset live balance if no bets have changed it yet
+            if state.get("total_profit_loss", 0.0) == 0.0:
+                state["current_bankroll"] = float(new_balance)
+                state["peak_bankroll"] = float(new_balance)
+            # Update live governor instance if running
+            if brain and brain.strike and brain.strike.bankroll:
+                if brain.strike.bankroll.total_profit_loss == 0.0:
+                    brain.strike.bankroll.current_bankroll = float(new_balance)
+                    brain.strike.bankroll.peak_bankroll = float(new_balance)
+                    brain.strike.bankroll._save_state()
         state["starting_balance"] = float(new_balance)
         with open(state_path, "w") as f:
             _json.dump(state, f, indent=2)
-        # Update live governor instance if running
-        if brain and brain.strike and brain.strike.bankroll:
-            if brain.strike.bankroll.total_profit_loss == 0.0:
-                brain.strike.bankroll.current_bankroll = float(new_balance)
-                brain.strike.bankroll.peak_bankroll = float(new_balance)
-                brain.strike.bankroll._save_state()
 
     return {"success": True, "saved": existing}
 

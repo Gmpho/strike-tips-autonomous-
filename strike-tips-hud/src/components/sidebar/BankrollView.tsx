@@ -58,6 +58,22 @@ export const BankrollView: React.FC = () => {
           <div className="flex items-baseline gap-3">
             <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">R {bankroll?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
           </div>
+          {/* Ledger split: active betting bank vs the untouched other ledger */}
+          {bankroll && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
+            <div className="mt-3 text-[10px] font-bold text-theme-secondary">
+              {bankroll.paperMode ? (
+                <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance).toFixed(2)}</span>
+                {bankroll.realBalance !== undefined && (
+                  <span className="opacity-70"> · Real funds: <span className="font-mono">R{bankroll.realBalance.toFixed(2)}</span> (untouched)</span>
+                )}</span>
+              ) : (
+                <span>Betting bank (live): <span className="text-emerald-400 font-mono">R{bankroll.balance.toFixed(2)}</span>
+                {bankroll.paperBalance !== undefined && (
+                  <span className="opacity-70"> · Paper bank: <span className="font-mono">R{bankroll.paperBalance.toFixed(2)}</span> (simulation)</span>
+                )}</span>
+              )}
+            </div>
+          )}
           <div className="mt-4 flex gap-6">
             <div>
               <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Daily Limit</div>

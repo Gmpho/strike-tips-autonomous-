@@ -51,6 +51,7 @@ export interface RaceEvent {
 }
 
 export interface BankrollState {
+  /** Active betting bank: paperBalance when paperMode, else realBalance. */
   balance: number;
   dailyLimit: number;
   dailyLoss: number;
@@ -58,6 +59,8 @@ export interface BankrollState {
   totalExposure: number;
   paperMode?: boolean;
   paperBalance?: number;
+  /** Real-funds ledger (untouched while paperMode is on). */
+  realBalance?: number;
 }
 
 export interface LearningState {

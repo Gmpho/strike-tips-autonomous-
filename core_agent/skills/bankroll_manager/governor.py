@@ -244,9 +244,28 @@ class BankrollGovernor:
             (self.peak_bankroll - self.current_bankroll) / self.peak_bankroll
         ) * 100.0
 
-    def get_open_exposure(self) -> float:
-        """Calculate total stake of currently open/pending bets"""
-        return sum(b.stake for b in self.get_open_bets())
+    def get_open_exposure(self, include_stale: bool = False) -> float:
+        """Total stake of currently open/pending bets.
+
+        By default STALE bets (older than MAX_SETTLE_AGE_DAYS — races long
+        finished, awaiting manual review) are excluded: a finished race is
+        not real exposure, and counting ~1000 stale tickets locked the
+        governor (daily-limit wall) so no new bet could ever be placed.
+        Pass include_stale=True for the gross accounting figure.
+        """
+        try:
+            from core_agent.skills.result_tracker import MAX_SETTLE_AGE_DAYS
+        except Exception:
+            MAX_SETTLE_AGE_DAYS = 3
+        total = 0.0
+        today = date.today()
+        for b in self.get_open_bets():
+            if not include_stale:
+                placed = self._parse_iso_date(getattr(b, "date", None))
+                if placed is not None and (today - placed).days > MAX_SETTLE_AGE_DAYS:
+                    continue
+            total += b.stake
+        return total
 
     # ─── Limit Checks ───────────────────────────────────────────────────────
 

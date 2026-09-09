@@ -340,8 +340,8 @@ async def get_bankroll_state():
     if brain and brain.strike and brain.strike.bankroll:
         bankroll = brain.strike.bankroll
         today_stats = bankroll.get_today_stats()
-        open_bets = bankroll.get_open_bets()
-        total_exposure = sum(b.stake for b in open_bets)
+        # Active exposure only (stale backlog excluded) — matches governor limits.
+        total_exposure = bankroll.get_open_exposure()
         active_balance = (
             getattr(bankroll, "paper_balance", _settings.get("paper_balance", 1000.0))
             if paper_mode

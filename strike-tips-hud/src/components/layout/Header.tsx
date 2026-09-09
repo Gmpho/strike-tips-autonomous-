@@ -100,7 +100,21 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
           className="bg-theme-secondary border border-theme px-2 sm:px-3.5 md:px-4 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl flex items-center gap-1.5 sm:gap-3 hover:border-purple-500/40 transition-all cursor-pointer group shrink-0"
         >
           <div>
-            <div className="text-[7px] sm:text-[8px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter">Capital</div>
+            <div className="text-[7px] sm:text-[8px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter flex items-center gap-1">
+              Capital
+              {state.bankroll && (
+                <span
+                  title={state.bankroll.paperMode ? 'Paper simulation bank — real funds untouched' : 'Live real-funds bank'}
+                  className={`px-1 py-px text-[6px] sm:text-[7px] font-black rounded uppercase tracking-wider ${
+                    state.bankroll.paperMode
+                      ? 'bg-cyan-500/20 text-cyan-400'
+                      : 'bg-emerald-500/20 text-emerald-400'
+                  }`}
+                >
+                  {state.bankroll.paperMode ? 'PAPER' : 'LIVE'}
+                </span>
+              )}
+            </div>
             <div className="text-[10px] sm:text-xs md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">
               R {state.bankroll?.balance ? Math.round(state.bankroll.balance).toLocaleString() : '0'}
             </div>

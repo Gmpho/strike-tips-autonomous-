@@ -79,11 +79,25 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  // Load persisted settings from backend on mount
+  // Load persisted settings from backend on mount.
+  // Retries with backoff: a cold Modal container can fail/sleep through the
+  // first attempt, and without retry the form sticks at DEFAULTS forever
+  // (effect runs once), looking like "saves don't stick".
   useEffect(() => {
-    apiFetch('/api/config')
-      .then(r => r.ok ? r.json() : null)
+    let cancelled = false;
+    const load = async () => {
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt++) {
+        try {
+          const r = await apiFetch('/api/config');
+          if (r.ok) return await r.json();
+        } catch { /* retry below */ }
+        await new Promise(res => setTimeout(res, 2000 * (attempt + 1)));
+      }
+      return null;
+    };
+    load()
       .then(data => {
+        if (!data || cancelled) return;
         if (!data) return;
         setSettings({
           bankroll: {
@@ -118,6 +132,7 @@ export const SettingsView: React.FC = () => {
         localStorage.setItem('strike_value_bet_alerts', String(data.valueBetAlerts ?? DEFAULTS.alerts.valueBetAlerts));
       })
       .catch(() => {/* keep defaults */});
+    return () => { cancelled = true; };
   }, []);
 
   const set = (section: keyof Settings, key: string, value: unknown) =>

@@ -338,6 +338,47 @@ def test_bankroll_history_empty_is_current_balance(tmp_path):
     assert gov.get_bankroll_history() == [{"t": "Start", "balance": 1000.0}]
 
 
+def test_stale_bets_excluded_from_exposure(tmp_path):
+    """Aged PENDING bets (finished races awaiting review) are not real
+    exposure — excluding them unblocks the governor's daily-limit wall."""
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir=str(tmp_path), starting_bankroll=1000.0)
+    fresh = gov.record_bet("Vaal", 4, "Alpha One", 3.0, 40.0, 10.0, "VALUE")
+    stale = gov.record_bet("Vaal", 5, "Beta Two", 4.0, 30.0, 12.0, "VALUE")
+    stale.date = (date.today() - timedelta(days=9)).isoformat()
+    gov._save_state()
+
+    assert gov.get_open_exposure() == pytest.approx(40.0)
+    assert gov.get_open_exposure(include_stale=True) == pytest.approx(70.0)
+
+    # Unparseable dates fail open (counted).
+    stale.date = "soon"
+    gov._save_state()
+    assert gov.get_open_exposure() == pytest.approx(70.0)
+    assert fresh.bet_id != stale.bet_id
+
+
+def test_governor_not_walled_by_stale_backlog(tmp_path):
+    """R5000 of 9-day-old pending stakes must not block a fresh R40 bet."""
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir=str(tmp_path), starting_bankroll=1000.0)
+    old_day = (date.today() - timedelta(days=9)).isoformat()
+    for i in range(50):
+        # Back-date + persist immediately: record_bet reloads state from disk
+        # on entry, which would wipe an unsaved in-memory back-date and trip
+        # the wall mid-loop. Gross lands 50 x R50 (5% cap) = R2500.
+        b = gov.record_bet("Vaal", 4, f"Stale Horse {i}", 3.0, 100.0, 10.0, "VALUE")
+        assert b is not None
+        b.date = old_day
+        gov._save_state()
+    gross = gov.get_open_exposure(include_stale=True)
+    assert gross > 200.0  # would trip the 20% daily wall on gross basis
+    ok, _reason = gov.can_bet_today(40.0)
+    assert ok is True
+
+
 def test_real_bankroll_moves_on_settle_not_placement(tmp_path):
     """Real-mode: placement holds exposure, settlement moves the balance."""
     from core_agent.skills.bankroll_manager.governor import BankrollGovernor
