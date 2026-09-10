@@ -80,7 +80,13 @@ export function useTranslation(): TranslationState {
       if (!w) return null;
       const msg = await callWorker<{ type: string; translation?: string }>(
         w,
-        { type: 'TRANSLATE', text: clean, model: OFFLINE_MODELS[lang.model].hfModel, tgt: lang.tgt },
+        {
+          type: 'TRANSLATE',
+          text: clean,
+          model: OFFLINE_MODELS[lang.model].hfModel,
+          src_lang: lang.src,
+          tgt_lang: lang.tgt,
+        },
         120000
       );
       const out = msg && msg.type === 'RESULT' ? (msg.translation ?? '').trim() : null;

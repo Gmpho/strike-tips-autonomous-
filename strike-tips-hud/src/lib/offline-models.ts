@@ -25,10 +25,10 @@ export const OFFLINE_MODELS: Record<string, OfflineModelDef> = {
   },
   tts: {
     id: 'tts',
-    label: 'Voice reader (SpeechT5)',
-    hfModel: 'Xenova/speecht5_tts',
-    bytes: 220 * 1024 * 1024,
-    blurb: 'Reads verdicts aloud on-device. ~220MB once, then offline.',
+    label: 'Voice reader (Supertonic)',
+    hfModel: 'onnx-community/Supertonic-TTS-ONNX',
+    bytes: 130 * 1024 * 1024,
+    blurb: 'Reads verdicts aloud on-device. ~130MB once (Wi-Fi!), then offline.',
   },
   trocr: {
     id: 'trocr',
@@ -46,16 +46,23 @@ export const OFFLINE_MODELS: Record<string, OfflineModelDef> = {
   },
   'mt-mul': {
     id: 'mt-mul',
-    label: 'isiZulu + Sesotho translation',
+    label: 'isiZulu translation',
     hfModel: 'Xenova/m2m100_418M',
     bytes: 230 * 1024 * 1024,
-    blurb: 'One model for isiZulu and Sesotho. ~230MB once, then offline.',
+    blurb: 'Translate tips to isiZulu. ~230MB once, then offline.',
+  },
+  'mt-nllb': {
+    id: 'mt-nllb',
+    label: 'Sesotho translation',
+    hfModel: 'Xenova/nllb-200-distilled-600M',
+    bytes: 330 * 1024 * 1024,
+    blurb: 'Translate tips to Sesotho. ~330MB once (Wi-Fi!), then offline.',
   },
 };
 
-/** SpeechT5 speaker embeddings (tiny .bin files, fetched on first voice use). */
+/** Supertonic speaker embeddings ship inside the model repo (tiny .bin files). */
 export const XVECTOR_BASE =
-  'https://huggingface.co/datasets/Xenova/cmu-arctic-xvectors-extracted/resolve/main';
+  'https://huggingface.co/onnx-community/Supertonic-TTS-ONNX/resolve/main/voices';
 
 export interface TtsVoice {
   id: string;
@@ -64,23 +71,26 @@ export interface TtsVoice {
 }
 
 export const TTS_VOICES: TtsVoice[] = [
-  { id: 'slt', label: 'Voice 1 · Female', file: 'cmu_us_slt_arctic-wav-arctic_a0001.bin' },
-  { id: 'bdl', label: 'Voice 2 · Male', file: 'cmu_us_bdl_arctic-wav-arctic_a0001.bin' },
-  { id: 'clb', label: 'Voice 3 · Female', file: 'cmu_us_clb_arctic-wav-arctic_a0001.bin' },
+  { id: 'f1', label: 'Voice 1 · Female', file: 'F1.bin' },
+  { id: 'm1', label: 'Voice 2 · Male', file: 'M1.bin' },
+  { id: 'f2', label: 'Voice 3 · Female', file: 'F2.bin' },
 ];
 
 export interface MtLang {
   id: 'af' | 'zu' | 'st';
   label: string;
-  model: 'mt-af' | 'mt-mul';
-  /** Target code passed to the model (m2m100 needs explicit langs). */
+  model: 'mt-af' | 'mt-mul' | 'mt-nllb';
+  /** Source/target codes passed to the model (m2m100/NLLB need explicit langs). */
+  src: string;
   tgt: string;
 }
 
 export const MT_LANGS: MtLang[] = [
-  { id: 'af', label: 'Afrikaans', model: 'mt-af', tgt: 'af' },
-  { id: 'zu', label: 'isiZulu', model: 'mt-mul', tgt: 'zu' },
-  { id: 'st', label: 'Sesotho', model: 'mt-mul', tgt: 'st' },
+  // Opus-MT is fixed en->af; codes sent but ignored by the worker.
+  { id: 'af', label: 'Afrikaans', model: 'mt-af', src: 'en', tgt: 'af' },
+  { id: 'zu', label: 'isiZulu', model: 'mt-mul', src: 'en', tgt: 'zu' },
+  // m2m100 has no Sesotho ('st' rejected) — NLLB uses Flores codes.
+  { id: 'st', label: 'Sesotho', model: 'mt-nllb', src: 'eng_Latn', tgt: 'sot_Latn' },
 ];
 
 export type OfflineModelId = keyof typeof OFFLINE_MODELS;

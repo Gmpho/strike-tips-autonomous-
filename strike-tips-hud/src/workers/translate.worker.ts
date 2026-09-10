@@ -1,6 +1,6 @@
 import { pipeline, type TranslationPipeline } from '@huggingface/transformers';
 
-// m2m100 covers isiZulu + Sesotho in one model; Opus-MT covers Afrikaans.
+// Opus-MT covers Afrikaans, m2m100 covers isiZulu, NLLB covers Sesotho.
 // Pipes are cached per model id so switching languages doesn't reload.
 const pipes = new Map<string, TranslationPipeline>();
 const loading = new Map<string, Promise<void>>();
@@ -35,7 +35,7 @@ function loadModel(
 }
 
 self.onmessage = async (e: MessageEvent) => {
-  const { type, text, model, tgt, id } = e.data ?? {};
+  const { type, text, model, src_lang, tgt_lang, id } = e.data ?? {};
   const progress = (p: number, t: string) =>
     self.postMessage({ type: 'PROGRESS', id, progress: p, text: t });
 
@@ -54,9 +54,11 @@ self.onmessage = async (e: MessageEvent) => {
       const modelId = String(model);
       await loadModel(modelId, progress);
       const pipe = pipes.get(modelId)!;
-      // m2m100 needs explicit langs; Opus-MT is fixed en->af and ignores them.
-      const out: any = modelId.includes('m2m100')
-        ? await pipe(input, { src_lang: 'en', tgt_lang: String(tgt || 'zu') })
+      // m2m100/NLLB need explicit lang codes; Opus-MT is fixed
+      // en->af and takes the text alone (extra options break it).
+      const needsLangs = modelId.includes('m2m100') || modelId.includes('nllb');
+      const out: any = needsLangs
+        ? await pipe(input, { src_lang: String(src_lang || 'en'), tgt_lang: String(tgt_lang || 'zu') })
         : await pipe(input);
       const first = Array.isArray(out) ? out[0] : out;
       self.postMessage({ type: 'RESULT', id, translation: String(first?.translation_text ?? '') });

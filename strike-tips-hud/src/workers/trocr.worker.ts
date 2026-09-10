@@ -10,7 +10,10 @@ function loadReader(onProgress: (p: number, text: string) => void): Promise<void
   if (!loadPromise) {
     loadPromise = (async () => {
       const pipe = await pipeline('image-to-text', MODEL_ID, {
-        dtype: 'q4',
+        // NOTE: this repo ships no encoder q4 file. 'quantized' resolves to
+        // the int8 *_{quantized}.onnx files at runtime (proven); the v4.2
+        // type union lags behind, hence the cast. Do not "fix" to q4 (404s).
+        dtype: 'quantized' as unknown as 'q8',
         progress_callback: (p: any) => {
           onProgress(
             typeof p?.progress === 'number' ? p.progress / 100 : 0,

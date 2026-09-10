@@ -1,6 +1,9 @@
-import { pipeline, Tensor, type TextToAudioPipeline } from '@huggingface/transformers';
+import { pipeline, type TextToAudioPipeline } from '@huggingface/transformers';
 
-const MODEL_ID = 'Xenova/speecht5_tts';
+// Supertonic: modern single-precision TTS built for transformers.js v4.
+// (SpeechT5 was dropped: its q8/int8 graphs rename decoder inputs so the
+// pipeline can't feed speaker embeddings, and fp16 fails ORT graph fusion.)
+const MODEL_ID = 'onnx-community/Supertonic-TTS-ONNX';
 // Long verdicts take too long to synthesize on phones; cap the input.
 const MAX_CHARS = 600;
 
@@ -12,7 +15,6 @@ function loadSynth(onProgress: (p: number, text: string) => void): Promise<void>
   if (!loadPromise) {
     loadPromise = (async () => {
       const pipe = await pipeline('text-to-audio', MODEL_ID, {
-        dtype: 'q8',
         progress_callback: (p: any) => {
           onProgress(
             typeof p?.progress === 'number' ? p.progress / 100 : 0,
@@ -58,15 +60,14 @@ self.onmessage = async (e: MessageEvent) => {
         self.postMessage({ type: 'RESULT', id, audio: null, samplingRate: 16000 });
         return;
       }
-      if (!(voiceData instanceof ArrayBuffer) || voiceData.byteLength !== 512 * 4) {
+      if (!(voiceData instanceof ArrayBuffer) || voiceData.byteLength === 0) {
         throw new Error('Missing speaker voice data');
       }
       await loadSynth(progress);
-      const speaker_embeddings = new Tensor(
-        'float32',
-        new Float32Array(voiceData),
-        [1, 512]
-      );
+      // Pass raw samples: the pipeline wraps Float32Array itself and reshapes
+      // to the model's style dim. (Do NOT pre-wrap in a Tensor — dims differ
+      // per model and a wrong guess throws a batch-size error.)
+      const speaker_embeddings = new Float32Array(voiceData);
       const out = await synth!(input, { speaker_embeddings });
       const samples = flatten(out.audio);
       if (!samples.length) throw new Error('Synthesizer returned no audio');

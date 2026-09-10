@@ -96,7 +96,7 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
 
   const onSpeakMessage = async (content: string) => {
     const ok = await tts.speak(content);
-    if (!ok) flashNote('Voice not ready — first use downloads ~220MB.');
+    if (!ok) flashNote('Voice not ready — first use downloads ~130MB (use Wi-Fi).');
   };
 
   const onTranslateMessage = async (index: number, content: string) => {
@@ -125,6 +125,9 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   };
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
   const [webGpuSupported, setWebGpuSupported] = useState(false);
+  // Weak GPUs (≤4GB device RAM hint) can't hold 1.7B+ models without hanging
+  // the whole machine — those options stay disabled (same pattern as no-WebGPU).
+  const [weakGpu, setWeakGpu] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile Drawer State
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -133,11 +136,54 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prefetchedContextRef = useRef<string | null>(null);
   const contextAbortRef = useRef<AbortController | null>(null);
+  // Stream batching: tokens accumulate here and flush to React state at
+  // 10Hz. Per-token setState + full-list re-render + disk persist on every
+  // token is what locked the main thread (and the whole PC on weak GPUs).
+  const streamBufRef = useRef('');
+  const flushTimerRef = useRef<number | null>(null);
+  // Auto-scroll sticks to bottom unless the user scrolled up to read back.
+  const stickRef = useRef(true);
+
+  const stopStreamFlush = (flush = true) => {
+    if (flushTimerRef.current) {
+      window.clearInterval(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    if (flush && streamBufRef.current) {
+      const chunk = streamBufRef.current;
+      streamBufRef.current = '';
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'ai' ? { ...m, content: m.content + chunk } : m
+        )
+      );
+    } else {
+      streamBufRef.current = '';
+    }
+  };
+
+  const startStreamFlush = () => {
+    stopStreamFlush(false);
+    flushTimerRef.current = window.setInterval(() => {
+      if (!streamBufRef.current) return;
+      const chunk = streamBufRef.current;
+      streamBufRef.current = '';
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'ai' ? { ...m, content: m.content + chunk } : m
+        )
+      );
+    }, 100);
+  };
 
   // Sync active view support
   useEffect(() => {
     checkWebGPUSupport().then(supported => {
       setWebGpuSupported(supported);
+      if (supported) {
+        const gb = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+        if (typeof gb === 'number' && gb <= 4) setWeakGpu(true);
+      }
     });
   }, []);
 
@@ -186,28 +232,45 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
   }, [activeSessionId]);
 
-  // Save messages whenever they change
+  // Save messages when they change — debounced and capped. Persisting the
+  // full history synchronously on EVERY streamed token stalled the main
+  // thread (fatal on full disks). 2s idle flush of the last 50 is plenty.
+  const persistTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    if (activeSessionId) {
+    if (!activeSessionId) return;
+    if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(() => {
       try {
-        localStorage.setItem(`strike_chat_messages_${activeSessionId}`, JSON.stringify(messages));
+        const capped = messages.slice(-50);
+        localStorage.setItem(`strike_chat_messages_${activeSessionId}`, JSON.stringify(capped));
       } catch {}
-    }
+    }, 2000);
+    return () => {
+      if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    };
   }, [messages, activeSessionId]);
 
-  // Scroll to bottom (instant during active generation to prevent main thread animation thrashing)
+  // Scroll to bottom via rAF, and only while stuck to bottom. Previously ran
+  // a layout-measuring scrollTo on every token even while reading history.
   useEffect(() => {
     if (!scrollRef.current) return;
-    const isGenerating = loading;
-    scrollRef.current.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: isGenerating ? 'auto' : 'smooth'
-    });
+    const el = scrollRef.current;
+    const doScroll = () => {
+      if (!stickRef.current) return;
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: loading ? 'auto' : 'smooth'
+      });
+    };
+    if (loading) requestAnimationFrame(doScroll);
+    else doScroll();
   }, [messages, currentActivity, loading]);
 
-  // Debounced context prefetch while user types
+  // Debounced context prefetch while user types. Skipped while generating:
+  // a background fetch + JSON parse mid-generation is main-thread work the
+  // GPU-busy tab cannot afford, and its result is never used mid-flight.
   useEffect(() => {
-    if (!input.trim()) {
+    if (!input.trim() || loading) {
       return;
     }
     const timer = setTimeout(async () => {
@@ -234,7 +297,7 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [input, activeSessionId, apiFetch]);
+  }, [input, activeSessionId, apiFetch, loading]);
 
   const getActivities = (msg: string): string[] => {
     const m = msg.toLowerCase();
@@ -287,6 +350,7 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    stopStreamFlush();
     if (selectedModel.startsWith('webllm-')) {
       try {
         const engine = await getWebLLMEngine(selectedModel);
@@ -311,6 +375,7 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     const updatedMessages: Message[] = [...messages, { role: 'user', content: userMsg, timestamp: now }];
     setMessages(updatedMessages);
     setInput('');
+    stickRef.current = true;
     if (textareaRef.current) {
       textareaRef.current.style.height = '48px';
     }
@@ -427,17 +492,12 @@ ${compiledContext || 'No context data available.'}`;
           messages: chatMessages,
           stream: true,
         });
+        startStreamFlush();
 
         for await (const chunk of chatCompletion) {
           if (controller.signal.aborted) break;
           const delta = chunk.choices[0]?.delta?.content || '';
-          if (delta) {
-            setMessages(prev => prev.map((m, i) =>
-              i === prev.length - 1 && m.role === 'ai'
-                ? { ...m, content: m.content + delta }
-                : m
-            ));
-          }
+          if (delta) streamBufRef.current += delta;
         }
 
         setLastModelUsed(selectedModel);
@@ -466,7 +526,11 @@ ${compiledContext || 'No context data available.'}`;
           errMsg.includes("gpubuffer")
         ) {
           displayError = "🔌 **WebGPU Device Lost**: Your graphics card ran out of VRAM or crashed while running the model. " +
-            "Please refresh this page and select the lighter **Qwen 2.5 0.5B** model to avoid crashing your GPU.";
+            "Switched you to the lighter **Qwen 2.5 0.5B** — try again with it.";
+          try {
+            await resetWebLLMEngine();
+          } catch {}
+          setSelectedModel('webllm-qwen-0.5b');
         } else if (errMsg.includes("json")) {
           displayError = "⚠️ **WebLLM Cache Corruption**: Detected a corrupted download config. " +
             "Please go to Settings and click 'Reset Browser AI Storage' to clear the corrupted cache and start fresh.";
@@ -482,6 +546,7 @@ ${compiledContext || 'No context data available.'}`;
         setLoading(false);
         setCurrentActivity(null);
         abortControllerRef.current = null;
+        stopStreamFlush();
       }
       return;
     }
@@ -520,6 +585,7 @@ ${compiledContext || 'No context data available.'}`;
 
       const decoder = new TextDecoder();
       let buffer = '';
+      startStreamFlush();
 
       while (true) {
         if (controller.signal.aborted) {
@@ -548,11 +614,7 @@ ${compiledContext || 'No context data available.'}`;
             const delta = parsed.choices?.[0]?.delta?.content || '';
             const finish = parsed.choices?.[0]?.finish_reason;
             if (delta) {
-              setMessages(prev => prev.map((m, i) =>
-                i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: m.content + delta, activity: modelUsed }
-                  : m
-              ));
+              streamBufRef.current += delta;
             }
             if (finish === 'stop') {
               const modelName = parsed.model || modelUsed;
@@ -579,6 +641,7 @@ ${compiledContext || 'No context data available.'}`;
       setLoading(false);
       setCurrentActivity(null);
       abortControllerRef.current = null;
+      stopStreamFlush();
     }
   };
 
@@ -722,7 +785,14 @@ ${compiledContext || 'No context data available.'}`;
         </div>
         
         {/* Messages view */}
-        <div ref={scrollRef} className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+          className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10"
+        >
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
                     Awaiting parameters...
@@ -875,11 +945,11 @@ ${compiledContext || 'No context data available.'}`;
                   <option value="webllm-qwen-1.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
                     Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
                   </option>
-                  <option value="webllm-qwen3-1.7b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
-                    Qwen3 1.7B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  <option value="webllm-qwen3-1.7b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
+                    Qwen3 1.7B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
                   </option>
-                  <option value="webllm-qwen35-2b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
-                    Qwen3.5 2B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                  <option value="webllm-qwen35-2b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
+                    Qwen3.5 2B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
                   </option>
                 </optgroup>
               </select>

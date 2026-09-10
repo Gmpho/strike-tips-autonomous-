@@ -29,6 +29,7 @@ function makeWorkerFor(id: string): () => Worker {
       return () => new TrocrWorker();
     case 'mt-af':
     case 'mt-mul':
+    case 'mt-nllb':
       return () => new TranslateWorker();
     default:
       throw new Error(`No worker for offline model: ${id}`);
