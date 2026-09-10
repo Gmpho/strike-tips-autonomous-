@@ -139,7 +139,7 @@ def test_single_bet_settles_win_and_loss(stub_brain_module):
 
     gov.reset_mock()
     gov.get_open_bets.return_value = [_bet(horse="Silver Storm")]
-    settled = asyncio.run(go("Winner: Other Horse (1st) in race 4 at Vaal"))
+    settled = asyncio.run(go("Winner: Night Fever (1st) in race 4 at Vaal"))
     assert len(settled) == 1 and settled[0]["won"] is False
     assert gov.settle_bet.call_args[1]["won"] is False
 
@@ -210,6 +210,200 @@ def test_unparseable_date_fails_open(stub_brain_module):
     assert len(settled) == 1 and settled[0]["won"] is True
 
 
+def test_race_winner_rejects_generic_words():
+    tracker = ResultTracker(bankroll_governor=MagicMock())
+    assert tracker._extract_race_winner("1st choice by two lengths here") is None
+    assert tracker._extract_race_winner("the favourite won easily today") is None
+    assert tracker._extract_race_winner("our top pick for the meeting") is None
+    # Real names still extract.
+    assert tracker._extract_race_winner("Winner: Silver Storm (1st) in race 4 at Vaal") == "Silver Storm"
+    assert tracker._extract_race_winner("1st Madison County, odds 3/1, going well") == "Madison County"
+
+
+def test_off_time_gate_skips_unrun_race(stub_brain_module, tmp_path):
+    """A bet whose off-time is in the future is never settled, win or lose."""
+    from datetime import datetime, timedelta as _td
+
+    gov = MagicMock()
+    gov.get_open_bets.return_value = [_bet(horse="Silver Storm")]
+    tracker = ResultTracker(bankroll_governor=gov)
+    future = datetime.now() + _td(hours=3)
+    past = datetime.now() - _td(hours=3)
+    with patch.object(
+        ResultTracker, "_race_off_datetime", return_value=future
+    ), patch.object(
+        ResultTracker, "_search_result", new=AsyncMock(return_value="Winner: Silver Storm (1st)")
+    ) as mock_search:
+        assert asyncio.run(tracker.check_and_settle_open_bets()) == []
+    mock_search.assert_not_called()
+    with patch.object(
+        ResultTracker, "_race_off_datetime", return_value=past
+    ), patch.object(
+        ResultTracker, "_search_result",
+        new=AsyncMock(return_value="Winner: Silver Storm (1st) in race 4 at Vaal"),
+    ):
+        settled = asyncio.run(tracker.check_and_settle_open_bets())
+    assert len(settled) == 1 and settled[0]["won"] is True
+
+
+def test_race_off_datetime_from_scan_file(tmp_path):
+    from datetime import datetime as _dt
+    import json
+
+    day = date.today().isoformat()
+    (tmp_path / f"daily_scan_{day}.json").write_text(json.dumps({
+        "Vaal": [{"race_number": 4, "race_time": "14:05"}]
+    }))
+    off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
+    assert off is not None and (off.hour, off.minute) == (14, 5)
+    assert ResultTracker._race_off_datetime("vaal", 9, day, data_dir=str(tmp_path)) is None
+    assert ResultTracker._race_off_datetime("vaal", 4, day, data_dir="/nonexistent") is None
+
+
+def test_void_settlement_reverses_money(tmp_path):
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir=str(tmp_path), starting_bankroll=1000.0)
+    # Real single: placement holds, settle applies P&L, void restores all.
+    b = gov.record_bet("Vaal", 4, "Alpha One", 3.0, 40.0, 10.0, "VALUE")
+    gov.settle_bet(b.bet_id, won=False)  # 1000 -> 960
+    assert gov.current_bankroll == pytest.approx(960.0)
+    assert gov.void_settlement(b.bet_id, notes="phantom") is True
+    assert gov.current_bankroll == pytest.approx(1000.0)
+    assert gov.total_profit_loss == pytest.approx(0.0)
+    assert gov.get_open_bets()[0].status == "PENDING"
+
+    w = gov.record_bet("Vaal", 5, "Beta Two", 3.0, 40.0, 10.0, "VALUE")
+    gov.settle_bet(w.bet_id, won=True)  # 1000 -> 1080
+    gov.void_settlement(w.bet_id)
+    assert gov.current_bankroll == pytest.approx(1000.0)
+
+    # Real exotic: cost deducted at placement; void-LOST refunds it.
+    x = gov.record_exotic_bet("Vaal", "JP1", [4, 5], [{"race": 4, "banker": "A", "savers": []}], 10.0, 500.0)
+    assert gov.current_bankroll == pytest.approx(1000.0 - 10.0)
+    gov.settle_exotic_bet(x.bet_id, pool_return=0.0)
+    assert gov.void_settlement(x.bet_id, notes="race not run") is True
+    assert gov.current_bankroll == pytest.approx(1000.0)
+
+    # Voiding unknown / already-pending is safe.
+    assert gov.void_settlement("nope") is False
+    assert gov.void_settlement(x.bet_id) is True  # now PENDING -> True
+
+
+def test_duplicate_bets_rejected(tmp_path):
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir=str(tmp_path), starting_bankroll=100000.0)
+    first = gov.record_bet("Vaal", 4, "Alpha One", 3.0, 40.0, 10.0, "VALUE")
+    assert first is not None
+    assert gov.record_bet("vaal", 4, "alpha one", 3.0, 40.0, 10.0, "VALUE") is None
+    # Different race still allowed.
+    assert gov.record_bet("Vaal", 5, "Alpha One", 3.0, 40.0, 10.0, "VALUE") is not None
+
+    x1 = gov.record_exotic_bet("Vaal", "JP1", [4, 5], [{"race": 4, "banker": "A", "savers": []}], 10.0, 500.0)
+    assert x1 is not None
+    assert gov.record_exotic_bet("Vaal", "JP1", [4, 5], [{"race": 4, "banker": "A", "savers": []}], 10.0, 500.0) is None
+    assert gov.record_exotic_bet("Vaal", "JP1", [6, 7], [{"race": 6, "banker": "A", "savers": []}], 10.0, 500.0) is not None
+
+
+def test_exotic_history_merge_and_prune(tmp_path):
+    from core_agent.core.strike_tips import _merge_exotic_history, _read_exotic_history
+
+    today = date.today().isoformat()
+    old = (date.today() - timedelta(days=2)).isoformat()
+    plays_a = [{"pool": "JP1", "legs": [4, 5], "combinations": [], "_track": "Vaal"}]
+    plays_b = [{"pool": "PA", "legs": [2, 3], "combinations": [], "_track": "Vaal"}]
+
+    flat = _merge_exotic_history(str(tmp_path), today, plays_a)
+    assert len(flat) == 1 and flat[0]["event_date"] == today
+    # Same day/track rescan replaces; other track appends.
+    plays_b[0]["_track"] = "Turffontein"
+    flat = _merge_exotic_history(str(tmp_path), today, plays_b)
+    assert sorted(p["pool"] for p in flat) == ["JP1", "PA"]
+    # Past entries pruned on read; empty scans must use _read (no wipe).
+    import json as _json
+    hist = _json.loads((tmp_path / "exotics_history.json").read_text())
+    hist.append({"event_date": old, "track": "Vaal", "pools": plays_a, "created_at": old})
+    (tmp_path / "exotics_history.json").write_text(_json.dumps(hist))
+    flat = _read_exotic_history(str(tmp_path))
+    assert all(p["event_date"] >= today for p in flat)
+    assert len(flat) == 2
+
+
+def test_bf_off_time_threading_and_fallback_match(tmp_path):
+    """Exact Betfair off-times reach the snapshot even when display times
+    disagree, via the course+raceNumber fallback match."""
+    import json as _json
+    from core_agent.core.adaptive_odds_monitor import _merge_bf_into
+    from core_agent.skills.parsers.betfair_sa import BetfairSA
+
+    # Parser emits offTime + raceNumber; t stays stable for display.
+    api = BetfairSA()
+    ev = api._parse_market("1.1", {
+        "runners": [{"runnername": "Horse A", "metadata": {}}],
+        "event": {"name": "Vaal", "startTime": 1788387300000},
+        "markets": [{"name": "R4 1600m Mdn"}],
+    })
+    assert ev is not None
+    assert ev.get("offTime") is not None and ":" in ev["offTime"]
+    assert ev.get("raceNumber") == 4
+
+    ev_none = api._parse_market("1.2", {
+        "runners": [{"runnername": "Horse A", "metadata": {}}],
+        "event": {"name": "Vaal"},
+        "markets": [{"name": "R4 1600m Mdn"}],
+    })
+    assert ev_none is not None
+    assert "offTime" not in ev_none  # unknown stays absent, never fabricated
+    assert ev_none["t"] == "00:00"
+
+    # Merge: Betway placeholder time vs exact Betfair time -> fallback match
+    # on (course, raceNumber) still merges + stamps bf_off_time.
+    state = {"events": {"1": {
+        "course": "Vaal", "t": "12:00", "raceNumber": 4,
+        "runners": [{"name": "Horse A"}],
+    }}}
+    bf = {"events": {"mk1": {
+        "course": "vaal", "t": "14:05", "raceName": "R4 1600m Mdn",
+        "raceNumber": 4, "offTime": "14:05",
+        "runners": [{"name": "Horse A", "gear": "Hood"}],
+    }}}
+    _merge_bf_into(state, bf)
+    assert state["events"]["1"]["runners"][0].get("gear") == "Hood"
+    assert state["events"]["1"].get("bf_off_time") == "14:05"
+    assert state["events"]["1"]["t"] == "12:00"  # display untouched
+
+    # Existing stamp never overwritten.
+    state["events"]["1"]["bf_off_time"] = "13:00"
+    _merge_bf_into(state, bf)
+    assert state["events"]["1"]["bf_off_time"] == "13:00"
+
+
+def test_find_race_time_prefers_bf_off(tmp_path):
+    """Gate uses the exact stamp over scan placeholders."""
+    import json as _json
+    from core_agent.skills.result_tracker import _find_race_time
+
+    day = date.today().isoformat()
+    (tmp_path / f"daily_scan_{day}.json").write_text(_json.dumps({
+        "Vaal": [{"race_number": 4, "race_time": "12:00"}]
+    }))
+    (tmp_path / "market_snapshot_latest.json").write_text(_json.dumps({
+        "events": {"1": {
+            "course": "Vaal", "t": "12:00", "raceNumber": 4,
+            "bf_off_time": "14:05", "runners": [],
+        }}
+    }))
+    assert _find_race_time(str(tmp_path), "vaal", 4, day) == "14:05"
+    # Without the stamp, scan time is used.
+    (tmp_path / "market_snapshot_latest.json").write_text(_json.dumps({
+        "events": {"1": {
+            "course": "Vaal", "t": "12:00", "raceNumber": 4, "runners": [],
+        }}
+    }))
+    assert _find_race_time(str(tmp_path), "vaal", 4, day) == "12:00"
+
+
 def test_daily_report_for_explicit_date_and_aged_section(tmp_path):
     """generate_daily_report(report_date) filters by date and lists the
     aged backlog (PENDING past max age) for manual review."""
@@ -264,6 +458,38 @@ def test_scheduler_has_both_report_jobs():
             sched.scheduler.shutdown(wait=False)
         except Exception:
             pass
+
+
+def test_volume_sync_throttles_and_noops_off_modal(monkeypatch):
+    """sync_volume: at most one reload per window; silent no-op without Modal."""
+    import core_agent.core.volume_sync as vs
+
+    calls = []
+    fake_vol = MagicMock()
+    fake_vol.reload.side_effect = lambda: calls.append(1)
+    fake_modal = MagicMock()
+    fake_modal.Volume.from_name.return_value = fake_vol
+    monkeypatch.setitem(sys.modules, "modal", fake_modal)
+    monkeypatch.setenv("MODAL_TASK_ID", "task-123")
+    vs._last_reload = 0.0
+    vs._volume = None
+
+    assert vs.sync_volume(max_age_secs=60) is True
+    assert len(calls) == 1
+    assert vs.sync_volume(max_age_secs=60) is False  # throttled
+    assert len(calls) == 1
+
+    # Outside Modal (local Docker/dev): no-op, never raises.
+    monkeypatch.delenv("MODAL_TASK_ID")
+    vs._last_reload = 0.0
+    assert vs.sync_volume(max_age_secs=0) is False
+    assert len(calls) == 1
+
+    # Reload failures (open files) are swallowed, never raised.
+    vs._last_reload = 0.0
+    monkeypatch.setenv("MODAL_TASK_ID", "task-123")
+    fake_vol.reload.side_effect = RuntimeError("open files")
+    assert vs.sync_volume(max_age_secs=0) is True
 
 
 def test_failed_brain_settle_is_not_recorded(stub_brain_module):
