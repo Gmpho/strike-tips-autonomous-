@@ -17,6 +17,7 @@ from core_agent.routes import (
 )
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import auth_middleware
+from core_agent.core.volume_sync import sync_volume
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
@@ -52,6 +53,14 @@ async def rate_limit_middleware(request: Request, call_next):
 
     if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
         return await call_next(request)
+
+    # Long-lived containers see a frozen volume view; pull the latest
+    # committed state (throttled internally) so reads reflect other
+    # containers' writes. Runs in a thread to avoid blocking the loop.
+    try:
+        await asyncio.to_thread(sync_volume)
+    except Exception:
+        pass
 
     client_ip = request.client.host if request.client else "unknown"
     key = f"{client_ip}:{path}"

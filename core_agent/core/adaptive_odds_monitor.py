@@ -229,7 +229,40 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
             bf_match = bf
             break
         if not bf_match:
+            # Fallback: same course + same race number. Betway display times
+            # can be placeholders ("12:00") while Betfair carries the exact
+            # off-time, which would otherwise block the whole merge.
+            try:
+                bw_race_num = int(event.get("raceNumber", event.get("race_number", -1)))
+            except (ValueError, TypeError):
+                bw_race_num = -1
+            if bw_race_num > 0:
+                for bf in bf_events.values():
+                    if not isinstance(bf, dict):
+                        continue
+                    if _norm_course(bf.get("course", "")) != course_key:
+                        continue
+                    try:
+                        bf_race_num = int(bf.get("raceNumber", -1))
+                    except (ValueError, TypeError):
+                        continue
+                    if bf_race_num == bw_race_num:
+                        bf_match = bf
+                        break
+        if not bf_match:
             continue
+
+        # Stamp the exact Betfair off-time (additive only). Downstream gates
+        # prefer this over display times that may be placeholders.
+        bf_off = bf_match.get("offTime")
+        if bf_off and "bf_off_time" not in event:
+            event["bf_off_time"] = bf_off
+        bf_date = bf_match.get("eventDate")
+        if bf_date and "bf_event_date" not in event:
+            event["bf_event_date"] = bf_date
+        bf_dist = bf_match.get("distanceM")
+        if bf_dist and "distance_m" not in event:
+            event["distance_m"] = bf_dist
 
         bf_runners = bf_match.get("runners") or []
         if not bf_runners:

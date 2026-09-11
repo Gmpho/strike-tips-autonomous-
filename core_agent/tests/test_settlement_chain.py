@@ -617,3 +617,139 @@ def test_real_bankroll_moves_on_settle_not_placement(tmp_path):
     gov.settle_bet(bet.bet_id, won=True)
     assert gov.current_bankroll == pytest.approx(1080.0)  # +80 net
     assert gov.get_open_exposure() == pytest.approx(0.0)
+
+
+def test_course_cleaning_and_event_date_parsing():
+    from core_agent.skills.parsers.betfair_sa import BetfairSA
+
+    assert BetfairSA._clean_course("Fairview (RSA) 11 Sep") == "Fairview"
+    assert BetfairSA._clean_course("Greyville") == "Greyville"
+    assert BetfairSA._event_date_from_market({"event": {"name": "Fairview (RSA) 11 Sep"}}) == "2026-09-11"
+    assert BetfairSA._event_date_from_market({"event": {"name": "Fairview"}}) is None
+    assert BetfairSA._event_date_from_market({}) is None
+
+
+def test_off_time_prefers_market_start_time():
+    from core_agent.skills.parsers.betfair_sa import BetfairSA
+
+    # Real payload shape: top-level marketStartTime (UTC epoch ms).
+    # 1789121700000 = 10:15 UTC = 12:15 SAST. The /all timeLabel ("10:15")
+    # is UTC — never use it as a local off-time (would shift 2h early).
+    assert BetfairSA._off_time_from_market({"marketStartTime": 1789121700000}) == "12:15"
+    assert BetfairSA._off_time_from_market({}) is None
+    assert BetfairSA._time_from_market({}) == "00:00"
+
+
+def test_parse_market_carries_event_date():
+    from core_agent.skills.parsers.betfair_sa import BetfairSA
+
+    ev = BetfairSA()._parse_market("1.1", {
+        "runners": [{"runnername": "Horse A", "metadata": {}}],
+        "marketStartTime": 1789121700000,
+        "event": {"name": "Fairview (RSA) 11 Sep", "venue": "Fairview"},
+        "markets": [{"name": "R1 1000m Mdn"}],
+    })
+    assert ev is not None
+    assert ev["course"] == "Fairview"
+    assert ev["offTime"] == "12:15"
+    assert ev["eventDate"] == "2026-09-11"
+    assert ev["raceNumber"] == 1
+
+
+def test_merge_stamps_event_date(tmp_path):
+    from core_agent.core.adaptive_odds_monitor import _merge_bf_into
+
+    state = {"events": {"1": {
+        "course": "Fairview", "t": "10:15", "raceNumber": 1,
+        "runners": [{"name": "Horse A"}],
+    }}}
+    bf = {"events": {"mk1": {
+        "course": "Fairview", "t": "10:15", "raceNumber": 1,
+        "offTime": "10:15", "eventDate": "2026-09-11",
+        "runners": [{"name": "Horse A"}],
+    }}}
+    _merge_bf_into(state, bf)
+    assert state["events"]["1"].get("bf_off_time") == "10:15"
+    assert state["events"]["1"].get("bf_event_date") == "2026-09-11"
+
+
+def test_gate_ignores_other_edition(tmp_path):
+    """A market stamped for a different date than the bet must not gate it."""
+    import json as _json
+    from datetime import datetime as _dt, timedelta as _td
+    from core_agent.skills.result_tracker import ResultTracker
+
+    day = date.today().isoformat()
+    (tmp_path / "market_snapshot_latest.json").write_text(_json.dumps({
+        "events": {"1": {
+            "course": "Vaal", "t": "12:00", "raceNumber": 4,
+            "bf_off_time": "14:05", "bf_event_date": day, "runners": [],
+        }}
+    }))
+    off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
+    assert off is not None and (off.hour, off.minute) == (14, 5)
+    assert off.tzinfo is not None  # SAST-aware: naive UTC comparisons delayed everything 2h
+
+    # Same market, but the bet is from yesterday -> stamp must not apply;
+    # falls back to scan file (absent here) -> None, evidence decides.
+    other_day = (date.today() - _td(days=1)).isoformat()
+    off2 = ResultTracker._race_off_datetime("vaal", 4, other_day, data_dir=str(tmp_path))
+    assert off2 is None
+
+
+def test_number_names_rejected_everywhere():
+    from core_agent.skills.parsers.tab4racing import _is_number_name
+    from core_agent.core.strike_tips import _is_number_selection, _play_has_real_names
+
+    assert _is_number_name("1") and _is_number_name(" 12 ")
+    assert not _is_number_name("THOONSIL") and not _is_number_name("2B")
+    assert _is_number_selection("7")
+    assert not _is_number_selection("Kensal Green")
+    good = {"pool": "JP1", "legs": [4, 5],
+            "combinations": [{"race": 4, "banker": "Pressonregardless", "savers": ["Kensal Green"]}],
+            "estimated_combinations": 2}
+    bad = {"pool": "JP1", "legs": [4, 5],
+           "combinations": [{"race": 4, "banker": "1", "savers": ["2"]}],
+           "estimated_combinations": 2}
+    assert _play_has_real_names(good) is True
+    assert _play_has_real_names(bad) is False
+    assert _play_has_real_names({"pool": "JP1", "legs": [], "combinations": []}) is True
+
+
+def test_betfair_distance_parsing():
+    from core_agent.skills.parsers.betfair_sa import BetfairSA
+
+    assert BetfairSA._distance_from_market({"markets": [{"name": "R1 1200m Mdn"}]}) == 1200
+    assert BetfairSA._distance_from_market({"markets": [{"name": "R6 6f Mdn"}]}) == 1207
+    assert BetfairSA._distance_from_market({"markets": [{"name": "R8 1m1f Stks"}]}) == 1811
+    assert BetfairSA._distance_from_market({"markets": [{"name": "R4 1400m Mdn"}]}) == 1400
+    assert BetfairSA._distance_from_market({"markets": [{"name": "R1 Mdn"}]}) is None
+    assert BetfairSA._distance_from_market({}) is None
+
+    ev = BetfairSA()._parse_market("1.1", {
+        "runners": [{"runnername": "Horse A", "metadata": {}}],
+        "marketStartTime": 1789121700000,
+        "event": {"name": "Fairview (RSA) 11 Sep", "venue": "Fairview"},
+        "markets": [{"name": "R1 1200m Mdn"}],
+    })
+    assert ev is not None and ev.get("distanceM") == 1200
+
+
+def test_merge_stamps_distance():
+    from core_agent.core.adaptive_odds_monitor import _merge_bf_into
+
+    state = {"events": {"1": {
+        "course": "Fairview", "t": "12:15", "raceNumber": 1,
+        "runners": [{"name": "Horse A"}],
+    }}}
+    bf = {"events": {"mk1": {
+        "course": "Fairview", "t": "12:15", "raceNumber": 1,
+        "offTime": "12:15", "eventDate": "2026-09-11", "distanceM": 1200,
+        "runners": [{"name": "Horse A"}],
+    }}}
+    _merge_bf_into(state, bf)
+    assert state["events"]["1"].get("distance_m") == 1200
+    # Existing value never overwritten.
+    state["events"]["1"]["distance_m"] = 1000
+    _merge_bf_into(state, bf)
+    assert state["events"]["1"].get("distance_m") == 1000

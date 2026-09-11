@@ -212,6 +212,14 @@ class StrikeTipsScheduler:
         try:
             # Use the singleton brain instance (set up by API startup)
             from core_agent.core.strike_brain import brain
+            from core_agent.core.volume_sync import sync_volume
+
+            # Fresh volume view first: sibling containers (scans, repairs)
+            # may have placed/voided bets since this process last synced.
+            try:
+                sync_volume(max_age_secs=0)
+            except Exception:
+                pass
 
             if not brain or not brain.strike or not brain.strike.bankroll:
                 return
