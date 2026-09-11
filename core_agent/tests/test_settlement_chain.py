@@ -753,3 +753,35 @@ def test_merge_stamps_distance():
     state["events"]["1"]["distance_m"] = 1000
     _merge_bf_into(state, bf)
     assert state["events"]["1"].get("distance_m") == 1000
+
+
+def _mk_play(pool, legs, track="Vaal"):
+    return {
+        "pool": pool, "legs": list(legs),
+        "combinations": [{"race": r, "banker": "Horse A", "savers": []} for r in legs],
+        "estimated_combinations": 1, "estimated_dividend": 100.0,
+        "_track": track,
+    }
+
+
+def test_exotic_layout_validation():
+    from core_agent.core.strike_tips import _validate_exotic_layout
+
+    good_jp = _mk_play("JACKPOT 1", [4, 5, 6, 7])
+    out_of_range = _mk_play("JACKPOT 2", [7, 8, 9, 10])  # R10 on 9-race card
+    wrong_count = _mk_play("PICK 6", [4, 5, 6])  # needs 6 legs
+    dupe = _mk_play("JACKPOT 1", [4, 5, 6, 7])
+    unknown_family = _mk_play("QUARTET", [1, 2, 3])  # no canonical count: kept
+    out = _validate_exotic_layout(
+        [good_jp, out_of_range, wrong_count, dupe, unknown_family], 9
+    )
+    pools = [p["pool"] for p in out]
+    assert pools == ["JACKPOT 1", "QUARTET"]
+    assert _validate_exotic_layout([], 9) == []
+    assert _validate_exotic_layout([good_jp], 0) == [good_jp]  # unknown card: pass through
+
+    # Overlapping ranges across DIFFERENT pools are normal SA structure: kept.
+    pa = _mk_play("PLACE ACCUMULATOR", [2, 3, 4, 5, 6, 7, 8])
+    p6 = _mk_play("PICK 6", [4, 5, 6, 7, 8, 9])
+    out2 = _validate_exotic_layout([pa, p6], 9)
+    assert [p["pool"] for p in out2] == ["PLACE ACCUMULATOR", "PICK 6"]

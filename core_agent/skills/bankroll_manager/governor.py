@@ -403,6 +403,22 @@ class BankrollGovernor:
                     logger.warning(f"Bet blocked by governor: {reason}")
                     return None
 
+            # Idempotency: same horse/track/race/date already pending (daily +
+            # value + midday scans all place) → don't stack duplicate tickets.
+            for existing in self._bets:
+                if (
+                    existing.status == "PENDING"
+                    and existing.date == date.today().isoformat()
+                    and str(existing.track).lower() == str(track).lower()
+                    and existing.race_number == race_number
+                    and str(existing.horse).lower() == str(horse).lower()
+                ):
+                    logger.info(
+                        f"Duplicate bet skipped: {horse} @ {track} R{race_number} "
+                        f"(already open as {existing.bet_id})"
+                    )
+                    return None
+
             now = datetime.now()
             bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
 
@@ -458,6 +474,22 @@ class BankrollGovernor:
                 can_bet, reason = self.can_bet_today(total_cost)
                 if not can_bet:
                     logger.warning(f"Exotic bet blocked by governor: {reason}")
+                    return None
+
+            # Idempotency: same pool/legs/date already pending → skip.
+            today_iso = date.today().isoformat()
+            leg_key = "-".join(str(r) for r in pool_legs)
+            for existing in self._bets:
+                if (
+                    existing.status == "PENDING"
+                    and existing.date == today_iso
+                    and str(existing.track).lower() == str(track).lower()
+                    and str(existing.horse) == f"{pool_type}:{leg_key}"
+                ):
+                    logger.info(
+                        f"Duplicate exotic skipped: {pool_type} {leg_key} @ {track} "
+                        f"(already open as {existing.bet_id})"
+                    )
                     return None
 
             now = datetime.now()
@@ -583,10 +615,69 @@ class BankrollGovernor:
                     self.peak_bankroll = self.current_bankroll
 
             # _atomic_transaction will handle _save_state()
-            
+
             logger.info(
                 f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}"
             )
+            return True
+
+    def void_settlement(self, bet_id: str, notes: str = "") -> bool:
+        """Reverse a wrongful settlement, returning the bet to PENDING.
+
+        Used for phantom settles (e.g. LOST recorded before the race ran).
+        Reverses exactly what each settle path applied:
+        - single real: settle added profit_loss → subtract it back.
+        - single paper: settle credited actual_return → subtract it back
+          (the placement stake stays deducted — the ticket is live again).
+        - exotic real: placement deducted cost from bankroll+P&L, settle
+          credited the dividend → void-WON subtracts the dividend; void-LOST
+          refunds the ticket cost (race not run, ticket still live).
+        - exotic paper: placement deducted cost from paper → void-LOST refunds
+          it; void-WON subtracts the credited dividend.
+        """
+        with self._atomic_transaction():
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            if not bet:
+                logger.warning(f"Void failed, bet not found: {bet_id}")
+                return False
+            if bet.status == "PENDING":
+                return True
+
+            was_won = bet.status == "WON"
+            is_paper_bet = getattr(bet, "is_paper", False) or (bet.notes and "PAPER" in str(bet.notes))
+            is_exotic = (getattr(bet, "confidence", "") or "").upper() == "EXOTIC" or ":" in str(
+                getattr(bet, "horse", "") or ""
+            )
+            actual = bet.actual_return or 0.0
+
+            if is_exotic:
+                if is_paper_bet:
+                    if was_won:
+                        self.paper_balance -= actual
+                    else:
+                        self.paper_balance += bet.stake
+                else:
+                    if was_won:
+                        self.current_bankroll -= actual
+                        self.total_profit_loss -= actual
+                    else:
+                        self.current_bankroll += bet.stake
+                        self.total_profit_loss += bet.stake
+            else:
+                if is_paper_bet:
+                    if was_won:
+                        self.paper_balance -= actual
+                else:
+                    self.current_bankroll -= (bet.profit_loss or 0.0)
+                    self.total_profit_loss -= (bet.profit_loss or 0.0)
+
+            bet.status = "PENDING"
+            bet.actual_return = None
+            bet.profit_loss = None
+            tag = f"VOID ({notes})" if notes else "VOID"
+            bet.notes = f"{bet.notes} | {tag}" if bet.notes else tag
+
+            logger.info(f"Bet settlement voided: {bet.horse} ({bet_id}) was { 'WON' if was_won else 'LOST'} — {notes}")
             return True
 
     # ─── Reporting ───────────────────────────────────────────────────────────

@@ -198,14 +198,20 @@ class BetfairSA:
             cache_payload["markets"][mid] = data
             event = self._parse_market(mid, data)
             if event:
-                # Override with stored info from /all (more reliable than market payload inference)
+                # Override with stored info from /all (more reliable course
+                # names than payload inference). Time is handled carefully:
+                # market payload startTime (epoch->SAST) is authoritative;
+                # the /all timeLabel is UTC and must ONLY fill in when the
+                # payload has no exact time — using it blindly shifts every
+                # off-time 2h early (Sep-2026 post-mortem: phantom-early
+                # race closures and merge misses).
                 info = market_info.get(mid, {})
                 if info.get("course") and info["course"] != "Unknown":
                     event["course"] = info["course"]
-                if info.get("t"):
-                    event["t"] = info["t"]
                 if info.get("raceName"):
                     event["raceName"] = info["raceName"]
+                if not event.get("offTime") and info.get("t"):
+                    event["t"] = info["t"]
                 events[mid] = event
 
         # 4. Cache raw responses for debugging / last-good reuse.
@@ -326,12 +332,28 @@ class BetfairSA:
         if not runners:
             return None
 
-        return {
+        off_time = self._off_time_from_market(data)
+        event: Dict[str, Any] = {
             "course": self._course_from_market(data),
-            "t": self._time_from_market(data),
+            "t": off_time or "00:00",
             "raceName": self._race_name_from_market(data),
             "runners": runners,
         }
+        # Exact off-time + race number travel with the event so downstream
+        # consumers (snapshot merge, settlement off-time gate) never have to
+        # trust placeholder display times. Absent when the payload lacks them.
+        if off_time:
+            event["offTime"] = off_time
+        race_num = self._race_number_from_market(data)
+        if race_num is not None:
+            event["raceNumber"] = race_num
+        event_date = self._event_date_from_market(data)
+        if event_date:
+            event["eventDate"] = event_date
+        distance_m = self._distance_from_market(data)
+        if distance_m:
+            event["distanceM"] = distance_m
+        return event
 
     @staticmethod
     def _race_name_from_market(data: Dict) -> Optional[str]:
@@ -343,7 +365,7 @@ class BetfairSA:
     @staticmethod
     def _course_from_market(data: Dict) -> str:
         """Best-effort course/track name from a market payload."""
-        for path in (("event", "name"), ("eventName",), ("race", "course"), ("course",)):
+        for path in (("event", "venue"), ("event", "name"), ("eventName",), ("race", "course"), ("course",)):
             obj: Any = data
             for key in path:
                 if isinstance(obj, dict):
@@ -352,13 +374,129 @@ class BetfairSA:
                     obj = None
                     break
             if isinstance(obj, str) and obj.strip():
-                return obj.strip()
+                return BetfairSA._clean_course(obj.strip())
         return "Unknown"
 
     @staticmethod
-    def _time_from_market(data: Dict) -> str:
-        """Best-effort race time (HH:MM) from a market payload."""
-        for path in (("event", "startTime"), ("startTime",), ("race", "time")):
+    def _clean_course(raw: str) -> str:
+        """Strip Betfair decorations: "Fairview (RSA) 11 Sep" -> "Fairview".
+
+        Without this, course matching fails whenever the market_info override
+        is absent, silently dropping the whole merge for the race.
+        """
+        import re as _re
+
+        s = _re.sub(r"\s*\(.*?\)\s*", " ", raw).strip()
+        s = _re.sub(r"\s+\d{1,2}\s+[A-Za-z]{3}\s*$", "", s).strip()
+        return s or raw
+
+    _MONTHS = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+
+    @staticmethod
+    def _event_date_from_market(data: Dict) -> Optional[str]:
+        """ISO meeting date from payloads like event "Fairview (RSA) 11 Sep".
+
+        Tells identically-numbered races apart across days: the settlement
+        gate must not apply today's off-time to yesterday's bet (or vice
+        versa). Year resolves forward; >60 days in the past rolls +1y.
+        """
+        import re as _re
+        from datetime import date as _date
+
+        candidates = []
+        event = data.get("event")
+        if isinstance(event, dict):
+            candidates.append(event.get("name"))
+        candidates.append(data.get("eventName"))
+        for text in candidates:
+            if not isinstance(text, str):
+                continue
+            m = _re.search(r"\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b", text, _re.IGNORECASE)
+            if not m:
+                continue
+            try:
+                day = int(m.group(1))
+                month = BetfairSA._MONTHS[m.group(2).lower()[:3]]
+                today = _date.today()
+                parsed = _date(today.year, month, day)
+                if (today - parsed).days > 60:
+                    parsed = _date(today.year + 1, month, day)
+                return parsed.isoformat()
+            except (ValueError, KeyError):
+                continue
+        return None
+
+    @staticmethod
+    def _race_number_from_market(data: Dict) -> Optional[int]:
+        """Best-effort race number from the market/race name ("R1 1200m Mdn")."""
+        import re as _re
+
+        candidates = []
+        markets = data.get("markets", []) or []
+        if markets and isinstance(markets[0], dict):
+            candidates.append(markets[0].get("name"))
+        candidates.append(data.get("raceName"))
+        candidates.append(data.get("name"))
+        for text in candidates:
+            if not isinstance(text, str):
+                continue
+            m = _re.search(r"\bR(\d{1,2})\b", text)
+            if m:
+                try:
+                    return int(m.group(1))
+                except (ValueError, TypeError):
+                    continue
+        return None
+
+    @staticmethod
+    def _distance_from_market(data: Dict) -> Optional[int]:
+        """Race distance in metres parsed from market names.
+
+        Handles "R1 1200m Mdn" (1200), "R6 6f Mdn" (6 furlongs), "R8 1m1f
+        Stks" (1 mile + 1 furlong). The leading R-number has no unit suffix
+        so it never collides. Returns None when unparseable.
+        """
+        import re as _re
+
+        candidates = []
+        markets = data.get("markets", []) or []
+        if markets and isinstance(markets[0], dict):
+            candidates.append(markets[0].get("name"))
+        candidates.append(data.get("raceName"))
+        for text in candidates:
+            if not isinstance(text, str):
+                continue
+            # Alternation (not adjacent optionals): an empty match must never
+            # succeed, or "R1 1200m" resolves at pos 0 with no groups.
+            m = _re.search(r"(\d+)\s*m\s*(\d+)\s*f\b|(\d+)\s*m\b|(\d+)\s*f\b", text)
+            if not m:
+                continue
+            if m.group(1) and m.group(2):
+                # "1m4f": miles + furlongs.
+                return round(int(m.group(1)) * 1609.34 + int(m.group(2)) * 201.168)
+            if m.group(4):
+                # "6f": furlongs.
+                return round(int(m.group(4)) * 201.168)
+            if m.group(3):
+                # Lone "m" is ambiguous ("1200m" metres vs "1m" mile):
+                # cards never run sub-100m, so >= 100 means metres.
+                v = int(m.group(3))
+                return v if v >= 100 else round(v * 1609.34)
+        return None
+
+    @staticmethod
+    def _off_time_from_market(data: Dict) -> Optional[str]:
+        """Exact race time (HH:MM SAST) from a market payload, or None.
+
+        `marketStartTime` (top-level epoch ms) is authoritative — the nested
+        event/startTime paths are absent on real payloads. Never fabricates:
+        unknown stays absent so downstream gates can't mistake a placeholder
+        for a real off-time.
+        """
+        for path in (("marketStartTime",), ("event", "startTime"), ("startTime",), ("race", "time")):
             obj: Any = data
             for key in path:
                 if isinstance(obj, dict):
@@ -371,4 +509,9 @@ class BetfairSA:
                     return datetime.fromtimestamp(obj / 1000, tz=_SAST).strftime("%H:%M")
                 except Exception:
                     pass
-        return "00:00"
+        return None
+
+    @staticmethod
+    def _time_from_market(data: Dict) -> str:
+        """Best-effort race time (HH:MM) from a market payload."""
+        return BetfairSA._off_time_from_market(data) or "00:00"

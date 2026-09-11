@@ -5,10 +5,32 @@ Uses fuzzy matching on horse names with date fallback (today → yesterday → n
 
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("result-tracker")
+
+# South Africa has no daylight saving — fixed UTC+2, safe without tzdata.
+_SAST = timezone(timedelta(hours=2))
+
+# Words that generic snippets use around results ("1st choice", "the
+# favourite won") but which are never actual horse names on their own.
+# _extract_race_winner must reject single-word captures from this set —
+# otherwise any snippet settles the bet LOST against a phantom winner.
+_NON_NAME_WORDS = frozenset({
+    "choice", "choices", "favourite", "favourites", "favorite", "favorites",
+    "pick", "picks", "tip", "tips", "selection", "selections", "nap", "nb",
+    "each", "way", "double", "treble", "yankee", "lucky", "patent", "trixie",
+    "outsider", "longshot", "banker", "saver", "field", "rest", "others",
+    "rival", "rivals", "danger", "dangers", "threat", "contender", "winner",
+    "winners", "winning", "won", "first", "second", "third", "placed",
+    "horse", "horses", "runner", "runners", "race", "races", "track",
+    "south", "africa", "result", "results",
+})
+
+# Grace period after scheduled off-time before a race counts as runnable for
+# settlement (results need time to publish).
+OFF_TIME_GRACE_MINUTES = 15
 
 
 # Max age for AUTO-settlement. Older PENDING bets are left alone for manual
@@ -55,6 +77,126 @@ def atr_date_label(bet_date: Optional[str]) -> str:
     if delta <= 0:
         return "today"
     return "yesterday"
+
+
+def _find_race_time(
+    base: str, track: str, race_number: int, bet_date: Optional[str]
+) -> Optional[str]:
+    """Best-effort HH:MM off-time for a race.
+
+    Priority: (1) snapshot `bf_off_time` — the exact Betfair market startTime
+    stamped by the merge, immune to TAB "12:00" placeholders; (2) the day's
+    daily_scan race_time; (3) live snapshot display time. Returns None when
+    unknown (no gate applied).
+    """
+    import json
+    import os
+
+    def _snapshot_event():
+        try:
+            with open(os.path.join(base, "market_snapshot_latest.json")) as f:
+                snap = json.load(f)
+        except Exception:
+            return None
+        for e in (snap.get("events") or {}).values():
+            if not isinstance(e, dict):
+                continue
+            try:
+                enum = int(e.get("raceNumber", e.get("race_number", -1)))
+            except (ValueError, TypeError):
+                continue
+            if enum != int(race_number):
+                continue
+            if str(e.get("course", "")).lower() != str(track or "").lower():
+                continue
+            return e
+        return None
+
+    # 1. Exact Betfair off-time stamped by the merge.
+    ev = _snapshot_event()
+    if ev:
+        off = ev.get("bf_off_time")
+        if off and ":" in str(off):
+            return str(off).strip()[:5]
+
+    try:
+        day = str(bet_date)[:10] if bet_date else date.today().isoformat()
+    except Exception:
+        day = date.today().isoformat()
+    try:
+        with open(os.path.join(base, f"daily_scan_{day}.json")) as f:
+            scan = json.load(f)
+        if isinstance(scan, dict):
+            for tname, races in scan.items():
+                if not isinstance(races, list):
+                    continue
+                if str(tname).lower() != str(track or "").lower():
+                    continue
+                for r in races:
+                    if not isinstance(r, dict):
+                        continue
+                    try:
+                        if int(r.get("race_number", -1)) != int(race_number):
+                            continue
+                    except (ValueError, TypeError):
+                        continue
+                    rt = r.get("race_time")
+                    if rt:
+                        return str(rt).strip()[:5]
+    except Exception:
+        pass
+    # Fallback: live snapshot display time (only meaningful for today's races).
+    ev = _snapshot_event()
+    if ev:
+        t = ev.get("t") or ev.get("st")
+        if t:
+            return str(t).strip()[:5]
+    return None
+
+
+def _scan_only_time(
+    base: str, track: str, race_number: int, bet_date: Optional[str]
+) -> Optional[datetime]:
+    """Off-time from the bet day's daily_scan file only (date-correct).
+
+    Used when the live snapshot carries a different meeting edition — the
+    snapshot's times then say nothing about the bet, but the scan file does.
+    """
+    import json
+    import os
+
+    try:
+        day = date.fromisoformat(str(bet_date)[:10]) if bet_date else date.today()
+    except (ValueError, TypeError):
+        return None
+    try:
+        with open(os.path.join(base, f"daily_scan_{day.isoformat()}.json")) as f:
+            scan = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(scan, dict):
+        return None
+    for tname, races in scan.items():
+        if not isinstance(races, list):
+            continue
+        if str(tname).lower() != str(track or "").lower():
+            continue
+        for r in races:
+            if not isinstance(r, dict):
+                continue
+            try:
+                if int(r.get("race_number", -1)) != int(race_number):
+                    continue
+            except (ValueError, TypeError):
+                continue
+            rt = r.get("race_time")
+            if rt and ":" in str(rt):
+                try:
+                    h, m = int(str(rt).strip().split(":")[0]), int(str(rt).strip().split(":")[1])
+                    return datetime(day.year, day.month, day.day, h, m, tzinfo=_SAST)
+                except (ValueError, IndexError):
+                    return None
+    return None
 
 
 def _iter_dates() -> List[str]:
@@ -223,8 +365,77 @@ class ResultTracker:
             if m:
                 w = m.group(1).strip()
                 if w and len(w) >= 3 and not any(kw in w.lower() for kw in ["race", "track", "south africa", "result", "winner"]):
-                    return w
+                    # Reject captures containing generic result words anywhere
+                    # ("1st choice by two lengths", "the favourite won").
+                    # Over-rejection only leaves a bet PENDING (safe);
+                    # under-rejection fabricates LOST results (harmful).
+                    words = set(w.lower().split())
+                    if not words & _NON_NAME_WORDS:
+                        return w
         return None
+
+    @staticmethod
+    def _race_off_datetime(
+        track: str, race_number: int, bet_date: Optional[str], data_dir: Optional[str] = None
+    ) -> Optional[datetime]:
+        """Scheduled off-time for a race, or None if unknown.
+
+        Prefers the Betfair-stamped exact off-time (bf_off_time) but ONLY
+        when the stamped meeting date matches the bet date — otherwise the
+        market belongs to a different edition of the race and its time says
+        nothing about the bet. Falls back to scan/snapshot display times.
+        Never raises — unknown means "no gate", not "no settle".
+        """
+        try:
+            from core_agent.config.paths import DATA_DIR as _default_dir
+        except Exception:
+            _default_dir = None
+        base = data_dir or (str(_default_dir) if _default_dir else None) or "./data"
+        try:
+            bet_day = date.fromisoformat(str(bet_date)[:10]) if bet_date else date.today()
+        except (ValueError, TypeError):
+            return None
+
+        import json
+        import os
+
+        try:
+            with open(os.path.join(base, "market_snapshot_latest.json")) as f:
+                snap = json.load(f)
+            for e in (snap.get("events") or {}).values():
+                if not isinstance(e, dict):
+                    continue
+                try:
+                    enum = int(e.get("raceNumber", e.get("race_number", -1)))
+                except (ValueError, TypeError):
+                    continue
+                if enum != int(race_number):
+                    continue
+                if str(e.get("course", "")).lower() != str(track or "").lower():
+                    continue
+                off = e.get("bf_off_time")
+                mdate = e.get("bf_event_date")
+                if off and ":" in str(off) and mdate:
+                    # Only trust the stamp for the bet's own meeting.
+                    if str(mdate)[:10] != bet_day.isoformat():
+                        return _scan_only_time(base, track, race_number, bet_date)
+                    h, m = int(str(off).strip().split(":")[0]), int(str(off).strip().split(":")[1])
+                    return datetime(bet_day.year, bet_day.month, bet_day.day, h, m, tzinfo=_SAST)
+        except Exception:
+            pass
+
+        time_str = _find_race_time(base, track, race_number, bet_date)
+        if not time_str or ":" not in time_str:
+            return None
+        try:
+            day = date.fromisoformat(str(bet_date)[:10]) if bet_date else date.today()
+        except (ValueError, TypeError):
+            return None
+        try:
+            h, m = int(time_str.strip().split(":")[0]), int(time_str.strip().split(":")[1])
+            return datetime(day.year, day.month, day.day, h, m, tzinfo=_SAST)
+        except (ValueError, IndexError):
+            return None
 
     async def check_and_settle_open_bets(
         self, max_age_days: int = MAX_SETTLE_AGE_DAYS
@@ -263,6 +474,23 @@ class ResultTracker:
             if age is not None and age > max_age_days:
                 deferred.append(f"{bet.bet_id} ({bet.horse} @ {bet.track} R{bet.race_number}, {age}d old)")
                 continue
+            # Off-time gate: never settle a race that hasn't run yet. This is
+            # what fabricated this morning's LOSTs for upcoming Vaal races.
+            try:
+                off = self._race_off_datetime(
+                    bet.track, bet.race_number, getattr(bet, "date", None)
+                )
+            except Exception:
+                off = None
+            if off is not None:
+                if off.tzinfo is None:
+                    off = off.replace(tzinfo=_SAST)
+                if datetime.now(_SAST) < off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
+                    logger.debug(
+                        "Skipping %s (%s R%s): off %s, not run yet",
+                        bet.bet_id, bet.track, bet.race_number, off.strftime("%H:%M"),
+                    )
+                    continue
             result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
             if not result_text:
                 continue

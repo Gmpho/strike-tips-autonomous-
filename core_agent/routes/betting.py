@@ -139,8 +139,8 @@ async def get_open_bets():
     if not bets_data or not isinstance(bets_data, list):
         return {"bets": [], "count": 0}
 
-    # Filter for pending bets (not WON or LOST)
-    pending = [b for b in bets_data if b.get("status") not in ["WON", "LOST"]]
+    # Filter for pending bets (VOIDed tickets are terminal, like settled ones)
+    pending = [b for b in bets_data if b.get("status") == "PENDING"]
 
     bets = []
     for b in pending:

@@ -50,6 +50,161 @@ def resolve_auto_bet_odds(value_bet: Dict) -> Optional[float]:
         return None
     return odds if odds > 1.01 else None
 
+
+def _is_number_selection(value: object) -> bool:
+    """True for cloth-number junk ("1", " 12 ") that sometimes arrives where
+    horse names belong (TAB program feeds in numbers mode). No racehorse is
+    named that — treat as missing, never display or bet it."""
+    return isinstance(value, str) and bool(value.strip()) and value.strip().isdigit()
+
+
+def _play_has_real_names(play: Dict) -> bool:
+    """Every leg banker must be a real name for an AI play to stand."""
+    for c in play.get("combinations", []) or []:
+        if not isinstance(c, dict):
+            return False
+        banker = c.get("banker")
+        name = banker.get("name") if isinstance(banker, dict) else banker
+        if not name or _is_number_selection(name):
+            return False
+    return True
+
+
+# Canonical SA pool sizes: Bipot 6, Jackpot 4, Pick 6 six, Place Accumulator 7.
+_POOL_LEG_COUNTS = (
+    ("BIPOT", 6), ("JACKPOT", 4), ("PICK 6", 6), ("PLACE ACCUMULATOR", 7),
+)
+
+
+def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
+    """Drop impossible or duplicate pool layouts before they reach the board.
+
+    - Legs outside [1, total_races] (e.g. R10 on a 9-race card) invalidate
+      the whole pool: a ticket with phantom legs is worse than no ticket.
+    - Wrong leg counts for the pool family are dropped (BI 6 / JP 4 /
+      P6 6 / PA 7).
+    - Identical (pool, legs) duplicates keep the first occurrence only.
+    Overlapping ranges across DIFFERENT pools (PA containing P6 legs) are
+    normal SA structure and are kept.
+    """
+    if total_races <= 0:
+        return list(plays)
+    seen = set()
+    valid = []
+    for p in plays:
+        if not isinstance(p, dict):
+            continue
+        legs = p.get("legs") or []
+        if any(not isinstance(r, int) or r < 1 or r > total_races for r in legs):
+            print(f"[EXOTIC] Dropped '{p.get('pool')}': legs {legs} outside 1-{total_races}")
+            continue
+        pool_name = str(p.get("pool", "")).upper()
+        expected = next((n for code, n in _POOL_LEG_COUNTS if code in pool_name), None)
+        if expected is not None and len(legs) != expected:
+            print(f"[EXOTIC] Dropped '{p.get('pool')}': {len(legs)} legs, {expected} required")
+            continue
+        key = (pool_name, tuple(legs))
+        if key in seen:
+            print(f"[EXOTIC] Dropped duplicate '{p.get('pool')}' legs {legs}")
+            continue
+        seen.add(key)
+        valid.append(p)
+    return valid
+
+
+def _read_exotic_history(data_dir: str) -> List[Dict]:
+    """Flattened upcoming exotic plays (newest scan wins per entry).
+
+    History entries: {event_date, track, pools: [...], created_at}.
+    Entries with event_date before today are pruned on read so finished
+    events fall off the board once results are in.
+    """
+    import json as _json
+    import os as _os
+    from datetime import date as _date
+
+    hist_path = _os.path.join(data_dir, "exotics_history.json")
+    try:
+        with open(hist_path) as f:
+            history = _json.load(f)
+    except Exception:
+        return []
+    if not isinstance(history, list):
+        return []
+    today = _date.today().isoformat()
+    flat: List[Dict] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("event_date", "")) < today:
+            continue
+        for pool in entry.get("pools") or []:
+            if not isinstance(pool, dict):
+                continue
+            play = dict(pool)
+            play.setdefault("event_date", entry.get("event_date"))
+            play.setdefault("_track", entry.get("track"))
+            flat.append(play)
+    # Newest event first, then pool order as analyzed.
+    flat.sort(key=lambda p: str(p.get("event_date", "")))
+    return flat
+
+
+def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> List[Dict]:
+    """Merge one scan's plays into the multi-day history and return the flat board.
+
+    - Entries keyed by (event_date, track): a rescan REPLACES that day/track.
+    - Past-dated entries pruned (events over).
+    - An empty scan never reaches here (caller serves history instead), so a
+      dry scan can no longer wipe Saturday's future board.
+    """
+    import json as _json
+    import os as _os
+    from datetime import date as _date
+    from datetime import datetime as _dt
+
+    hist_path = _os.path.join(data_dir, "exotics_history.json")
+    try:
+        with open(hist_path) as f:
+            history = _json.load(f)
+    except Exception:
+        history = []
+    if not isinstance(history, list):
+        history = []
+
+    today = _date.today().isoformat()
+    now_iso = _dt.now().isoformat()
+    by_track: Dict[str, List[Dict]] = {}
+    for p in plays:
+        if not isinstance(p, dict):
+            continue
+        by_track.setdefault(str(p.get("_track", "unknown")), []).append(p)
+    for track, pools in by_track.items():
+        history = [
+            e for e in history
+            if not (
+                isinstance(e, dict)
+                and str(e.get("event_date", "")) == str(event_date)
+                and str(e.get("track", "")) == track
+            )
+        ]
+        history.append({
+            "event_date": str(event_date),
+            "track": track,
+            "pools": pools,
+            "created_at": now_iso,
+        })
+    history = [
+        e for e in history
+        if isinstance(e, dict) and str(e.get("event_date", "")) >= today
+    ]
+    try:
+        with open(hist_path, "w") as f:
+            _json.dump(history, f, indent=2, default=str)
+    except Exception as e:
+        print(f"[WARN] Failed to save exotics_history.json: {e}")
+    return _read_exotic_history(data_dir)
+
 try:
     import logging_loki
 except ImportError:
@@ -308,6 +463,7 @@ class StrikeTips:
                         "track": track,
                         "race_number": r.race_number,
                         "race_time": r.race_time,
+                        "distance": r.distance,
                         "condition": r.track_condition,
                         "runners": [run.horse_name for run in r.runners],
                         "value_bets": self._validate_value_bets(
@@ -464,6 +620,7 @@ class StrikeTips:
         track_name = list(all_results.keys())[0] if all_results else "South Africa"
         track_races = all_results.get(track_name, [])
         total_races = len(track_races)
+        from_pdf = bool(pool_starts)
 
         if not pool_starts:
             if total_races >= 10:
@@ -539,6 +696,9 @@ class StrikeTips:
                 valid_plays = []
                 for p in plays:
                     p["_track"] = track_name
+                    # Source tag: PDF-derived starts are authoritative, AI fills
+                    # selections on top of them.
+                    p["source"] = "pdf+ai" if from_pdf else "ai"
                     combos = p.get("combinations", [])
                     if combos and isinstance(combos, list) and isinstance(combos[0], dict) and "banker" in combos[0]:
                         # Recalculate true mathematical combinations
@@ -547,7 +707,12 @@ class StrikeTips:
                             s_cnt = len(c.get("savers", []))
                             true_combos *= max(1, 1 + s_cnt)
                         p["estimated_combinations"] = true_combos
-                        valid_plays.append(p)
+                        if _play_has_real_names(p):
+                            valid_plays.append(p)
+                        else:
+                            print(f"[EXOTIC] AI play '{p.get('pool')}' dropped: cloth-number selections, no horse names")
+                if valid_plays:
+                    valid_plays = _validate_exotic_layout(valid_plays, total_races)
                 if valid_plays:
                     print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s)")
                     return valid_plays
@@ -565,31 +730,50 @@ class StrikeTips:
                 legs_list = list(range(start_race, start_race + num_legs))
                 combinations = []
                 true_combos = 1
+                pool_ok = True
 
                 for r_num in legs_list:
                     r_info = next((r for r in track_races if r.get("race_number") == r_num), None)
                     r_runners = r_info.get("runners", []) if r_info else []
-                    
+                    r_dist = (r_info or {}).get("distance")
+
                     def _get_name(idx):
                         if idx < len(r_runners):
                             item = r_runners[idx]
                             if isinstance(item, str):
-                                return item
+                                return item if not _is_number_selection(item) else None
                             if hasattr(item, "horse_name"):
-                                return item.horse_name
+                                name = item.horse_name
+                                return name if name and not _is_number_selection(name) else None
                             if isinstance(item, dict):
-                                return item.get("horse_name") or item.get("name") or f"Horse #{idx+1}"
-                        return f"Horse #{idx+1}"
+                                name = item.get("horse_name") or item.get("name")
+                                return name if name and not _is_number_selection(name) else None
+                        return None
 
                     b_horse = _get_name(0)
-                    s_horses = [_get_name(1)] if len(r_runners) > 1 else []
-                    combinations.append({
+                    if not b_horse:
+                        # A pool without a real banker is meaningless — drop
+                        # the whole pool rather than carding "#1 (Banker)".
+                        pool_ok = False
+                        break
+                    s_horses = []
+                    if len(r_runners) > 1:
+                        saver = _get_name(1)
+                        if saver:
+                            s_horses = [saver]
+                    combo = {
                         "race": r_num,
                         "banker": b_horse,
                         "savers": s_horses,
-                    })
+                    }
+                    if r_dist:
+                        combo["distance_m"] = r_dist
+                    combinations.append(combo)
                     true_combos *= (1 + len(s_horses))
 
+                if not pool_ok:
+                    print(f"[EXOTIC] Pool '{matched_pool}' dropped: no named banker available")
+                    continue
                 fallback_plays.append({
                     "pool": matched_pool,
                     "legs": legs_list,
@@ -598,9 +782,10 @@ class StrikeTips:
                     "estimated_dividend": 450.0 * num_legs,
                     "reasoning": f"Algorithmic coverage blueprint covering {num_legs} legs starting at Race {start_race}.",
                     "_track": track_name,
+                    "source": "pdf" if from_pdf else "convention",
                 })
             print(f"[EXOTIC] Generated {len(fallback_plays)} structured fallback exotic play(s)")
-            return fallback_plays
+            return _validate_exotic_layout(fallback_plays, total_races)
         except Exception as e:
             print(f"[EXOTIC] Fallback exotic generation error: {e}")
             return []
@@ -932,8 +1117,15 @@ class StrikeTips:
         # Save exotic plays (empty or populated) to keep UI state in sync
         try:
             exotic_file = os.path.join(self.data_dir, "exotics_latest.json")
+            if exotic_plays:
+                merged = _merge_exotic_history(
+                    self.data_dir, date.today().isoformat(), exotic_plays
+                )
+            else:
+                # Empty scan must NEVER wipe future-dated plays — serve history.
+                merged = _read_exotic_history(self.data_dir)
             with open(exotic_file, "w") as f:
-                json.dump(exotic_plays, f, indent=2, default=str)
+                json.dump(merged, f, indent=2, default=str)
         except Exception as e:
             print(f"[WARN] Failed to save exotics_latest.json: {e}")
 
@@ -1028,6 +1220,7 @@ class StrikeTips:
         # Auto-bet: place bets for qualifying value bets from daily scan
         auto_bets_placed = 0
         exotic_bets_placed = 0
+        auto_skipped = {"no_horse": 0, "edge": 0, "odds": 0, "governor": 0}
         try:
             settings_path = os.path.join(self.data_dir, "settings.json")
             if os.path.exists(settings_path):
@@ -1054,15 +1247,18 @@ class StrikeTips:
                             for vb in race.get("value_bets", []):
                                 horse = vb.get("horse") or ""
                                 if not horse:
+                                    auto_skipped["no_horse"] += 1
                                     continue
                                 raw_edge = vb.get("edge_percent") or vb.get("edge") or vb.get("edge_percentage") or vb.get("estimated_edge") or 0
                                 edge = float(raw_edge)
                                 if 0 < edge < 1:
                                     edge *= 100
                                 if edge < min_edge:
+                                    auto_skipped["edge"] += 1
                                     continue
                                 odds = resolve_auto_bet_odds(vb)
                                 if odds is None:
+                                    auto_skipped["odds"] += 1
                                     logger.info(
                                         "Auto-bet skip %s R%s: no bettable market odds for %s",
                                         track, race.get("race_number", 0), horse,
@@ -1078,6 +1274,9 @@ class StrikeTips:
                                 )
                                 if bet:
                                     auto_bets_placed += 1
+                                else:
+                                    # Governor wall / duplicate / cap — place_bet logs why.
+                                    auto_skipped["governor"] += 1
 
                     # Auto-bet exotic plays
                     if exotic_plays:
@@ -1101,13 +1300,23 @@ class StrikeTips:
                             if bet:
                                 exotic_bets_placed += 1
 
-                    if auto_bets_placed or exotic_bets_placed:
+                    if auto_bets_placed or exotic_bets_placed or any(auto_skipped.values()):
                         msg = f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
                         if auto_bets_placed:
                             msg += f"Placed {auto_bets_placed} value bet(s)\n"
                         if exotic_bets_placed:
-                            msg += f"Placed {exotic_bets_placed} exotic play(s)"
-                        print(f"[AUTO-BET] Placed {auto_bets_placed} win + {exotic_bets_placed} exotic bets")
+                            msg += f"Placed {exotic_bets_placed} exotic play(s)\n"
+                        skipped_total = sum(auto_skipped.values())
+                        if skipped_total:
+                            msg += (
+                                f"Skipped {skipped_total} "
+                                f"(edge {auto_skipped['edge']}, odds {auto_skipped['odds']}, "
+                                f"governor/dupe {auto_skipped['governor']})"
+                            )
+                        print(
+                            f"[AUTO-BET] Placed {auto_bets_placed} win + {exotic_bets_placed} exotic bets "
+                            f"| skipped: {auto_skipped}"
+                        )
                         if self.telegram:
                             await self.telegram.send_message(msg)
         except Exception as e:

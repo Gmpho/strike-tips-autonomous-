@@ -18,6 +18,14 @@ logger = logging.getLogger("tab4racing-scraper")
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 from core_agent.core.http_client import get_async_client
 
+
+def _is_number_name(name: str) -> bool:
+    """True for cloth-number junk ("1", " 12 "). No racehorse is named that —
+    when the TAB program feed flips into numbers mode, accepting them cements
+    garbage (exotic cards rendering "#1 (Banker)") instead of falling through
+    to the HTML/PDF sources that carry real names."""
+    return bool(name) and name.strip().isdigit()
+
 try:
     from bs4 import BeautifulSoup
 
@@ -240,6 +248,8 @@ class TAB4RacingScraper:
                             if not name:
                                 continue
                             name = name.strip()
+                            if _is_number_name(name):
+                                continue
                             runners.append(
                                 ScrapedRunner(
                                     horse_name=name,
@@ -298,6 +308,8 @@ class TAB4RacingScraper:
 
                     horse_name = name_el.get_text(strip=True)
                     if not horse_name or len(horse_name) < 2:
+                        continue
+                    if _is_number_name(horse_name):
                         continue
 
                     runners.append(

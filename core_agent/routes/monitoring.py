@@ -39,6 +39,14 @@ async def stream_snapshot(request: Request):
                 if await request.is_disconnected():
                     break
 
+                # Keep this long-lived stream on fresh volume state (threaded:
+                # blocking_reload must not run on the event loop).
+                try:
+                    from core_agent.core.volume_sync import sync_volume
+                    await asyncio.to_thread(sync_volume)
+                except Exception:
+                    pass
+
                 # Check snapshot for changes
                 cache = request.app.state.snapshot_cache or {}
                 current = dict(cache)

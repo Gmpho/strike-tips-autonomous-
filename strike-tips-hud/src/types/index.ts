@@ -40,6 +40,8 @@ export interface RaceEvent {
   t: string;
   raceNumber: string;
   runners: Runner[];
+  /** Race distance in metres (Betfair-derived, when available). */
+  distance_m?: number;
   complexity?: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
   predictionConfidence?: number;
   dsi?: number;
