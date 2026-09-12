@@ -210,6 +210,22 @@ class BetfairSA:
                     event["course"] = info["course"]
                 if info.get("raceName"):
                     event["raceName"] = info["raceName"]
+                    # The market payload's own name is often just the bet type
+                    # ("Win"/"Place"), so raceNumber/distanceM parsed from it
+                    # come back None. Re-derive from the authoritative /all
+                    # race name ("R5 1800m Mdn") when still missing.
+                    if event.get("raceNumber") is None:
+                        rn = self._race_number_from_market(
+                            {"markets": [{"name": info["raceName"]}]}
+                        )
+                        if rn is not None:
+                            event["raceNumber"] = rn
+                    if not event.get("distanceM"):
+                        dm = self._distance_from_market(
+                            {"markets": [{"name": info["raceName"]}]}
+                        )
+                        if dm:
+                            event["distanceM"] = dm
                 if not event.get("offTime") and info.get("t"):
                     event["t"] = info["t"]
                 events[mid] = event

@@ -103,6 +103,26 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     return filtered
 
 
+def _race_num_from_text(text) -> int:
+    """Best-effort race number from a race-name string ("R5 1800m Mdn" -> 5).
+
+    Used by the Betfair merge fallback when the event carries no explicit
+    ``raceNumber`` (stale caches, bet-type market names). Returns -1 when
+    unparseable so callers can skip without raising.
+    """
+    if not isinstance(text, str):
+        return -1
+    import re as _re
+
+    m = _re.search(r"\bR(\d{1,2})\b", text)
+    if not m:
+        return -1
+    try:
+        return int(m.group(1))
+    except (ValueError, TypeError):
+        return -1
+
+
 def _norm_course(c: str) -> str:
     """Normalise course name for cross-source matching."""
     n = c.lower().strip()
@@ -245,7 +265,11 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
                     try:
                         bf_race_num = int(bf.get("raceNumber", -1))
                     except (ValueError, TypeError):
-                        continue
+                        bf_race_num = -1
+                    if bf_race_num < 0:
+                        # Stale caches predate the raceNumber field; the /all
+                        # race name ("R5 1800m Mdn") still carries it.
+                        bf_race_num = _race_num_from_text(bf.get("raceName"))
                     if bf_race_num == bw_race_num:
                         bf_match = bf
                         break
