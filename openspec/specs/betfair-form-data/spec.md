@@ -13,7 +13,15 @@ The system SHALL fetch, for every upcoming race published on betfairsa.co.za (al
 - **WHEN** Betfair reports gear as `"Hood/Tongue Strap/BLINKERS"`
 - **THEN** the parsed value is `"Hood · Tongue strap · Blinkers"`
 
+#### Scenario: Race number backfilled from listing name
+
+- **WHEN** the market-detail payload carries only `marketName: "Win"` but the `/all` listing name is `"R5 1800m Mdn"`
+- **THEN** the event still gains `raceNumber: 5` and `distanceM: 1800`
+
 #### Scenario: Days since run parsed as integer
+
+- **WHEN** the market-detail payload carries only `marketName: "Win"` but the `/all` listing name is `"R5 1800m Mdn"`
+- **THEN** the event still gains `raceNumber: 5` and `distanceM: 1800`
 - **WHEN** Betfair reports last-run info equivalent to 14 days ago
 - **THEN** `daysSinceRun` is the integer `14`
 
