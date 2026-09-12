@@ -24,6 +24,7 @@ function isAuthorized(request: Request, env: Env): boolean {
 const ALLOWED_ORIGINS = new Set([
   "https://strike-tips-hud.vercel.app",
   "https://www.strike-tips-hud.vercel.app",
+  "https://strike-tips-hud.pages.dev",
   "http://localhost:3000",
   "http://localhost:5173",
 ]);
@@ -36,6 +37,7 @@ function corsHeaders(request: Request): Record<string, string> {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, x-api-key, X-API-KEY, Authorization",
     "Access-Control-Max-Age": "86400",
+    "Cross-Origin-Resource-Policy": "cross-origin",
     "Vary": "Origin",
   };
 }
