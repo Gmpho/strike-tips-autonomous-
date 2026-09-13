@@ -41,6 +41,13 @@ class BetSettleRequest(BaseModel):
     notes: Optional[str] = ""
 
 
+class BetVoidRequest(BaseModel):
+    bet_id: str
+    action: str = "void"  # "void" (reverse a wrongful settle -> PENDING+refund)
+                          # or "cancel" (scrap a PENDING phantom -> VOID+refund)
+    reason: Optional[str] = ""
+
+
 class BettingRootResponse(BaseModel):
     """Lightweight betting route index for endpoint discovery."""
 
@@ -98,6 +105,34 @@ async def settle_bet(request: BetSettleRequest):
         logger.error(f"Failed to settle bet: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to settle bet: {e}")
     return {"success": True, "result": result}
+
+
+@router.post("/void")
+async def void_bet(request: BetVoidRequest):
+    """Admin remediation: reverse a wrongful settlement ("void") or scrap a
+    PENDING phantom ticket ("cancel", refunds stake, marks VOID). Keyed by
+    the global auth middleware like all /api/* paths."""
+    if not brain.strike:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    gov = brain.strike.bankroll
+    if not gov:
+        raise HTTPException(status_code=503, detail="Bankroll not initialized")
+    action = (request.action or "void").lower()
+    try:
+        if action == "cancel":
+            ok = gov.cancel_pending_bet(request.bet_id, request.reason or "")
+        elif action == "void":
+            ok = gov.void_settlement(request.bet_id, request.reason or "")
+        else:
+            raise HTTPException(status_code=400, detail="action must be 'void' or 'cancel'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to void bet {request.bet_id}: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to void bet: {e}")
+    if not ok:
+        raise HTTPException(status_code=404, detail="Bet not found or not eligible")
+    return {"success": True, "bet_id": request.bet_id, "action": action}
 
 
 @router.get("/history")

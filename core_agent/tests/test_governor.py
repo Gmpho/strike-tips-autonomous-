@@ -198,3 +198,60 @@ def test_paper_record_bet_uses_kelly_staking(temp_data_dir):
 
     # Sub-minimum edge still rejected in paper mode
     assert gov.record_bet("Greyville", 2, "Weak Horse", 3.0, 10.0, 4.0, "LOW") is None
+
+
+def _paper_gov(temp_data_dir, balance=1000.0):
+    import json as _json
+    import os as _os
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+    with open(_os.path.join(temp_data_dir, "settings.json"), "w") as f:
+        _json.dump({"paper_mode": True, "paper_balance": balance}, f)
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    gov.paper_balance = balance
+    return gov
+
+
+def test_cancel_pending_exotic_refunds_paper(temp_data_dir):
+    """Cancelling a phantom PENDING ticket refunds the stake and marks VOID."""
+    gov = _paper_gov(temp_data_dir)
+    bet = gov.record_exotic_bet(
+        track="turffontein", pool_type="JP1", pool_legs=[1, 2],
+        combinations=[{"race": 1, "banker": "A", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=2.0,
+    )
+    assert bet is not None
+    assert gov.paper_balance == pytest.approx(1000.0 - bet.stake)
+    assert gov.cancel_pending_bet(bet.bet_id, "phantom meeting") is True
+    assert gov.paper_balance == pytest.approx(1000.0)
+    b = next(x for x in gov._bets if x.bet_id == bet.bet_id)
+    assert b.status == "VOID"
+    # Idempotent second cancel
+    assert gov.cancel_pending_bet(bet.bet_id, "again") is True
+    assert gov.paper_balance == pytest.approx(1000.0)
+
+
+def test_cancel_refuses_settled_needs_void(temp_data_dir):
+    gov = _paper_gov(temp_data_dir)
+    bet = gov.record_exotic_bet(
+        track="turffontein", pool_type="JP1", pool_legs=[1, 2],
+        combinations=[{"race": 1, "banker": "A", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=2.0,
+    )
+    assert gov.settle_exotic_bet(bet.bet_id, 0.0, "dead leg") is True
+    assert gov.cancel_pending_bet(bet.bet_id, "oops") is False
+
+
+def test_expire_stale_bet_moves_no_money(temp_data_dir):
+    """EXPIRED clears the open book with zero ledger movement."""
+    gov = _paper_gov(temp_data_dir)
+    bet = gov.record_exotic_bet(
+        track="turffontein", pool_type="JP1", pool_legs=[1, 2],
+        combinations=[{"race": 1, "banker": "A", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=2.0,
+    )
+    before = gov.paper_balance
+    assert gov.expire_stale_bet(bet.bet_id) is True
+    b = next(x for x in gov._bets if x.bet_id == bet.bet_id)
+    assert b.status == "EXPIRED"
+    assert gov.paper_balance == pytest.approx(before)
+    assert bet.bet_id not in [x.bet_id for x in gov.get_open_bets()]

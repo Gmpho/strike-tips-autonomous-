@@ -86,7 +86,8 @@ def test_search_result_uses_label_not_iso(tmp_path, stub_atr_module):
 
 
 # ---------------------------------------------------------------------------
-# Exotic tickets are skipped (never settled from single-winner results)
+# Exotic tickets without named candidates stay PENDING (leg-based settlement
+# lives in test_exotic_settlement.py)
 # ---------------------------------------------------------------------------
 def _bet(**kw):
     b = MagicMock()
@@ -107,7 +108,9 @@ def test_is_exotic_bet():
     assert not _is_exotic_bet(_bet(horse="Silver Storm", confidence="VALUE"))
 
 
-def test_exotic_open_bet_never_settled(stub_brain_module):
+def test_exotic_without_names_never_settled(stub_brain_module):
+    # A ticket with legs but no named candidates (old "POOL:r1-r2" shape)
+    # cannot be evaluated against results — it stays PENDING, honestly.
     gov = MagicMock()
     exotic = _bet(horse="PICK6:4-5-6-7-8-9", confidence="EXOTIC")
     gov.get_open_bets.return_value = [exotic]

@@ -58,6 +58,91 @@ def _is_number_selection(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip()) and value.strip().isdigit()
 
 
+def _norm_text(s) -> str:
+    """Alphanumeric-lowercase normaliser for cross-source name matching."""
+    return "".join(c for c in str(s or "").lower() if c.isalnum())
+
+
+async def _betfair_course_dates() -> Dict[str, set]:
+    """Betfair courses mapped to their meeting dates (ISO).
+
+    Betfair carries the only authoritative card date (marketStartTime /
+    event name). Empty dict when unavailable — callers must fail open.
+    """
+    try:
+        from core_agent.skills.parsers.betfair_sa import BetfairSA
+        form = await BetfairSA().get_form_format()
+    except Exception as e:
+        print(f"[GATE] Betfair date check unavailable ({e}) — failing open")
+        return {}
+    out: Dict[str, set] = {}
+    for ev in (form.get("events") or {}).values():
+        if not isinstance(ev, dict) or not ev.get("eventDate"):
+            continue
+        out.setdefault(_norm_text(ev.get("course", "")), set()).add(str(ev["eventDate"]))
+    return out
+
+
+def _drop_meetings_not_running_today(
+    all_results: Dict, course_dates: Dict[str, set], today_iso: str
+) -> Dict:
+    """Drop scan tracks whose card is not actually running today.
+
+    TAB serves next-meeting cards early (e.g. Thursday Vaal harvested on
+    Sunday) with placeholder 12:00 times. A track is dropped ONLY when
+    Betfair knows the course and none of its dates is today — unknown
+    courses fail open so a Betfair gap can never wipe a real meeting.
+    """
+    if not course_dates:
+        return all_results
+    kept = {}
+    for track, races in all_results.items():
+        if not races:
+            kept[track] = races
+            continue
+        dates = course_dates.get(_norm_text(track))
+        if dates is not None and today_iso not in dates:
+            print(
+                f"[GATE] Dropped {track}: Betfair shows {sorted(dates)}, not {today_iso} "
+                f"({len(races)} future-dated races excluded)"
+            )
+            kept[track] = []
+            continue
+        kept[track] = races
+    return kept
+
+
+def _play_matches_snapshot(play: Dict, snapshot_horses: Dict[str, set]) -> bool:
+    """Phantom-meeting guard: at least half the leg bankers must run at the
+    play's track in today's snapshot. A Thursday card stamped as today fails
+    here even if every upstream gate missed it."""
+    import difflib as _difflib
+
+    track = _norm_text(play.get("_track", ""))
+    pool = set()
+    for k, names in snapshot_horses.items():
+        if track and (track in k or k in track):
+            pool |= names
+    if not pool:
+        return False
+    bankers = [
+        (c.get("banker", {}).get("name") if isinstance(c.get("banker"), dict) else c.get("banker"))
+        for c in (play.get("combinations") or []) if isinstance(c, dict)
+    ]
+    bankers = [_norm_text(b) for b in bankers if b]
+    if not bankers:
+        return False
+    hits = 0
+    for b in bankers:
+        if b in pool or _difflib.get_close_matches(b, pool, n=1, cutoff=0.6):
+            hits += 1
+    ok = hits * 2 >= len(bankers)
+    if not ok:
+        print(f"[EXOTIC] Dropped '{play.get('pool')}' @ {play.get('_track')}: "
+              f"only {hits}/{len(bankers)} bankers run there today (phantom meeting?)")
+    return ok
+
+
 def _play_has_real_names(play: Dict) -> bool:
     """Every leg banker must be a real name for an AI play to stand."""
     for c in play.get("combinations", []) or []:
@@ -616,8 +701,13 @@ class StrikeTips:
                     if pn not in pool_starts:
                         pool_starts[pn] = int(rn)
 
-        # Fallback standard SA pool starts if PDF leg_info is absent
-        track_name = list(all_results.keys())[0] if all_results else "South Africa"
+        # Fallback standard SA pool starts if PDF leg_info is absent.
+        # NOTE: this method analyses ONE non-empty track. The caller loops
+        # tracks so a play can never be stamped with another meeting's name
+        # (Sep-2026: a Vaal Thursday card went out as "turffontein" via the
+        # first-dict-key default this replaces).
+        track_name = next((t for t, rs in all_results.items() if rs),
+                          "South Africa")
         track_races = all_results.get(track_name, [])
         total_races = len(track_races)
         from_pdf = bool(pool_starts)
@@ -1101,11 +1191,50 @@ class StrikeTips:
                 print(f"[ERR] Error processing {track}: {e}")
                 all_results[track] = []
 
+        # 2b. Future-meeting gate: TAB serves next-meeting cards early
+        # (Thursday Vaal harvested on a Sunday) with placeholder times. Drop
+        # any track Betfair proves isn't running today, before analysis,
+        # exotics, bets, or history can touch it.
+        try:
+            _bf_dates = await _betfair_course_dates()
+            all_results = _drop_meetings_not_running_today(
+                all_results, _bf_dates, date.today().isoformat()
+            )
+        except Exception as e:
+            print(f"[GATE] Meeting gate failed open: {e}")
+
+        # Snapshot horse index (today's actual runners per course) for the
+        # exotic phantom-meeting guard below. Reused for the HUD save.
+        _snapshot_for_gates = {"events": {}}
+        try:
+            _snapshot_for_gates = await self.betway.get_snapshot_format() or {"events": {}}
+        except Exception as e:
+            print(f"[GATE] Snapshot unavailable for exotic validation: {e}")
+        _snap_horses: Dict[str, set] = {}
+        for _ev in (_snapshot_for_gates.get("events") or {}).values():
+            if not isinstance(_ev, dict):
+                continue
+            _c = _norm_text(_ev.get("course", ""))
+            for _r in (_ev.get("runners") or []):
+                if isinstance(_r, dict):
+                    _n = _norm_text(_r.get("name") or _r.get("outcomeName") or "")
+                    if _n:
+                        _snap_horses.setdefault(_c, set()).add(_n)
+
         # 3. Exotic Analysis (uses PDF pool structure if available, else standard SA pool conventions)
         exotic_plays = []
         if all_results:
             print("\n[EXOTIC] Running exotic pool analysis across daily races...")
-            exotic_plays = await self._analyze_exotic_pools(all_results, pdf_races)
+            for _tname, _traces in all_results.items():
+                if not _traces:
+                    continue
+                try:
+                    _plays = await self._analyze_exotic_pools({_tname: _traces}, pdf_races)
+                except Exception as e:
+                    print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
+                    _plays = []
+                exotic_plays.extend(_plays or [])
+            exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
                 if self.telegram:
@@ -1197,9 +1326,10 @@ class StrikeTips:
         with open(output_file, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
 
-        # Save raw Betway snapshot for the HUD dashboard
+        # Save raw Betway snapshot for the HUD dashboard (reuse the gate
+        # fetch when fresh so the scan costs one snapshot, not two).
         try:
-            snapshot = await self.betway.get_snapshot_format()
+            snapshot = _snapshot_for_gates if _snapshot_for_gates.get("events") else await self.betway.get_snapshot_format()
             if snapshot.get("events"):
                 snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
                 with open(snapshot_file, "w") as f:

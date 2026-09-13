@@ -621,6 +621,55 @@ class BankrollGovernor:
             )
             return True
 
+    def cancel_pending_bet(self, bet_id: str, notes: str = "") -> bool:
+        """Cancel a PENDING ticket that should never have existed (phantom
+        meeting, duplicate recording). Refunds the stake exactly where
+        placement took it (paper vs real ledger) and marks VOID — no P&L
+        impact beyond the refund. Idempotent: already-VOID/settled bets
+        are left alone (settled ones need void_settlement instead)."""
+        with self._atomic_transaction():
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            if not bet:
+                logger.warning(f"Cancel failed, bet not found: {bet_id}")
+                return False
+            if bet.status == "VOID":
+                return True
+            if bet.status != "PENDING":
+                logger.warning(
+                    f"Cancel refused: {bet_id} is {bet.status}, use void_settlement"
+                )
+                return False
+            is_paper_bet = getattr(bet, "is_paper", False) or (
+                bet.notes and "PAPER" in str(bet.notes)
+            )
+            if is_paper_bet:
+                self.paper_balance += bet.stake
+            else:
+                self.current_bankroll += bet.stake
+                self.total_profit_loss += bet.stake
+            bet.status = "VOID"
+            bet.actual_return = 0.0
+            bet.profit_loss = 0.0
+            tag = f"VOID ({notes})" if notes else "VOID"
+            bet.notes = f"{bet.notes} | {tag}" if bet.notes else tag
+            logger.info(f"Pending bet cancelled (stake refunded): {bet.horse} ({bet_id}) — {notes}")
+            return True
+
+    def expire_stale_bet(self, bet_id: str) -> bool:
+        """Mark an over-age PENDING bet EXPIRED. No money moves (the stake
+        was spent when placed and no result can ever verify it) — this only
+        clears it from the open book so backlogs can't pile up forever.
+        Idempotent."""
+        with self._atomic_transaction():
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            if not bet:
+                return False
+            if bet.status != "PENDING":
+                return True
+            bet.status = "EXPIRED"
+            logger.info(f"Stale bet expired (no money moved): {bet.horse} ({bet_id})")
+            return True
+
     def void_settlement(self, bet_id: str, notes: str = "") -> bool:
         """Reverse a wrongful settlement, returning the bet to PENDING.
 

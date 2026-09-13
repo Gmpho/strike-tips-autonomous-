@@ -60,6 +60,105 @@ def _is_exotic_bet(bet) -> bool:
         return False
 
 
+# --- Exotic leg-based settlement -------------------------------------------
+# Pool finishing requirements per leg (SA tote rules). Unknown pools default
+# to the strictest (win-only) so a ticket is never wrongly marked LOST.
+def _exotic_requirement(pool_type: str) -> frozenset:
+    """Positions that satisfy one leg of the pool. BIPOT pays 1st/2nd,
+    place pools pay 1st/2nd/3rd, win pools (Pick 6/3, Jackpot) need 1st."""
+    p = str(pool_type or "").upper()
+    if "BIPOT" in p or p.strip() in ("BI", "BI1", "BI2"):
+        return frozenset({"1st", "2nd"})
+    if "PLACE" in p or p.strip() in ("PA",):
+        return frozenset({"1st", "2nd", "3rd"})
+    return frozenset({"1st"})
+
+
+def _parse_exotic_ticket(bet) -> Optional[Dict]:
+    """Parse an exotic ticket into pool legs + named candidates per leg.
+
+    Primary source is the notes JSON written by record_exotic_bet
+    ({pool_type, pool_legs, combinations:[{race, banker, savers[]}]}).
+    Falls back to the horse field ("POOL:r1-r2-...") for legs only —
+    without names a ticket cannot be evaluated (returns None).
+    """
+    import json as _json
+
+    pool_type = None
+    pool_legs: List[int] = []
+    combos: List[Dict] = []
+    try:
+        notes = getattr(bet, "notes", "") or ""
+        if notes.strip().startswith("{"):
+            data = _json.loads(notes)
+            pool_type = data.get("pool_type")
+            pool_legs = [int(r) for r in (data.get("pool_legs") or [])]
+            for c in (data.get("combinations") or []):
+                if not isinstance(c, dict):
+                    continue
+                cands = []
+                if c.get("banker"):
+                    cands.append(str(c["banker"]))
+                cands.extend(str(s) for s in (c.get("savers") or []) if s)
+                if c.get("race") is not None and cands:
+                    combos.append({"race": int(c["race"]), "candidates": cands})
+    except Exception:
+        pass
+    if not pool_type:
+        try:
+            horse = str(getattr(bet, "horse", "") or "")
+            if ":" in horse:
+                pool_type, leg_str = horse.split(":", 1)
+                pool_type = pool_type.strip() or None
+                pool_legs = [int(x) for x in re.findall(r"\d+", leg_str)]
+        except Exception:
+            pass
+    if not pool_type or not pool_legs:
+        return None
+    return {"pool_type": pool_type, "pool_legs": pool_legs, "combos": combos}
+
+
+def _race_runners_by_number(races: List[Dict], race_number: int) -> Optional[List[Dict]]:
+    """Find ATR result runners for a race number (title holds 'N HH:MM')."""
+    for race in races or []:
+        m = re.search(r"(\d+)\s+\d{2}:\d{2}", str(race.get("title", "")))
+        if m and int(m.group(1)) == int(race_number):
+            return race.get("runners") or []
+    return None
+
+
+def _extract_pool_dividend(text: str, pool_type: str) -> Optional[float]:
+    """Best-effort tote dividend (Rand per R1) for a pool from results text.
+
+    TAB result pages print lines like "JACKPOT PAYS R1 234,50". Returns the
+    per-R1 Rand value, or None when no parseable dividend is present.
+    """
+    if not text or not pool_type:
+        return None
+    p = str(pool_type).upper().strip()
+    aliases = {
+        "BIPOT": r"BIP?OT",
+        "PLACE ACCUMULATOR": r"PLACE\s*ACCUMULATOR",
+        "PICK 6": r"PICK\s*6",
+        "PICK 3": r"PICK\s*3",
+        "JACKPOT": r"JACKPOT",
+    }
+    pat = aliases.get(p, re.escape(p))
+    for m in re.finditer(
+        rf"(?:{pat})\s*(?:PAYS|PAYOUT|POOL|DIVIDEND|WINS?)?\s*R\s*([\d\s.,]+)",
+        str(text).upper(),
+    ):
+        raw = m.group(1).strip()
+        try:
+            # SA format: space thousands, comma decimals ("1 234,50").
+            val = float(raw.replace(" ", "").replace(",", "."))
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 def atr_date_label(bet_date: Optional[str]) -> str:
     """Convert a BetRecord ISO date (YYYY-MM-DD) to the relative day label the
     ATR results pages understand (today/yesterday).
@@ -437,6 +536,162 @@ class ResultTracker:
         except (ValueError, IndexError):
             return None
 
+    async def _settle_exotic_ticket(self, bet, gov, brain) -> Optional[Dict]:
+        """Settle one exotic pool ticket from ATR placed results.
+
+        Leg logic (conservative — a ticket is only settled on proof):
+        - each combination leg passes when the banker OR a saver finished
+          inside the pool requirement (win pools: 1st; Bipot: 1st/2nd;
+          Place Accumulator: 1st/2nd/3rd), fuzzy-matched like singles.
+        - a combination is dead only when a leg's results are confirmed AND
+          every candidate is accounted for outside the requirement. Unknown
+          (missing results, unmatched names) keeps the ticket PENDING.
+        - LOST when at least one combination exists and ALL are dead.
+        - WON when some combination passes every leg — but only settled with
+          a scraped tote dividend (settle_exotic_bet math needs real Rand).
+          Without a dividend the ticket stays PENDING ("awaiting dividend").
+        Returns the settled record dict, or None when left PENDING.
+        """
+        # ATR only serves today/yesterday result pages, so a ticket older
+        # than 1 day can NEVER be verified against its own race day —
+        # settling it would score it against a different day's winners.
+        try:
+            if (_bet_age_days(getattr(bet, "date", None)) or 0) > 1:
+                return None
+        except Exception:
+            pass
+        ticket = _parse_exotic_ticket(bet)
+        if not ticket or not ticket["combos"]:
+            return None
+        requirement = _exotic_requirement(ticket["pool_type"])
+        legs = ticket["pool_legs"]
+
+        try:
+            from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+            atr = AtTheRacesAPI()
+            races = await atr.get_results_for_track(
+                getattr(bet, "track", ""), date=atr_date_label(getattr(bet, "date", None))
+            )
+        except Exception as e:
+            logger.debug(f"Exotic ATR lookup failed for {bet.bet_id}: {e}")
+            return None
+        if not races:
+            return None
+
+        # Gate on the last leg's off-time when known (a ticket can't be dead
+        # before its final leg has run). Unknown off-time falls through to
+        # evidence: only confirmed results settle anything.
+        try:
+            last_off = self._race_off_datetime(
+                getattr(bet, "track", ""), legs[-1], getattr(bet, "date", None)
+            )
+        except Exception:
+            last_off = None
+        if last_off is not None:
+            if last_off.tzinfo is None:
+                last_off = last_off.replace(tzinfo=_SAST)
+            if datetime.now(_SAST) < last_off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
+                return None
+
+        def leg_status(entry: Dict) -> str:
+            runners = _race_runners_by_number(races, entry["race"])
+            if not runners:
+                return "unknown"
+            best: Optional[str] = None
+            matched_any = False
+            for cand in entry["candidates"]:
+                for r in runners:
+                    if self._fuzzy_match(str(r.get("name", "")), cand) >= 0.55:
+                        matched_any = True
+                        pos = str(r.get("position", "")).strip()
+                        if pos in requirement:
+                            return "pass"
+                        best = pos or best
+            if matched_any:
+                return "fail"  # all candidates placed outside requirement
+            # No candidate found in results. For win pools a confirmed
+            # different winner still kills the leg; for place pools the
+            # candidate could have placed unlisted, so stay unknown.
+            if requirement == frozenset({"1st"}):
+                winners = [r for r in runners if str(r.get("position", "")) == "1st"]
+                if winners:
+                    return "fail"
+            return "unknown"
+
+        all_dead = True
+        any_won_combo = False
+        # Each stored entry is one leg (banker + savers); the ticket is one
+        # logical combination across all legs.
+        legs_state = [leg_status(e) for e in ticket["combos"]]
+        if any(s == "unknown" for s in legs_state):
+            return None
+        if all(s == "pass" for s in legs_state):
+            any_won_combo = True
+            all_dead = False
+        elif all(s == "fail" for s in legs_state):
+            all_dead = True
+        else:
+            # Mixed pass/fail across legs of a single combination ticket:
+            # a failed leg kills the only combination.
+            all_dead = True
+
+        if any_won_combo:
+            div_text = await self._scrape_sa_results_direct(
+                getattr(bet, "track", ""), legs[0]
+            )
+            div = _extract_pool_dividend(div_text or "", ticket["pool_type"])
+            if div is None:
+                logger.info(
+                    "Exotic %s all legs placed, awaiting tote dividend — left PENDING",
+                    bet.bet_id,
+                )
+                return None
+            pool_return = round(div * float(getattr(bet, "stake", 0.0) or 0.0), 2)
+            notes = (
+                f"Auto-settled (WON all {len(legs_state)} legs, "
+                f"tote dividend R{div:.2f}/R1)"
+            )
+            ok = gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
+            won = True
+        elif all_dead:
+            notes = (
+                f"Auto-settled (LOST — dead leg, "
+                f"requirement {sorted(requirement)} not met)"
+            )
+            ok = gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
+            won = False
+            pool_return = 0.0
+        else:
+            return None
+
+        if not ok:
+            return None
+        logger.info(
+            "Auto-settled exotic: %s (%s) - %s (%s)",
+            bet.horse, getattr(bet, "track", ""), "WON" if won else "LOST", notes,
+        )
+        try:
+            if brain and brain.strike and brain.strike.telegram:
+                await brain.strike.telegram.send_bet_result(
+                    horse=bet.horse,
+                    track=getattr(bet, "track", ""),
+                    race_number=getattr(bet, "race_number", 0),
+                    won=won,
+                    stake=getattr(bet, "stake", 0.0),
+                    returns=pool_return if won else 0.0,
+                    profit_loss=(pool_return - float(getattr(bet, "stake", 0.0))) if won else -float(getattr(bet, "stake", 0.0)),
+                )
+        except Exception as tg_err:
+            logger.warning(f"Failed to dispatch Telegram exotic result: {tg_err}")
+        return {
+            "bet_id": bet.bet_id,
+            "horse": bet.horse,
+            "track": getattr(bet, "track", ""),
+            "race_number": getattr(bet, "race_number", 0),
+            "won": won,
+            "notes": notes,
+        }
+
     async def check_and_settle_open_bets(
         self, max_age_days: int = MAX_SETTLE_AGE_DAYS
     ) -> List[Dict]:
@@ -464,15 +719,61 @@ class ResultTracker:
         settled = []
         deferred: List[str] = []
         for bet in open_bets:
-            if _is_exotic_bet(bet):
-                logger.debug(
-                    "Skipping exotic ticket %s (%s) — needs pool dividends, not single-winner results",
-                    bet.bet_id, bet.horse,
-                )
-                continue
             age = _bet_age_days(getattr(bet, "date", None))
             if age is not None and age > max_age_days:
+                # Over-age bets can never be verified (ATR serves today /
+                # yesterday only) — expire them out of the open book instead
+                # of letting PENDINGs pile up forever. No money moves.
+                try:
+                    if gov and hasattr(gov, "expire_stale_bet"):
+                        gov.expire_stale_bet(bet.bet_id)
+                except Exception as exp_err:
+                    logger.debug(f"Expire failed for {bet.bet_id}: {exp_err}")
                 deferred.append(f"{bet.bet_id} ({bet.horse} @ {bet.track} R{bet.race_number}, {age}d old)")
+                continue
+            if _is_exotic_bet(bet):
+                # Duplicate recordings (same track/date/ticket, e.g. from
+                # overlapping monitor runs) — keep the earliest, cancel the
+                # rest with stake refund. The recorder treats this key as one
+                # ticket, so extras are never legitimate.
+                try:
+                    my_key = (
+                        str(getattr(bet, "track", "") or "").lower(),
+                        str(getattr(bet, "date", "") or ""),
+                        str(getattr(bet, "horse", "") or ""),
+                    )
+                    older = [
+                        o for o in open_bets
+                        if o is not bet
+                        and (
+                            str(getattr(o, "track", "") or "").lower(),
+                            str(getattr(o, "date", "") or ""),
+                            str(getattr(o, "horse", "") or ""),
+                        ) == my_key
+                        and str(getattr(o, "bet_id", "")) < str(getattr(bet, "bet_id", ""))
+                    ]
+                    if older and gov and hasattr(gov, "cancel_pending_bet"):
+                        gov.cancel_pending_bet(
+                            bet.bet_id,
+                            f"duplicate of {older[0].bet_id} (same ticket recorded twice)",
+                        )
+                        logger.info(
+                            "Cancelled duplicate exotic ticket %s (kept %s)",
+                            bet.bet_id, getattr(older[0], "bet_id", "?"),
+                        )
+                        continue
+                except Exception as dupe_err:
+                    logger.debug(f"Dedupe check failed for {bet.bet_id}: {dupe_err}")
+                # Leg-based exotic settlement (ATR placed results + tote
+                # dividends). Settles LOST on dead legs, WON with a scraped
+                # dividend, else honestly leaves PENDING.
+                try:
+                    exotic_rec = await self._settle_exotic_ticket(bet, gov, brain)
+                except Exception as exo_err:
+                    logger.debug(f"Exotic settle failed for {bet.bet_id}: {exo_err}")
+                    exotic_rec = None
+                if exotic_rec:
+                    settled.append(exotic_rec)
                 continue
             # Off-time gate: never settle a race that hasn't run yet. This is
             # what fabricated this morning's LOSTs for upcoming Vaal races.
