@@ -3,7 +3,7 @@ import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone, playValueBetTone } from './audio';
 import { apiFetch } from '../lib/api-fetch';
 
-const FAST_INTERVAL = 15000;
+const FAST_INTERVAL = 10000;
 const SLOW_INTERVAL = 60000;
 const MAX_FAST_BACKOFF = 60000;
 const MAX_SLOW_BACKOFF = 120000;

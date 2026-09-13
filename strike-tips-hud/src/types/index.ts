@@ -110,6 +110,7 @@ export interface BetRecord {
   settled: boolean;
   won?: boolean;
   payout?: number;
+  status?: string;
   notes?: string;
 }
 

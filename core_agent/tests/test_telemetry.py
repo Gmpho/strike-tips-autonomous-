@@ -1,6 +1,15 @@
 """Tests for engine telemetry (core_agent.core.telemetry) — buffer, badges, fanout safety."""
 
+import pytest
+
 from core_agent.core import telemetry
+
+
+@pytest.fixture(autouse=True)
+def _isolated_file(tmp_path, monkeypatch):
+    """Redirect the cross-container JSONL mirror to a temp file so tests
+    never touch the real data/telemetry.jsonl."""
+    monkeypatch.setattr(telemetry, "_telemetry_path", lambda: str(tmp_path / "telemetry.jsonl"))
 
 
 def setup_function(_):
@@ -31,10 +40,10 @@ def test_ring_buffer_caps_at_max():
     for i in range(telemetry.MAX_EVENTS + 20):
         telemetry.emit("swarm", f"event-{i}")
     events = telemetry.get_events(1000)
-    assert len(events) <= telemetry.MAX_EVENTS
-    # Oldest dropped: newest message survives
+    # Memory caps at MAX_EVENTS; the file mirror caps higher (250). The
+    # merged view stays bounded by the file cap, newest survive.
+    assert len(events) <= telemetry.TELEMETRY_FILE_MAX_LINES
     assert any("event-119" in e["message"] for e in events)
-    assert not any("event-0" in e["message"] for e in events)
 
 
 def test_get_latest_by_engine_returns_newest_per_engine():
@@ -52,7 +61,10 @@ def test_emit_never_raises_without_event_loop():
     assert ev["engine"] == "news"
 
 
-def test_clear_resets_buffer():
+def test_clear_resets_memory_but_file_survives():
+    """clear() wipes this process's buffer; the cross-container file mirror
+    is intentionally untouched (that's how sibling containers see events)."""
     telemetry.emit("swarm", "gone soon")
     telemetry.clear()
-    assert telemetry.get_events() == []
+    assert list(telemetry._buffer) == []
+    assert any(e["message"] == "gone soon" for e in telemetry.get_events())

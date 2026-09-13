@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v2.5.1';
+const CACHE_VERSION = 'v2.6.0';
 const STATIC_CACHE = `strike-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `strike-dynamic-${CACHE_VERSION}`;
 

@@ -16,6 +16,7 @@ class BetRecord(BaseModel):
     settled: bool = False
     won: Optional[bool] = None
     payout: Optional[float] = None
+    status: Optional[str] = None
     notes: Optional[str] = None
 
     class Config:

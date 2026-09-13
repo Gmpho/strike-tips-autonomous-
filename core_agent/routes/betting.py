@@ -161,6 +161,7 @@ async def get_bets():
                 settled=settled,
                 won=won,
                 payout=b.get("actual_return", 0.0) if won else None,
+                status=b.get("status", "PENDING"),
                 notes=b.get("notes", ""),
             ).model_dump(by_alias=True, exclude_none=True)
         )
@@ -192,6 +193,7 @@ async def get_open_bets():
                 placedAt=b.get("timestamp", datetime.now().isoformat()),
                 settled=False,
                 notes=b.get("notes", ""),
+                status=b.get("status", "PENDING"),
             ).model_dump(by_alias=True, exclude_none=True)
         )
     return {"bets": bets, "count": len(bets)}

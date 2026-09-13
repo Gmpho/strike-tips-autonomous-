@@ -14,7 +14,10 @@ export const ThemeToggle: React.FC = () => {
     }
   }, []);
 
-  const toggle = () => {
+  const toggle = (e: React.MouseEvent) => {
+    // Nested inside the Capital pill (navigates to bankroll on click) —
+    // stop the toggle click bubbling up or every theme switch also navigates.
+    e.stopPropagation();
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     localStorage.setItem('strike-theme', next);
