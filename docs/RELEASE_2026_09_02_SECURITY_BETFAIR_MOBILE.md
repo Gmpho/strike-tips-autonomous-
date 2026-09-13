@@ -11,7 +11,7 @@ Three-track release: **(A) production security** (Cloudflare + Vercel), **(B) Be
 - **Auth bypass fixed:** `isAuthorized` changed from `!env.BACKEND_API_KEY || header===env.BACKEND_API_KEY` to `!!env.BACKEND_API_KEY && header===env.BACKEND_API_KEY` — fail-closed when secret missing, was fail-open (`isAuthorized:20`).
 - **CORS locked:** `*` replaced with allowlist `https://strike-tips-hud.vercel.app` (+ `http://localhost:3000/5173` for dev) via `ALLOWED_ORIGINS:24` + `corsHeaders(request):31` + `Vary: Origin`. Preflight `OPTIONS 204` added (`src/index.ts:556`).
 - **Headers normalized:** `json()` now takes optional `Request` to set per-origin `Access-Control-*` (`json:48`), post-handlers wrap with `corsHeaders` (`src/index.ts:565`).
-- **Secret rotation:** `BACKEND_API_KEY` rotated to `7a70174b1f0d6bfa84009329b9800d5013c768fc52d2b1be77084c465201a125` (256-bit) via `wrangler secret put BACKEND_API_KEY` — verified `curl -H "x-api-key: <old>"` now `401`, `curl POST /api/ingest-odds` without key `401` with key passes.
+- **Secret rotation:** `BACKEND_API_KEY` rotated to a fresh 256-bit value (redacted — never commit real keys; a past value published here was rotated out on 2026-09-13) via `wrangler secret put BACKEND_API_KEY` — verified `curl -H "x-api-key: <old>"` now `401`, `curl POST /api/ingest-odds` without key `401` with key passes.
 
 ### Vercel Middleware (`strike-tips-hud/middleware.ts:14`)
 - **Rate limiting:** fixed-window `RATE_LIMIT_MAX=100 req/min` per IP (`rateStore:16`, `isRateLimited:19`) — returns `429 Retry-After:60`.

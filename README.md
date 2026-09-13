@@ -9,7 +9,7 @@ A modular, AI-powered betting assistant that identifies value bets in South Afri
 **3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
+![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)
 ![Status](https://img.shields.io/badge/Status-Production-green.svg)
 
 ---
@@ -45,15 +45,15 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 
 ```
                     ┌─────────────────────────────────────┐
-                    │     VERCEL HUD (Frontend)           │
-                    │  https://strike-tips-hud.vercel.app  │
+                    │  CLOUDFLARE PAGES HUD (Frontend)     │
+                    │  https://strike-tips-hud.pages.dev  │
                     │                                     │
                     │  Vite + React 19 + Three.js         │
-                    │  middleware.ts routes API calls      │
+                    │  Keyless reads direct → origins      │
                     └──────────────┬──────────────────────┘
                                    │
                     ┌──────────────┴──────────────────────┐
-                    │           MIDDLEWARE.TS              │
+                    │        PAGES FUNCTIONS PROXY        │
                     │  Cloudflare paths → CF Worker        │
                     │  All other paths → Modal             │
                     └──────┬──────────────────────┬────────┘
@@ -225,7 +225,7 @@ npm run deploy
 cd ../strike-tips-hud
 vercel deploy --prod -y --force
 
-# 3. Visit https://strike-tips-hud.vercel.app
+# 3. Visit https://strike-tips-hud.pages.dev
 ```
 
 ### Option B: Docker (Local Development)
@@ -674,7 +674,12 @@ pytest --cov=core_agent --cov-report=term-missing
 
 ## 📜 License
 
-MIT License - see [LICENSE](LICENSE) file
+GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+
+Free to use, study, modify, and share. If you run a modified version as a
+public service, you must share your changes under the same license.
+Betting tips and data stay free forever; the project is community-funded
+(see Support below if you'd like to help keep the lights on).
 
 ---
 
@@ -690,7 +695,7 @@ MIT License - see [LICENSE](LICENSE) file
 
 - Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
-- HUD: [https://strike-tips-hud.vercel.app/](https://strike-tips-hud.vercel.app/)
+- HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages; Vercel URL kept paused as fallback)
 - MCP: `POST https://striketips-mcp.gmphorg379.workers.dev/mcp` (requires `x-api-key` + `Accept: application/json, text/event-stream`)
 
 ---

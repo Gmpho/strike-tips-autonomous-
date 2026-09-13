@@ -11,7 +11,9 @@ See `docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md` §A for `curl` probes a
 
 ## 🔑 Managing API Keys (Rotate `STRIKE_TIPS_API_KEY` / `BACKEND_API_KEY`)
 
-Use `openssl rand -hex 32` (256-bit, 64 hex chars) — the 2026-09-02 rotation used `7a70174b1f0d6bfa84009329b9800d5013c768fc52d2b1be77084c465201a125`.
+Use `openssl rand -hex 32` (256-bit, 64 hex chars). NEVER paste a real key
+into docs, chat logs, or the repo — past values were rotated out on 2026-09-13
+after appearing here (see git history).
 
 ### Rotate (All 3 Layers)
 
