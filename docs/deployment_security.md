@@ -17,6 +17,12 @@ after appearing here (see git history).
 
 ### Rotate (All 3 Layers)
 
+Single-key design (2026-09-13): the worker's `BACKEND_API_KEY` and Modal's
+`STRIKE_TIPS_API_KEY` hold the SAME value, and backend pushes fall back to
+it (`core_agent/core/cf_push.py`) — a stale second key 401'd all pushes for
+hours, so never let them drift apart again. Keep `CLOUDFLARE_API_KEY` in
+`.env` equal too (local Docker parity).
+
 1. **Generate:** `openssl rand -hex 32`
 2. **Local `.env`:** set `STRIKE_TIPS_API_KEY="<new>"` (`.env:5`)
 3. **Modal:** `modal secret create strike-tips-api-key STRIKE_TIPS_API_KEY=<new> --force` (read via `core_agent/core/security.py:5`)

@@ -1326,6 +1326,43 @@ class StrikeTips:
         with open(output_file, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
 
+        # D1 memory mirror: push today's official cards so search_past_races
+        # stays fresh (the old writer died ~Jun-2026 and D1 froze). Best
+        # effort — a failed push never breaks the scan.
+        try:
+            from core_agent.core.cf_push import push_insight
+
+            _today = date.today().isoformat()
+            for _trk, _races in (all_results or {}).items():
+                for _rc in (_races or []):
+                    if not isinstance(_rc, dict):
+                        continue
+                    _rn = _rc.get("race_number", 0)
+                    _runners = _rc.get("runners", []) or []
+                    _names = [
+                        r if isinstance(r, str) else (
+                            getattr(r, "horse_name", None)
+                            or ((r.get("horse_name") or r.get("name")) if isinstance(r, dict) else str(r))
+                        )
+                        for r in _runners
+                    ]
+                    await push_insight(
+                        doc_id=f"card-{_today}-{str(_trk).lower()}-r{_rn}",
+                        horse=f"Track_{_trk}_R{_rn}",
+                        content=(
+                            f"OFFICIAL RACE CARD: {_trk} Race {_rn} at "
+                            f"{_rc.get('race_time', 'TBD')}. "
+                            f"Condition: {_rc.get('condition', '?')}. "
+                            f"Runners: {_names}."
+                        ),
+                        insight_type="official_card",
+                        track=str(_trk),
+                        race_number=_rn,
+                        date=_today,
+                    )
+        except Exception as e:
+            print(f"[WARN] D1 card mirror skipped: {e}")
+
         # Save raw Betway snapshot for the HUD dashboard (reuse the gate
         # fetch when fresh so the scan costs one snapshot, not two).
         try:

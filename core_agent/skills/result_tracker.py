@@ -870,4 +870,34 @@ class ResultTracker:
                 "Deferred %d stale bet(s) older than %dd for manual review: %s",
                 len(deferred), max_age_days, "; ".join(deferred[:10]),
             )
+
+        # D1 memory mirror: settled outcomes so search_past_races learns from
+        # real results, not just cards. Best effort — never breaks settlement.
+        if settled:
+            try:
+                from core_agent.core.cf_push import push_insight
+
+                _by_id = {getattr(b, "bet_id", ""): b for b in open_bets}
+                for _rec in settled:
+                    _b = _by_id.get(_rec.get("bet_id", ""))
+                    _stake = float(getattr(_b, "stake", 0.0) or 0.0) if _b is not None else 0.0
+                    _ret = float(getattr(_b, "actual_return", 0.0) or 0.0) if _b is not None else 0.0
+                    _outcome = "WON" if _rec.get("won") else "LOST"
+                    _trk = str(_rec.get("track", "") or "")
+                    _rn = _rec.get("race_number", 0)
+                    _dt = str(getattr(_b, "date", "") or "")[:10] if _b is not None else ""
+                    await push_insight(
+                        doc_id=f"result-{_dt or 'nodate'}-{_trk.lower()}-r{_rn}-{_rec.get('bet_id', '')}",
+                        horse=str(_rec.get("horse", "")),
+                        content=(
+                            f"RESULT {_outcome}: {_rec.get('horse', '')} R{_rn} @ {_trk} "
+                            f"(stake R{_stake:.2f}, return R{_ret:.2f}). {_rec.get('notes', '')}"
+                        ),
+                        insight_type="race_result",
+                        track=_trk,
+                        race_number=_rn,
+                        date=_dt,
+                    )
+            except Exception as e:
+                logger.debug(f"D1 result mirror skipped: {e}")
         return settled

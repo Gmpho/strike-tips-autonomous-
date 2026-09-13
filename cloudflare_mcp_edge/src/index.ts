@@ -168,10 +168,23 @@ async function searchFormInsights(db: D1Database, track: string, runnerName: str
 }
 
 async function getOddsSnapshot(kv: KVNamespace, track: string, raceNumber: number) {
-  const key = `odds:${track.toLowerCase().slice(0, 100)}:${raceNumber}`;
-  const val = await kv.get(key, "text");
-  if (!val) return { note: "No cached odds for this race" };
-  try { return JSON.parse(val); } catch { return { error: "corrupted cache" }; }
+  // Single-put design: filter the full snapshot in code (per-event keys
+  // were removed — their fan-out exhausted the KV daily write quota).
+  const full = await kv.get("odds:full_snapshot", "text");
+  if (!full) return { note: "No cached odds for this race" };
+  try {
+    const body = JSON.parse(full) as { events?: Record<string, Record<string, unknown>> };
+    const events = body.events || {};
+    const t = track.toLowerCase();
+    for (const event of Object.values(events)) {
+      const course = String(event.course || event.en || "").toLowerCase();
+      const num = Number(event.raceNumber) || 0;
+      if (num === raceNumber && (course.includes(t) || t.includes(course.split(":").pop()?.trim() || ""))) {
+        return event;
+      }
+    }
+    return { note: "No cached odds for this race" };
+  } catch { return { error: "corrupted cache" }; }
 }
 
 async function ingestOdds(kv: KVNamespace, track: string, raceNumber: number, data: string) {
@@ -339,21 +352,17 @@ async function handlePOST(request: Request, url: URL, env: Env): Promise<Respons
     if (path === "/api/ingest-snapshot") {
       const body = (await request.json()) as Record<string, unknown>;
       if (!body.events || typeof body.events !== "object") return error("events object required");
-      // Store full snapshot
-      await env.ODDS_KV.put("odds:full_snapshot", JSON.stringify(body), { expirationTtl: 300 });
-      // Fan out individual events for backward compat
-      const events = body.events as Record<string, Record<string, unknown>>;
-      let count = 0;
-      for (const [eid, event] of Object.entries(events)) {
-        const course = (event.course || event.en || "") as string;
-        const raceNum = (event.raceNumber as number) || 0;
-        if (course && raceNum > 0) {
-          const track = course.split(":").pop()?.trim().toLowerCase() || course.toLowerCase();
-          await env.ODDS_KV.put(`odds:${track}:${raceNum}`, JSON.stringify(event), { expirationTtl: 300 });
-          count++;
-        }
-      }
-      return json({ status: "ingested", events: count });
+      const payload = JSON.stringify(body);
+      // Write-gate: KV free allows ~1k writes/day and the monitor pushes
+      // every 5 min. Skip the write when nothing changed (overnight the
+      // snapshot is static for hours). Reads are 100x cheaper quota-wise.
+      const prev = await env.ODDS_KV.get("odds:full_snapshot", "text");
+      if (prev === payload) return json({ status: "unchanged" });
+      // Single put only. The old per-event fan-out (~130 puts per push)
+      // exhausted the daily write quota within the first hour, every day.
+      // Readers filter the full snapshot in code instead.
+      await env.ODDS_KV.put("odds:full_snapshot", payload, { expirationTtl: 300 });
+      return json({ status: "ingested", events: Object.keys(body.events as object).length });
     }
 
     if (path === "/api/ingest-insight") {
