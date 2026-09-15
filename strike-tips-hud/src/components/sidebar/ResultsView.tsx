@@ -158,7 +158,7 @@ export const ResultsView: React.FC = () => {
               placeholder="Search course or runner..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition-all font-semibold"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-theme-primary placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition-all font-semibold"
             />
           </div>
         )}

@@ -661,8 +661,8 @@ ${compiledContext || 'No context data available.'}`;
               onClick={() => { setActiveSessionId(s.id); setIsSidebarOpen(false); }} 
               className={`flex-1 text-xs text-left px-3 py-2.5 truncate font-bold transition-all ${
                 activeSessionId === s.id 
-                  ? 'text-white bg-purple-500/25 border border-purple-500/30' 
-                  : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
+                  ? 'text-purple-300 bg-purple-500/25 border border-purple-500/30' 
+                  : 'text-slate-400 hover:text-theme-primary hover:bg-white/5 border border-transparent'
               } rounded-xl`}
             >
               {s.title}
@@ -728,7 +728,7 @@ ${compiledContext || 'No context data available.'}`;
           >
             <div className="flex items-center justify-between mb-4 shrink-0">
               <span className="text-xs font-black uppercase text-purple-500 tracking-widest px-1">Sessions</span>
-              <button onClick={() => setIsSidebarOpen(false)} aria-label="Close sessions panel" className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white">
+              <button onClick={() => setIsSidebarOpen(false)} aria-label="Close sessions panel" className="p-1.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-theme-primary">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -753,7 +753,7 @@ ${compiledContext || 'No context data available.'}`;
               </button>
               
               <Bot className="w-5 h-5 text-purple-400 shrink-0" />
-              <span className="text-sm font-black uppercase tracking-widest text-white truncate">Strike Command</span>
+              <span className="text-sm font-black uppercase tracking-widest text-theme-primary truncate">Strike Command</span>
             </div>
 
             {currentActivity && (

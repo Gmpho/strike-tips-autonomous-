@@ -24,7 +24,7 @@ export const ContactPage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-indigo-500/10 text-white/60 hover:text-indigo-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-indigo-500/10 text-theme-secondary hover:text-indigo-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -33,9 +33,9 @@ export const ContactPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
                   <MessageSquare className="w-5 h-5 text-indigo-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">Contact</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">Contact</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium max-w-2xl leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
                 Strike Tips Racing Bot — Get in touch with the system administrator or access responsible gambling support.
               </p>
             </div>
@@ -45,7 +45,7 @@ export const ContactPage: React.FC = () => {
 
       {/* Primary Contact */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Bot className="w-5 h-5 text-purple-400" />
           System Administrator
         </h2>
@@ -57,15 +57,15 @@ export const ContactPage: React.FC = () => {
                 <Bot className="w-7 h-7 text-purple-400" />
               </div>
               <div>
-                <div className="text-lg font-black text-white">Strike Tips Bot</div>
+                <div className="text-lg font-black text-theme-primary">Strike Tips Bot</div>
                 <div className="text-sm text-purple-400 font-bold">@Striketips_bot</div>
                 <div className="flex items-center gap-1.5 mt-1">
                   <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px] shadow-emerald-400" />
-                  <span className="text-xs text-white/50 font-medium">Active on Telegram</span>
+                  <span className="text-xs text-theme-secondary font-medium">Active on Telegram</span>
                 </div>
               </div>
             </div>
-            <p className="text-sm text-white/65 leading-relaxed mb-5">
+            <p className="text-sm text-theme-secondary leading-relaxed mb-5">
               The primary contact channel for Strike Tips Racing Bot is via Telegram. Message the bot directly for technical support, configuration help, or to report issues.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -79,7 +79,7 @@ export const ContactPage: React.FC = () => {
               ].map((item, i) => (
                 <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/8 hover:border-purple-500/30 transition-all">
                   <code className="text-xs font-mono px-2.5 py-1 bg-purple-500/15 border border-purple-500/25 rounded-lg text-purple-400 shrink-0">{item.cmd}</code>
-                  <span className="text-xs text-white/60">{item.desc}</span>
+                  <span className="text-xs text-theme-secondary">{item.desc}</span>
                 </div>
               ))}
             </div>
@@ -87,7 +87,7 @@ export const ContactPage: React.FC = () => {
               href="https://web.telegram.org/k/#@Striketips_bot"
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-5 w-full flex items-center justify-center gap-2 py-3 px-6 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 rounded-xl text-purple-300 hover:text-white transition-all font-bold text-sm"
+              className="mt-5 w-full flex items-center justify-center gap-2 py-3 px-6 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 rounded-xl text-purple-300 hover:text-theme-primary transition-all font-bold text-sm"
             >
               <Send className="w-4 h-4" />
               Open in Telegram
@@ -99,7 +99,7 @@ export const ContactPage: React.FC = () => {
 
       {/* Web Dashboard */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Globe className="w-5 h-5 text-cyan-400" />
           Web Dashboard
         </h2>
@@ -109,7 +109,7 @@ export const ContactPage: React.FC = () => {
               <Globe className="w-5 h-5 text-cyan-400" />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-black text-white mb-1">Strike Tips HUD</div>
+              <div className="text-sm font-black text-theme-primary mb-1">Strike Tips HUD</div>
               <a
                 href="https://strike-tips-hud.vercel.app"
                 target="_blank"
@@ -119,7 +119,7 @@ export const ContactPage: React.FC = () => {
                 https://strike-tips-hud.vercel.app
                 <ExternalLink className="w-3 h-3" />
               </a>
-              <p className="text-xs text-white/55 mt-2 leading-relaxed">
+              <p className="text-xs text-theme-secondary mt-2 leading-relaxed">
                 Access the live racing intelligence dashboard for race cards, bankroll tracking, AI agents, and analytics.
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
@@ -136,7 +136,7 @@ export const ContactPage: React.FC = () => {
 
       {/* Responsible Gambling Emergency */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Heart className="w-5 h-5 text-rose-400" />
           Responsible Gambling Support
         </h2>
@@ -185,14 +185,14 @@ export const ContactPage: React.FC = () => {
                   item.color === 'blue' ? 'text-blue-400' :
                   'text-purple-400'
                 }`} />
-                <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">{item.label}</div>
+                <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">{item.label}</div>
                 <div className={`text-sm font-black ${
                   item.color === 'rose' ? 'text-rose-300' :
                   item.color === 'emerald' ? 'text-emerald-300' :
                   item.color === 'blue' ? 'text-blue-300' :
                   'text-purple-300'
                 }`}>{item.value}</div>
-                <div className="text-[10px] text-white/40 mt-1">{item.note}</div>
+                <div className="text-[10px] text-theme-secondary mt-1">{item.note}</div>
               </div>
             );
           })}
@@ -201,26 +201,26 @@ export const ContactPage: React.FC = () => {
 
       {/* Regulator Reference */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Scale className="w-5 h-5 text-amber-400" />
           Regulatory Reference
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
             <Scale className="w-5 h-5 text-amber-400 mb-2" />
-            <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Regulator</div>
+            <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">Regulator</div>
             <div className="text-sm font-bold text-amber-300">Mpumalanga Economic Regulator</div>
-            <div className="text-xs text-white/40 mt-1">Provincial gambling authority</div>
+            <div className="text-xs text-theme-secondary mt-1">Provincial gambling authority</div>
           </div>
           <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
             <Shield className="w-5 h-5 text-emerald-400 mb-2" />
-            <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Classification</div>
+            <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">Classification</div>
             <div className="text-sm font-bold text-emerald-300">Paper-Trading Educational Tool</div>
-            <div className="text-xs text-white/40 mt-1">Not a gambling service</div>
+            <div className="text-xs text-theme-secondary mt-1">Not a gambling service</div>
           </div>
           <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
             <Scale className="w-5 h-5 text-blue-400 mb-2" />
-            <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Data Regulator (POPIA)</div>
+            <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">Data Regulator (POPIA)</div>
             <div className="text-sm font-bold text-blue-300">Information Regulator SA</div>
             <a href="https://inforegulator.org.za" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline mt-1 flex items-center gap-1">
               inforegulator.org.za <ExternalLink className="w-2.5 h-2.5" />
@@ -228,9 +228,9 @@ export const ContactPage: React.FC = () => {
           </div>
           <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20">
             <Zap className="w-5 h-5 text-purple-400 mb-2" />
-            <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">Jurisdiction</div>
+            <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">Jurisdiction</div>
             <div className="text-sm font-bold text-purple-300">Republic of South Africa</div>
-            <div className="text-xs text-white/40 mt-1">Governed under SA law</div>
+            <div className="text-xs text-theme-secondary mt-1">Governed under SA law</div>
           </div>
         </div>
       </motion.div>
@@ -238,7 +238,7 @@ export const ContactPage: React.FC = () => {
       {/* Bottom banner */}
       <motion.div variants={fadeUp}>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-white/3 to-white/1 border border-white/10 text-center">
-          <p className="text-xs text-white/40 leading-relaxed">
+          <p className="text-xs text-theme-secondary leading-relaxed">
             Strike Tips Racing Bot is a free, paper-trading educational tool. No real money is ever wagered, collected, or paid out. For technical issues, message <span className="text-purple-400 font-bold">@Striketips_bot</span> on Telegram. For gambling-related concerns, contact the <span className="text-rose-400 font-bold">NRGP at 0800 006 008</span>.
           </p>
         </div>

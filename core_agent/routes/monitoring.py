@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 from datetime import datetime
+from typing import Any
 from fastapi import Query
 from fastapi.responses import Response
 from core_agent.config.paths import DATA_DIR, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH, ATR_RESULTS_PATH, NEWS_PATH, NEWS_IMAGES_DIR, NEWS_PATH, NEWS_IMAGES_DIR
@@ -119,6 +120,30 @@ async def stream_snapshot(request: Request):
     )
 
 
+def _read_json_file(path) -> Any:
+    """Best-effort JSON read for bundled side feeds (missing/corrupt -> None)."""
+    try:
+        with open(str(path)) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+@router.get("/monitoring/snapshot-hash")
+async def get_snapshot_hash(request: Request):
+    """Tiny poll target: hash + counts only, so clients download the full
+    snapshot solely when something changed (10s polling without the bytes)."""
+    cache = request.app.state.snapshot_cache
+    if not cache:
+        return {"snapshot_hash": "none", "event_count": 0}
+    digest = hashlib.md5(json.dumps(cache, sort_keys=True).encode()).hexdigest()
+    try:
+        n = len((cache.get("events") or {}))
+    except Exception:
+        n = 0
+    return {"snapshot_hash": digest, "event_count": n}
+
+
 @router.get("/monitoring/snapshot")
 async def get_monitoring_snapshot(request: Request):
     """Get latest zero-hallucination snapshot from in-memory cache with hash for differential sync"""
@@ -136,6 +161,19 @@ async def get_monitoring_snapshot(request: Request):
 
     # Inject recently triggered alerts from the AlertEngine's history log
     result["alerts"] = _load_recent_alerts(20)
+
+    # Bundle the slow-moving side feeds so one poll replaces the SSE fan-out
+    # (retiring SSE eliminates 24/7 billed executions per open tab).
+    result["movers"] = _read_json_file(ATR_MOVERS_PATH)
+    result["predictor"] = _read_json_file(ATR_PREDICTOR_PATH)
+    result["results"] = _read_json_file(ATR_RESULTS_PATH)
+    result["news"] = _read_json_file(NEWS_PATH)
+    try:
+        from core_agent.core.telemetry import get_events
+
+        result["telemetry"] = get_events(30)
+    except Exception:
+        pass
     return result
 
 

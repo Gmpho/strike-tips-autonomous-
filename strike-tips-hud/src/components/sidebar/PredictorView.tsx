@@ -128,7 +128,7 @@ export const PredictorView: React.FC = () => {
                 placeholder="Search horse..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all font-semibold"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-theme-primary placeholder-slate-500 focus:outline-none focus:border-purple-500/50 transition-all font-semibold"
               />
             </div>
             
@@ -142,7 +142,7 @@ export const PredictorView: React.FC = () => {
                   filter === 'SPECULATIVE' ? 'Speculative' : 'AI Pick';
                 
                 const activeClass = 
-                  filter === 'ALL' ? 'bg-white/10 text-white border-white/20' :
+                  filter === 'ALL' ? 'bg-purple-500/20 text-purple-400 border-purple-500/30' :
                   filter === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
                   filter === 'MEDIUM' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
                   filter === 'SPECULATIVE' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
@@ -341,7 +341,7 @@ function PredictionDetailModal({
                 <Sparkles className="w-5 h-5 text-purple-400" />
               </div>
               <div className="min-w-0">
-                <h3 className="text-lg sm:text-xl font-black text-white leading-tight truncate">
+                <h3 className="text-lg sm:text-xl font-black text-theme-primary leading-tight truncate">
                   {pred.horse}
                 </h3>
                 <p className="text-xs text-theme-secondary font-medium mt-1">
@@ -391,7 +391,7 @@ function PredictionDetailModal({
                   </p>
                 </div>
                 <div className="bg-purple-500/5 border border-purple-500/15 rounded-2xl p-5">
-                  <p className="text-base text-white/90 font-medium leading-relaxed whitespace-pre-wrap">
+                  <p className="text-base text-theme-primary font-medium leading-relaxed whitespace-pre-wrap">
                     {pred.prediction}
                   </p>
                 </div>
@@ -628,7 +628,7 @@ function PredictionCardWrapper({
                     </p>
                   </div>
                   <div className="bg-purple-500/5 border border-purple-500/15 rounded-xl p-3">
-                    <p className="text-sm text-white/80 font-medium leading-relaxed">
+                    <p className="text-sm text-theme-secondary font-medium leading-relaxed">
                       {pred.prediction}
                     </p>
                   </div>

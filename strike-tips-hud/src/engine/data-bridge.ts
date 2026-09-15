@@ -7,65 +7,26 @@ const FAST_INTERVAL = 10000;
 const SLOW_INTERVAL = 60000;
 const MAX_FAST_BACKOFF = 60000;
 const MAX_SLOW_BACKOFF = 120000;
-// Connect directly to the backend SSE origin (bypasses the Vercel Edge
-// middleware runtime cap). /api/monitoring/stream is in SAFE_PATHS (no API key)
-// and the backend CORS allows the production origin.
-// Modal is the primary origin. A fallback (e.g. Cloud Run / self-hosted) is
-// optional and only used when VITE_SSE_FALLBACK_ORIGIN is set — it is never
-// hard-coded, so the primary stays Modal unless you opt in.
-const SSE_ORIGINS = [
-  // Dev: same-origin first — Vite proxy forwards /api/* to the local backend.
-  ...(import.meta.env.DEV ? [''] : []),
-  'https://gmpho--strike-tips-racing-serve-api.modal.run',
-  ...((import.meta as any).env?.VITE_SSE_FALLBACK_ORIGIN
-    ? [(import.meta as any).env.VITE_SSE_FALLBACK_ORIGIN.replace(/\/$/, '')]
-    : []),
-];
-let activeSseOrigin: string | null = null;
-// Remember recently-failed origins so reconnects skip the 4s probe stall.
-const failedOrigins = new Map<string, number>();
-const ORIGIN_RETRY_MS = 60_000;
-
-async function pickSseOrigin(): Promise<string> {
-  if (activeSseOrigin) return activeSseOrigin;
-  const now = Date.now();
-  for (const origin of SSE_ORIGINS) {
-    const failedAt = failedOrigins.get(origin);
-    if (failedAt && now - failedAt < ORIGIN_RETRY_MS) continue;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${origin}/api/system/health`, { signal: controller.signal });
-      clearTimeout(timer);
-      if (res.ok || res.status === 401 || res.status === 404) {
-        activeSseOrigin = origin;
-        failedOrigins.delete(origin);
-        return origin;
-      }
-      failedOrigins.set(origin, now);
-    } catch {
-      failedOrigins.set(origin, now);
-    }
-  }
-  return SSE_ORIGINS[0]; // none healthy yet; default and retry on reconnect
-}
+// NOTE: the SSE stream (/api/monitoring/stream) was retired 2026-09-15: one
+// long-lived connection per open tab billed a 24/7 Modal execution. Snapshot,
+// movers, predictor, results, news, and telemetry now arrive via hash-first
+// polling (syncSnapshot) + the view-gated slow poll. The backend keeps the
+// endpoint for rollback.
 
 export class DataBridge {
   private fastTimer: number | null = null;
   private slowTimer: number | null = null;
-  private sse: EventSource | null = null;
-  private sseReconnectMs = 2000;
   private prevEventCount = 0;
   private prevBetCount = 0;
   private playedValueBets = new Set<string>();
   private fastBackoffMs = FAST_INTERVAL;
   private slowBackoffMs = SLOW_INTERVAL;
+  private lastSnapshotHash: string | null = null;
   private refCount = 0;
 
   start() {
     this.refCount++;
     if (this.refCount > 1) return;
-    this.connectSSE();
     this.hydrateFeeds();
     this.scheduleFast();
     this.scheduleSlow();
@@ -78,93 +39,60 @@ export class DataBridge {
     if (this.slowTimer) clearTimeout(this.slowTimer);
     this.fastTimer = null;
     this.slowTimer = null;
-    this.disconnectSSE();
   }
 
-  private async connectSSE() {
-    this.disconnectSSE();
-    const origin = await pickSseOrigin();
-    this.sse = new EventSource(`${origin}/api/monitoring/stream`);
-
-    this.sse.addEventListener('snapshot', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        const current = hudStore.getState();
-        hudStore.updateState({
-          events: data.events || {},
-          alerts: data.alerts || [],
-        });
-        this.playSoundsForChanges(data, null, { bets: current.betHistory });
-      } catch (err) {
-        console.error('SSE snapshot parse error:', err);
-      }
-    });
-
-    this.sse.addEventListener('market-movers', (e: MessageEvent) => {
-      try {
-        hudStore.updateState({ marketMovers: JSON.parse(e.data) });
-      } catch (err) {
-        console.error('SSE market-movers parse error:', err);
-      }
-    });
-
-    this.sse.addEventListener('predictor', (e: MessageEvent) => {
-      try {
-        hudStore.updateState({ predictions: JSON.parse(e.data) });
-      } catch (err) {
-        console.error('SSE predictor parse error:', err);
-      }
-    });
-
-    this.sse.addEventListener('results', (e: MessageEvent) => {
-      try {
-        hudStore.updateState({ results: JSON.parse(e.data) });
-      } catch (err) {
-        console.error('SSE results parse error:', err);
-      }
-    });
-
-    this.sse.addEventListener('news', (e: MessageEvent) => {
-      try {
-        const items = JSON.parse(e.data);
-        if (Array.isArray(items)) hudStore.updateState({ news: items });
-      } catch (err) {
-        console.error('SSE news parse error:', err);
-      }
-    });
-
-    this.sse.addEventListener('telemetry', (e: MessageEvent) => {
-      try {
-        const fresh = JSON.parse(e.data) as Array<{ engine: string; badge: string; message: string; ts: number }>;
-        if (!Array.isArray(fresh)) return;
-        const existing = hudStore.getState().telemetry || [];
-        const seen = new Set(existing.map(t => `${t.engine}|${t.message}|${t.ts}`));
-        const merged = [...fresh.filter(t => !seen.has(`${t.engine}|${t.message}|${t.ts}`)), ...existing].slice(0, 30);
-        hudStore.updateState({ telemetry: merged });
-      } catch (err) {
-        console.error('SSE telemetry parse error:', err);
-      }
-    });
-
-    this.sse.onerror = () => {
-      this.disconnectSSE();
-      setTimeout(() => this.connectSSE(), this.sseReconnectMs);
-      this.sseReconnectMs = Math.min(this.sseReconnectMs * 2, 30000);
-    };
-
-    this.sse.onopen = () => {
-      this.sseReconnectMs = 2000;
-    };
-  }
-
-  private disconnectSSE() {
-    if (this.sse) {
-      this.sse.close();
-      this.sse = null;
+  /** Hash-first snapshot sync: tiny hash poll each tick, full download only
+   * on change. Replaces the SSE stream (which billed a 24/7 execution per
+   * open tab on Modal) with ~10s polling at ~9k invocations/day. */
+  private async syncSnapshot() {
+    try {
+      const hashRes = await apiFetch('/api/monitoring/snapshot-hash');
+      if (!hashRes.ok) return;
+      const { snapshot_hash } = await hashRes.json();
+      if (!snapshot_hash || snapshot_hash === this.lastSnapshotHash) return;
+      const fullRes = await apiFetch('/api/monitoring/snapshot');
+      if (!fullRes.ok) return;
+      const data = await fullRes.json();
+      this.lastSnapshotHash = data.snapshot_hash || snapshot_hash;
+      const current = hudStore.getState();
+      const patch: Record<string, unknown> = {
+        events: data.events || {},
+        alerts: data.alerts || [],
+      };
+      const unwrap = (v: unknown): unknown => {
+        // Bundle files wrap arrays ({movers: [...], timestamp}); SSE used to
+        // send bare arrays. Accept both shapes.
+        if (Array.isArray(v)) return v;
+        if (v && typeof v === 'object') {
+          const o = v as Record<string, unknown>;
+          for (const k of ['movers', 'predictions', 'results', 'items', 'events']) {
+            if (Array.isArray(o[k])) return o[k];
+          }
+        }
+        return v;
+      };
+      if (data.movers !== undefined && data.movers !== null) patch.marketMovers = unwrap(data.movers);
+      if (data.predictor !== undefined && data.predictor !== null) patch.predictions = unwrap(data.predictor);
+      if (data.results !== undefined && data.results !== null) patch.results = unwrap(data.results);
+      const newsItems = Array.isArray(data.news) ? data.news : data.news?.items;
+      if (Array.isArray(newsItems) && newsItems.length > 0) patch.news = newsItems;
+      if (Array.isArray(data.telemetry)) this.mergeTelemetry(data.telemetry);
+      hudStore.updateState(patch);
+      this.playSoundsForChanges(data, null, { bets: current.betHistory });
+    } catch (err) {
+      console.error('Snapshot sync failed:', err);
     }
   }
 
-  /** One-shot REST hydration for news + telemetry before SSE events arrive. */
+  private mergeTelemetry(fresh: Array<{ engine: string; badge: string; message: string; ts: number }>) {
+    if (!Array.isArray(fresh) || fresh.length === 0) return;
+    const existing = hudStore.getState().telemetry || [];
+    const seen = new Set(existing.map(t => `${t.engine}|${t.message}|${t.ts}`));
+    const merged = [...fresh.filter(t => !seen.has(`${t.engine}|${t.message}|${t.ts}`)), ...existing].slice(0, 30);
+    hudStore.updateState({ telemetry: merged });
+  }
+
+  /** One-shot REST hydration for news + telemetry on startup. */
   private async hydrateFeeds() {
     // Run news + telemetry hydration in parallel — the sequential await here
     // delayed telemetry by however long the (slow) news fetch took.
@@ -259,6 +187,7 @@ export class DataBridge {
         apiFetch('/api/system/health'),
         apiFetch(BETTING_ENDPOINTS.accountSummary),
         apiFetch(BETTING_ENDPOINTS.open),
+        this.syncSnapshot(),
       ]);
 
       if (!healthRes.ok) throw new Error('Backend link severed');

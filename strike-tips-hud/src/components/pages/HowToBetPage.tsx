@@ -76,7 +76,7 @@ export const HowToBetPage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-purple-500/10 text-white/60 hover:text-purple-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-purple-500/10 text-theme-secondary hover:text-purple-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -85,14 +85,14 @@ export const HowToBetPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
                   <BookOpen className="w-5 h-5 text-purple-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">How to Bet</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">How to Bet</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium max-w-2xl leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
                 Strike Tips Racing Bot is a <span className="text-purple-400 font-bold">paper-trading educational system</span> — it simulates betting selections against a virtual R1,000 bankroll. No real money is ever wagered, collected, or paid out.
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Effective: June 2026</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Effective: June 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
                 <span className="text-[10px] px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full font-bold uppercase tracking-widest text-emerald-400">South Africa</span>
               </div>
             </div>
@@ -112,7 +112,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: What You'll See */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Activity className="w-5 h-5 text-purple-400" />
           What You'll See
         </h2>
@@ -126,8 +126,8 @@ export const HowToBetPage: React.FC = () => {
             <div key={i} className="flex items-start gap-3 p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] hover:border-purple-500/30 transition-all">
               <div className="w-2 h-2 rounded-full bg-purple-400 mt-2 shrink-0" />
               <div>
-                <div className="text-sm font-bold text-white mb-1">{item.label}</div>
-                <div className="text-xs text-white/60 leading-relaxed">{item.desc}</div>
+                <div className="text-sm font-bold text-theme-primary mb-1">{item.label}</div>
+                <div className="text-xs text-theme-secondary leading-relaxed">{item.desc}</div>
               </div>
             </div>
           ))}
@@ -135,7 +135,7 @@ export const HowToBetPage: React.FC = () => {
 
         {/* Selection Format */}
         <div className="mt-4 p-4 rounded-xl bg-black/40 border border-white/10 font-mono">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-2">Selection Format</div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-theme-secondary mb-2">Selection Format</div>
           <div className="text-sm text-emerald-400 font-mono">
             Horse Name | Track Race# | Odds | Edge % | Stake (R) | Confidence
           </div>
@@ -144,7 +144,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: Data Pipeline */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Database className="w-5 h-5 text-cyan-400" />
           Data Pipeline
         </h2>
@@ -164,10 +164,10 @@ export const HowToBetPage: React.FC = () => {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">Step {i + 1}</span>
+                      <span className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">Step {i + 1}</span>
                     </div>
-                    <div className="text-sm font-bold text-white">{step.label}</div>
-                    <div className="text-xs text-white/60 mt-0.5 leading-relaxed">{step.desc}</div>
+                    <div className="text-sm font-bold text-theme-primary">{step.label}</div>
+                    <div className="text-xs text-theme-secondary mt-0.5 leading-relaxed">{step.desc}</div>
                   </div>
                 </motion.div>
               );
@@ -178,7 +178,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: AI Swarm */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Bot className="w-5 h-5 text-purple-400" />
           AI Agent Swarm
         </h2>
@@ -186,9 +186,9 @@ export const HowToBetPage: React.FC = () => {
           <table className="w-full min-w-[500px]">
             <thead>
               <tr className="border-b border-white/10 bg-white/[0.03]">
-                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">Model</th>
-                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">Role</th>
-                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">Specialty</th>
+                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">Model</th>
+                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">Role</th>
+                <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">Specialty</th>
               </tr>
             </thead>
             <tbody>
@@ -199,8 +199,8 @@ export const HowToBetPage: React.FC = () => {
                       {agent.model}
                     </code>
                   </td>
-                  <td className="px-4 py-3 text-sm font-medium text-white/80">{agent.role}</td>
-                  <td className="px-4 py-3 text-xs text-white/50">{agent.specialty}</td>
+                  <td className="px-4 py-3 text-sm font-medium text-theme-primary">{agent.role}</td>
+                  <td className="px-4 py-3 text-xs text-theme-secondary">{agent.specialty}</td>
                 </tr>
               ))}
             </tbody>
@@ -210,7 +210,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: Key Metrics */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-emerald-400" />
           Key Metrics
         </h2>
@@ -218,7 +218,7 @@ export const HowToBetPage: React.FC = () => {
           {METRICS.map((m, i) => (
             <div key={i} className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
               <div className={`text-lg font-black mb-2 ${m.color === 'emerald' ? 'text-emerald-400' : m.color === 'purple' ? 'text-purple-400' : 'text-amber-400'}`}>{m.label}</div>
-              <div className="text-xs text-white/60 leading-relaxed font-mono">{m.formula}</div>
+              <div className="text-xs text-theme-secondary leading-relaxed font-mono">{m.formula}</div>
             </div>
           ))}
         </div>
@@ -229,7 +229,7 @@ export const HowToBetPage: React.FC = () => {
           <code className="text-sm font-mono text-emerald-300 block mb-3">
             Reflective | Vaal R8 | 5.50 | +12.4% | R42 | HIGH
           </code>
-          <div className="space-y-1 text-xs text-white/60">
+          <div className="space-y-1 text-xs text-theme-secondary">
             <p>→ Model gives 20.4% win probability vs. market 18.2% (5.50 odds)</p>
             <p>→ Kelly stake = R1,000 × 0.5 × 0.124 = R62 → capped at 5% = R50 → R42 after rounding</p>
           </div>
@@ -238,7 +238,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: Telegram Commands */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Terminal className="w-5 h-5 text-blue-400" />
           Telegram Bot Commands
         </h2>
@@ -246,7 +246,7 @@ export const HowToBetPage: React.FC = () => {
           {COMMANDS.map((cmd, i) => (
             <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] hover:border-blue-500/20 transition-all">
               <code className="text-xs font-mono px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 shrink-0">{cmd.cmd}</code>
-              <span className="text-xs text-white/60">{cmd.desc}</span>
+              <span className="text-xs text-theme-secondary">{cmd.desc}</span>
             </div>
           ))}
         </div>
@@ -254,7 +254,7 @@ export const HowToBetPage: React.FC = () => {
 
       {/* Section: Web Dashboard */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Globe className="w-5 h-5 text-purple-400" />
           Web Dashboard (HUD)
         </h2>
@@ -268,7 +268,7 @@ export const HowToBetPage: React.FC = () => {
               'Market movers & ATR predictors',
               'System vitals & logs',
             ].map((item, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs text-white/70">
+              <div key={i} className="flex items-center gap-2 text-xs text-theme-primary">
                 <Zap className="w-3 h-3 text-purple-400 shrink-0" />
                 {item}
               </div>
@@ -293,7 +293,7 @@ export const HowToBetPage: React.FC = () => {
               <div key={i} className="text-center p-3 rounded-xl bg-rose-500/5 border border-rose-500/10">
                 <div className="text-[9px] uppercase tracking-widest text-rose-400/60 font-black mb-1">{r.label}</div>
                 <div className="text-sm font-bold text-rose-300">{r.value}</div>
-                <div className="text-[10px] text-white/40 mt-0.5">{r.note}</div>
+                <div className="text-[10px] text-theme-secondary mt-0.5">{r.note}</div>
               </div>
             ))}
           </div>

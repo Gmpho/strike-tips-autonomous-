@@ -96,7 +96,7 @@ export const ResponsiblePage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-rose-500/10 text-white/60 hover:text-rose-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-rose-500/10 text-theme-secondary hover:text-rose-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -105,9 +105,9 @@ export const ResponsiblePage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center">
                   <Heart className="w-5 h-5 text-rose-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">Responsible Gambling</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">Responsible Gambling</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium max-w-2xl leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
                 Strike Tips Racing Bot is a paper-trading educational system only. No real money is ever wagered, collected, or paid out. <span className="text-rose-400 font-bold">If you or someone you know needs help, use the contacts below immediately.</span>
               </p>
             </div>
@@ -136,8 +136,8 @@ export const ResponsiblePage: React.FC = () => {
                     <Icon className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
                     <div>
                       <div className="text-[10px] font-black text-rose-400/60 uppercase tracking-widest">{item.label}</div>
-                      <div className="text-sm font-bold text-white">{item.contact}</div>
-                      <div className="text-[10px] text-white/40">{item.note}</div>
+                      <div className="text-sm font-bold text-theme-primary">{item.contact}</div>
+                      <div className="text-[10px] text-theme-secondary">{item.note}</div>
                     </div>
                   </div>
                 );
@@ -150,7 +150,7 @@ export const ResponsiblePage: React.FC = () => {
       {/* Warning Signs Self-Check */}
       <motion.div variants={fadeUp} className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-black text-white flex items-center gap-2">
+          <h2 className="text-lg font-black text-theme-primary flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-400" />
             Warning Signs Checklist
           </h2>
@@ -162,7 +162,7 @@ export const ResponsiblePage: React.FC = () => {
             </div>
           )}
         </div>
-        <p className="text-xs text-white/50 mb-4">Tick any that apply to you or someone you know. If 3+ apply, seek help immediately.</p>
+        <p className="text-xs text-theme-secondary mb-4">Tick any that apply to you or someone you know. If 3+ apply, seek help immediately.</p>
         <div className="space-y-6">
           {Object.entries(WARNING_SIGNS).map(([category, signs]) => (
             <div key={category}>
@@ -183,9 +183,9 @@ export const ResponsiblePage: React.FC = () => {
                     >
                       {isChecked
                         ? <CheckSquare className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        : <Square className="w-4 h-4 text-white/30 shrink-0 mt-0.5" />
+                        : <Square className="w-4 h-4 text-theme-secondary shrink-0 mt-0.5" />
                       }
-                      <span className={`text-sm ${isChecked ? 'text-amber-300' : 'text-white/65'}`}>{sign}</span>
+                      <span className={`text-sm ${isChecked ? 'text-amber-300' : 'text-theme-secondary'}`}>{sign}</span>
                     </button>
                   );
                 })}
@@ -200,34 +200,34 @@ export const ResponsiblePage: React.FC = () => {
             className="mt-4 p-4 rounded-xl bg-rose-500/20 border-2 border-rose-500/50 text-center"
           >
             <div className="text-rose-400 font-black text-lg mb-1">Please Seek Help Now</div>
-            <div className="text-white/70 text-sm">Call <span className="font-bold text-rose-400">0800 006 008</span> — Free, confidential, 24/7</div>
+            <div className="text-theme-primary text-sm">Call <span className="font-bold text-rose-400">0800 006 008</span> — Free, confidential, 24/7</div>
           </motion.div>
         )}
       </motion.div>
 
       {/* Self-Protection Tools */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Shield className="w-5 h-5 text-emerald-400" />
           Self-Protection Tools
         </h2>
         <div className="mb-3">
-          <div className="text-xs font-black text-white/40 uppercase tracking-widest mb-3">South African Options</div>
+          <div className="text-xs font-black text-theme-secondary uppercase tracking-widest mb-3">South African Options</div>
           <div className="overflow-x-auto rounded-xl border border-white/10">
             <table className="w-full min-w-[400px]">
               <thead>
                 <tr className="border-b border-white/10 bg-white/3">
-                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">Tool</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">Provider</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white/40">How to Access</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">Tool</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">Provider</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-black uppercase tracking-widest text-theme-secondary">How to Access</th>
                 </tr>
               </thead>
               <tbody>
                 {SELF_PROTECTION.map((row, i) => (
                   <tr key={i} className="border-b border-white/5 hover:bg-white/3 transition-colors">
                     <td className="px-4 py-3 text-sm font-bold text-emerald-400">{row.tool}</td>
-                    <td className="px-4 py-3 text-xs text-white/60">{row.provider}</td>
-                    <td className="px-4 py-3 text-xs text-white/50">{row.access}</td>
+                    <td className="px-4 py-3 text-xs text-theme-secondary">{row.provider}</td>
+                    <td className="px-4 py-3 text-xs text-theme-secondary">{row.access}</td>
                   </tr>
                 ))}
               </tbody>
@@ -236,7 +236,7 @@ export const ResponsiblePage: React.FC = () => {
         </div>
 
         <div className="mt-4">
-          <div className="text-xs font-black text-white/40 uppercase tracking-widest mb-3">Strike Tips Bot Controls</div>
+          <div className="text-xs font-black text-theme-secondary uppercase tracking-widest mb-3">Strike Tips Bot Controls</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {[
               'PIN-gated access — Only authorised users (BOT_ACCESS_PIN)',
@@ -244,7 +244,7 @@ export const ResponsiblePage: React.FC = () => {
               'Hard bankroll limits — 5% max bet, 20% daily loss cap (cannot override)',
               'No real-money integration — No deposit/withdrawal possible',
             ].map((item, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs text-white/65 p-3 rounded-xl bg-white/3 border border-white/8">
+              <div key={i} className="flex items-center gap-2 text-xs text-theme-secondary p-3 rounded-xl bg-white/3 border border-white/8">
                 <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
                 {item}
               </div>
@@ -255,7 +255,7 @@ export const ResponsiblePage: React.FC = () => {
 
       {/* Do's and Don'ts */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <CheckCircle className="w-5 h-5 text-purple-400" />
           If You Choose to Bet Real Money
         </h2>
@@ -264,7 +264,7 @@ export const ResponsiblePage: React.FC = () => {
             <div className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-3">✓ DO</div>
             <div className="space-y-2">
               {DOS.map((item, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm text-white/70 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
+                <div key={i} className="flex items-start gap-2 text-sm text-theme-primary p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
                   <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   {item}
                 </div>
@@ -275,7 +275,7 @@ export const ResponsiblePage: React.FC = () => {
             <div className="text-xs font-black text-rose-400 uppercase tracking-widest mb-3">✗ DON'T</div>
             <div className="space-y-2">
               {DONTS.map((item, i) => (
-                <div key={i} className="flex items-start gap-2 text-sm text-white/70 p-3 rounded-xl bg-rose-500/5 border border-rose-500/15">
+                <div key={i} className="flex items-start gap-2 text-sm text-theme-primary p-3 rounded-xl bg-rose-500/5 border border-rose-500/15">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   {item}
                 </div>
@@ -287,7 +287,7 @@ export const ResponsiblePage: React.FC = () => {
 
       {/* For Family & Friends */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Users className="w-5 h-5 text-blue-400" />
           For Family & Friends
         </h2>
@@ -301,12 +301,12 @@ export const ResponsiblePage: React.FC = () => {
           ].map((item, i) => (
             <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/3 border border-white/8">
               <div className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center shrink-0 text-[10px] font-black text-blue-400">{i + 1}</div>
-              <span className="text-sm text-white/70">{item}</span>
+              <span className="text-sm text-theme-primary">{item}</span>
             </div>
           ))}
         </div>
         <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20">
-          <p className="text-xs text-white/60">
+          <p className="text-xs text-theme-secondary">
             <span className="font-bold text-blue-400">Gam-Anon SA:</span> gamanon.org.za | WhatsApp support groups available
           </p>
         </div>
@@ -314,7 +314,7 @@ export const ResponsiblePage: React.FC = () => {
 
       {/* Provincial Regulators */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <MapPin className="w-5 h-5 text-amber-400" />
           South African Legal Context
         </h2>
@@ -324,10 +324,10 @@ export const ResponsiblePage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {PROVINCIAL_REGULATORS.map((reg, i) => (
             <div key={i} className={`flex items-start gap-2 p-3 rounded-xl border transition-all ${reg.body.includes('★') ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/3 border-white/8'}`}>
-              <Scale className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${reg.body.includes('★') ? 'text-purple-400' : 'text-white/40'}`} />
+              <Scale className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${reg.body.includes('★') ? 'text-purple-400' : 'text-theme-secondary'}`} />
               <div>
-                <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">{reg.province}</div>
-                <div className={`text-xs font-bold ${reg.body.includes('★') ? 'text-purple-400' : 'text-white/70'}`}>{reg.body.replace(' ★', '')}</div>
+                <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">{reg.province}</div>
+                <div className={`text-xs font-bold ${reg.body.includes('★') ? 'text-purple-400' : 'text-theme-primary'}`}>{reg.body.replace(' ★', '')}</div>
                 {reg.body.includes('★') && <div className="text-[9px] text-purple-400/60 mt-0.5">Referenced by this bot</div>}
               </div>
             </div>
@@ -339,11 +339,11 @@ export const ResponsiblePage: React.FC = () => {
       <motion.div variants={fadeUp}>
         <div className="p-6 rounded-2xl bg-gradient-to-br from-rose-500/10 to-rose-500/5 border border-rose-500/30 text-center">
           <Heart className="w-8 h-8 text-rose-400 mx-auto mb-3" />
-          <p className="text-lg font-black text-white mb-1">Winners know when to stop.</p>
-          <p className="text-sm text-white/60">Help is <span className="text-emerald-400 font-bold">free</span>, <span className="text-blue-400 font-bold">confidential</span>, and available <span className="text-amber-400 font-bold">24/7</span>.</p>
+          <p className="text-lg font-black text-theme-primary mb-1">Winners know when to stop.</p>
+          <p className="text-sm text-theme-secondary">Help is <span className="text-emerald-400 font-bold">free</span>, <span className="text-blue-400 font-bold">confidential</span>, and available <span className="text-amber-400 font-bold">24/7</span>.</p>
           <div className="flex justify-center gap-4 mt-4">
             <div className="text-center">
-              <div className="text-[10px] text-white/40 uppercase font-black tracking-widest mb-1">NRGP Helpline</div>
+              <div className="text-[10px] text-theme-secondary uppercase font-black tracking-widest mb-1">NRGP Helpline</div>
               <div className="text-lg font-black text-rose-400">0800 006 008</div>
             </div>
           </div>

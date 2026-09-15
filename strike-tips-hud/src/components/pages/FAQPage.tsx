@@ -136,7 +136,7 @@ const AccordionItem: React.FC<{ q: string; a: string; color: string }> = ({ q, a
         className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-white/3 transition-colors"
         aria-expanded={open}
       >
-        <span className="text-sm font-semibold text-white/90 leading-snug">{q}</span>
+        <span className="text-sm font-semibold text-theme-primary leading-snug">{q}</span>
         <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }}>
           <ChevronDown className={`w-4 h-4 shrink-0 ${c.text}`} />
         </motion.div>
@@ -150,7 +150,7 @@ const AccordionItem: React.FC<{ q: string; a: string; color: string }> = ({ q, a
             transition={{ duration: 0.22, ease: 'easeInOut' }}
             className="overflow-hidden"
           >
-            <div className={`px-4 pb-4 pt-1 text-sm text-white/65 leading-relaxed border-t border-white/5 ${c.bg}`}>
+            <div className={`px-4 pb-4 pt-1 text-sm text-theme-secondary leading-relaxed border-t border-white/5 ${c.bg}`}>
               {a}
             </div>
           </motion.div>
@@ -189,7 +189,7 @@ export const FAQPage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-cyan-500/10 text-white/60 hover:text-cyan-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-cyan-500/10 text-theme-secondary hover:text-cyan-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -198,14 +198,14 @@ export const FAQPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
                   <MessageSquare className="w-5 h-5 text-cyan-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">FAQ</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">FAQ</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium leading-relaxed">
                 Frequently Asked Questions — Strike Tips Racing Bot
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Last Updated: June 2026</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Last Updated: June 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
               </div>
             </div>
           </div>
@@ -215,13 +215,13 @@ export const FAQPage: React.FC = () => {
       {/* Search */}
       <motion.div {...fadeUp} className="mb-6">
         <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-secondary" />
           <input
             type="text"
             placeholder="Search questions..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-sm font-medium text-white placeholder-white/30 focus:outline-none focus:border-cyan-500/50 focus:bg-cyan-500/5 transition-all"
+            className="w-full bg-white/5 border border-white/10 rounded-xl pl-11 pr-4 py-3 text-sm font-medium text-theme-primary placeholder-white/30 focus:outline-none focus:border-cyan-500/50 focus:bg-cyan-500/5 transition-all"
           />
         </div>
       </motion.div>
@@ -232,8 +232,8 @@ export const FAQPage: React.FC = () => {
           onClick={() => setActiveCategory(null)}
           className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
             activeCategory === null
-              ? 'bg-white/10 border-white/20 text-white'
-              : 'bg-white/3 border-white/8 text-white/50 hover:border-white/20 hover:text-white/80'
+              ? 'bg-white/10 border-white/20 text-theme-primary'
+              : 'bg-white/3 border-white/8 text-theme-secondary hover:border-white/20 hover:text-theme-primary'
           }`}
         >
           All
@@ -247,7 +247,7 @@ export const FAQPage: React.FC = () => {
               className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
                 activeCategory === section.category
                   ? `${c.bg} ${c.border} ${c.text}`
-                  : 'bg-white/3 border-white/8 text-white/50 hover:border-white/20 hover:text-white/80'
+                  : 'bg-white/3 border-white/8 text-theme-secondary hover:border-white/20 hover:text-theme-primary'
               }`}
             >
               {section.category}
@@ -268,7 +268,7 @@ export const FAQPage: React.FC = () => {
                   <Icon className={`w-4 h-4 ${c.text}`} />
                 </div>
                 <h2 className={`text-base font-black ${c.text}`}>{section.category}</h2>
-                <span className="text-[10px] font-bold text-white/30 ml-1">({section.items.length})</span>
+                <span className="text-[10px] font-bold text-theme-secondary ml-1">({section.items.length})</span>
               </div>
               <div className="space-y-2">
                 {section.items.map((item, i) => (
@@ -281,8 +281,8 @@ export const FAQPage: React.FC = () => {
 
         {filtered.length === 0 && (
           <motion.div {...fadeUp} className="text-center py-16">
-            <HelpCircle className="w-12 h-12 text-white/20 mx-auto mb-4" />
-            <p className="text-white/40 font-medium">No questions match your search</p>
+            <HelpCircle className="w-12 h-12 text-theme-secondary mx-auto mb-4" />
+            <p className="text-theme-secondary font-medium">No questions match your search</p>
           </motion.div>
         )}
       </div>
@@ -291,8 +291,8 @@ export const FAQPage: React.FC = () => {
       <motion.div {...fadeUp} className="mt-8 p-4 rounded-xl bg-white/3 border border-white/10">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <div className="text-sm font-bold text-white mb-1">Still have questions?</div>
-            <div className="text-xs text-white/50">Contact us via Telegram or responsible gambling helpline</div>
+            <div className="text-sm font-bold text-theme-primary mb-1">Still have questions?</div>
+            <div className="text-xs text-theme-secondary">Contact us via Telegram or responsible gambling helpline</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <div className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400">

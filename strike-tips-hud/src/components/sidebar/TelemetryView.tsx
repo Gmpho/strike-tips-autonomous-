@@ -198,7 +198,7 @@ export const TelemetryView: React.FC = () => {
       {/* Footer */}
       <div className="shrink-0 pt-3 border-t border-theme">
         <p className="text-[10px] text-theme-secondary font-semibold">
-          Pushed via SSE event:telemetry — zero polling, zero cost
+          Pushed every 10s via snapshot poll — SSE retired to stop 24/7 billed executions
         </p>
       </div>
     </motion.div>

@@ -85,7 +85,7 @@ export const DisclaimerPage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-amber-500/10 text-white/60 hover:text-amber-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-amber-500/10 text-theme-secondary hover:text-amber-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -94,14 +94,14 @@ export const DisclaimerPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
                   <AlertOctagon className="w-5 h-5 text-amber-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">Disclaimer</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">Disclaimer</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium max-w-2xl leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
                 Strike Tips Racing Bot — Legal disclaimer for paper-trading educational system.
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">June 2026</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">June 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
               </div>
             </div>
           </div>
@@ -119,8 +119,8 @@ export const DisclaimerPage: React.FC = () => {
             <div className="text-2xl md:text-4xl font-black text-amber-400 tracking-tight mb-2">
               📢 PAPER TRADING ONLY
             </div>
-            <div className="text-lg font-black text-white mb-2">NO REAL MONEY</div>
-            <p className="text-sm text-white/70 max-w-xl mx-auto">
+            <div className="text-lg font-black text-theme-primary mb-2">NO REAL MONEY</div>
+            <p className="text-sm text-theme-primary max-w-xl mx-auto">
               Every figure, result, "win," "loss," "bankroll," "ROI," "profit," "stake," and "payout" shown by this system is <span className="text-amber-400 font-bold">SIMULATED</span>.
             </p>
           </div>
@@ -129,7 +129,7 @@ export const DisclaimerPage: React.FC = () => {
 
       {/* What it does */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-blue-400" />
           What This System Actually Does
         </h2>
@@ -137,12 +137,12 @@ export const DisclaimerPage: React.FC = () => {
           {WHAT_WE_DO.map((item, i) => (
             <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/3 border border-white/8 hover:border-blue-500/20 transition-all">
               <CheckCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-              <span className="text-sm text-white/75">{item}</span>
+              <span className="text-sm text-theme-primary">{item}</span>
             </div>
           ))}
         </div>
         <div className="mt-3 p-3 rounded-xl bg-white/3 border border-white/10">
-          <p className="text-xs text-white/50 font-mono">
+          <p className="text-xs text-theme-secondary font-mono">
             Architecture: 5 specialized local models (Ollama) + cloud fallback (Groq Llama 3.3 70B, Gemini 2.0 Flash) orchestrated via intent routing with ChromaDB + Honcho dual memory.
           </p>
         </div>
@@ -150,7 +150,7 @@ export const DisclaimerPage: React.FC = () => {
 
       {/* Key Warnings */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-amber-400" />
           Key Warnings
         </h2>
@@ -162,7 +162,7 @@ export const DisclaimerPage: React.FC = () => {
                 <h3 className={`text-sm font-black mb-3 ${c.text}`}>{warning.title}</h3>
                 <div className="space-y-1.5">
                   {warning.points.map((point, j) => (
-                    <div key={j} className="flex items-start gap-2 text-xs text-white/65">
+                    <div key={j} className="flex items-start gap-2 text-xs text-theme-secondary">
                       <XCircle className={`w-3.5 h-3.5 ${c.text} shrink-0 mt-0.5`} />
                       {point}
                     </div>
@@ -176,11 +176,11 @@ export const DisclaimerPage: React.FC = () => {
 
       {/* Responsible Gambling */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Shield className="w-5 h-5 text-rose-400" />
           Responsible Gambling
         </h2>
-        <p className="text-sm text-white/60 mb-4">If you choose to bet real money elsewhere:</p>
+        <p className="text-sm text-theme-secondary mb-4">If you choose to bet real money elsewhere:</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           {[
             { label: 'NRGP Helpline', value: '0800 006 008', note: '24/7 toll-free', icon: Phone },
@@ -193,7 +193,7 @@ export const DisclaimerPage: React.FC = () => {
                 <Icon className="w-5 h-5 text-rose-400 mx-auto mb-2" />
                 <div className="text-[9px] uppercase tracking-widest text-rose-400/60 font-black mb-1">{r.label}</div>
                 <div className="text-sm font-bold text-rose-300">{r.value}</div>
-                <div className="text-[10px] text-white/40 mt-0.5">{r.note}</div>
+                <div className="text-[10px] text-theme-secondary mt-0.5">{r.note}</div>
               </div>
             );
           })}
@@ -202,7 +202,7 @@ export const DisclaimerPage: React.FC = () => {
           <p className="text-xs font-bold text-amber-300">
             <span className="text-amber-400">Warning signs:</span> Chasing losses, betting beyond means, hiding betting, borrowing to bet, emotional distress.
           </p>
-          <p className="text-xs text-white/50 mt-1">
+          <p className="text-xs text-theme-secondary mt-1">
             Self-exclusion: Register with the National Central Electronic Monitoring System (NCEMS) via your bookmaker.
           </p>
         </div>
@@ -210,7 +210,7 @@ export const DisclaimerPage: React.FC = () => {
 
       {/* Regulatory Context */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <Server className="w-5 h-5 text-purple-400" />
           Regulatory Context
         </h2>
@@ -222,8 +222,8 @@ export const DisclaimerPage: React.FC = () => {
             { label: 'Age Restriction', value: '18+ only (enforced via BOT_ACCESS_PIN)', color: 'amber' },
           ].map((item, i) => (
             <div key={i} className="p-3 rounded-xl bg-white/3 border border-white/8">
-              <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">{item.label}</div>
-              <div className="text-sm text-white/80">{item.value}</div>
+              <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest mb-1">{item.label}</div>
+              <div className="text-sm text-theme-primary">{item.value}</div>
             </div>
           ))}
         </div>
@@ -231,7 +231,7 @@ export const DisclaimerPage: React.FC = () => {
 
       {/* AI Model Limitations */}
       <motion.div variants={fadeUp} className="mb-8">
-        <h2 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-black text-theme-primary mb-4 flex items-center gap-2">
           <BarChart2 className="w-5 h-5 text-cyan-400" />
           AI & Model Limitations
         </h2>
@@ -245,8 +245,8 @@ export const DisclaimerPage: React.FC = () => {
             <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/3 border border-white/8">
               <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 shrink-0" />
               <div>
-                <span className="text-sm font-bold text-white/80">{item.label}: </span>
-                <span className="text-sm text-white/55">{item.value}</span>
+                <span className="text-sm font-bold text-theme-primary">{item.label}: </span>
+                <span className="text-sm text-theme-secondary">{item.value}</span>
               </div>
             </div>
           ))}
@@ -259,7 +259,7 @@ export const DisclaimerPage: React.FC = () => {
           <h2 className="text-sm font-black text-emerald-400 mb-4">By Using Strike Tips Racing Bot, You Acknowledge:</h2>
           <div className="space-y-2">
             {ACKNOWLEDGMENTS.map((item, i) => (
-              <div key={i} className="flex items-center gap-3 text-sm text-white/75">
+              <div key={i} className="flex items-center gap-3 text-sm text-theme-primary">
                 <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
                   <CheckCircle className="w-3 h-3 text-emerald-400" />
                 </div>

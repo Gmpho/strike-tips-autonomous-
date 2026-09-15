@@ -56,7 +56,7 @@ export const TermsPage: React.FC = () => {
             <button
               onClick={() => window.history.back()}
               aria-label="Go back"
-              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-blue-500/10 text-white/60 hover:text-blue-400 transition-all border border-white/10 shrink-0"
+              className="mt-1 p-2 rounded-xl bg-white/5 hover:bg-blue-500/10 text-theme-secondary hover:text-blue-400 transition-all border border-white/10 shrink-0"
             >
               <ArrowLeft size={18} />
             </button>
@@ -65,15 +65,15 @@ export const TermsPage: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
                   <FileText className="w-5 h-5 text-blue-400" />
                 </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">Terms of Service</h1>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">Terms of Service</h1>
               </div>
-              <p className="text-sm text-white/60 font-medium max-w-2xl leading-relaxed">
+              <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
                 Strike Tips Racing Bot — Free paper-trading educational service. No subscription, payment, or financial commitment required or accepted.
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Effective: June 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Effective: June 2026</span>
                 <span className="text-[10px] px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full font-bold uppercase tracking-widest text-blue-400">South Africa</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-white/50">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
               </div>
             </div>
           </div>
@@ -96,8 +96,8 @@ export const TermsPage: React.FC = () => {
           onClick={() => setTocOpen(!tocOpen)}
           className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/3 border border-white/10 hover:border-blue-500/20 transition-all"
         >
-          <span className="text-sm font-bold text-white/80">Table of Contents</span>
-          {tocOpen ? <ChevronDown className="w-4 h-4 text-blue-400" /> : <ChevronRight className="w-4 h-4 text-white/40" />}
+          <span className="text-sm font-bold text-theme-primary">Table of Contents</span>
+          {tocOpen ? <ChevronDown className="w-4 h-4 text-blue-400" /> : <ChevronRight className="w-4 h-4 text-theme-secondary" />}
         </button>
         {tocOpen && (
           <div className="mt-2 p-4 rounded-xl bg-white/3 border border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-1">
@@ -105,7 +105,7 @@ export const TermsPage: React.FC = () => {
               <a
                 key={s.id}
                 href={`#section-${s.id}`}
-                className="flex items-center gap-2 text-xs text-white/60 hover:text-blue-400 transition-colors py-1"
+                className="flex items-center gap-2 text-xs text-theme-secondary hover:text-blue-400 transition-colors py-1"
               >
                 <span className="text-[10px] font-black text-blue-400/60 w-5">{s.id}.</span>
                 {s.title}
@@ -119,17 +119,17 @@ export const TermsPage: React.FC = () => {
       <div className="space-y-8">
         {/* §1 */}
         <motion.section variants={fadeUp} id="section-1">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§1</span> Acceptance of Terms
           </h2>
-          <p className="text-sm text-white/70 leading-relaxed">
+          <p className="text-sm text-theme-primary leading-relaxed">
             By accessing or using the Strike Tips Racing Bot via Telegram or the web dashboard, you agree to be bound by these Terms of Service. If you do not agree, do not use the Service.
           </p>
         </motion.section>
 
         {/* §2 */}
         <motion.section variants={fadeUp} id="section-2">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§2</span> What the Service Is
           </h2>
           <div className="space-y-2">
@@ -140,7 +140,7 @@ export const TermsPage: React.FC = () => {
               'Delivers insights via Telegram and a web dashboard (HUD)',
               'Uses a multi-agent AI architecture (local Ollama + cloud Groq/Gemini)',
             ].map((item, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm text-white/70">
+              <div key={i} className="flex items-start gap-2 text-sm text-theme-primary">
                 <CheckCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 {item}
               </div>
@@ -150,7 +150,7 @@ export const TermsPage: React.FC = () => {
 
         {/* §3 */}
         <motion.section variants={fadeUp} id="section-3">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§3</span> What the Service Is NOT
           </h2>
           <div className="space-y-2">
@@ -165,7 +165,7 @@ export const TermsPage: React.FC = () => {
 
         {/* §4 */}
         <motion.section variants={fadeUp} id="section-4">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§4</span> Eligibility
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -176,7 +176,7 @@ export const TermsPage: React.FC = () => {
             ].map((req, i) => (
               <div key={i} className="p-3 rounded-xl bg-white/3 border border-white/10">
                 <div className="text-sm font-black text-blue-400 mb-1">{req.label}</div>
-                <div className="text-xs text-white/55">{req.desc}</div>
+                <div className="text-xs text-theme-secondary">{req.desc}</div>
               </div>
             ))}
           </div>
@@ -184,11 +184,11 @@ export const TermsPage: React.FC = () => {
 
         {/* §5 */}
         <motion.section variants={fadeUp} id="section-5">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§5</span> Free Access
           </h2>
           <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
-            <p className="text-sm text-white/70 leading-relaxed">
+            <p className="text-sm text-theme-primary leading-relaxed">
               The Service is currently <span className="text-emerald-400 font-bold">free to use</span>. No payment is required, no payment details are collected, and no premium tiers exist at this time. If premium features are introduced in the future, they will be governed by a separate agreement.
             </p>
           </div>
@@ -196,12 +196,12 @@ export const TermsPage: React.FC = () => {
 
         {/* §6 */}
         <motion.section variants={fadeUp} id="section-6">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§6</span> Your Responsibilities
           </h2>
           <div className="space-y-2">
             {RESPONSIBILITIES.map((item, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm text-white/70 py-2 border-b border-white/5 last:border-0">
+              <div key={i} className="flex items-start gap-2 text-sm text-theme-primary py-2 border-b border-white/5 last:border-0">
                 <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 {item}
               </div>
@@ -211,22 +211,22 @@ export const TermsPage: React.FC = () => {
 
         {/* §7 */}
         <motion.section variants={fadeUp} id="section-7">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§7</span> Intellectual Property
           </h2>
-          <div className="text-sm text-white/70 leading-relaxed space-y-2">
+          <div className="text-sm text-theme-primary leading-relaxed space-y-2">
             <p>The Service, its AI models, prompts, architecture, and code are proprietary. Race data sourced from TAB4Racing, Betway, Racing Post belongs to their respective owners. Your paper-trading history and virtual bankroll data are yours to export. You may not copy, redistribute, or commercialize the Service.</p>
           </div>
         </motion.section>
 
         {/* §8 */}
         <motion.section variants={fadeUp} id="section-8">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§8</span> Disclaimer of Warranties
           </h2>
           <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
             <p className="text-xs font-bold text-amber-300/80 uppercase tracking-wide mb-2">AS IS / AS AVAILABLE</p>
-            <p className="text-sm text-white/65 leading-relaxed">
+            <p className="text-sm text-theme-secondary leading-relaxed">
               THE SERVICE IS PROVIDED WITHOUT WARRANTIES OF ANY KIND. No warranty of merchantability, fitness for purpose, accuracy, uninterrupted operation, or that simulated results will replicate real-world outcomes.
             </p>
             <p className="text-xs font-bold text-amber-400 mt-3">
@@ -237,10 +237,10 @@ export const TermsPage: React.FC = () => {
 
         {/* §9 */}
         <motion.section variants={fadeUp} id="section-9">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§9</span> Limitation of Liability
           </h2>
-          <p className="text-sm text-white/70 leading-relaxed mb-3">
+          <p className="text-sm text-theme-primary leading-relaxed mb-3">
             TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL WE BE LIABLE FOR any direct, indirect, incidental, or consequential damages; data or profit loss; decisions based on Service output; or third-party service failures.
           </p>
           <div className="p-3 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center">
@@ -256,41 +256,41 @@ export const TermsPage: React.FC = () => {
           { id: 13, title: 'Changes to Terms', content: 'We may update these Terms. Material changes will be announced via the Telegram bot. Continued use constitutes acceptance.' },
         ].map(section => (
           <motion.section variants={fadeUp} key={section.id} id={`section-${section.id}`}>
-            <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+            <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
               <span className="text-blue-400/60 text-sm">§{section.id}</span> {section.title}
             </h2>
-            <p className="text-sm text-white/70 leading-relaxed">{section.content}</p>
+            <p className="text-sm text-theme-primary leading-relaxed">{section.content}</p>
           </motion.section>
         ))}
 
         {/* §15 Contact */}
         <motion.section variants={fadeUp} id="section-15">
-          <h2 className="text-base font-black text-white mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
+          <h2 className="text-base font-black text-theme-primary mb-3 flex items-center gap-2 pb-2 border-b border-white/10">
             <span className="text-blue-400/60 text-sm">§15</span> Contact
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex items-center gap-3 p-3 rounded-xl bg-white/3 border border-white/10">
               <Send className="w-4 h-4 text-blue-400" />
               <div>
-                <div className="text-[10px] text-white/40 uppercase font-black tracking-widest">Telegram</div>
-                <div className="text-sm font-bold text-white">@StrikeTipsBot</div>
+                <div className="text-[10px] text-theme-secondary uppercase font-black tracking-widest">Telegram</div>
+                <div className="text-sm font-bold text-theme-primary">@StrikeTipsBot</div>
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-xl bg-white/3 border border-white/10">
               <Scale className="w-4 h-4 text-emerald-400" />
               <div>
-                <div className="text-[10px] text-white/40 uppercase font-black tracking-widest">Regulator</div>
-                <div className="text-sm font-bold text-white">Mpumalanga Economic Regulator</div>
+                <div className="text-[10px] text-theme-secondary uppercase font-black tracking-widest">Regulator</div>
+                <div className="text-sm font-bold text-theme-primary">Mpumalanga Economic Regulator</div>
               </div>
             </div>
           </div>
           <div className="mt-3 flex items-start gap-3 p-3 rounded-xl bg-white/3 border border-white/10">
             <Phone className="w-4 h-4 text-rose-400 mt-0.5" />
-            <div className="text-xs text-white/60">
-              Responsible Gambling: <span className="font-bold text-white/80">0800 006 008</span> | WhatsApp <span className="font-bold text-white/80">076 675 0710</span>
+            <div className="text-xs text-theme-secondary">
+              Responsible Gambling: <span className="font-bold text-theme-primary">0800 006 008</span> | WhatsApp <span className="font-bold text-theme-primary">076 675 0710</span>
             </div>
           </div>
-          <p className="text-xs text-white/35 mt-4 italic">
+          <p className="text-xs text-theme-secondary mt-4 italic">
             These Terms apply only to the Strike Tips Racing Bot paper-trading system. They do not create any right to real-money betting services.
           </p>
         </motion.section>
