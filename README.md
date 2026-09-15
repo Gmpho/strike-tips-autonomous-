@@ -696,6 +696,7 @@ Betting tips and data stay free forever; the project is community-funded
 - Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
 - HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages; Vercel URL kept paused as fallback)
+- Support the project: [https://strike-tips-hud.pages.dev/support](https://strike-tips-hud.pages.dev/support) — voluntary once-off contributions, tips stay free forever
 - MCP: `POST https://striketips-mcp.gmphorg379.workers.dev/mcp` (requires `x-api-key` + `Accept: application/json, text/event-stream`)
 
 ---

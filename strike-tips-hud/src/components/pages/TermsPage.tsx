@@ -68,12 +68,12 @@ export const TermsPage: React.FC = () => {
                 <h1 className="text-2xl md:text-3xl font-black tracking-tight text-theme-primary">Terms of Service</h1>
               </div>
               <p className="text-sm text-theme-secondary font-medium max-w-2xl leading-relaxed">
-                Strike Tips Racing Bot — Free paper-trading educational service. No subscription, payment, or financial commitment required or accepted.
+                Strike Tips Racing Bot — Free paper-trading educational service. No subscription or payment required. Entirely optional once-off contributions are accepted to cover running costs (see §5).
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Effective: June 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Effective: September 2026</span>
                 <span className="text-[10px] px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full font-bold uppercase tracking-widest text-blue-400">South Africa</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.1</span>
               </div>
             </div>
           </div>
@@ -189,7 +189,7 @@ export const TermsPage: React.FC = () => {
           </h2>
           <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
             <p className="text-sm text-theme-primary leading-relaxed">
-              The Service is currently <span className="text-emerald-400 font-bold">free to use</span>. No payment is required, no payment details are collected, and no premium tiers exist at this time. If premium features are introduced in the future, they will be governed by a separate agreement.
+              The Service is <span className="text-emerald-400 font-bold">free to use</span>. No payment is required, no paywalls exist, and no premium tiers gate any feature. Entirely <span className="font-bold">voluntary once-off contributions</span> may be made via a third-party payment processor to help cover hosting, domains, and compute. Contributions are donations toward running costs: they are non-refundable except in cases of duplicate charges or processing errors, confer no goods, services, advantages, or influence over tips and analysis, and never affect access. Contributors must be 18+.
             </p>
           </div>
         </motion.section>
@@ -215,7 +215,7 @@ export const TermsPage: React.FC = () => {
             <span className="text-blue-400/60 text-sm">§7</span> Intellectual Property
           </h2>
           <div className="text-sm text-theme-primary leading-relaxed space-y-2">
-            <p>The Service, its AI models, prompts, architecture, and code are proprietary. Race data sourced from TAB4Racing, Betway, Racing Post belongs to their respective owners. Your paper-trading history and virtual bankroll data are yours to export. You may not copy, redistribute, or commercialize the Service.</p>
+            <p>The Service is open-source software licensed under the GNU Affero General Public License v3.0 (see LICENSE). You may use, study, modify, and share it under those terms; anyone running a modified public version must share their changes alike. Race data sourced from TAB4Racing, Betway, Racing Post belongs to their respective owners. Your paper-trading history and virtual bankroll data are yours to export.</p>
           </div>
         </motion.section>
 
@@ -244,7 +244,7 @@ export const TermsPage: React.FC = () => {
             TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL WE BE LIABLE FOR any direct, indirect, incidental, or consequential damages; data or profit loss; decisions based on Service output; or third-party service failures.
           </p>
           <div className="p-3 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center">
-            <span className="text-sm font-black text-rose-400">Our total liability shall not exceed R0 (zero) — the Service is free.</span>
+            <span className="text-sm font-black text-rose-400">Our total liability shall not exceed the voluntary contributions you made in the 12 months preceding the claim — or R0 (zero) if none.</span>
           </div>
         </motion.section>
 

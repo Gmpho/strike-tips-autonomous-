@@ -40,6 +40,7 @@ const PrivacyPage = React.lazy(() => import('./components/pages/PrivacyPage').th
 const DisclaimerPage = React.lazy(() => import('./components/pages/DisclaimerPage').then(m => ({ default: m.DisclaimerPage })));
 const ResponsiblePage = React.lazy(() => import('./components/pages/ResponsiblePage').then(m => ({ default: m.ResponsiblePage })));
 const ContactPage = React.lazy(() => import('./components/pages/ContactPage').then(m => ({ default: m.ContactPage })));
+const SupportPage = React.lazy(() => import('./components/pages/SupportPage').then(m => ({ default: m.SupportPage })));
 
 const ViewFallback = () => (
   <div className="flex-1 flex items-center justify-center min-h-[300px]">
@@ -47,7 +48,7 @@ const ViewFallback = () => (
   </div>
 );
 
-const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact'];
+const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
@@ -241,6 +242,8 @@ export const App: React.FC = () => {
         return <Suspense key="responsible-view" fallback={<ViewFallback />}><ResponsiblePage /></Suspense>;
       case 'contact':
         return <Suspense key="contact-view" fallback={<ViewFallback />}><ContactPage /></Suspense>;
+      case 'support':
+        return <Suspense key="support-view" fallback={<ViewFallback />}><SupportPage /></Suspense>;
       default:
         return <div key="default-view" className="text-theme-primary p-6 sm:p-12">Select a module</div>;
     }

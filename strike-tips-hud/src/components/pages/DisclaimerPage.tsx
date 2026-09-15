@@ -37,6 +37,16 @@ const WARNINGS = [
     ],
   },
   {
+    title: 'Voluntary Contributions Are Donations, Not Payments for Tips',
+    color: 'blue',
+    points: [
+      'Contributions are once-off, voluntary donations toward hosting and compute — processed by a third-party provider',
+      'They buy no advantage: identical tips, analysis, and access for contributors and non-contributors alike',
+      'A donation is not a wager, investment, or purchase of financial advice; contributing does not make outputs more accurate',
+      'Non-refundable except duplicate charges or processing errors',
+    ],
+  },
+  {
     title: 'Data Sources Are Third-Party',
     color: 'blue',
     points: [
@@ -59,6 +69,7 @@ const ACKNOWLEDGMENTS = [
   'This is paper trading only — no real money involved',
   'Simulated results do not predict real-world outcomes',
   'This is not financial or betting advice',
+  'Voluntary contributions are donations, not payments for tips or influence',
   'You are 18+ and located where this is legal',
   'You will not hold the system liable for any decisions you make',
 ];
@@ -100,8 +111,8 @@ export const DisclaimerPage: React.FC = () => {
                 Strike Tips Racing Bot — Legal disclaimer for paper-trading educational system.
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">June 2026</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">September 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.1</span>
               </div>
             </div>
           </div>

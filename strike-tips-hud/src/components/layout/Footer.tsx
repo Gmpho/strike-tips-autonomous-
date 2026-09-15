@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, Info, FileText, Lock, LifeBuoy, MessageSquare, FileText as FileTextIcon } from 'lucide-react';
+import { ShieldCheck, Info, FileText, Lock, LifeBuoy, MessageSquare, FileText as FileTextIcon, Coffee } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   const links = [
@@ -11,6 +11,7 @@ export const Footer: React.FC = () => {
     { label: 'Disclaimer', icon: FileTextIcon, href: '/disclaimer' },
     { label: 'Responsible', icon: LifeBuoy, href: '/responsible' },
     { label: 'Contact', icon: MessageSquare, href: '/contact' },
+    { label: 'Support', icon: Coffee, href: '/support' },
   ];
 
   return (

@@ -24,7 +24,23 @@ const FAQ_SECTIONS = [
       },
       {
         q: 'How much does it cost?',
-        a: 'Free. No subscription, no premium tiers, no payment details collected.',
+        a: 'Free. No subscription, no premium tiers, no paywalls. Entirely optional once-off contributions are accepted to help cover hosting and compute — they change nothing about access or tips.',
+      },
+      {
+        q: 'Do I have to pay anything?',
+        a: 'Never. Contributions are voluntary and once-off. The full service remains free whether you contribute or not.',
+      },
+      {
+        q: 'Where do contributions go?',
+        a: 'Directly to running costs: hosting, domains, and compute. Processed securely by a third-party payment provider — we never see or store your card details.',
+      },
+      {
+        q: 'Can I get a refund on a contribution?',
+        a: 'Contributions are donations and generally non-refundable, except for duplicate charges or processing errors — contact us and we will make it right.',
+      },
+      {
+        q: 'Does contributing improve my tips?',
+        a: 'No. Tips, analysis, and access are identical for everyone. Contributions fund infrastructure, not influence.',
       },
     ],
   },
@@ -204,8 +220,8 @@ export const FAQPage: React.FC = () => {
                 Frequently Asked Questions — Strike Tips Racing Bot
               </p>
               <div className="flex flex-wrap gap-2 mt-4">
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Last Updated: June 2026</span>
-                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.0</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Last Updated: September 2026</span>
+                <span className="text-[10px] px-2.5 py-1 bg-white/5 border border-white/10 rounded-full font-bold uppercase tracking-widest text-theme-secondary">Version 1.1</span>
               </div>
             </div>
           </div>
