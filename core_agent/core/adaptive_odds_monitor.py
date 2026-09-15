@@ -215,6 +215,23 @@ def _merge_ro_into(betway_state: dict, ro_snapshot: dict):
     )
 
 
+def _sast_wall(time_hhmm: str) -> str:
+    """Shift a UTC wall-clock HH:MM to SAST wall-clock (+2h, no DST in SA).
+
+    Betway display times are UTC walls (epoch rendered in UTC containers)
+    while Betfair stamps SAST walls (epoch rendered with tz=_SAST) — the
+    same instant reads 2h apart ("12:40" vs "14:40"). Comparing in one
+    frame is what makes UK/IRE cards (whose race names carry no R-number
+    for the raceNumber fallback) merge at all. Returns "" when unparseable.
+    """
+    try:
+        parts = str(time_hhmm or "").strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+        return f"{(h + 2) % 24:02d}:{m:02d}"
+    except (ValueError, TypeError, IndexError):
+        return ""
+
+
 def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
     """Inject Betfair SA form data (gear + days since last run) into matching
     Betway events/runners. Adds two optional fields per runner; never modifies
@@ -239,15 +256,27 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
             continue
 
         bf_match = None
-        for bf in bf_events.values():
-            if not isinstance(bf, dict):
-                continue
-            if _norm_course(bf.get("course", "")) != course_key:
-                continue
-            if _norm_time(bf.get("t", "")) != time_key:
-                continue
-            bf_match = bf
-            break
+        time_sast = _sast_wall(time_key)
+        # Two passes: exact-frame first, UTC->SAST shifted second. A single
+        # pass could pair a race with a different race 2h later in meetings
+        # where both frames appear.
+        for shifted in (False, True):
+            for bf in bf_events.values():
+                if not isinstance(bf, dict):
+                    continue
+                if _norm_course(bf.get("course", "")) != course_key:
+                    continue
+                bf_time = _norm_time(bf.get("t", ""))
+                # Exact match (same frame) or UTC->SAST shifted match: Betway
+                # times are UTC walls, Betfair times SAST walls ("12:40" UTC
+                # is "14:40" SAST — same instant, different wall clock).
+                want = time_sast if shifted else time_key
+                if not want or bf_time != want:
+                    continue
+                bf_match = bf
+                break
+            if bf_match:
+                break
         if not bf_match:
             # Fallback: same course + same race number. Betway display times
             # can be placeholders ("12:00") while Betfair carries the exact

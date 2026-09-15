@@ -257,3 +257,62 @@ def test_existing_betway_fields_preserved():
     assert state["events"]["1"]["en"] == "South Africa: Scottsville"
     assert state["events"]["1"]["isFinished"] is False
     assert state["events"]["1"]["raceNumber"] == 1
+
+
+# ---------------------------------------------------------------------------
+# UTC (Betway) vs SAST (Betfair) wall-clock matching — UK/IRE cards carry no
+# R-numbers, so the raceNumber fallback cannot save them; only the +2h frame
+# shift pairs "12:40" UTC with "14:40" SAST (same instant).
+# ---------------------------------------------------------------------------
+def test_utc_to_sast_shift_matches_uk_style_card():
+    from core_agent.core.adaptive_odds_monitor import _sast_wall
+
+    assert _sast_wall("12:40") == "14:40"
+    assert _sast_wall("23:30") == "01:30"
+    assert _sast_wall("not-a-time") == ""
+
+    state = {
+        "events": {
+            "1": _bw_event("Punchestown", "12:40", ["Night Fever"]),
+        }
+    }
+    bf = {
+        "events": {
+            # Irish race names carry no R-number ("1m Mdn") and no raceNumber key
+            "mk1": {
+                "course": "Punchestown",
+                "t": "14:40",
+                "raceName": "1m Mdn",
+                "offTime": "14:40",
+                "runners": [{"name": "Night  Fever (IRE)", "gear": "Hood", "daysSinceRun": 14}],
+            }
+        }
+    }
+    _merge_bf_into(state, bf)
+    ev = state["events"]["1"]
+    assert ev["bf_off_time"] == "14:40"
+    assert ev["runners"][0]["daysSinceRun"] == 14
+    assert ev["runners"][0]["gear"] == "Hood"
+
+
+def test_exact_frame_still_wins_over_shifted_decoy():
+    # Betway event already in SAST frame: exact match must win over a race
+    # 2h later that the shifted frame would also hit.
+    state = {
+        "events": {
+            "1": _bw_event("Greyville", "19:00", ["Speedster"]),
+        }
+    }
+    bf = {
+        "events": {
+            "decoy": _bf_event("Greyville", "21:00", [("Other Horse", None, 5)]),
+            "real": {
+                "course": "Greyville",
+                "t": "19:00",
+                "runners": [{"name": "Speedster", "daysSinceRun": 9}],
+            },
+        }
+    }
+    _merge_bf_into(state, bf)
+    ev = state["events"]["1"]
+    assert ev["runners"][0]["daysSinceRun"] == 9
