@@ -43,11 +43,47 @@ Idempotency keys used: `strike-tips-jar-001`, `strike-jar4-*`. Reuse new keys pe
 3. Send a real R-amount test payment to yourself; confirm payout lands.
 4. Announce in Telegram (pinned message copy below).
 
-## Telegram copy
+## Member messages (copy-paste)
 
-> 🏇 *Strike Tips stays free forever.* If the machine's made you money and you'd like to keep the lights on — once-off, no subscriptions, no paywalls, ever:
-> ☕ Coffee $3 · 🏇 Stable $9 · 🏆 Champion $17 (SAVE $38)
+### 1. Current members (group announcement)
+
+> 🏇 *Quick one, family.*
+>
+> Strike Tips stays **free forever** — that will never change. But the machine costs real money to keep alive (hosting, domains, compute), and until now that's come out of one pocket. 😅
+>
+> So there's now a voluntary tip-jar — **once-off, no subscriptions, no paywalls, no locked tips.** Only chip in if the machine's made you money:
+>
+> ☕ Coffee — $3 (≈R50)
+> 🏇 Stable — $9 (≈R150)
+> 🏆 Champion — $17 (≈R300, marked down from $55)
+>
 > 👉 https://strike-tips-hud.pages.dev/support
+>
+> Zero pressure. The tips don't change either way. 🙏
+
+### 2. Gone members (win-back DM)
+
+> Hey! 👋 Long time — Strike Tips has grown a lot since you left: auto-settling bets, bankroll analytics, a proper dashboard, the works. Still 100% free.
+>
+> I'm keeping it alive with a small voluntary tip-jar now (once-off, from $3 — only if you ever feel like it). No catch, just thought you'd want to see what it became:
+>
+> 👉 https://strike-tips-hud.pages.dev/support
+>
+> Door's always open. 🏇
+
+### 3. New members (welcome + pinned message)
+
+> Welcome to Strike Tips! 🏇 Quick orientation:
+>
+> 📊 Daily AI value bets + full racecards → Dashboard
+> 💰 Auto-settled results + bankroll tracking → Bankroll
+> 📈 Performance deep-dives → Analytics
+>
+> Everything is **free, forever** — no subscriptions, no paywalls. There's an optional once-off tip-jar if the machine ever makes you money (link below), but it changes nothing about what you get.
+>
+> ⚠️ Paper-trading education only. 18+. Winners know when to stop.
+>
+> ☕ Support (optional): https://strike-tips-hud.pages.dev/support
 
 ## Legal coverage
 
