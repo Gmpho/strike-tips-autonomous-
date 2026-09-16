@@ -3,7 +3,9 @@ Result Tracker - Auto-settle open bets using search service (DDGS + direct SA sc
 Uses fuzzy matching on horse names with date fallback (today → yesterday → no date).
 """
 
+import json
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -37,6 +39,32 @@ OFF_TIME_GRACE_MINUTES = 15
 # review: settling a week-old bet against yesterday's results for the same
 # track+race number would usually settle the WRONG race (usually as LOST).
 MAX_SETTLE_AGE_DAYS = 3
+
+
+def _log_settled_winner(bet, winner: str) -> None:
+    """Append a confirmed winner for dream calibration.
+
+    Best-effort JSONL ({date, track, race, winner}) on the first writable
+    data dir found. Never raises.
+    """
+    try:
+        data_dir = ""
+        for cand in (os.environ.get("DATA_DIR", ""), "./data", "data",
+                     "/app/data"):
+            if cand and os.path.isdir(cand):
+                data_dir = cand
+                break
+        if not data_dir:
+            return
+        with open(os.path.join(data_dir, "settled_winners.jsonl"), "a") as f:
+            f.write(json.dumps({
+                "date": str(getattr(bet, "date", "") or "")[:10],
+                "track": str(getattr(bet, "track", "") or ""),
+                "race": str(getattr(bet, "race_number", "") or ""),
+                "winner": str(winner or ""),
+            }) + "\n")
+    except Exception as e:
+        logger.debug(f"settled-winner log skipped: {e}")
 
 
 def _bet_age_days(bet_date: Optional[str]) -> Optional[int]:
@@ -671,7 +699,10 @@ class ResultTracker:
             bet.horse, getattr(bet, "track", ""), "WON" if won else "LOST", notes,
         )
         try:
-            if brain and brain.strike and brain.strike.telegram:
+            _notify_exotic = True
+            if gov and hasattr(gov, "mark_notified"):
+                _notify_exotic = gov.mark_notified(bet.bet_id, won)
+            if _notify_exotic and brain and brain.strike and brain.strike.telegram:
                 await brain.strike.telegram.send_bet_result(
                     horse=bet.horse,
                     track=getattr(bet, "track", ""),
@@ -711,6 +742,15 @@ class ResultTracker:
         gov = self.governor or (brain.strike.bankroll if brain and brain.strike else None)
         if not gov:
             return []
+
+        # Force a fresh volume view: long-lived/overlapping containers settle
+        # from stale reads otherwise (Sep-2026: same bets settled+notified 2x).
+        try:
+            from core_agent.core.volume_sync import sync_volume
+
+            sync_volume(max_age_secs=120)
+        except Exception:
+            pass
 
         open_bets = gov.get_open_bets()
         if not open_bets:
@@ -806,6 +846,7 @@ class ResultTracker:
                 won = True
                 settle_needed = True
                 notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
+                _log_settled_winner(bet, winner)
             else:
                 # 2. Check if a DIFFERENT winner was confirmed for this race
                 confirmed_winner = self._extract_race_winner(result_text)
@@ -815,10 +856,12 @@ class ResultTracker:
                         won = True
                         settle_needed = True
                         notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
+                        _log_settled_winner(bet, confirmed_winner)
                     else:
                         won = False
                         settle_needed = True
                         notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
+                        _log_settled_winner(bet, confirmed_winner)
 
             if settle_needed:
                 settled_ok = False
@@ -839,16 +882,25 @@ class ResultTracker:
                     logger.info(
                         f"Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'} ({notes})"
                     )
-                    profit_loss = (bet.actual_return or 0.0) - bet.stake if won else -bet.stake
+                    # Confirmed values only: the local bet object may be stale
+                    # when settlement ran in another process (brain path), so
+                    # never read actual_return off it (Sep-2026: WON posted
+                    # with R0, LOST posted with the win amount).
+                    _stake = float(getattr(bet, "stake", 0.0) or 0.0)
+                    _returns = float(getattr(bet, "potential_return", 0.0) or 0.0) if won else 0.0
+                    profit_loss = _returns - _stake if won else -_stake
                     try:
-                        if brain and brain.strike and brain.strike.telegram:
+                        _notify = True
+                        if gov and hasattr(gov, "mark_notified"):
+                            _notify = gov.mark_notified(bet.bet_id, won)
+                        if _notify and brain and brain.strike and brain.strike.telegram:
                             await brain.strike.telegram.send_bet_result(
                                 horse=bet.horse,
                                 track=bet.track,
                                 race_number=bet.race_number,
                                 won=won,
-                                stake=bet.stake,
-                                returns=bet.actual_return or 0.0,
+                                stake=_stake,
+                                returns=_returns,
                                 profit_loss=profit_loss,
                             )
                     except Exception as tg_err:

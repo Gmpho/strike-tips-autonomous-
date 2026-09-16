@@ -38,7 +38,56 @@ def _pick_race(snap: Dict) -> Dict:
     return random.choice(events) if events else {}
 
 
-async def _groq_insight(scenario: str, race: Dict) -> str:
+def _enriched_race_text(course: str, race_num, runners: List[Dict]) -> str:
+    """Betfair brief lines for one race (gear/days/comments/verdict).
+
+    Reads the monitor's last-good cache directly — no extra fetching, no
+    import coupling to the scan orchestrator. Empty string when unavailable.
+    """
+    try:
+        data_dir = _dream_data_dir()
+        with open(os.path.join(data_dir, "betfair_form_last_good.json")) as f:
+            cache = json.load(f)
+    except Exception:
+        return ""
+    import time as _time
+    from datetime import datetime as _dt
+    try:
+        age = _time.time() - _dt.fromisoformat(cache.get("saved_at", "")).timestamp()
+        if age > 6 * 3600:
+            return ""
+    except Exception:
+        return ""
+    want = {(r.get("name", "") or "").lower().strip() for r in runners if isinstance(r, dict)}
+    lines = []
+    for ev in (cache.get("events") or {}).values():
+        if not isinstance(ev, dict):
+            continue
+        if str(ev.get("course", "")).lower() != str(course or "").lower():
+            continue
+        try:
+            if int(ev.get("raceNumber", -1)) != int(race_num):
+                continue
+        except (ValueError, TypeError):
+            continue
+        for r in (ev.get("runners") or []):
+            if not isinstance(r, dict):
+                continue
+            if (r.get("name", "") or "").lower().strip() not in want:
+                continue
+            bits = [str(r.get("name", "?"))]
+            for field, short in (("gear", "gear"), ("daysSinceRun", "days"),
+                                 ("official_rating", "OR"), ("runner_comments", "comment"),
+                                 ("verdict", "verdict"), ("form", "form")):
+                v = r.get(field)
+                if v is None or v == "":
+                    continue
+                bits.append(f"{short}:{v}")
+            lines.append(" | ".join(str(b) for b in bits)[:350])
+    return "\n".join(lines[:12])
+
+
+async def _groq_insight(scenario: str, race: Dict, enriched: str = "") -> str:
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         return "Groq unavailable — insight pending."
@@ -86,9 +135,22 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
     prompt = (
         f"Horse racing analyst. Scenario: {scenario}\n"
         f"Race: {race.get('course','?')} R{race.get('raceNumber','?')}. "
-        f"Runners: {runner_summary}.{search_context}{chroma_context}\n"
-        f"Give one concise insight (1-2 sentences) on how this affects value/probability."
+        f"Runners: {runner_summary}.{search_context}{chroma_context}"
+        + (f"\nBetfair form: {enriched}" if enriched else "") +
+        "\nGive one concise insight (1-2 sentences) on how this affects value/probability."
     )
+    try:
+        from core_agent.core import llm_cache as _llm_cache
+        try:
+            from core_agent.core.strike_brain import brain as _brain
+            _ddir = getattr(_brain, "data_dir", None) or "./data"
+        except Exception:
+            _ddir = "./data"
+        _hit = _llm_cache.get(_ddir, "dream-20b", prompt)
+        if _hit:
+            return _hit[:400]
+    except Exception:
+        _hit = None
     try:
         from core_agent.core.http_client import get_async_client
         client = get_async_client(timeout=10.0, resolve_hosts={"api.groq.com"})
@@ -111,14 +173,24 @@ async def _groq_insight(scenario: str, race: Dict) -> str:
             reasoning = data["choices"][0]["message"].get("reasoning") or ""
             if reasoning:
                 content = reasoning.strip()
+        try:
+            from core_agent.core import llm_cache as _llm_cache2
+            try:
+                from core_agent.core.strike_brain import brain as _brain2
+                _ddir2 = getattr(_brain2, "data_dir", None) or "./data"
+            except Exception:
+                _ddir2 = "./data"
+            if content:
+                _llm_cache2.put(_ddir2, "dream-20b", prompt, content)
+        except Exception:
+            pass
         return content[:400]
     except Exception as e:
         logger.warning(f"Groq dream failed: {e}")
         return "Simulation complete — insight unavailable."
 
 
-SCENARIO_TEMPLATES = [
-    "What if the going changed to Heavy at {course}?",
+SCENARIO_TEMPLATES = [    "What if the going changed to Heavy at {course}?",
     "Simulating a 20km/h headwind on the straight at {course}.",
     "What if the favourite was a late scratch in Race {race}?",
     "Evaluating jockey substitution impact at {course} Race {race}.",
@@ -131,28 +203,157 @@ SCENARIO_TEMPLATES = [
 ]
 
 
-def calculate_scenario_shift(scenario: str, race_info: Dict, insight_text: str) -> float:
-    """Calculate a mathematical probability shift based on going, wind, scratches, and sentiment."""
+def _scenario_family(scenario: str) -> str:
+    """Classify a scenario for calibration: going/wind/scratch/sentiment/other."""
+    s = (scenario or "").lower()
+    if any(w in s for w in ("heavy", "soft", "rain", "wet", "mud", "going", "delay")):
+        return "going"
+    if any(w in s for w in ("wind", "headwind", "gale", "breeze")):
+        return "wind"
+    if any(w in s for w in ("scratch", "withdrawn", "non-runner", "suspend", "reduction")):
+        return "scratch"
+    if any(w in s for w in ("late", "drift", "market", "distance", "outsider", "substitut")):
+        return "sentiment"
+    return "other"
+
+
+def _dream_data_dir() -> str:
+    try:
+        from core_agent.core.strike_brain import brain
+        if brain and getattr(brain, "data_dir", None):
+            return str(brain.data_dir)
+    except Exception:
+        pass
+    try:
+        from core_agent.config.paths import DATA_DIR
+        return str(DATA_DIR)
+    except Exception:
+        return "./data"
+
+
+def _append_jsonl(data_dir: str, filename: str, record: Dict) -> None:
+    try:
+        with open(os.path.join(str(data_dir), filename), "a") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except Exception as e:
+        logger.debug(f"dream ledger append skipped: {e}")
+
+
+def _record_dream_ledger(dream_id: str, date: str, track: str, race: str,
+                         scenario: str, fav_name: str, fav_odds: float,
+                         shift: float) -> None:
+    """Append one prediction row: favorite, implied and shifted win probs."""
+    try:
+        implied = 1.0 / max(float(fav_odds), 1.01)
+    except (ValueError, TypeError):
+        implied = 0.2
+    predicted = min(0.99, max(0.01, implied * (1.0 + float(shift or 0.0))))
+    _append_jsonl(_dream_data_dir(), "dream_ledger.jsonl", {
+        "dream_id": dream_id,
+        "date": date,
+        "track": str(track or ""),
+        "race": str(race or ""),
+        "family": _scenario_family(scenario),
+        "fav": str(fav_name or ""),
+        "odds": float(fav_odds) if fav_odds else None,
+        "implied": round(implied, 4),
+        "predicted": round(predicted, 4),
+    })
+
+
+def calibrate_dreams(data_dir: str = "") -> Dict[str, Any]:
+    """Brier-score dream families against settled winners.
+
+    Matches ledger rows to settled_winners by (date, track, race); skips
+    dreams with no matching winner. Returns {family: {n, brier, baseline,
+    skill}} and persists it to dream_calibration.json. Positive skill =
+    dreams beat implied-only probability.
+    """
+    base = str(data_dir or _dream_data_dir())
+    winners: Dict[tuple, str] = {}
+    try:
+        with open(os.path.join(base, "settled_winners.jsonl")) as f:
+            for line in f:
+                try:
+                    w = json.loads(line)
+                    winners[(str(w.get("date", ""))[:10],
+                             str(w.get("track", "")).lower(),
+                             str(w.get("race", "")))] = str(w.get("winner", ""))
+                except Exception:
+                    continue
+    except Exception:
+        return {}
+    fams: Dict[str, Dict[str, float]] = {}
+    try:
+        with open(os.path.join(base, "dream_ledger.jsonl")) as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+    except Exception:
+        return {}
+    for r in rows:
+        try:
+            key = (str(r.get("date", ""))[:10], str(r.get("track", "")).lower(), str(r.get("race", "")))
+            winner = winners.get(key)
+            if not winner:
+                continue
+            outcome = 1.0 if winner.lower() in str(r.get("fav", "")).lower() or str(r.get("fav", "")).lower() in winner.lower() else 0.0
+            fam = str(r.get("family", "other"))
+            b = fams.setdefault(fam, {"n": 0.0, "brier": 0.0, "baseline": 0.0})
+            b["n"] += 1
+            b["brier"] += (float(r.get("predicted", 0.0)) - outcome) ** 2
+            b["baseline"] += (float(r.get("implied", 0.0)) - outcome) ** 2
+        except Exception:
+            continue
+    out: Dict[str, Any] = {}
+    for fam, b in fams.items():
+        n = b["n"] or 1.0
+        out[fam] = {
+            "n": int(b["n"]),
+            "brier": round(b["brier"] / n, 4),
+            "baseline": round(b["baseline"] / n, 4),
+            "skill": round((b["baseline"] - b["brier"]) / n, 4),
+        }
+    try:
+        with open(os.path.join(base, "dream_calibration.json"), "w") as f:
+            json.dump({"updated": datetime.now().isoformat(), "families": out}, f, indent=2)
+    except Exception as e:
+        logger.debug(f"calibration save skipped: {e}")
+    return out
+
+
+def calculate_scenario_shift(scenario: str, race_info: Dict, insight_text: str,
+                             extra_text: str = "", deterministic: bool = False) -> float:
+    """Calculate a mathematical probability shift based on going, wind, scratches, and sentiment.
+
+    `extra_text` carries Betfair comment/verdict lines so keyword rules read
+    real sentences instead of bare form strings. With deterministic=True the
+    uninformative fallback is 0.0 (Tier-1 screens must be reproducible —
+    never random).
+    """
     scen_lower = scenario.lower()
     ins_lower = insight_text.lower()
+    extra_lower = (extra_text or "").lower()
+
+    def _hit(words, *texts):
+        return any(w in t for w in words for t in texts if t)
     
     # 1. Going/Rain simulation
     if any(w in scen_lower for w in ("heavy", "soft", "rain", "wet", "mud")):
         # Check if form or name implies mud capability
         horse_name = race_info.get("name", "").lower()
         form_comments = race_info.get("form", "").lower()
-        if any(w in horse_name or w in form_comments for w in ("mud", "wet", "rain", "heavy", "soft", "sire", "storm")):
+        if _hit(("mud", "wet", "rain", "heavy", "soft", "sire", "storm"),
+                horse_name, form_comments, extra_lower):
             return 0.08
         return -0.05
-        
+
     # 2. Wind simulation
     if any(w in scen_lower for w in ("wind", "headwind", "gale", "breeze")):
         form_comments = race_info.get("form", "").lower()
         # Pacesetters get penalized by headwinds
-        if any(w in form_comments for w in ("led", "pace", "front", "speed")):
+        if _hit(("led", "pace", "front", "speed"), form_comments, extra_lower):
             return -0.06
         # Closers get boosted
-        if any(w in form_comments for w in ("ran on", "stayed", "closer", "slowly away")):
+        if _hit(("ran on", "stayed", "closer", "slowly away"), form_comments, extra_lower):
             return 0.04
         return -0.01
 
@@ -171,7 +372,9 @@ def calculate_scenario_shift(scenario: str, race_info: Dict, insight_text: str) 
         return 0.05
     elif neg_count > pos_count:
         return -0.05
-        
+
+    if deterministic or not insight_text.strip():
+        return 0.0
     return round(random.uniform(-0.03, 0.03), 3)
 
 
@@ -195,7 +398,10 @@ class DreamEngine:
         except Exception:
             return ""
 
-    async def generate_dream(self) -> Dream:
+    async def generate_dream(self, allow_llm: bool = True) -> Dream:
+        """Background dream. allow_llm=False runs the free deterministic
+        Tier-1 screen (no Groq call) — the scheduler passes False for
+        non-bet races (two-tier gating). Default True preserves behavior."""
         snap = _load_snapshot()
         race = _pick_race(snap)
         course = race.get("course", "Unknown Track")
@@ -212,8 +418,17 @@ class DreamEngine:
 
 
         scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
-        insight = await _groq_insight(scenario, race)
-        prob_shift = calculate_scenario_shift(scenario, race, insight)
+        enriched = _enriched_race_text(course, race_num, runners)
+        if allow_llm:
+            insight = await _groq_insight(scenario, race, enriched=enriched)
+            prob_shift = calculate_scenario_shift(scenario, race, insight, extra_text=enriched)
+        else:
+            _fam = _scenario_family(scenario)
+            insight = (f"Screened ({_fam} scenario, deterministic Tier-1, no LLM). "
+                       f"{enriched[:220]}" if enriched else
+                       f"Screened ({_fam} scenario, deterministic Tier-1, no LLM).")
+            prob_shift = calculate_scenario_shift(
+                scenario, race, "", extra_text=enriched, deterministic=True)
 
         dream = Dream(
             id=f"dream-{int(datetime.now().timestamp())}",
@@ -224,6 +439,16 @@ class DreamEngine:
             vividness=round(random.uniform(0.4, 0.95), 2),
             track=course,
             race=str(race_num),
+        )
+        try:
+            from datetime import timezone as _tz, timedelta as _td
+            _today = datetime.now(_tz(_td(hours=2))).strftime("%Y-%m-%d")
+        except Exception:
+            _today = datetime.now().strftime("%Y-%m-%d")
+        _record_dream_ledger(
+            dream.id, _today, course, str(race_num), scenario,
+            str(fav.get("name", "")), odds if isinstance(odds, (int, float)) else 0.0,
+            prob_shift,
         )
         self.history.insert(0, dream)
         if len(self.history) > 20:
@@ -344,6 +569,19 @@ class DreamEngine:
             vividness=round(random.uniform(0.4, 0.95), 2),
             track=course,
             race=str(race_num),
+        )
+        try:
+            from datetime import timezone as _tz, timedelta as _td
+            _today = datetime.now(_tz(_td(hours=2))).strftime("%Y-%m-%d")
+        except Exception:
+            _today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            _c_odds = float(race_info.get("odds", 0.0) or 0.0)
+        except (ValueError, TypeError):
+            _c_odds = 0.0
+        _record_dream_ledger(
+            dream.id, _today, course, str(race_num), scenario,
+            str(race_info.get("name", "")), _c_odds, prob_shift,
         )
         self.history.insert(0, dream)
         if len(self.history) > 20:

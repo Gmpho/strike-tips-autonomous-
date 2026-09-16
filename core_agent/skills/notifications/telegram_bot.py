@@ -27,6 +27,21 @@ def _get_whitelist_ids() -> set[int]:
         return set()
 
 
+def _clip_reasoning(text: str, limit: int = 200) -> str:
+    """Clip reasoning to a sentence boundary (never mid-sentence).
+
+    Cuts at the last sentence end within the limit, appending an ellipsis.
+    Falls back to a hard cut when no boundary exists.
+    """
+    t = str(text or "").strip()
+    if len(t) <= limit:
+        return t
+    cut = max(t.rfind(". ", 0, limit), t.rfind("! ", 0, limit), t.rfind("? ", 0, limit))
+    if cut > 40:
+        return t[: cut + 1].strip() + " …"
+    return t[:limit].rstrip() + " …"
+
+
 class TelegramNotifier:
     """
     Asynchronous Telegram Bot interface for Strike Tips notifications.
@@ -157,8 +172,8 @@ class TelegramNotifier:
             f"🐎 <b>{horse}</b>\n"
             f"💰 Odds: {odds} | Edge: +{edge_percent:.1f}%\n"
             f"💵 Advised Stake: R{stake:.2f}\n\n"
-            f"📝 <i>{reasoning[:200]}</i>\n\n"
-            f"⚠️ Bet responsibly. Max 5% per bet rule applied."
+            f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
+            f"⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
         )
         await self.broadcast(text)
         return True

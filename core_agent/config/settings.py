@@ -103,7 +103,7 @@ class NotificationConfig:
         default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", "")
     )
     twa_url: str = field(
-        default_factory=lambda: os.getenv("TELEGRAM_TWA_URL", "https://strike-tips-hud.vercel.app")
+        default_factory=lambda: os.getenv("TELEGRAM_TWA_URL", "https://strike-tips-hud.pages.dev")
     )
     access_pin: str = field(
         default_factory=lambda: os.getenv("BOT_ACCESS_PIN", "")

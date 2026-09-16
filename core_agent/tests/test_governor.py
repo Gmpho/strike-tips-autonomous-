@@ -255,3 +255,35 @@ def test_expire_stale_bet_moves_no_money(temp_data_dir):
     assert b.status == "EXPIRED"
     assert gov.paper_balance == pytest.approx(before)
     assert bet.bet_id not in [x.bet_id for x in gov.get_open_bets()]
+
+
+def test_longshot_cap_shrinks_with_odds(temp_data_dir):
+    """5% cap holds at <=5.0 odds, hyperbolically less above (25/odds)."""
+    gov = _paper_gov(temp_data_dir, balance=10000.0)
+    assert gov.calculate_max_stake(50.0, balance=10000.0) == pytest.approx(500.0)
+    assert gov.calculate_max_stake(50.0, balance=10000.0, odds=5.0) == pytest.approx(500.0)
+    assert gov.calculate_max_stake(50.0, balance=10000.0, odds=10.0) == pytest.approx(250.0)
+    assert gov.calculate_max_stake(50.0, balance=10000.0, odds=41.0) == pytest.approx(60.98, abs=0.05)
+    # No-odds callers keep legacy behavior
+    assert gov.calculate_max_stake(50.0, balance=10000.0, odds=None) == pytest.approx(500.0)
+
+
+def test_delusion_gate_rejects_absurd_edge(temp_data_dir):
+    """61% edge on a 41.0 shot (26x implied) is model error, not value."""
+    gov = _paper_gov(temp_data_dir, balance=10000.0)
+    assert gov.record_bet("vaal", 1, "Deluded", 41.0, 10.0, 61.0, "VALUE") is None
+    # Sane edges still pass: 8% @ 3.0 (est 41% vs implied 33% = 1.24x)
+    bet = gov.record_bet("vaal", 1, "Sane", 3.0, 10.0, 8.0, "VALUE")
+    assert bet is not None
+    # Boundary: exactly 8x ratio passes, above rejects
+    assert gov.record_bet("vaal", 2, "Edge8x", 9.0, 10.0, 77.0, "VALUE") is not None  # est .888/implied .111 = 8.0x
+    assert gov.record_bet("vaal", 3, "Edge9x", 9.0, 10.0, 80.0, "VALUE") is None
+
+
+def test_mark_notified_dedupes(temp_data_dir):
+    gov = _paper_gov(temp_data_dir)
+    assert gov.mark_notified("abc123", True) is True
+    assert gov.mark_notified("abc123", True) is False
+    # Same bet, different outcome is a distinct key
+    assert gov.mark_notified("abc123", False) is True
+    assert gov.mark_notified("abc123", False) is False

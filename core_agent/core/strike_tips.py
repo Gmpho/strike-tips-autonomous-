@@ -5,6 +5,7 @@ Main orchestrator that ties together all skills
 
 import json
 import os
+import re
 import sys
 import argparse
 import asyncio
@@ -61,6 +62,164 @@ def _is_number_selection(value: object) -> bool:
 def _norm_text(s) -> str:
     """Alphanumeric-lowercase normaliser for cross-source name matching."""
     return "".join(c for c in str(s or "").lower() if c.isalnum())
+
+
+def _bf_form_index(data_dir: str, max_age_secs: int = 6 * 3600) -> Dict[tuple, List[Dict]]:
+    """Betfair enriched runners keyed by (norm_course, race_number).
+
+    Reads the monitor's last-good cache (refreshed every cycle, no extra
+    fetching). Stale caches (>6h) return {} — analysis degrades to
+    unenriched rather than reasoning on old cards. Secondary key: exact
+    time match is left to callers; raceNumber is primary.
+    """
+    import json as _json
+    import os as _os
+    import time as _time
+    from datetime import datetime as _dt
+
+    out: Dict[tuple, List[Dict]] = {}
+    try:
+        with open(_os.path.join(str(data_dir), "betfair_form_last_good.json")) as f:
+            cache = _json.load(f)
+        saved = cache.get("saved_at", "")
+        try:
+            age = _time.time() - _dt.fromisoformat(saved).timestamp()
+        except Exception:
+            return {}
+        if age > max_age_secs:
+            return {}
+        for ev in (cache.get("events") or {}).values():
+            if not isinstance(ev, dict):
+                continue
+            key = None
+            try:
+                rn = ev.get("raceNumber")
+                if rn is not None:
+                    key = (_norm_text(ev.get("course", "")), int(rn))
+            except (ValueError, TypeError):
+                key = None
+            if key is None or not key[0]:
+                continue
+            out[key] = [r for r in (ev.get("runners") or []) if isinstance(r, dict)]
+    except Exception:
+        pass
+    return out
+
+
+_BF_PROMPT_FIELDS = (
+    "gear", "daysSinceRun", "official_rating", "pedigree", "owner",
+    "trainer", "age", "weight", "form", "runner_comments", "verdict",
+    "jockey_claim",
+)
+
+
+def _bf_runner_brief(r: Dict) -> str:
+    """One compact line of Betfair form for the AI prompt."""
+    bits = [str(r.get("name", "?"))]
+    mapping = [
+        ("gear", "gear"), ("daysSinceRun", "days"), ("official_rating", "OR"),
+        ("pedigree", "ped"), ("owner", "own"), ("trainer", "trn"),
+        ("age", "age"), ("weight", "wgt"), ("form", "form"),
+        ("runner_comments", "comment"), ("verdict", "verdict"),
+        ("jockey_claim", "claim"),
+    ]
+    for field, short in mapping:
+        v = r.get(field)
+        if v is None or v == "":
+            continue
+        bits.append(f"{short}:{v}")
+    line = " | ".join(str(b) for b in bits)
+    return line[:400]
+
+
+def _snapshot_distances(data_dir: str, today_iso: str) -> Dict[tuple, int]:
+    """Real race distances from the last merged market snapshot.
+
+    The Betfair merge stamps exact `distance_m` per event (only when its
+    `bf_event_date` is today — stale meetings never leak in). Returns
+    {(norm_course, race_number): metres}. Empty on any failure: callers
+    treat unknown as unknown.
+    """
+    import json as _json
+    import os as _os
+
+    out: Dict[tuple, int] = {}
+    try:
+        with open(_os.path.join(str(data_dir), "market_snapshot_latest.json")) as f:
+            snap = _json.load(f)
+        for ev in (snap.get("events") or {}).values():
+            if not isinstance(ev, dict):
+                continue
+            if str(ev.get("bf_event_date", "") or "")[:10] != today_iso:
+                continue
+            try:
+                rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
+                dm = int(ev.get("distance_m", 0))
+            except (ValueError, TypeError):
+                continue
+            if rn > 0 and dm >= 800:
+                out[(_norm_text(ev.get("course", "")), rn)] = dm
+    except Exception:
+        pass
+    return out
+
+
+# TAB Daily Tipping Sheet prints exact pool ranges per meeting, e.g.
+# "Bipot (1-6)", "PA (2-8)", "Pick 6 (3-8)", "Jackpot 1 (4-7)".
+# (pool label, leg count, code prefix)
+_TIPS_POOL_RES = (
+    (r"\bBIPOT\s*\((\d+)\s*-\s*(\d+)\)", 6, "BI1"),
+    (r"\bPA\s*\((\d+)\s*-\s*(\d+)\)", 7, "PA"),
+    (r"PICK\s*6\s*\((\d+)\s*-\s*(\d+)\)", 6, "P6"),
+    (r"PICK\s*3\s*\((\d+)\s*-\s*(\d+)\)", 3, "P3"),
+    (r"JACKPOT\s*1?\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP1"),
+    (r"JACKPOT\s*2\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP2"),
+)
+
+
+def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
+    """Exact pool start races from the TAB Daily Tipping Sheet text.
+
+    Scopes to the track's meeting section (headers are bare caps names like
+    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL).
+    Returns {"BI1": 1, "PA": 2, ...}. Entries whose range length disagrees
+    with the pool's leg count are ignored ( OCR/parse noise guard).
+    """
+    out: Dict[str, int] = {}
+    if not raw_text or not track:
+        return out
+    lines = str(raw_text).splitlines()
+    want = _norm_text(track)
+    start = None
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s:
+            continue
+        if _norm_text(s) == want and len(s) <= 30:
+            start = i
+            break
+    if start is None:
+        return out
+    section = []
+    for ln in lines[start + 1:start + 60]:
+        s = ln.strip()
+        if not s:
+            continue
+        # Next meeting section or a new sheet begins.
+        if s.isupper() and len(s) <= 30 and _norm_text(s) != want and re.fullmatch(r"[A-Z][A-Z \-&']+", s):
+            if "LEG" in s or "RACE" in s or "COST" in s or "CLOSE" in s:
+                continue
+            break
+        section.append(s)
+    blob = "\n".join(section)
+    for pat, legs, code in _TIPS_POOL_RES:
+        for m in re.finditer(pat, blob, re.IGNORECASE):
+            groups = [int(g) for g in m.groups()]
+            first, last = groups[-2], groups[-1]
+            if last - first + 1 != legs:
+                continue
+            out.setdefault(code, first)
+    return out
 
 
 async def _betfair_course_dates() -> Dict[str, set]:
@@ -478,32 +637,149 @@ class StrikeTips:
                 print(f"[WARN] No race data found for {track} after all attempts.")
                 return []
 
+            # Enrich with Betfair form (gear/days/comments/verdict/ratings)
+            # from the monitor's last-good cache + exact snapshot distances.
+            # The AI summarises this into reasoning instead of guessing.
+            _bf_index = _bf_form_index(self.data_dir)
+            _dist_index = _snapshot_distances(self.data_dir, today_iso)
+            _bf_lines: Dict[int, str] = {}
+            for _r in races:
+                _key = (_norm_text(track), int(_r.race_number or 0))
+                if _r.distance is None and _key in _dist_index:
+                    _r.distance = _dist_index[_key]
+                _bfr = _bf_index.get(_key, [])
+                if _bfr:
+                    _by_norm = {_norm_text(x.get("name", "")): x for x in _bfr}
+                    _lines = []
+                    for _run in _r.runners:
+                        _nm = _run.horse_name if hasattr(_run, "horse_name") else str(_run)
+                        _hit = _by_norm.get(_norm_text(_nm))
+                        if _hit:
+                            _lines.append(_bf_runner_brief(_hit))
+                    if _lines:
+                        _bf_lines[int(_r.race_number or 0)] = (
+                            "BETFAIR FORM (summarise into reasoning):\n" + "\n".join(_lines[:14])
+                        )
+            if _bf_lines:
+                print(f"[FORM] Attached Betfair enrichment to {len(_bf_lines)}/{len(races)} {track} races")
+
             # 2. Dispatch Parallel AI Analysis
             print(
                 f"[LIST] Found {len(races)} races. Dispatching parallel AI analysis..."
             )
             prompts = []
             for r in races:
+                _dist_hint = (
+                    f"Race distance is {r.distance}m. "
+                    if r.distance else
+                    "Race distance is UNKNOWN — do not state any distance. "
+                )
+                _bf_ctx = _bf_lines.get(int(r.race_number or 0), "")
                 prompt = (
                     f"Analyze this single race for value: {json.dumps(asdict(r))}. "
-                    f"Context: {track} Race {r.race_number}. "
+                    f"Context: {track} Race {r.race_number}. {_dist_hint}"
+                    + (_bf_ctx + " " if _bf_ctx else "") +
                     "Return ONLY valid JSON. Each value_bet MUST include these fields: "
                     "'horse' (string), 'edge_percent' (float, your edge = (est_prob - 1/odds) * 100), "
                     "'odds_decimal' (float), 'estimated_probability' (float 0-1), "
-                    "'reasoning' (string). "
+                    "'reasoning' (string, max 2 sentences). "
                     f"{{'race_number': {r.race_number}, 'summary': '...', 'value_bets': [...]}}"
                 )
                 prompts.append(prompt)
 
-            # Use the parallel provider if available
-            # Dispatch in batches of 1 to protect 8GB RAM (Sequential reasoning)
-            ai_responses = []
-            for i in range(0, len(prompts)):
-                batch = prompts[i : i + 1]
-                logger.info(f"[SWARM] Processing race {i+1}/{len(prompts)}...")
-                batch_responses = await self.ai._call_kimi_parallel(batch)
-                ai_responses.extend(batch_responses)
+            # Dispatch: date-scoped prompt cache first, then batched Groq
+            # calls (6 races/call, JSON-array schema). Identical prompts
+            # across morning/midday/chat re-pay nothing; batching cuts
+            # request count ~6x (free-tier walls count requests first).
+            from core_agent.core import llm_cache as _llm_cache
+
+            _SCAN_MODEL = "scan-120b"
+            _CHUNK = 6
+            contents: List[Optional[str]] = [None] * len(races)
+            pending_idx: List[int] = []
+            for i, prompt in enumerate(prompts):
+                hit = _llm_cache.get(self.data_dir, _SCAN_MODEL, prompt)
+                if hit:
+                    contents[i] = hit
+                else:
+                    pending_idx.append(i)
+
+            async def _dispatch_chunk(idxs: List[int]) -> None:
+                if len(idxs) == 1:
+                    i = idxs[0]
+                    try:
+                        resp = await self.ai._call_kimi_parallel([prompts[i]])
+                        text = resp[0].content if resp else ""
+                    except Exception as e:
+                        logger.warning(f"[SWARM] single call failed R{races[i].race_number}: {e}")
+                        text = ""
+                    contents[i] = text
+                    if text:
+                        _llm_cache.put(self.data_dir, _SCAN_MODEL, prompts[i], text)
+                    return
+                chunk_prompt = (
+                    "Analyze EACH of the following races for value. "
+                    "Return ONLY valid JSON: {\"races\": [{\"race_number\": N, "
+                    "\"summary\": \"...\", \"value_bets\": [{\"horse\": \"...\", "
+                    "\"edge_percent\": 0.0, \"odds_decimal\": 0.0, "
+                    "\"estimated_probability\": 0.0, \"reasoning\": \"max 2 sentences\"}]}]}. "
+                    "One entry per race, same order as given.\n\n"
+                    + "\n\n--- RACE ---\n\n".join(prompts[j] for j in idxs)
+                )
+                cached = _llm_cache.get(self.data_dir, _SCAN_MODEL, chunk_prompt)
+                if cached:
+                    _assign_chunk(cached, idxs)
+                    return
+                try:
+                    resp = await self.ai._call_kimi_parallel([chunk_prompt])
+                    text = resp[0].content if resp else ""
+                except Exception as e:
+                    logger.warning(f"[SWARM] chunk call failed, falling back to singles: {e}")
+                    text = ""
+                if text and _assign_chunk(text, idxs):
+                    _llm_cache.put(self.data_dir, _SCAN_MODEL, chunk_prompt, text)
+                    return
+                # Fallback: single calls for each race in the chunk.
+                for j in idxs:
+                    try:
+                        r2 = await self.ai._call_kimi_parallel([prompts[j]])
+                        t2 = r2[0].content if r2 else ""
+                    except Exception:
+                        t2 = ""
+                    contents[j] = t2
+                    if t2:
+                        _llm_cache.put(self.data_dir, _SCAN_MODEL, prompts[j], t2)
+
+            def _assign_chunk(text: str, idxs: List[int]) -> bool:
+                """Map a chunk JSON response back onto races. False = retry singles."""
+                try:
+                    clean = text.replace("```json", "").replace("```", "").strip()
+                    if "{" in clean:
+                        clean = clean[clean.find("{"):clean.rfind("}") + 1]
+                    data = json.loads(clean)
+                    entries = data.get("races", [])
+                    by_num = {}
+                    for e in entries:
+                        if isinstance(e, dict) and e.get("race_number") is not None:
+                            by_num[int(e["race_number"])] = json.dumps(e)
+                    ok = True
+                    for j in idxs:
+                        s = by_num.get(int(races[j].race_number or -1))
+                        if s is None:
+                            ok = False
+                        contents[j] = s or ""
+                    return ok
+                except Exception:
+                    return False
+
+            for _s in range(0, len(pending_idx), _CHUNK):
+                logger.info(f"[SWARM] Processing races chunk {_s // _CHUNK + 1}...")
+                await _dispatch_chunk(pending_idx[_s:_s + _CHUNK])
                 await asyncio.sleep(3)  # Increased throttle delay for 8GB RAM
+
+            ai_responses = [
+                type("R", (), {"content": contents[i] or ""})() for i in range(len(races))
+            ]
 
             results = []
             for i, r in enumerate(races):
@@ -678,7 +954,7 @@ class StrikeTips:
             logger.warning("[PDF] Runner enrichment failed: %s", e)
             return 0
 
-    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict) -> List[Dict]:
+    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "") -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
         import re
 
@@ -702,6 +978,8 @@ class StrikeTips:
                         pool_starts[pn] = int(rn)
 
         # Fallback standard SA pool starts if PDF leg_info is absent.
+        # Best source: the TAB Daily Tipping Sheet prints exact ranges
+        # ("Bipot (1-6)") per meeting — beats conventions and leg_info.
         # NOTE: this method analyses ONE non-empty track. The caller loops
         # tracks so a play can never be stamped with another meeting's name
         # (Sep-2026: a Vaal Thursday card went out as "turffontein" via the
@@ -709,6 +987,10 @@ class StrikeTips:
         track_name = next((t for t, rs in all_results.items() if rs),
                           "South Africa")
         track_races = all_results.get(track_name, [])
+        tips_starts = _tips_pool_starts(tips_text, track_name)
+        if tips_starts:
+            print(f"[EXOTIC] TAB sheet pool starts for {track_name}: {tips_starts}")
+            pool_starts.update(tips_starts)
         total_races = len(track_races)
         from_pdf = bool(pool_starts)
 
@@ -745,8 +1027,11 @@ class StrikeTips:
             + "\n".join(card_sections)
             + f"\n\nPOOL LAYOUT: {pool_summary}\n\n"
             + "YOUR TASK: Generate exotic pool combinations for each declared pool. "
-            + "For each pool, pick banker and saver selections per leg based on horse quality, "
-            + "form, and trainer/jockey strength. "
+            + "For each leg, pick 2 to 4 selections, strongest first: one banker "
+            + "plus up to 3 savers, chosen on horse quality, form, and "
+            + "trainer/jockey strength. Short legs (clear standout) take fewer "
+            + "selections, open handicaps take more — like a strategist sizing "
+            + "a real permutation ticket, never the full field. "
             + "Return ONLY valid JSON with this exact structure: "
             + '{"exotic_plays": [{"pool": "PICK 6", "legs": [4,5,6,7,8,9], '
             + '"combinations": [{"race": 4, "banker": "Horse 1", "savers": ["Horse 2", "Horse 3"]}], '
@@ -791,6 +1076,13 @@ class StrikeTips:
                     p["source"] = "pdf+ai" if from_pdf else "ai"
                     combos = p.get("combinations", [])
                     if combos and isinstance(combos, list) and isinstance(combos[0], dict) and "banker" in combos[0]:
+                        # Strategist cap: at most 3 savers per leg (banker + 3
+                        # = 4 selections max). Trims AI excess while keeping
+                        # banker-first order.
+                        for c in combos:
+                            if isinstance(c, dict) and isinstance(c.get("savers"), list):
+                                c["savers"] = [s for s in c["savers"] if not _is_number_selection(
+                                    s.get("name") if isinstance(s, dict) else s)][:3]
                         # Recalculate true mathematical combinations
                         true_combos = 1
                         for c in combos:
@@ -846,11 +1138,20 @@ class StrikeTips:
                         # the whole pool rather than carding "#1 (Banker)".
                         pool_ok = False
                         break
+                    # Strategist spread: more selections per leg on short
+                    # pools, fewer on long ones so permutations stay sane
+                    # (4 legs: up to 4/leg; 5-7 legs: up to 3; 8+: up to 2).
+                    if num_legs <= 4:
+                        max_sel = 4
+                    elif num_legs <= 7:
+                        max_sel = 3
+                    else:
+                        max_sel = 2
                     s_horses = []
-                    if len(r_runners) > 1:
-                        saver = _get_name(1)
-                        if saver:
-                            s_horses = [saver]
+                    for _si in range(1, max_sel):
+                        _saver = _get_name(_si)
+                        if _saver and _saver != b_horse and _saver not in s_horses:
+                            s_horses.append(_saver)
                     combo = {
                         "race": r_num,
                         "banker": b_horse,
@@ -1003,8 +1304,11 @@ class StrikeTips:
         if override_stake:
             stake = override_stake
         else:
-            # Use Kelly-based stake from analyzer (DSI-scaled via track/race)
-            max_stake = self.bankroll.calculate_max_stake(edge_percent, track, race_number)
+            # Use Kelly-based stake from analyzer (DSI-scaled via track/race,
+            # odds-scaled cap via odds so longshots can't take full 5%).
+            max_stake = self.bankroll.calculate_max_stake(
+                edge_percent, track, race_number, odds=odds
+            )
             stake = min(max_stake, self.bankroll.current_bankroll * 0.05)
 
         # Record the bet
@@ -1229,7 +1533,10 @@ class StrikeTips:
                 if not _traces:
                     continue
                 try:
-                    _plays = await self._analyze_exotic_pools({_tname: _traces}, pdf_races)
+                    _plays = await self._analyze_exotic_pools(
+                        {_tname: _traces}, pdf_races,
+                        tips_text=str(pdf_res.get("raw_text", "") or ""),
+                    )
                 except Exception as e:
                     print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
                     _plays = []
@@ -1299,7 +1606,7 @@ class StrikeTips:
 
                                 # Calculate advised stake using Half-Kelly for the notification
                                 max_stake = self.bankroll.calculate_max_stake(
-                                    edge, track, race.get("race_number")
+                                    edge, track, race.get("race_number"), odds=odds
                                 )
                                 advised_stake = min(max_stake, self.bankroll.current_bankroll * 0.05)
 

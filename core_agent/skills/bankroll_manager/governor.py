@@ -126,6 +126,14 @@ class BankrollGovernor:
     """
 
     MAX_BET_PERCENT: float = 5.0
+    # Delusion guard: est/implied ratio above this means the model, not the
+    # market, is broken (Sep-2026: 61% "edge" on a 41.0 shot = 26x implied).
+    MAX_EST_TO_IMPLIED_RATIO: float = 8.0
+    # Longshot damage cap: max % of bank shrinks hyperbolically above 5.0
+    # odds (5% at <=5.0, 2.5% at 10.0, 0.6% at 41.0). Kelly hits the cap on
+    # anything with edge>10% regardless of odds — without this, 40/1
+    # lottery tickets get full 5% stakes and bleed the bank dry.
+    LONGSHOT_CAP_NUMERATOR: float = 25.0
     DAILY_LOSS_LIMIT_PERCENT: float = 20.0
     MAX_DRAWDOWN_PERCENT: float = 50.0
     MIN_EDGE_PERCENT: float = 5.0
@@ -291,6 +299,7 @@ class BankrollGovernor:
         track: Optional[str] = None,
         race_number: Optional[int] = None,
         balance: Optional[float] = None,
+        odds: Optional[float] = None,
     ) -> float:
         """Calculate maximum allowed stake using Half-Kelly, scaled by Dream Stress Index (DSI)
 
@@ -298,6 +307,9 @@ class BankrollGovernor:
             balance: Bankroll base for sizing. Defaults to the real current
                 bankroll; pass ``paper_balance`` for paper-mode sizing so
                 simulated bets mirror live Kelly/DSI logic.
+            odds: Decimal odds. When provided, the 5% cap shrinks
+                hyperbolically above 5.0 odds (25/odds percent) so longshots
+                can't take full-bank-percentage lottery stakes.
         """
         if edge_percent < self.MIN_EDGE_PERCENT:
             return 0.0
@@ -346,7 +358,13 @@ class BankrollGovernor:
                 logger.warning(f"Failed to query ChromaDB for DSI calculation: {e}")
                 
         scaled_kelly = kelly_stake * dsi_scale
-        max_stake = base_balance * (self.MAX_BET_PERCENT / 100.0)
+        cap_pct = self.MAX_BET_PERCENT
+        try:
+            if odds is not None and float(odds) > 0:
+                cap_pct = min(cap_pct, self.LONGSHOT_CAP_NUMERATOR / float(odds))
+        except (ValueError, TypeError):
+            pass
+        max_stake = base_balance * (cap_pct / 100.0)
         return round(min(scaled_kelly, max_stake), 2)
 
     # ─── Bet Operations ─────────────────────────────────────────────────────
@@ -373,6 +391,22 @@ class BankrollGovernor:
                     f"Bet rejected: insufficient edge ({edge_percent}% < {self.MIN_EDGE_PERCENT}%)"
                 )
                 return None
+
+            # Delusion gate: implied est. probability cannot exceed N times
+            # the market-implied probability. A 61% "edge" on a 41.0 shot
+            # means est_p ~= 63% vs implied 2.4% (26x) — model error, not
+            # value. Reject loudly instead of staking the 5% cap on it.
+            try:
+                _implied = 1.0 / float(odds) if float(odds) > 1.0 else 0.0
+                _est = _implied + float(edge_percent) / 100.0
+                if _implied > 0 and _est / _implied > self.MAX_EST_TO_IMPLIED_RATIO:
+                    logger.warning(
+                        f"Bet rejected: delusional edge ({edge_percent}% @ {odds} "
+                        f"implies p~{_est:.1%} vs market {_implied:.1%})"
+                    )
+                    return None
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
 
             if is_paper:
                 # Refill the paper account from settings when its ledger has been drained
@@ -619,6 +653,38 @@ class BankrollGovernor:
             logger.info(
                 f"Bet settled: {bet.horse} - {'WON' if won else 'LOST'} | P&L: R{bet.profit_loss:.2f}"
             )
+            return True
+
+    def mark_notified(self, bet_id: str, won: bool) -> bool:
+        """Persistent settle-notification dedupe (cross-process safe).
+
+        Overlapping monitor runs each settle+notify the same bets from stale
+        volume reads (Sep-2026: every result posted 2x, amounts crossed).
+        Returns True only the first time a (bet_id, outcome) is marked —
+        callers must skip Telegram when False. Best-effort file ops.
+        """
+        try:
+            path = os.path.join(self.data_dir, "notified_settles.json")
+            try:
+                with open(path) as f:
+                    seen = json.load(f)
+                if not isinstance(seen, dict):
+                    seen = {}
+            except Exception:
+                seen = {}
+            key = f"{bet_id}:{'W' if won else 'L'}"
+            if key in seen:
+                return False
+            seen[key] = {"won": won, "ts": datetime.now().isoformat()}
+            while len(seen) > 500:
+                seen.pop(next(iter(seen)))
+            try:
+                with open(path, "w") as f:
+                    json.dump(seen, f)
+            except Exception:
+                pass
+            return True
+        except Exception:
             return True
 
     def cancel_pending_bet(self, bet_id: str, notes: str = "") -> bool:

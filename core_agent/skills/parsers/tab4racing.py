@@ -67,11 +67,31 @@ class ScrapedRace:
     track: str
     race_number: int
     race_time: str
-    distance: int  # metres, default 1600 if not found
+    distance: Optional[int]  # metres; None when the source gives none —
+    # NEVER a placeholder (Sep-2026: hardcoded 1600m made every AI comment
+    # say "the 1600m race" for sprints and routes alike).
     track_condition: str  # Good, Soft, Heavy
     runners: List[ScrapedRunner] = field(default_factory=list)
     race_class: Optional[str] = None
     prize_money: Optional[float] = None
+
+
+def _parse_distance_m(*candidates) -> Optional[int]:
+    """Best-effort race distance in metres from API fields or race text.
+
+    Accepts ints, "1600m"/"1m4f"-style strings. Returns None when nothing
+    parseable — callers must treat unknown as unknown, never default.
+    """
+    for cand in candidates:
+        if cand is None:
+            continue
+        if isinstance(cand, (int, float)) and cand >= 800:
+            return int(cand)
+        if isinstance(cand, str):
+            m = re.search(r"(\d{3,4})\s*m\b", cand)
+            if m and int(m.group(1)) >= 800:
+                return int(m.group(1))
+    return None
 
 
 def get_live_odds(
@@ -269,7 +289,11 @@ class TAB4RacingScraper:
                                 race_time=r.get("AdvertisedStartTime", "").split(" ")[
                                     -1
                                 ][:5],
-                                distance=1600,
+                                distance=_parse_distance_m(
+                                    r.get("Distance"), r.get("distance"),
+                                    r.get("RaceDistance"), r.get("race_distance"),
+                                    r.get("RaceName"), r.get("race_name"),
+                                ),
                                 track_condition="Good",
                                 runners=runners,
                             )
@@ -332,7 +356,9 @@ class TAB4RacingScraper:
                             track=track,
                             race_number=i,
                             race_time=race_time,
-                            distance=1600,
+                            distance=_parse_distance_m(
+                                container.get_text(" ", strip=True)[:500]
+                            ),
                             track_condition="Good",
                             runners=runners,
                         )

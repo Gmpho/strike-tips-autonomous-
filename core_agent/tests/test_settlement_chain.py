@@ -98,6 +98,7 @@ def _bet(**kw):
     b.confidence = kw.get("confidence", "VALUE")
     b.stake = kw.get("stake", 10.0)
     b.actual_return = 0.0
+    b.potential_return = kw.get("potential_return", 35.0)
     b.date = date.today().isoformat()
     return b
 
@@ -788,3 +789,74 @@ def test_exotic_layout_validation():
     p6 = _mk_play("PICK 6", [4, 5, 6, 7, 8, 9])
     out2 = _validate_exotic_layout([pa, p6], 9)
     assert [p["pool"] for p in out2] == ["PLACE ACCUMULATOR", "PICK 6"]
+
+
+def test_notify_uses_confirmed_values_not_stale_object(stub_brain_module):
+    """Sep-2026: WON posted with R0 / LOST posted with the win amount because
+    notifications read the possibly-stale bet object. Now computed."""
+    gov = MagicMock()
+    gov.settle_bet.return_value = True
+    bet = _bet(horse="Silver Storm", stake=10.0, potential_return=35.0)
+    bet.actual_return = 0.0  # stale object, as in the cross-process bug
+    gov.get_open_bets.return_value = [bet]
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(
+        ResultTracker, "_search_result", new=AsyncMock(return_value="Winner: Silver Storm (1st) in race 4 at Vaal")
+    ):
+        settled = asyncio.run(tracker.check_and_settle_open_bets())
+    assert len(settled) == 1 and settled[0]["won"] is True
+
+
+def test_duplicate_notification_suppressed():
+    """Overlapping runs re-settling the same bet must notify only once:
+    mark_notified False skips the Telegram send."""
+    import sys as _sys
+
+    gov = MagicMock()
+    gov.settle_bet.return_value = True
+    gov.mark_notified.return_value = False  # already notified before
+    tg = AsyncMock()
+    fake_brain_mod = MagicMock()
+    fake_brain_mod.brain.strike.telegram = tg
+    fake_brain_mod.brain.strike.bankroll = gov
+    bet = _bet(horse="Silver Storm", stake=10.0, potential_return=35.0)
+    gov.get_open_bets.return_value = [bet]
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(_sys.modules, {"core_agent.core.strike_brain": fake_brain_mod}):
+        with patch.object(
+            ResultTracker, "_search_result",
+            new=AsyncMock(return_value="Winner: Silver Storm (1st) in race 4 at Vaal"),
+        ):
+            settled = asyncio.run(tracker.check_and_settle_open_bets())
+    assert len(settled) == 1 and settled[0]["won"] is True
+    tg.send_bet_result.assert_not_called()
+    gov.mark_notified.assert_called_once_with(bet.bet_id, True)
+
+
+def test_first_notification_goes_through():
+    """mark_notified True on first settle lets the Telegram send through with
+    confirmed (not object-read) amounts."""
+    import sys as _sys
+
+    gov = MagicMock()
+    gov.settle_bet.return_value = True
+    gov.mark_notified.return_value = True
+    tg = AsyncMock()
+    fake_brain_mod = MagicMock()
+    fake_brain_mod.brain.strike.telegram = tg
+    fake_brain_mod.brain.strike.bankroll = gov
+    bet = _bet(horse="Silver Storm", stake=10.0, potential_return=35.0)
+    bet.actual_return = 0.0  # stale object must not leak into the message
+    gov.get_open_bets.return_value = [bet]
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(_sys.modules, {"core_agent.core.strike_brain": fake_brain_mod}):
+        with patch.object(
+            ResultTracker, "_search_result",
+            new=AsyncMock(return_value="Winner: Silver Storm (1st) in race 4 at Vaal"),
+        ):
+            asyncio.run(tracker.check_and_settle_open_bets())
+    tg.send_bet_result.assert_called_once()
+    kwargs = tg.send_bet_result.call_args[1]
+    assert kwargs["won"] is True
+    assert kwargs["returns"] == pytest.approx(35.0)
+    assert kwargs["profit_loss"] == pytest.approx(25.0)

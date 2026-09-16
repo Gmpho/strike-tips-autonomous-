@@ -33,7 +33,9 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     volumes={"/app/data": data_volume},
     memory=256,
     timeout=3600,
-    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
+    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
+         # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
+         "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
     startup_timeout=120,
     min_containers=0,

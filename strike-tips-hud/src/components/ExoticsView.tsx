@@ -6,8 +6,8 @@ import { apiFetch } from '../lib/api-fetch';
 
 interface CombinationSelection {
   race: number;
-  banker: number;
-  savers: number[];
+  banker: string | number | { name?: string; number?: number };
+  savers: (string | number | { name?: string; number?: number })[];
   distance_m?: number;
 }
 
