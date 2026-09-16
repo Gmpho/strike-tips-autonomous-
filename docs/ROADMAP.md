@@ -1,5 +1,7 @@
 # Strike Tips Roadmap
 
+*Business/growth roadmap. Engineering history: [roadmap.md](roadmap.md) (Phases 1–5, Mar-2026). Technical specs: OpenSpec (`openspec/specs/`).*
+
 *Last updated: September 2026. Owner-reviewed; checkboxes flip as work lands.*
 
 ## Now — Community funding (shipping)

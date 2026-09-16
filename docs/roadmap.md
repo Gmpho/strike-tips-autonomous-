@@ -1,5 +1,10 @@
 # 🏇 Strike Tips Racing Bot - Development Roadmap
 
+> **Status note (Sep-2026):** this file is the *engineering history* (Phases 1–5, Mar-2026).
+> Current planning lives in two places: **[ROADMAP.md](ROADMAP.md)** (business/growth:
+> funding, outreach, B2B) and **OpenSpec** (`openspec/specs/`, archived deltas in
+> `openspec/changes/archive/`) for technical builds. This file is kept for context.
+
 ## Phase 1: Foundation & Stability (COMPLETED)
 - [x] L7 Unified AI Intelligence Engine (Dispatcher/Analyst/Presenter chain).
 - [x] Model Registry (Centralized config for 10 models).
