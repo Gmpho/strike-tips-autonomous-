@@ -1,7 +1,7 @@
 // Community tip-jar links (Whop-hosted checkout — our domain never touches
 // payment). Flip TEST_MODE to false after payouts/KYC go live; links stay
 // identical (Whop test vs live is account-side).
-export const SUPPORT_TEST_MODE = true;
+export const SUPPORT_TEST_MODE = false;
 
 export interface SupportTier {
   key: string;
