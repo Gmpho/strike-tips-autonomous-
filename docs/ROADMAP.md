@@ -97,7 +97,7 @@ Site is WordPress. Three depths, pitch in this order:
 - **(b) Auto-publish (the pitch).** Backend POSTs the finished morning card into their WordPress via REST API as a drafted/scheduled post. They wake up, review, publish. Zero routine change, hours back daily. Offer as a free one-meeting trial ("let Thursday's card publish itself, compare against yours").
 - **(c) Plugin (only if it sticks).** Tiny WP plugin for live odds / settled-P&L widgets. Real dev work — after (b) proves the relationship.
 
-*(Trainer relationships — e.g. Vaughn Marshall — deliberately NOT on the roadmap yet. Engagement play only: value-first replies, DM with model reads much later, never ask early.)*
+
 
 ## Later — Infra (spend-triggered only)
 
