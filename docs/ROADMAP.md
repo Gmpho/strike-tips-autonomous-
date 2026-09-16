@@ -79,6 +79,26 @@ Expected reply rate ~5–10% cold: send 20, work 1–2 conversations. Personal n
 - Auth + workspaces → one design-partner tipping site (cheap/free) → Stripe → API/white-label as the revenue line.
 - Triggers: public track record compounded for weeks + first inbound interest. Not before.
 
+### Monetization: three doors, one engine (MCP-first)
+
+The engine already serves all three — monetization just adds the cash register:
+
+1. 🚪 **MCP access (lead with this)** — per-key quotas (e.g. 10k tool calls/mo). AI-native buyers (site owners, group admins) plug the 16 racing tools straight into Claude Desktop / Cursor / their bots in 60 seconds. Zero integration work for them, stickiest revenue (their agents get wired into your tools).
+2. 🚪 **REST access (backup door)** — same quotas, raw JSON for developers and high-volume machine-to-machine (leaner than MCP's chatty protocol at odds-feed cadence). Costs nothing extra to offer.
+3. 🚪 **White-label dashboard** — full site under their brand for non-technical buyers. Monthly fee.
+
+Price list leads with MCP ("AI-native access, 3 tiers"), footnote: "REST available on all tiers." Reach over margin: MCP removes the customer's integration homework, so deals close faster than REST-only competitors.
+
+### WordPress integration (for tipster sites, e.g. My Big Bets — warm lead, personal contact)
+
+Site is WordPress. Three depths, pitch in this order:
+
+- **(a) Embed (5 min).** One `<iframe>` of a white-labeled card page pasted into any WP page. Clunky on mobile, no styling inside — fallback only.
+- **(b) Auto-publish (the pitch).** Backend POSTs the finished morning card into their WordPress via REST API as a drafted/scheduled post. They wake up, review, publish. Zero routine change, hours back daily. Offer as a free one-meeting trial ("let Thursday's card publish itself, compare against yours").
+- **(c) Plugin (only if it sticks).** Tiny WP plugin for live odds / settled-P&L widgets. Real dev work — after (b) proves the relationship.
+
+*(Trainer relationships — e.g. Vaughn Marshall — deliberately NOT on the roadmap yet. Engagement play only: value-first replies, DM with model reads much later, never ask early.)*
+
 ## Later — Infra (spend-triggered only)
 
 - OpenTofu for VPS (Ollama GPU box / Redis) if Modal passes ~€15/mo sustained.
