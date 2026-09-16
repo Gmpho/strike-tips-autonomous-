@@ -68,3 +68,15 @@ def test_clear_resets_memory_but_file_survives():
     telemetry.clear()
     assert list(telemetry._buffer) == []
     assert any(e["message"] == "gone soon" for e in telemetry.get_events())
+
+
+def test_correlation_bind_get_tag():
+    from core_agent.core import correlation as corr
+
+    assert corr.get() == "" or isinstance(corr.get(), str)
+    cid = corr.bind(corr.new_id("settle"))
+    assert cid.startswith("settle-") and len(cid) == len("settle-") + 8
+    assert corr.get() == cid
+    assert corr.tag() == f"[{cid}]"
+    corr.bind("")
+    assert corr.get() == "" and corr.tag() == ""

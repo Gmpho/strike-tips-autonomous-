@@ -174,7 +174,7 @@ class RacingOddsAPI:
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, detail_url), timeout=60)
         except asyncio.TimeoutError:
-            logger.warning("Racing-odds race detail timed out after 60s: %s", detail_url)
+            logger.info("Racing-odds race detail timed out after 60s: %s", detail_url)
             return []
         if not html:
             return []

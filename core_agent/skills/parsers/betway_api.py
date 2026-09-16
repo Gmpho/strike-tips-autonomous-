@@ -60,7 +60,7 @@ class BetwayAPI:
 
                 return {"status": "success", "details": events_details}
             except Exception as e:
-                logger.warning(f"Betway fetch attempt {attempt+1} failed: {e}")
+                logger.info(f"Betway fetch attempt {attempt+1} failed (retrying): {e}")
                 await asyncio.sleep(backoff[attempt])
         return {"status": "error", "error": "Max retries reached"}
 

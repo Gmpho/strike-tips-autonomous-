@@ -33,10 +33,12 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
 - **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
 - **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
-- **📡 Live Ops Telemetry** - Dedicated sidebar tab streaming real-time engine activity (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments) over SSE — engine status cards + live activity stream, zero polling ([docs](docs/LIVE_OPS_TELEMETRY.md))
+- **📡 Live Ops Telemetry** - Dedicated sidebar tab with engine status cards + live activity stream (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments), fed by 10s hash-first polling + disk-backed cross-container mirror — SSE retired to stop 24/7 billed executions ([docs](docs/LIVE_OPS_TELEMETRY.md))
 - **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header
 - **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Vercel middleware `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
 - **📊 Betfair Enriched Form (All Regions)** - 12 fields per runner (`gear`, `daysSinceRun`, `official_rating`, `pedigree` via `SIRE x DAM`, `owner`, `trainer`, `age`, `weight`, `form`, `jockey_claim`, `runner_comments`, `verdict`) across RSA/AUS/USA/GB/IRE/FRA/NZL (`_COUNTRY_FILTER=None`, case-insensitive `WEARING`/`DAYS_SINCE_LAST_RUN`, `marketId`/`id` fix; 169 events for TOMORROW vs 0 before)
+- **💬 Markdown AI Chat** - Assistant messages render full markdown (headings, tables via GFM, code) theme-mapped for dark/light; user bubbles stay plain
+- **🔭 Observability** - Correlation IDs per scan/settle/chat flow (trailing token on Telegram messages), JSON logs on Modal, honest log levels ([docs](docs/OBSERVABILITY.md))
 ---
 
 ## 🏛️ Architecture
@@ -144,7 +146,7 @@ emit(engine, message) from Swarm Researcher / News poller / Dream heartbeat / Go
         │  core_agent/core/telemetry.py — in-memory ring buffer (100 events)
         │  + best-effort Redis fanout on agent:telemetry
         ▼
-GET /api/monitoring/stream → SSE event: telemetry   (one shared connection)
+GET /api/monitoring/stream → SSE event: telemetry   (legacy, kept for rollback; retired Sep-2026 — see note above)
 GET /api/telemetry         → REST hydration         (newest-first, max 30)
         ▼
 DataBridge → hudStore.telemetry → Live Ops tab

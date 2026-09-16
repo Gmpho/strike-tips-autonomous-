@@ -1407,6 +1407,9 @@ class StrikeTips:
         """
         tracks = tracks or list(TRACKS.keys())
 
+        from core_agent.core.correlation import bind as _bind_cid, new_id as _new_cid, tag as _tag
+
+        _bind_cid(_new_cid("scan"))
         print("\n" + "=" * 60)
         print("STRIKE TIPS - Daily Racing Scan")
         print("=" * 60)
@@ -1623,6 +1626,7 @@ class StrikeTips:
                                     stake=advised_stake,
                                     confidence=confidence,
                                     reasoning=vb.get("reasoning", "Value detected by AI model analysis."),
+                                    ref=_tag().strip("[]"),
                                 )
             except Exception as e:
                 print(f"[ERR] Failed to send individual value bet alerts: {e}")

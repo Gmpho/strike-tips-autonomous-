@@ -157,7 +157,7 @@ class BetfairSA:
                     continue
                 groups = raw
             except Exception as e:
-                logger.warning("Betfair SA header fetch failed (timeRange=%s): %s", tr, e)
+                logger.info("Betfair SA header fetch failed, trying next range (timeRange=%s): %s", tr, e)
                 continue
 
             for grp in groups:
@@ -257,7 +257,7 @@ class BetfairSA:
                 logger.debug("Betfair SA market %s attempt %d failed: %s", market_id, attempt + 1, e)
                 if attempt < len(backoff):
                     await asyncio.sleep(backoff[attempt])
-        logger.warning("Betfair SA market %s: all attempts failed -- skipping", market_id)
+        logger.info("Betfair SA market %s: all attempts failed -- skipping", market_id)
         return market_id, None
 
     def _parse_market(self, market_id: str, data: Optional[Dict]) -> Optional[Dict]:

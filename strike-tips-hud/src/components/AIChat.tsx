@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, Languages, ImagePlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
@@ -844,6 +846,34 @@ ${compiledContext || 'No context data available.'}`;
                           <span className="text-[11px] text-slate-400 leading-normal italic font-medium">
                             {m.content}
                           </span>
+                        </div>
+                      ) : m.role === 'ai' ? (
+                        <div className="markdown-body text-sm leading-relaxed">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              h1: ({ children }) => <div className="text-base font-black text-theme-primary mt-2 mb-1">{children}</div>,
+                              h2: ({ children }) => <div className="text-sm font-black text-theme-primary mt-2 mb-1">{children}</div>,
+                              h3: ({ children }) => <div className="text-sm font-black text-purple-300 mt-2 mb-1">{children}</div>,
+                              h4: ({ children }) => <div className="text-xs font-black text-theme-primary mt-1.5 mb-1">{children}</div>,
+                              p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
+                              strong: ({ children }) => <strong className="font-black text-theme-primary">{children}</strong>,
+                              ul: ({ children }) => <ul className="list-disc pl-4 my-1.5 space-y-1">{children}</ul>,
+                              ol: ({ children }) => <ol className="list-decimal pl-4 my-1.5 space-y-1">{children}</ol>,
+                              li: ({ children }) => <li className="text-sm">{children}</li>,
+                              code: ({ children }) => <code className="px-1 py-px rounded bg-black/30 border border-white/10 font-mono text-[12px] text-amber-300">{children}</code>,
+                              pre: ({ children }) => <pre className="p-2.5 rounded-xl bg-black/30 border border-white/10 overflow-x-auto text-[12px] font-mono my-2">{children}</pre>,
+                              table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-[12px] border-collapse">{children}</table></div>,
+                              thead: ({ children }) => <thead className="text-purple-300 uppercase text-[10px]">{children}</thead>,
+                              th: ({ children }) => <th className="text-left font-black px-2 py-1 border-b border-white/10">{children}</th>,
+                              td: ({ children }) => <td className="px-2 py-1 border-b border-white/5 tabular-nums">{children}</td>,
+                              a: ({ children, href }) => <a className="text-purple-300 underline" href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
+                              hr: () => <hr className="border-white/10 my-2" />,
+                              blockquote: ({ children }) => <blockquote className="border-l-2 border-purple-500/50 pl-2 italic text-theme-secondary">{children}</blockquote>,
+                            }}
+                          >
+                            {m.content}
+                          </ReactMarkdown>
                         </div>
                       ) : (
                         m.content

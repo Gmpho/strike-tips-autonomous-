@@ -355,7 +355,7 @@ class BankrollGovernor:
                             )
                             _cache_dsi(track, race_number, dsi, dsi_scale)
             except Exception as e:
-                logger.warning(f"Failed to query ChromaDB for DSI calculation: {e}")
+                logger.debug(f"DSI ChromaDB unavailable, scale defaults to 1.0: {e}")
                 
         scaled_kelly = kelly_stake * dsi_scale
         cap_pct = self.MAX_BET_PERCENT

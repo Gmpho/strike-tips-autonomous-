@@ -556,6 +556,13 @@ if not response:
     response = await self._call_gemini(prompt)
 ```
 
+## Observability (Sep-2026)
+
+See [OBSERVABILITY.md](OBSERVABILITY.md): correlation IDs per scan/settle/chat flow
+(`scan-`/`settle-`/`chat-`, trailing token on Telegram messages), JSON logs on
+Modal containers, and honest log levels (routine fallbacks at info/debug, 429s
+and money-path failures at warning).
+
 ---
 
 ## Development Guidelines

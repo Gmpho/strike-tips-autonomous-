@@ -147,7 +147,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
                 logger.info(f"[SEARCH] SA-fallback: {url} ({len(text)} chars)")
 
     if not results:
-        logger.warning(f"[SEARCH] Empty for '{query[:60]}'")
+        logger.info(f"[SEARCH] Empty for '{query[:60]}' (no results published yet)")
 
     return {
         "query": query,

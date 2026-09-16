@@ -565,6 +565,7 @@ class ResultTracker:
             return None
 
     async def _settle_exotic_ticket(self, bet, gov, brain) -> Optional[Dict]:
+        from core_agent.core.correlation import tag as _tag
         """Settle one exotic pool ticket from ATR placed results.
 
         Leg logic (conservative — a ticket is only settled on proof):
@@ -711,9 +712,10 @@ class ResultTracker:
                     stake=getattr(bet, "stake", 0.0),
                     returns=pool_return if won else 0.0,
                     profit_loss=(pool_return - float(getattr(bet, "stake", 0.0))) if won else -float(getattr(bet, "stake", 0.0)),
+                    ref=_tag().strip("[]"),
                 )
         except Exception as tg_err:
-            logger.warning(f"Failed to dispatch Telegram exotic result: {tg_err}")
+            logger.warning(f"{_tag()} Failed to dispatch Telegram exotic result: {tg_err}")
         return {
             "bet_id": bet.bet_id,
             "horse": bet.horse,
@@ -755,6 +757,11 @@ class ResultTracker:
         open_bets = gov.get_open_bets()
         if not open_bets:
             return []
+
+        from core_agent.core.correlation import bind as _bind_cid, new_id as _new_cid, tag as _tag
+
+        _bind_cid(_new_cid("settle"))
+        logger.info(f"{_tag()} settle run: {len(open_bets)} open bets")
 
         settled = []
         deferred: List[str] = []
@@ -880,7 +887,7 @@ class ResultTracker:
 
                 if settled_ok:
                     logger.info(
-                        f"Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'} ({notes})"
+                        f"{_tag()} Auto-settled: {bet.horse} at {bet.track} R{bet.race_number} - {'WON' if won else 'LOST'} ({notes})"
                     )
                     # Confirmed values only: the local bet object may be stale
                     # when settlement ran in another process (brain path), so
@@ -902,9 +909,10 @@ class ResultTracker:
                                 stake=_stake,
                                 returns=_returns,
                                 profit_loss=profit_loss,
+                                ref=_tag().strip("[]"),
                             )
                     except Exception as tg_err:
-                        logger.warning(f"Failed to dispatch Telegram result alert: {tg_err}")
+                        logger.warning(f"{_tag()} Failed to dispatch Telegram result alert: {tg_err}")
 
                     settled.append(
                         {

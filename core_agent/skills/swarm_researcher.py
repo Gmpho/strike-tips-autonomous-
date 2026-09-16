@@ -212,7 +212,9 @@ async def _groq_call(prompt: str, max_tokens: int = 220, temperature: float = 0.
             },
         )
         if resp.status_code != 200:
-            logger.warning(f"Groq swarm call failed: status {resp.status_code}")
+            # 429s stay warnings (rate-limit signal); other failures are routine.
+            (logger.warning if resp.status_code == 429 else logger.info)(
+                f"Groq swarm call failed: status {resp.status_code}")
             return ""
         data = resp.json()
         content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""

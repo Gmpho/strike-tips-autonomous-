@@ -28,6 +28,9 @@ from core_agent.config.paths import DATA_DIR
 from core_agent.core.strike_brain import brain
 from core_agent.core.scheduler import StrikeTipsScheduler
 from contextlib import asynccontextmanager
+from core_agent.core.logging_setup import configure_logging
+
+configure_logging()
 
 logger = logging.getLogger("strike-api")
 

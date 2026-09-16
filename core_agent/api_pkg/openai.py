@@ -58,6 +58,13 @@ async def handle_chat_completions(request: Request):
     stream = body.get("stream", False)
     session_id = body.get("session_id", "api:default")
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    try:
+        from core_agent.core.correlation import bind as _bind_cid, new_id as _new_cid, tag as _tag
+
+        _bind_cid(_new_cid("chat"))
+        logger.info(f"{_tag()} chat: session={session_id} msg={user_text[:60]!r}")
+    except Exception:
+        pass
 
     # ── FAST PATH ────────────────────────────────────────────────────────────
     # Greetings, thanks, goodbyes — respond instantly, skip bus/AgentLoop

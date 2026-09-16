@@ -15,6 +15,10 @@ import logging
 import os
 from typing import Optional
 
+from core_agent.core.logging_setup import configure_logging
+
+configure_logging()
+
 logger = logging.getLogger("modal-app")
 
 image = modal.Image.from_dockerfile("Dockerfile")

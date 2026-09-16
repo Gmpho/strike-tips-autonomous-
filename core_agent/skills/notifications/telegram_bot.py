@@ -158,6 +158,7 @@ class TelegramNotifier:
         stake: float,
         confidence: str,
         reasoning: str,
+        ref: str = "",
     ) -> bool:
         """Send a value bet alert asynchronously"""
         confidence_emoji = {
@@ -174,6 +175,7 @@ class TelegramNotifier:
             f"💵 Advised Stake: R{stake:.2f}\n\n"
             f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
             f"⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
+            + (f"\n<code>{ref}</code>" if ref else "")
         )
         await self.broadcast(text)
         return True
@@ -187,6 +189,7 @@ class TelegramNotifier:
         stake: float,
         returns: float,
         profit_loss: float,
+        ref: str = "",
     ) -> bool:
         """Send a bet result notification asynchronously"""
         emoji = "🎉" if won else "❌"
@@ -201,6 +204,8 @@ class TelegramNotifier:
             f"💵 Stake: R{stake:.2f} | Returns: R{returns:.2f}\n"
             f"📊 P&L: <b>{pl_str}</b>"
         )
+        if ref:
+            text += f"\n<code>{ref}</code>"
         await self.broadcast(text)
         return True
 
