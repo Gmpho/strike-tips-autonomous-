@@ -10,7 +10,7 @@ import random
 import re
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 
 logger = logging.getLogger("dream-engine")
@@ -36,6 +36,29 @@ def _load_snapshot() -> Dict[str, Any]:
 def _pick_race(snap: Dict) -> Dict:
     events = list(snap.get("events", {}).values())
     return random.choice(events) if events else {}
+
+
+def _race_has_bets(course: str, race_num) -> bool:
+    """True when an open (PENDING) ticket exists for this race.
+
+    Drives two-tier gating: bet races earn full Groq sims, everything else
+    gets the free deterministic screen. Fail-open (True) so a lookup
+    failure never silently degrades a race that matters.
+    """
+    try:
+        from core_agent.core.strike_brain import brain
+        gov = brain.strike.bankroll if brain and brain.strike else None
+        if not gov:
+            return True
+        want = (str(course or "").lower(), str(race_num))
+        for b in gov.get_open_bets():
+            if getattr(b, "status", "") != "PENDING":
+                continue
+            if (str(getattr(b, "track", "") or "").lower(), str(getattr(b, "race_number", ""))) == want:
+                return True
+        return False
+    except Exception:
+        return True
 
 
 def _enriched_race_text(course: str, race_num, runners: List[Dict]) -> str:
@@ -398,10 +421,13 @@ class DreamEngine:
         except Exception:
             return ""
 
-    async def generate_dream(self, allow_llm: bool = True) -> Dream:
-        """Background dream. allow_llm=False runs the free deterministic
-        Tier-1 screen (no Groq call) — the scheduler passes False for
-        non-bet races (two-tier gating). Default True preserves behavior."""
+    async def generate_dream(self, allow_llm: Optional[bool] = None) -> Dream:
+        """Background dream.
+
+        allow_llm=True forces the Groq sim, False forces the free
+        deterministic Tier-1 screen, None (default) auto-selects: races
+        with open tickets earn Tier-2, everything else Tier-1.
+        """
         snap = _load_snapshot()
         race = _pick_race(snap)
         course = race.get("course", "Unknown Track")
@@ -419,7 +445,8 @@ class DreamEngine:
 
         scenario = random.choice(SCENARIO_TEMPLATES).format(course=course, race=race_num)
         enriched = _enriched_race_text(course, race_num, runners)
-        if allow_llm:
+        use_llm = _race_has_bets(course, race_num) if allow_llm is None else allow_llm
+        if use_llm:
             insight = await _groq_insight(scenario, race, enriched=enriched)
             prob_shift = calculate_scenario_shift(scenario, race, insight, extra_text=enriched)
         else:
@@ -557,8 +584,9 @@ class DreamEngine:
         }
 
         scenario = scenario_override
-        insight = await _groq_insight(scenario, race_info)
-        prob_shift = calculate_scenario_shift(scenario, race_info, insight)
+        _c_enriched = _enriched_race_text(course, race_num, runners)
+        insight = await _groq_insight(scenario, race_info, enriched=_c_enriched)
+        prob_shift = calculate_scenario_shift(scenario, race_info, insight, extra_text=_c_enriched)
 
         dream = Dream(
             id=f"dream-{int(datetime.now().timestamp())}",

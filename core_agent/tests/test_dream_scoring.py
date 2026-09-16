@@ -91,3 +91,42 @@ def test_llm_cache_roundtrip_and_scope(tmp_path):
 def test_llm_cache_never_raises(tmp_path):
     assert llm_cache.get("/nonexistent-dir-xyz", "m", "p") is None
     llm_cache.put("/nonexistent-dir-xyz", "m", "p", "r")  # must not raise
+
+
+def test_race_has_bets_gating():
+    from core_agent.skills.dreamer import _race_has_bets
+    import core_agent.skills.dreamer as _dm
+
+    gov = MagicMock()
+    b = MagicMock()
+    b.status = "PENDING"
+    b.track = "Vaal"
+    b.race_number = 2
+    gov.get_open_bets.return_value = [b]
+    fake_brain = MagicMock()
+    fake_brain.strike.bankroll = gov
+    with patch.dict(sys.modules, {"core_agent.core.strike_brain": MagicMock(brain=fake_brain)}):
+        # NOTE: dreamer does `from ... import brain`, binding name `brain`;
+        # patch the already-imported reference instead.
+        with patch.object(_dm, "brain", fake_brain, create=True):
+            assert _race_has_bets("vaal", 2) is True
+            assert _race_has_bets("vaal", 5) is False
+
+
+def test_generate_dream_tier1_no_llm():
+    from core_agent.skills.dreamer import DreamEngine
+    import core_agent.skills.dreamer as _dm
+
+    async def _no_llm(*a, **k):
+        raise AssertionError("Groq must not be called in Tier-1")
+
+    eng = DreamEngine()
+    with patch.object(_dm, "_load_snapshot", return_value={
+            "events": {"e1": {"course": "Vaal", "raceNumber": 2,
+                              "runners": [{"name": "Test Horse", "odds": 4.0}]}}}):
+        with patch.object(_dm, "_race_has_bets", return_value=False):
+            with patch.object(_dm, "_groq_insight", new=_no_llm):
+                with patch.object(_dm, "_enriched_race_text", return_value=""):
+                    dream = asyncio.run(eng.generate_dream())
+    assert "Tier-1" in dream.insight
+    assert isinstance(dream.probability_shift, float)

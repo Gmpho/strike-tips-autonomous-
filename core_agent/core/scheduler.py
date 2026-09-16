@@ -390,7 +390,23 @@ class StrikeTipsScheduler:
                             },
                         )
 
-                # Auto-bet on any new value bets from this rescan
+                # Auto-bet on any new value bets from this rescan.
+                # Midday gate (Sep-2026 bleed inquiry): the morning scan owns
+                # discovery. Midday places ONLY when (a) no PENDING ticket
+                # exists yet for that track+race today (no stacking on fresh
+                # nondeterministic AI rolls), and (b) edge clears a higher
+                # bar than morning (8.0%). Same-horse dupes are already
+                # refused inside record_bet.
+                _open_races = set()
+                try:
+                    _gov = brain.strike.bankroll if brain and brain.strike else None
+                    _today = datetime.now().strftime("%Y-%m-%d")
+                    for _b in (_gov.get_open_bets() if _gov else []):
+                        if getattr(_b, "status", "") == "PENDING" and str(getattr(_b, "date", ""))[:10] == _today:
+                            _open_races.add((str(getattr(_b, "track", "") or "").lower(),
+                                             str(getattr(_b, "race_number", ""))))
+                except Exception:
+                    _open_races = set()
                 if auto_bet_enabled:
                     for race in results:
                         if not isinstance(race, dict):
@@ -404,6 +420,11 @@ class StrikeTipsScheduler:
                             if 0 < edge < 1:
                                 edge *= 100
                             if edge < min_edge:
+                                continue
+                            if edge < 8.0:
+                                continue
+                            _rk = (str(track or "").lower(), str(race.get("race_number", 0)))
+                            if _rk in _open_races:
                                 continue
                             odds = resolve_auto_bet_odds(vb)
                             if odds is None:
