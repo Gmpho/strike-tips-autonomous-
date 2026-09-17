@@ -8,9 +8,37 @@ A modular, AI-powered betting assistant that identifies value bets in South Afri
 
 **3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Modal](https://img.shields.io/badge/Modal-Serverless-7C3AED)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React_19-61DAFB?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/Tailwind-06B6D4?logo=tailwindcss&logoColor=white)
 ![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)
 ![Status](https://img.shields.io/badge/Status-Production-green.svg)
+
+![Cloudflare](https://img.shields.io/badge/Cloudflare-F38020?logo=cloudflare&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-16_tools-FF6B35)
+![PWA](https://img.shields.io/badge/PWA-5A0FC8?logo=pwa&logoColor=white)
+![TWA](https://img.shields.io/badge/TWA-3DDC84?logo=android&logoColor=black)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-FF4B4B)
+![Honcho](https://img.shields.io/badge/Honcho-Memory-8B5CF6)
+![Playwright](https://img.shields.io/badge/Playwright-2EAD33?logo=playwright&logoColor=white)
+
+![Bayesian](https://img.shields.io/badge/Bayesian-Learning-0EA5E9)
+![Kelly_Criterion](https://img.shields.io/badge/Kelly_Criterion-HalfKelly-10B981)
+![Monte_Carlo](https://img.shields.io/badge/Monte_Carlo-Simulations-F59E0B)
+![DSI](https://img.shields.io/badge/DSI-Stress_Scaled-E63600)
+
+![Groq](https://img.shields.io/badge/Groq-LPU-F55036)
+![Gemini](https://img.shields.io/badge/Gemini-4285F4?logo=google&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-Local-000000)
+![WebLLM](https://img.shields.io/badge/WebLLM-OnDevice-7C3AED)
+![WebGPU](https://img.shields.io/badge/WebGPU-005A9C)
+![Three.js](https://img.shields.io/badge/Three.js-000000?logo=threedotjs&logoColor=white)
 
 ---
 
