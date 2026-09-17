@@ -256,7 +256,7 @@ def _fresh_insight_exists(horse: str, course: str, region: str) -> bool:
         results = brain.memory.search_form_insights(
             f"{horse} {course}",
             n_results=3,
-            where={"type": "racing_insight", "region": region},
+            where={"$and": [{"type": "racing_insight"}, {"region": region}]},
         )
         today = datetime.now().strftime("%Y-%m-%d")
         for r in results:

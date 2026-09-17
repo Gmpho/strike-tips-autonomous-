@@ -21,6 +21,8 @@ interface ExoticPlay {
   _track?: string;
   /** Where the pool structure came from: pdf | pdf+ai | ai | convention. */
   source?: string;
+  /** TAB official per-leg cloth numbers, keyed by race: {"5": [1,7,9]}. */
+  official?: Record<string, number[]>;
   /** ISO event date (YYYY-MM-DD). Boards persist per day until raceday. */
   event_date?: string;
 }
@@ -264,8 +266,11 @@ export const ExoticsView: React.FC = () => {
                             Multi-Leg Structure
                           </h4>
                           <div className="space-y-3">
-                            {(play.combinations || []).map((combo, idx) => (
-                              <div key={idx} className="flex items-center gap-3 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+                            {(play.combinations || []).map((combo, idx) => {
+                              const official = play.official?.[String(combo.race)];
+                              return (
+                              <div key={idx} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+                                <div className="flex items-center gap-3">
                                 <div className="text-[10px] font-black text-purple-400 w-12 shrink-0">LEG {idx + 1}</div>
                                 <div className="text-[9px] text-slate-500 uppercase shrink-0 font-bold">
                                   RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ''}
@@ -283,8 +288,18 @@ export const ExoticsView: React.FC = () => {
                                     </span>
                                   ))}
                                 </div>
+                                </div>
+                                {official && official.length > 0 && (
+                                  <div className="flex items-center gap-2 mt-1.5 ml-0 sm:ml-[104px]">
+                                    <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400/80">TAB official</span>
+                                    <span className="text-[11px] font-black text-emerald-300 tabular">
+                                      {official.join(' · ')}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       </div>

@@ -275,9 +275,12 @@ def test_delusion_gate_rejects_absurd_edge(temp_data_dir):
     # Sane edges still pass: 8% @ 3.0 (est 41% vs implied 33% = 1.24x)
     bet = gov.record_bet("vaal", 1, "Sane", 3.0, 10.0, 8.0, "VALUE")
     assert bet is not None
-    # Boundary: exactly 8x ratio passes, above rejects
-    assert gov.record_bet("vaal", 2, "Edge8x", 9.0, 10.0, 77.0, "VALUE") is not None  # est .888/implied .111 = 8.0x
-    assert gov.record_bet("vaal", 3, "Edge9x", 9.0, 10.0, 80.0, "VALUE") is None
+    # Boundary at 4x: est/implied 4.0 passes, above rejects.
+    assert gov.record_bet("vaal", 2, "Edge4x", 9.0, 10.0, 33.0, "VALUE") is not None  # 44/11.1 = 3.96x
+    assert gov.record_bet("vaal", 3, "Edge5x", 9.0, 10.0, 45.0, "VALUE") is None  # 56/11.1 = 5.05x
+    # Shared helper agrees (placement and alerts use one source of truth).
+    assert gov.is_sane_edge(61.0, 41.0) is False
+    assert gov.is_sane_edge(8.0, 3.0) is True
 
 
 def test_mark_notified_dedupes(temp_data_dir):

@@ -127,8 +127,10 @@ class BankrollGovernor:
 
     MAX_BET_PERCENT: float = 5.0
     # Delusion guard: est/implied ratio above this means the model, not the
-    # market, is broken (Sep-2026: 61% "edge" on a 41.0 shot = 26x implied).
-    MAX_EST_TO_IMPLIED_RATIO: float = 8.0
+    # market, is broken (Sep-2026: 61% "edge" on a 41.0 shot = 26x implied;
+    # genuine mid-range value rarely exceeds 2-3x). Applies to placement AND
+    # alerts — insane edges must never reach Telegram either.
+    MAX_EST_TO_IMPLIED_RATIO: float = 4.0
     # Longshot damage cap: max % of bank shrinks hyperbolically above 5.0
     # odds (5% at <=5.0, 2.5% at 10.0, 0.6% at 41.0). Kelly hits the cap on
     # anything with edge>10% regardless of odds — without this, 40/1
@@ -293,6 +295,22 @@ class BankrollGovernor:
 
         return True, "OK"
 
+    def is_sane_edge(self, edge_percent: float, odds: float) -> bool:
+        """True when an edge is humanly plausible for the odds.
+
+        est_p = implied + edge/100 must stay within MAX_EST_TO_IMPLIED_RATIO
+        of implied. Shared by placement (record_bet) and alert paths so a
+        delusional estimate can neither take money nor reach Telegram.
+        """
+        try:
+            implied = 1.0 / float(odds) if float(odds) > 1.0 else 0.0
+            est = implied + float(edge_percent) / 100.0
+            if implied <= 0:
+                return True
+            return (est / implied) <= self.MAX_EST_TO_IMPLIED_RATIO
+        except (ValueError, TypeError, ZeroDivisionError):
+            return True
+
     def calculate_max_stake(
         self,
         edge_percent: float,
@@ -395,18 +413,12 @@ class BankrollGovernor:
             # Delusion gate: implied est. probability cannot exceed N times
             # the market-implied probability. A 61% "edge" on a 41.0 shot
             # means est_p ~= 63% vs implied 2.4% (26x) — model error, not
-            # value. Reject loudly instead of staking the 5% cap on it.
-            try:
-                _implied = 1.0 / float(odds) if float(odds) > 1.0 else 0.0
-                _est = _implied + float(edge_percent) / 100.0
-                if _implied > 0 and _est / _implied > self.MAX_EST_TO_IMPLIED_RATIO:
-                    logger.warning(
-                        f"Bet rejected: delusional edge ({edge_percent}% @ {odds} "
-                        f"implies p~{_est:.1%} vs market {_implied:.1%})"
-                    )
-                    return None
-            except (ValueError, TypeError, ZeroDivisionError):
-                pass
+            # value. Reject loudly instead of staking the cap on it.
+            if not self.is_sane_edge(edge_percent, odds):
+                logger.warning(
+                    f"Bet rejected: delusional edge ({edge_percent}% @ {odds})"
+                )
+                return None
 
             if is_paper:
                 # Refill the paper account from settings when its ledger has been drained

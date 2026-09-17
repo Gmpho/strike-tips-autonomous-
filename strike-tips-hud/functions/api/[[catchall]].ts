@@ -25,19 +25,36 @@ const CF_PREFIXES = [
 const SENSITIVE_PREFIXES = ['/api/agent/kill', '/api/agent/reset'];
 
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX = 100;
+const RATE_MAX = 100; // reads/min per IP
+const WRITE_RATE_MAX = 20; // writes/min per IP (bet placement, config, healing)
 const rateStore = new Map<string, { count: number; resetAt: number }>();
+const writeStore = new Map<string, { count: number; resetAt: number }>();
 
-function isRateLimited(ip: string): boolean {
+function hitRate(
+  store: Map<string, { count: number; resetAt: number }>,
+  ip: string,
+  max: number,
+): boolean {
   const now = Date.now();
-  const entry = rateStore.get(ip);
+  const entry = store.get(ip);
   if (!entry || now > entry.resetAt) {
-    rateStore.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    store.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
   entry.count++;
-  return entry.count > RATE_MAX;
+  return entry.count > max;
 }
+
+// State-changing API families: the proxy never spends the master key here
+// on an anonymous caller's behalf (Sep-2026 audit: confused-deputy).
+const WRITE_PREFIXES = [
+  '/api/betting/',
+  '/api/config',
+  '/api/healing/',
+  '/api/tasks/',
+  '/api/agent/kill',
+  '/api/agent/reset',
+];
 
 function matches(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
@@ -62,17 +79,26 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const ip = request.headers.get('cf-connecting-ip')
     || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || 'unknown';
-  if (isRateLimited(ip)) {
+  if (hitRate(rateStore, ip, RATE_MAX)) {
     return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': '60' } });
   }
 
-  // Sensitive actions: caller must present the key (fail-closed).
-  if (SENSITIVE_PREFIXES.some((p) => matches(url.pathname, p))) {
+  const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+    && WRITE_PREFIXES.some((p) => matches(url.pathname, p));
+
+  // Sensitive actions + all state-changing calls: caller must present the
+  // key (fail-closed). Reads keep flowing with server-side injection.
+  const needsCallerKey = isWrite
+    || SENSITIVE_PREFIXES.some((p) => matches(url.pathname, p));
+  if (needsCallerKey) {
     const caller = request.headers.get('x-api-key') || request.headers.get('X-API-KEY')
       || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
     if (!env.BACKEND_API_KEY || caller !== env.BACKEND_API_KEY) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
+  }
+  if (isWrite && hitRate(writeStore, ip, WRITE_RATE_MAX)) {
+    return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': '60' } });
   }
 
   const isCF = CF_PREFIXES.some((p) => matches(url.pathname, p))

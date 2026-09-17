@@ -16,6 +16,10 @@ from core_agent.skills.result_tracker import (
     atr_date_label,
 )
 
+# Real implementation handle: the autouse wall-clock fixture below mocks
+# _race_off_datetime to None, so gate-specific tests rebind this.
+_REAL_RACE_OFF_DATETIME = ResultTracker._race_off_datetime
+
 
 @pytest.fixture()
 def stub_atr_module():
@@ -44,6 +48,16 @@ def stub_brain_module():
     stub.brain.strike = None
     with patch.dict(sys.modules, {"core_agent.core.strike_brain": stub}):
         yield stub
+
+
+@pytest.fixture(autouse=True)
+def _no_wallclock_offtime_gate():
+    """Settlement-behavior tests must not depend on wall-clock time or the
+    repo's data/market_snapshot_latest.json (Sep-2026: a same-day snapshot
+    file started gating noon tests as 'race not run yet'). Gate-specific
+    tests below re-patch _race_off_datetime explicitly."""
+    with patch.object(ResultTracker, "_race_off_datetime", return_value=None):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -258,10 +272,11 @@ def test_race_off_datetime_from_scan_file(tmp_path):
     (tmp_path / f"daily_scan_{day}.json").write_text(json.dumps({
         "Vaal": [{"race_number": 4, "race_time": "14:05"}]
     }))
-    off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
-    assert off is not None and (off.hour, off.minute) == (14, 5)
-    assert ResultTracker._race_off_datetime("vaal", 9, day, data_dir=str(tmp_path)) is None
-    assert ResultTracker._race_off_datetime("vaal", 4, day, data_dir="/nonexistent") is None
+    with patch.object(ResultTracker, "_race_off_datetime", staticmethod(_REAL_RACE_OFF_DATETIME)):
+        off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
+        assert off is not None and (off.hour, off.minute) == (14, 5)
+        assert ResultTracker._race_off_datetime("vaal", 9, day, data_dir=str(tmp_path)) is None
+        assert ResultTracker._race_off_datetime("vaal", 4, day, data_dir="/nonexistent") is None
 
 
 def test_void_settlement_reverses_money(tmp_path):
@@ -690,15 +705,17 @@ def test_gate_ignores_other_edition(tmp_path):
             "bf_off_time": "14:05", "bf_event_date": day, "runners": [],
         }}
     }))
-    off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
-    assert off is not None and (off.hour, off.minute) == (14, 5)
-    assert off.tzinfo is not None  # SAST-aware: naive UTC comparisons delayed everything 2h
+    from unittest.mock import patch as _patch2
+    with _patch2.object(ResultTracker, "_race_off_datetime", staticmethod(_REAL_RACE_OFF_DATETIME)):
+        off = ResultTracker._race_off_datetime("vaal", 4, day, data_dir=str(tmp_path))
+        assert off is not None and (off.hour, off.minute) == (14, 5)
+        assert off.tzinfo is not None  # SAST-aware: naive UTC comparisons delayed everything 2h
 
-    # Same market, but the bet is from yesterday -> stamp must not apply;
-    # falls back to scan file (absent here) -> None, evidence decides.
-    other_day = (date.today() - _td(days=1)).isoformat()
-    off2 = ResultTracker._race_off_datetime("vaal", 4, other_day, data_dir=str(tmp_path))
-    assert off2 is None
+        # Same market, but the bet is from yesterday -> stamp must not apply;
+        # falls back to scan file (absent here) -> None, evidence decides.
+        other_day = (date.today() - _td(days=1)).isoformat()
+        off2 = ResultTracker._race_off_datetime("vaal", 4, other_day, data_dir=str(tmp_path))
+        assert off2 is None
 
 
 def test_number_names_rejected_everywhere():

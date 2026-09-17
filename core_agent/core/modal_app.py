@@ -82,8 +82,18 @@ def serve_api():
         if not is_authorized(chat_id, owner_id):
             try:
                 if text.startswith("/auth"):
+                    from core_agent.core.access_control import pin_locked, record_pin_attempt
+
+                    if pin_locked(chat_id):
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text="🔒 *Too many failed attempts.* Try again in 30 minutes.",
+                            parse_mode="Markdown",
+                        )
+                        return {"ok": True}
                     parts = text.split()
                     if len(parts) == 2 and parts[1] == pin:
+                        record_pin_attempt(chat_id, True)
                         authorize(chat_id)
                         await bot.send_message(
                             chat_id=chat_id,
@@ -91,9 +101,11 @@ def serve_api():
                             parse_mode="Markdown",
                         )
                     else:
+                        locked = record_pin_attempt(chat_id, False)
                         await bot.send_message(
                             chat_id=chat_id,
-                            text="🔒 *Invalid PIN.* Access denied.",
+                            text="🔒 *Invalid PIN.* Access denied."
+                            + (" *Locked out for 30 minutes.*" if locked else ""),
                             parse_mode="Markdown",
                         )
                 else:

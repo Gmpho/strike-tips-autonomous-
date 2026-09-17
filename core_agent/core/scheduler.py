@@ -476,12 +476,20 @@ class StrikeTipsScheduler:
 
                                     # Calculate advised stake using Half-Kelly for the notification
                                     max_stake = brain.strike.bankroll.calculate_max_stake(
-                                        edge, track, race.get("race_number")
+                                        edge, track, race.get("race_number"), odds=odds
                                     )
                                     advised_stake = min(max_stake, brain.strike.bankroll.current_bankroll * 0.05)
 
                                     # Determine confidence category
                                     confidence = "STRONG_VALUE" if edge >= 15.0 else "VALUE" if edge >= 8.0 else "MARGINAL"
+
+                                    # Same delusion gate as placement.
+                                    try:
+                                        _sane = brain.strike.bankroll.is_sane_edge(edge, odds)
+                                    except Exception:
+                                        _sane = True
+                                    if not _sane:
+                                        continue
 
                                     await brain.strike.telegram.send_value_bet(
                                         horse=horse,

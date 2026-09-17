@@ -177,17 +177,10 @@ _TIPS_POOL_RES = (
 )
 
 
-def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
-    """Exact pool start races from the TAB Daily Tipping Sheet text.
-
-    Scopes to the track's meeting section (headers are bare caps names like
-    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL).
-    Returns {"BI1": 1, "PA": 2, ...}. Entries whose range length disagrees
-    with the pool's leg count are ignored ( OCR/parse noise guard).
-    """
-    out: Dict[str, int] = {}
+def _tips_meeting_section(raw_text: str, track: str) -> str:
+    """Raw text of one meeting's section in the TAB sheet (pools + picks)."""
     if not raw_text or not track:
-        return out
+        return ""
     lines = str(raw_text).splitlines()
     want = _norm_text(track)
     start = None
@@ -199,19 +192,32 @@ def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
             start = i
             break
     if start is None:
-        return out
+        return ""
     section = []
-    for ln in lines[start + 1:start + 60]:
+    for ln in lines[start + 1:start + 80]:
         s = ln.strip()
         if not s:
             continue
-        # Next meeting section or a new sheet begins.
         if s.isupper() and len(s) <= 30 and _norm_text(s) != want and re.fullmatch(r"[A-Z][A-Z \-&']+", s):
             if "LEG" in s or "RACE" in s or "COST" in s or "CLOSE" in s:
                 continue
             break
         section.append(s)
-    blob = "\n".join(section)
+    return "\n".join(section)
+
+
+def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
+    """Exact pool start races from the TAB Daily Tipping Sheet text.
+
+    Scopes to the track's meeting section (headers are bare caps names like
+    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL).
+    Returns {"BI1": 1, "PA": 2, ...}. Entries whose range length disagrees
+    with the pool's leg count are ignored ( OCR/parse noise guard).
+    """
+    out: Dict[str, int] = {}
+    blob = _tips_meeting_section(raw_text, track)
+    if not blob:
+        return out
     for pat, legs, code in _TIPS_POOL_RES:
         for m in re.finditer(pat, blob, re.IGNORECASE):
             groups = [int(g) for g in m.groups()]
@@ -219,6 +225,58 @@ def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
             if last - first + 1 != legs:
                 continue
             out.setdefault(code, first)
+    return out
+
+
+def _tips_official_picks(raw_text: str, track: str) -> Dict[str, Dict[int, List[int]]]:
+    """TAB official per-leg selections (cloth numbers) per pool.
+
+    Parses pool blocks like "Bipot (2-7)\\nR480\\n1, 7, 9, 10\\n1, 9\\n..."
+    where each following number-line maps to consecutive leg races. Returns
+    {pool_code: {race_number: [cloth, ...]}}. Numbers-only lines only —
+    anything with letters ends the block ( OCR/noise guard).
+    """
+    out: Dict[str, Dict[int, List[int]]] = {}
+    blob = _tips_meeting_section(raw_text, track)
+    if not blob:
+        return out
+    lines = blob.splitlines()
+    i = 0
+    while i < len(lines):
+        header = None
+        for pat, legs, code in _TIPS_POOL_RES:
+            m = re.search(pat, lines[i], re.IGNORECASE)
+            if m:
+                groups = [int(g) for g in m.groups()]
+                first, last = groups[-2], groups[-1]
+                if last - first + 1 == legs:
+                    header = (code, first, last)
+                break
+        if header is None:
+            i += 1
+            continue
+        code, first, last = header
+        legs: Dict[int, List[int]] = {}
+        j = i + 1
+        # Skip the cost line (R480) if present.
+        if j < len(lines) and re.fullmatch(r"R\s?[\d\s.,]+", lines[j].strip(), re.IGNORECASE):
+            j += 1
+        for rn in range(first, last + 1):
+            if j >= len(lines):
+                break
+            s = lines[j].strip()
+            if not re.fullmatch(r"[\d,\s]+", s):
+                break
+            nums = [int(x) for x in re.findall(r"\d+", s)]
+            if not nums:
+                break
+            legs[rn] = nums
+            j += 1
+        if legs:
+            out[code] = legs
+            i = j  # j sits on the first non-number line (next header/time)
+        else:
+            i += 1  # advance one line so a following header is still scanned
     return out
 
 
@@ -1532,17 +1590,30 @@ class StrikeTips:
         exotic_plays = []
         if all_results:
             print("\n[EXOTIC] Running exotic pool analysis across daily races...")
+            _tips_text = str(pdf_res.get("raw_text", "") or "")
             for _tname, _traces in all_results.items():
                 if not _traces:
                     continue
                 try:
                     _plays = await self._analyze_exotic_pools(
                         {_tname: _traces}, pdf_races,
-                        tips_text=str(pdf_res.get("raw_text", "") or ""),
+                        tips_text=_tips_text,
                     )
                 except Exception as e:
                     print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
                     _plays = []
+                # TAB official picks alongside AI analysis: match official
+                # blocks to plays by exact leg set.
+                try:
+                    _off = _tips_official_picks(_tips_text, _tname)
+                    for _p in _plays or []:
+                        _legs = set(_p.get("legs", []) or [])
+                        for _pools in _off.values():
+                            if set(_pools.keys()) == _legs and _legs:
+                                _p["official"] = {str(r): list(c) for r, c in _pools.items()}
+                                break
+                except Exception as e:
+                    print(f"[WARN] Official picks attach skipped: {e}")
                 exotic_plays.extend(_plays or [])
             exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
             if exotic_plays:
@@ -1615,6 +1686,16 @@ class StrikeTips:
 
                                 # Determine confidence category
                                 confidence = "STRONG_VALUE" if edge >= 15.0 else "VALUE" if edge >= 8.0 else "MARGINAL"
+
+                                # Same delusion gate as placement: insane edges
+                                # must never reach Telegram either.
+                                try:
+                                    _sane = self.bankroll.is_sane_edge(edge, odds)
+                                except Exception:
+                                    _sane = True
+                                if not _sane:
+                                    print(f"[AUTO-BET] Alert suppressed (delusional edge {edge}% @ {odds}): {horse}")
+                                    continue
 
                                 await self.telegram.send_value_bet(
                                     horse=horse,
