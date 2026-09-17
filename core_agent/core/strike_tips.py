@@ -164,6 +164,76 @@ def _snapshot_distances(data_dir: str, today_iso: str) -> Dict[tuple, int]:
     return out
 
 
+def _snapshot_non_runners(data_dir, today_iso: str) -> set:
+    """{(norm_course, race_number, norm_horse)} scratched per today's merged
+    snapshot (Betway nonRunner flag + Betfair REMOVED, carried through the
+    merge). Settlement auto-VOIDs these (stake back) instead of scoring a
+    scratched horse WON/LOST. Empty on any failure: unknown stays unknown.
+    """
+    import json as _json
+    import os as _os
+
+    out: set = set()
+    try:
+        with open(_os.path.join(str(data_dir), "market_snapshot_latest.json")) as f:
+            snap = _json.load(f)
+        for ev in (snap.get("events") or {}).values():
+            if not isinstance(ev, dict):
+                continue
+            if str(ev.get("bf_event_date", "") or "")[:10] != today_iso:
+                continue
+            try:
+                rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
+            except (ValueError, TypeError):
+                continue
+            if rn <= 0:
+                continue
+            course = _norm_text(ev.get("course", ""))
+            for r in ev.get("runners") or []:
+                if not isinstance(r, dict):
+                    continue
+                if r.get("non_runner") or str(r.get("odds", "")) == "NR":
+                    hn = _norm_text(r.get("name") or r.get("outcomeName") or "")
+                    if hn:
+                        out.add((course, rn, hn))
+    except Exception:
+        pass
+    # Plus the monitor's Betfair cache: a horse scratched after the last
+    # snapshot save still VOIDs — but only from today's card (a stale
+    # cache's NRs must never void today's runners).
+    try:
+        import time as _time
+        from datetime import datetime as _dt
+        with open(_os.path.join(str(data_dir), "betfair_form_last_good.json")) as f:
+            _bfc = _json.load(f)
+        try:
+            _age = _time.time() - _dt.fromisoformat(
+                str(_bfc.get("saved_at", ""))).timestamp()
+        except Exception:
+            _age = 10 ** 9
+        if _age <= 6 * 3600:
+            for _ev in (_bfc.get("events") or {}).values():
+                if not isinstance(_ev, dict):
+                    continue
+                if str(_ev.get("eventDate", "") or "")[:10] != today_iso:
+                    continue
+                try:
+                    _rn = int(_ev.get("raceNumber", -1))
+                except (ValueError, TypeError):
+                    continue
+                if _rn <= 0:
+                    continue
+                _course = _norm_text(_ev.get("course", ""))
+                for _r in _ev.get("runners") or []:
+                    if isinstance(_r, dict) and _r.get("non_runner"):
+                        _hn = _norm_text(_r.get("name") or "")
+                        if _hn:
+                            out.add((_course, _rn, _hn))
+    except Exception:
+        pass
+    return out
+
+
 # TAB Daily Tipping Sheet prints exact pool ranges per meeting, e.g.
 # "Bipot (1-6)", "PA (2-8)", "Pick 6 (3-8)", "Jackpot 1 (4-7)".
 # (pool label, leg count, code prefix)
@@ -369,6 +439,97 @@ def _play_has_real_names(play: Dict) -> bool:
         name = banker.get("name") if isinstance(banker, dict) else banker
         if not name or _is_number_selection(name):
             return False
+    return True
+
+
+# A leg anchored only by outsiders is a lottery line, not a strategy line.
+# Legs may include longshots, but at least half the legs with known market
+# odds must anchor on a favourite/value selection (<= 6.0). Legs with no
+# known odds never count against the play — drop only on proof, like the
+# phantom guard. (Sep-2026: AI kept carding all-outsider tickets with no
+# favourite anywhere, nearly killing every exotic.)
+_ANCHOR_ODDS_MAX: float = 6.0
+
+
+def _play_has_balance(play: Dict, snapshot_odds: Dict[str, Dict[str, float]]) -> bool:
+    """Balance guard: a ticket needs favourites, not just outsiders."""
+    import difflib as _difflib
+
+    track = _norm_text(play.get("_track", ""))
+    odds_pool: Dict[str, float] = {}
+    for k, names in snapshot_odds.items():
+        if track and (track in k or k in track):
+            odds_pool.update(names)
+    if not odds_pool:
+        return True
+    anchored = 0
+    judged = 0
+    for c in play.get("combinations", []) or []:
+        if not isinstance(c, dict):
+            continue
+        cands = []
+        b = c.get("banker")
+        cands.append(b.get("name") if isinstance(b, dict) else b)
+        for s in c.get("savers", []) or []:
+            cands.append(s.get("name") if isinstance(s, dict) else s)
+        known = []
+        for cand in cands:
+            n = _norm_text(cand) if cand else ""
+            if not n:
+                continue
+            if n in odds_pool:
+                known.append(odds_pool[n])
+            else:
+                m = _difflib.get_close_matches(n, odds_pool, n=1, cutoff=0.6)
+                if m:
+                    known.append(odds_pool[m[0]])
+        if not known:
+            continue
+        judged += 1
+        if min(known) <= _ANCHOR_ODDS_MAX:
+            anchored += 1
+    if not judged:
+        return True
+    ok = anchored * 2 >= judged
+    if not ok:
+        print(f"[EXOTIC] Dropped '{play.get('pool')}' @ {play.get('_track')}: "
+              f"only {anchored}/{judged} legs anchored at {_ANCHOR_ODDS_MAX} or shorter "
+              f"(all-outsider ticket)")
+    return ok
+
+
+def _play_has_no_nrs(play: Dict, nr_names: Dict[tuple, set]) -> bool:
+    """Scratched-horse guard: no leg candidate may be a non-runner.
+
+    nr_names maps (norm_course, race_number) -> {norm_horse} from the fresh
+    snapshot (Betway nonRunner + Betfair REMOVED). A banker that can't run
+    kills the leg, so the whole pool is dropped rather than carded —
+    same philosophy as the phantom-meeting guard.
+    """
+    track = _norm_text(play.get("_track", ""))
+    for c in play.get("combinations", []) or []:
+        if not isinstance(c, dict):
+            continue
+        try:
+            race = int(c.get("race", -1))
+        except (ValueError, TypeError):
+            continue
+        nrs = set()
+        for (course, rn), names in nr_names.items():
+            if rn == race and (not track or track in course or course in track):
+                nrs |= names
+        if not nrs:
+            continue
+        cands = []
+        b = c.get("banker")
+        cands.append(b.get("name") if isinstance(b, dict) else b)
+        for s in c.get("savers", []) or []:
+            cands.append(s.get("name") if isinstance(s, dict) else s)
+        for cand in cands:
+            if cand and _norm_text(cand) in nrs:
+                print(f"[EXOTIC] Dropped '{play.get('pool')}' @ {play.get('_track')}: "
+                      f"R{race} candidate '{cand}' is a non-runner (scratched)")
+                return False
     return True
 
 
@@ -1012,9 +1173,10 @@ class StrikeTips:
             logger.warning("[PDF] Runner enrichment failed: %s", e)
             return 0
 
-    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "") -> List[Dict]:
+    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "", nr_names: Optional[Dict[tuple, set]] = None) -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
         import re
+        nr_names = nr_names or {}
 
         # 1. Extract pool starts from PDF leg_info, falling back to standard SA layout
         pool_starts = {}
@@ -1072,10 +1234,20 @@ class StrikeTips:
                 rn = race.get("race_number", "?")
                 rt = race.get("race_time", "TBD")
                 runners_list = race.get("runners", [])
-                runner_names = [
-                    (r if isinstance(r, str) else getattr(r, "horse_name", None) or (r.get("horse_name") or r.get("name") if isinstance(r, dict) else str(r)))
-                    for r in runners_list
-                ]
+                try:
+                    _rn_int = int(rn)
+                except (ValueError, TypeError):
+                    _rn_int = -1
+                _race_nrs = set()
+                for (_cc, _rr), _names in nr_names.items():
+                    if _rr == _rn_int and (_norm_text(t_name) in _cc or _cc in _norm_text(t_name)):
+                        _race_nrs |= _names
+                runner_names = []
+                for r in runners_list:
+                    _nm = (r if isinstance(r, str) else getattr(r, "horse_name", None) or (r.get("horse_name") or r.get("name") if isinstance(r, dict) else str(r)))
+                    if _nm and _norm_text(_nm) in _race_nrs:
+                        _nm = f"{_nm} (NR - scratched, do not select)"
+                    runner_names.append(_nm)
                 card_sections.append(f"\nRace {rn} ({rt}): {len(runners_list)} runners")
                 card_sections.append(f"  Runners: {', '.join(runner_names[:16])}")
 
@@ -1087,7 +1259,12 @@ class StrikeTips:
             + "YOUR TASK: Generate exotic pool combinations for each declared pool. "
             + "For each leg, pick 2 to 4 selections, strongest first: one banker "
             + "plus up to 3 savers, chosen on horse quality, form, and "
-            + "trainer/jockey strength. Short legs (clear standout) take fewer "
+            + "trainer/jockey strength. Build like a professional strategist, "
+            + "not a lottery player: every leg must include a realistic anchor "
+            + "(a favourite or value runner at short odds) and longshots are "
+            + "savers only — never card a leg, let alone a whole ticket, made "
+            + "up of outsiders alone. Horses marked (NR - scratched) are "
+            + "non-runners — never select them in any leg. Short legs (clear standout) take fewer "
             + "selections, open handicaps take more — like a strategist sizing "
             + "a real permutation ticket, never the full field. "
             + "Return ONLY valid JSON with this exact structure: "
@@ -1176,8 +1353,15 @@ class StrikeTips:
                     r_info = next((r for r in track_races if r.get("race_number") == r_num), None)
                     r_runners = r_info.get("runners", []) if r_info else []
                     r_dist = (r_info or {}).get("distance")
+                    # Scratched horses can't anchor or save a leg — skip them
+                    # in fallback order (a NR banker would otherwise card a
+                    # dead ticket, or shift every saver up a slot).
+                    _leg_nrs = set()
+                    for (_cc, _rr), _names in nr_names.items():
+                        if _rr == r_num and (_norm_text(track_name) in _cc or _cc in _norm_text(track_name)):
+                            _leg_nrs |= _names
 
-                    def _get_name(idx):
+                    def _get_name(idx, _nrs=_leg_nrs):
                         if idx < len(r_runners):
                             item = r_runners[idx]
                             if isinstance(item, str):
@@ -1189,6 +1373,13 @@ class StrikeTips:
                                 name = item.get("horse_name") or item.get("name")
                                 return name if name and not _is_number_selection(name) else None
                         return None
+
+                    _ordered = [_get_name(_i) for _i in range(len(r_runners))]
+                    _ordered = [_nm for _nm in _ordered
+                                if _nm and _norm_text(_nm) not in _leg_nrs]
+
+                    def _get_name(idx):
+                        return _ordered[idx] if idx < len(_ordered) else None
 
                     b_horse = _get_name(0)
                     if not b_horse:
@@ -1397,14 +1588,14 @@ class StrikeTips:
 
         return asdict(bet) if bet else None
 
-    def settle_bet(self, bet_id: str, won: bool, notes: str = "") -> Dict:
+    def settle_bet(self, bet_id: str, won: bool, notes: str = "", placed: Optional[str] = None) -> Dict:
         """
         Settle a bet with result
 
         Returns:
             Updated bankroll state
         """
-        success = self.bankroll.settle_bet(bet_id, won, notes=notes)
+        success = self.bankroll.settle_bet(bet_id, won, notes=notes, placed=placed)
 
         if success:
             bet = next(b for b in self.bankroll._bets if b.bet_id == bet_id)
@@ -1576,15 +1767,30 @@ class StrikeTips:
         except Exception as e:
             print(f"[GATE] Snapshot unavailable for exotic validation: {e}")
         _snap_horses: Dict[str, set] = {}
+        _snap_odds: Dict[str, Dict[str, float]] = {}
+        _nr_names: Dict[tuple, set] = {}
         for _ev in (_snapshot_for_gates.get("events") or {}).values():
             if not isinstance(_ev, dict):
                 continue
             _c = _norm_text(_ev.get("course", ""))
+            try:
+                _rn = int(_ev.get("raceNumber", _ev.get("race_number", -1)))
+            except (ValueError, TypeError):
+                _rn = -1
             for _r in (_ev.get("runners") or []):
                 if isinstance(_r, dict):
                     _n = _norm_text(_r.get("name") or _r.get("outcomeName") or "")
                     if _n:
                         _snap_horses.setdefault(_c, set()).add(_n)
+                        try:
+                            _o = float(_r.get("odds"))
+                        except (TypeError, ValueError):
+                            _o = 0.0
+                        if _o > 0:
+                            _snap_odds.setdefault(_c, {})[_n] = _o
+                        if _r.get("non_runner") or str(_r.get("odds", "")) == "NR":
+                            if _rn > 0:
+                                _nr_names.setdefault((_c, _rn), set()).add(_n)
 
         # 3. Exotic Analysis (uses PDF pool structure if available, else standard SA pool conventions)
         exotic_plays = []
@@ -1598,6 +1804,7 @@ class StrikeTips:
                     _plays = await self._analyze_exotic_pools(
                         {_tname: _traces}, pdf_races,
                         tips_text=_tips_text,
+                        nr_names=_nr_names,
                     )
                 except Exception as e:
                     print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
@@ -1616,6 +1823,8 @@ class StrikeTips:
                     print(f"[WARN] Official picks attach skipped: {e}")
                 exotic_plays.extend(_plays or [])
             exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
+            exotic_plays = [p for p in exotic_plays if _play_has_balance(p, _snap_odds)]
+            exotic_plays = [p for p in exotic_plays if _play_has_no_nrs(p, _nr_names)]
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
                 if self.telegram:
@@ -1823,6 +2032,14 @@ class StrikeTips:
                                         track, race.get("race_number", 0), horse,
                                     )
                                     continue
+                                # Punter's form budget: hot streaks earn more
+                                # tickets, cold streaks tighten. Stakes stay
+                                # cautious regardless.
+                                _ok_budget, _budget_why = self.bankroll.within_budget()
+                                if not _ok_budget:
+                                    auto_skipped["budget"] = auto_skipped.get("budget", 0) + 1
+                                    logger.info("Auto-bet skip %s: %s", horse, _budget_why)
+                                    continue
                                 bet = self.place_bet(
                                     horse=horse,
                                     track=track,
@@ -1870,7 +2087,8 @@ class StrikeTips:
                             msg += (
                                 f"Skipped {skipped_total} "
                                 f"(edge {auto_skipped['edge']}, odds {auto_skipped['odds']}, "
-                                f"governor/dupe {auto_skipped['governor']})"
+                                f"governor/dupe {auto_skipped['governor']}, "
+                                f"budget {auto_skipped.get('budget', 0)})"
                             )
                         print(
                             f"[AUTO-BET] Placed {auto_bets_placed} win + {exotic_bets_placed} exotic bets "

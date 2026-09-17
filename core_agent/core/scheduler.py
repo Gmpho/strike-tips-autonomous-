@@ -430,6 +430,10 @@ class StrikeTipsScheduler:
                             if odds is None:
                                 print(f"[AUTO-BET] Skip {horse} @ {track} R{race.get('race_number')}: no bettable market odds")
                                 continue
+                            ok_budget, budget_why = brain.strike.bankroll.within_budget()
+                            if not ok_budget:
+                                print(f"[AUTO-BET] Skip {horse} @ {track}: {budget_why}")
+                                break
 
                             # Place the bet!
                             brain.strike.place_bet(

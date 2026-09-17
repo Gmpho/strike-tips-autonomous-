@@ -317,6 +317,11 @@ class BetfairSA:
                 weight = f"{w} {weight_units}" if weight_units else w
                 weight = weight.strip()
             form = _clean_str(_get("form"))
+            # Non-runner signal: Betfair marks scratched runners REMOVED
+            # (market stays OPEN). Without this the NR vanishes downstream
+            # and settlement later scores a scratched horse WON/LOST.
+            status = str(_get("status") or "").upper()
+            non_runner = status in ("REMOVED", "REMOVED_VACANT", "NON_RUNNER", "WITHDRAWN")
 
             runner: Dict[str, Any] = {"name": name}
             if gear:
@@ -343,6 +348,8 @@ class BetfairSA:
                 runner["weight"] = weight
             if form:
                 runner["form"] = form
+            if non_runner:
+                runner["non_runner"] = True
             runners.append(runner)
 
         if not runners:

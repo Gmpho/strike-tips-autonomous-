@@ -86,6 +86,10 @@ class BetRecord:
     profit_loss: Optional[float] = None
     notes: str = ""
     is_paper: bool = False
+    # Finishing position when known ("1st"/"2nd"/"3rd"/...). Singles that
+    # lose but place are the backbone of future place-pool analysis —
+    # a LOST ticket that ran 2nd is signal, not noise.
+    placed: Optional[str] = None
 
 
 @dataclass
@@ -131,6 +135,16 @@ class BankrollGovernor:
     # genuine mid-range value rarely exceeds 2-3x). Applies to placement AND
     # alerts — insane edges must never reach Telegram either.
     MAX_EST_TO_IMPLIED_RATIO: float = 4.0
+    # Form-driven daily auto-bet budget (Sep-2026: think like a punter —
+    # press with more tickets when hot, tighten to ~10 when cold. Stakes
+    # stay cautious regardless (Kelly × DSI × odds-cap × delusion gate).
+    FORM_LOOKBACK: int = 20
+    HOT_WIN_RATE: float = 0.40
+    COLD_WIN_RATE: float = 0.25
+    BUDGET_HOT: int = 24
+    BUDGET_NEUTRAL: int = 16
+    BUDGET_COLD: int = 10
+    MIN_FORM_SAMPLE: int = 10
     # Longshot damage cap: max % of bank shrinks hyperbolically above 5.0
     # odds (5% at <=5.0, 2.5% at 10.0, 0.6% at 41.0). Kelly hits the cap on
     # anything with edge>10% regardless of odds — without this, 40/1
@@ -293,6 +307,92 @@ class BankrollGovernor:
         if self.drawdown_percent >= self.MAX_DRAWDOWN_PERCENT:
             return False, f"Max drawdown reached ({self.drawdown_percent:.1f}% >= {self.MAX_DRAWDOWN_PERCENT}%)"
 
+        return True, "OK"
+
+    def recent_form(self) -> dict:
+        """Win rate + net over the last FORM_LOOKBACK settled singles.
+
+        Exotics excluded (pool variance would swamp the signal); VOID and
+        EXPIRED excluded (never ran). Small samples return neutral zeros
+        so a cold start never throttles or inflates.
+        """
+        settled = [
+            b for b in self._bets
+            if getattr(b, "status", "") in ("WON", "LOST")
+            and str(getattr(b, "confidence", "") or "").upper() != "EXOTIC"
+            and ":" not in str(getattr(b, "horse", "") or "")
+        ]
+        settled.sort(key=lambda b: (str(getattr(b, "date", "")), str(getattr(b, "bet_id", ""))))
+        tail = settled[-self.FORM_LOOKBACK:]
+        if len(tail) < self.MIN_FORM_SAMPLE:
+            return {"n": len(tail), "win_rate": 0.0, "net": 0.0, "hot": False, "cold": False}
+        wins = sum(1 for b in tail if b.status == "WON")
+        wr = wins / len(tail)
+        net = sum(float(getattr(b, "profit_loss", 0.0) or 0.0) for b in tail)
+        return {
+            "n": len(tail),
+            "win_rate": round(wr, 3),
+            "net": round(net, 2),
+            "hot": wr >= self.HOT_WIN_RATE,
+            "cold": wr < self.COLD_WIN_RATE and net < 0,
+        }
+
+    def daily_bet_budget(self) -> int:
+        """Max AUTO singles to place today: 24 hot, 16 neutral, 10 cold."""
+        form = self.recent_form()
+        if form["hot"]:
+            return self.BUDGET_HOT
+        if form["cold"]:
+            return self.BUDGET_COLD
+        return self.BUDGET_NEUTRAL
+
+    def place_rate(self) -> dict:
+        """Singles that officially ran 1st/2nd/3rd over settled singles.
+
+        WON counts as placed even when settled before place capture
+        existed (a winner is 1st by definition). Exotics excluded.
+        """
+        settled = [
+            b for b in self._bets
+            if getattr(b, "status", "") in ("WON", "LOST")
+            and ":" not in str(getattr(b, "horse", "") or "")
+        ]
+        n = len(settled)
+        if not n:
+            return {"n": 0, "place_rate": 0.0, "wins": 0, "places": 0}
+        wins = sum(1 for b in settled if b.status == "WON")
+        places = sum(
+            1 for b in settled
+            if b.status == "WON"
+            or str(getattr(b, "placed", "") or "") in ("1st", "2nd", "3rd")
+        )
+        return {
+            "n": n,
+            "place_rate": round(places / n, 3),
+            "wins": wins,
+            "places": places,
+        }
+
+    def auto_bets_placed_today(self) -> int:
+        """AUTO singles already recorded today (any status but VOID/EXPIRED)."""
+        today = date.today().isoformat()
+        return sum(
+            1 for b in self._bets
+            if str(getattr(b, "date", ""))[:10] == today
+            and str(getattr(b, "confidence", "") or "").upper() in ("AUTO", "AUTO_MIDDAY")
+            and getattr(b, "status", "") not in ("VOID", "EXPIRED")
+        )
+
+    def within_budget(self) -> tuple[bool, str]:
+        """True when today's AUTO count is under the form-driven budget."""
+        budget = self.daily_bet_budget()
+        used = self.auto_bets_placed_today()
+        if used >= budget:
+            form = self.recent_form()
+            return False, (
+                f"Daily ticket budget reached ({used}/{budget}; "
+                f"form {form['win_rate']:.0%} over last {form['n']})"
+            )
         return True, "OK"
 
     def is_sane_edge(self, edge_percent: float, odds: float) -> bool:
@@ -624,7 +724,7 @@ class BankrollGovernor:
             )
             return True
 
-    def settle_bet(self, bet_id: str, won: bool, notes: str = "") -> bool:
+    def settle_bet(self, bet_id: str, won: bool, notes: str = "", placed: Optional[str] = None) -> bool:
         """Settle a pending bet with a result (Atomic)"""
         with self._atomic_transaction():
             bet = next((b for b in self._bets if b.bet_id == bet_id), None)
@@ -639,9 +739,12 @@ class BankrollGovernor:
             if won:
                 actual_return = bet.potential_return
                 bet.status = "WON"
+                bet.placed = "1st"
             else:
                 actual_return = 0.0
                 bet.status = "LOST"
+                if placed:
+                    bet.placed = placed
 
             bet.actual_return = actual_return
             bet.profit_loss = actual_return - bet.stake

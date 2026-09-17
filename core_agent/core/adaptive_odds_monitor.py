@@ -384,6 +384,34 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
                 val = bf_runner.get(key)
                 if val is not None and val != "" and key not in bw_runner:
                     bw_runner[key] = val
+            # Non-runner flag travels both ways: Betfair REMOVED stamps the
+            # Betway runner, and Betfair-only NRs (scratched after Betway
+            # cached, or never listed) are injected so the NR signal can't
+            # vanish — settlement auto-VOIDs on this, HUD badges it.
+            if bf_runner.get("non_runner") and not bw_runner.get("non_runner"):
+                bw_runner["non_runner"] = True
+        # Inject unmatched Betfair non-runners (they can't win, but the
+        # roster must show them as scratched, not silently absent).
+        try:
+            _existing = {
+                _bf_normalise(str(rr.get("name") or rr.get("outcomeName") or ""))
+                for rr in (event.get("runners") or []) if isinstance(rr, dict)
+            }
+            for _i, _br in enumerate(bf_runners):
+                if _i in matched_bf_indices or not _br.get("non_runner"):
+                    continue
+                _bn = str(_br.get("name") or "").strip()
+                if not _bn or _bf_normalise(_bn) in _existing:
+                    continue
+                (event.get("runners") or []).append({
+                    "name": _bn,
+                    "outcomeName": _bn,
+                    "odds": "NR",
+                    "non_runner": True,
+                })
+                _existing.add(_bf_normalise(_bn))
+        except Exception:
+            pass
         merged_races += 1
 
     logger.info(

@@ -290,3 +290,90 @@ def test_mark_notified_dedupes(temp_data_dir):
     # Same bet, different outcome is a distinct key
     assert gov.mark_notified("abc123", False) is True
     assert gov.mark_notified("abc123", False) is False
+
+
+def _seed_form(gov, wins, losses):
+    """Append settled AUTO singles directly (bypasses placement gates)."""
+    n = 0
+    for i in range(wins):
+        n += 1
+        gov._bets.append(BetRecord(
+            bet_id=f"w{n}", timestamp="2026-09-01T10:00:00", date="2026-09-01",
+            track="vaal", race_number=1, horse=f"Winner{n}", odds=3.0,
+            stake=50.0, potential_return=150.0, status="WON",
+            edge_percent=10.0, confidence="AUTO",
+            actual_return=150.0, profit_loss=100.0,
+        ))
+    for i in range(losses):
+        n += 1
+        gov._bets.append(BetRecord(
+            bet_id=f"l{n}", timestamp="2026-09-01T10:00:00", date="2026-09-01",
+            track="vaal", race_number=1, horse=f"Loser{n}", odds=3.0,
+            stake=50.0, potential_return=150.0, status="LOST",
+            edge_percent=10.0, confidence="AUTO",
+            actual_return=0.0, profit_loss=-50.0,
+        ))
+
+
+def test_form_budget_hot(temp_data_dir):
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    _seed_form(gov, wins=9, losses=11)  # 45% win rate
+    form = gov.recent_form()
+    assert form["hot"] is True and form["cold"] is False
+    assert gov.daily_bet_budget() == gov.BUDGET_HOT == 24
+
+
+def test_form_budget_cold(temp_data_dir):
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    _seed_form(gov, wins=3, losses=17)  # 15% win rate, negative net
+    form = gov.recent_form()
+    assert form["cold"] is True and form["hot"] is False
+    assert gov.daily_bet_budget() == gov.BUDGET_COLD == 10
+
+
+def test_form_budget_neutral_and_small_sample(temp_data_dir):
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    assert gov.daily_bet_budget() == gov.BUDGET_NEUTRAL == 16  # cold start
+    _seed_form(gov, wins=2, losses=1)  # below MIN_FORM_SAMPLE
+    assert gov.daily_bet_budget() == gov.BUDGET_NEUTRAL == 16
+    # Exotics and non-singles must not move the needle
+    gov._bets.append(BetRecord(
+        bet_id="x1", timestamp="2026-09-01T10:00:00", date="2026-09-01",
+        track="vaal", race_number=1, horse="PICK6:1,2/3,4", odds=100.0,
+        stake=50.0, potential_return=5000.0, status="LOST",
+        edge_percent=10.0, confidence="EXOTIC",
+        actual_return=0.0, profit_loss=-50.0,
+    ))
+    assert gov.recent_form()["n"] == 3
+
+
+def test_within_budget_counts_today_only(temp_data_dir):
+    from datetime import date as _date
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    today = _date.today().isoformat()
+    for i in range(24):
+        gov._bets.append(BetRecord(
+            bet_id=f"t{i}", timestamp=f"{today}T10:00:00", date=today,
+            track="vaal", race_number=1, horse=f"Auto{i}", odds=3.0,
+            stake=10.0, potential_return=30.0, status="PENDING",
+            edge_percent=10.0, confidence="AUTO",
+        ))
+    ok, why = gov.within_budget()
+    assert gov.auto_bets_placed_today() == 24
+    # Cold-start form is neutral (16); 24 used exceeds it
+    assert ok is False and "budget" in why.lower()
+
+
+def test_settle_bet_captures_placed(temp_data_dir):
+    gov = _paper_gov(temp_data_dir)
+    bet = gov.record_bet("vaal", 1, "Placer", 3.0, 10.0, 8.0, "VALUE")
+    assert bet is not None
+    assert gov.settle_bet(bet.bet_id, won=False, placed="2nd") is True
+    settled = next(b for b in gov._bets if b.bet_id == bet.bet_id)
+    assert settled.status == "LOST" and settled.placed == "2nd"
+    win = gov.record_bet("vaal", 2, "Winner", 3.0, 10.0, 8.0, "VALUE")
+    assert gov.settle_bet(win.bet_id, won=True) is True
+    settled_w = next(b for b in gov._bets if b.bet_id == win.bet_id)
+    assert settled_w.placed == "1st"
+    pr = gov.place_rate()
+    assert pr == {"n": 2, "place_rate": 1.0, "wins": 1, "places": 2}

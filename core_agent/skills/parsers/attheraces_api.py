@@ -429,6 +429,30 @@ class AtTheRacesAPI:
 
         return None
 
+    async def get_placing_for_bet(
+        self, track_name: str, race_number: int, horse: str, date: str = "yesterday"
+    ) -> Optional[str]:
+        """Get our horse's official finishing position (ATR results).
+
+        Returns "1st"/"2nd"/"3rd"/"4th"... or None when the track/race/
+        horse can't be matched. Fuzzy name match mirrors the winner path —
+        ATR names carry suffixes like " (IRE)".
+        """
+        track_results = await self.get_results_for_track(track_name, date=date)
+        if not track_results:
+            return None
+        want = re.sub(r"[^a-z]", "", horse.lower())
+        for race in track_results:
+            race_num_match = re.search(r"(\d+)\s+\d{2}:\d{2}", race.get("title", ""))
+            if not race_num_match or int(race_num_match.group(1)) != race_number:
+                continue
+            for runner in race.get("runners", []):
+                name = str(runner.get("name", ""))
+                norm = re.sub(r"[^a-z]", "", name.lower())
+                if want and (want in norm or norm in want):
+                    return runner.get("position") or None
+        return None
+
     async def get_market_movers(self) -> List[Dict]:
         """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov."""
         try:

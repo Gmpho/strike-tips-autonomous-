@@ -344,6 +344,39 @@ class ResultTracker:
 
     def __init__(self, bankroll_governor=None):
         self.governor = bankroll_governor
+        # {(track_lower, atr_date_label): races} — one ATR scrape per
+        # track/day no matter how many singles settle from it.
+        self._atr_track_cache: Dict = {}
+
+    async def _atr_placing(self, track: str, race_number: int, horse: str,
+                           bet_date: Optional[str] = None) -> Optional[str]:
+        """Official finishing position for one single (ATR results).
+
+        Winners are already known ("1st"); this exists for the losers —
+        a LOST ticket that ran 2nd is place-pool signal, not noise.
+        Cached per track/day; None on any failure (never blocks settling).
+        """
+        if not horse or ":" in str(horse):
+            return None
+        try:
+            key = (str(track or "").lower(), atr_date_label(bet_date))
+            if key not in self._atr_track_cache:
+                from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+                atr = AtTheRacesAPI()
+                self._atr_track_cache[key] = (
+                    await atr.get_results_for_track(track, date=key[1])
+                ) or []
+            runners = _race_runners_by_number(
+                self._atr_track_cache[key], int(race_number or 0)
+            )
+            if not runners:
+                return None
+            for r in runners:
+                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
+                    return str(r.get("position", "")).strip() or None
+        except Exception as e:
+            logger.debug(f"ATR placing lookup failed for {horse}: {e}")
+        return None
 
     def _fuzzy_match(self, name_a: str, name_b: str) -> float:
         a = set(name_a.lower().split())
@@ -765,6 +798,7 @@ class ResultTracker:
 
         settled = []
         deferred: List[str] = []
+        _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
         for bet in open_bets:
             age = _bet_age_days(getattr(bet, "date", None))
             if age is not None and age > max_age_days:
@@ -839,6 +873,50 @@ class ResultTracker:
                         bet.bet_id, bet.track, bet.race_number, off.strftime("%H:%M"),
                     )
                     continue
+            # Non-runner void: a scratched horse can neither win nor lose —
+            # refund the stake (VOID) instead of fabricating a result.
+            # (Sep-2026: Nkandla Gold + Got The Look scratched at Vaal while
+            # the meeting stayed OPEN.) Exotics skip this: one scratched leg
+            # candidate doesn't kill a multi-horse ticket.
+            if not _is_exotic_bet(bet):
+                try:
+                    _bet_day = str(getattr(bet, "date", "") or "")[:10]
+                    if _bet_day not in _nr_cache:
+                        _nr_cache[_bet_day] = set()
+                        _nr_data_dir = getattr(gov, "data_dir", None) or getattr(
+                            getattr(brain, "strike", None), "data_dir", None)
+                        if _nr_data_dir:
+                            from core_agent.core.strike_tips import _snapshot_non_runners
+                            _nr_cache[_bet_day] = _snapshot_non_runners(
+                                _nr_data_dir, _bet_day)
+                    _bt = str(getattr(bet, "track", "") or "").lower()
+                    _br = int(getattr(bet, "race_number", 0) or 0)
+                    _is_nr = any(
+                        c == _bt and r == _br and self._fuzzy_match(h, str(bet.horse)) >= 0.55
+                        for (c, r, h) in _nr_cache[_bet_day]
+                    )
+                except Exception as nr_err:
+                    logger.debug(f"NR check skipped for {bet.bet_id}: {nr_err}")
+                    _is_nr = False
+                if _is_nr and gov and hasattr(gov, "cancel_pending_bet"):
+                    try:
+                        if gov.cancel_pending_bet(
+                            bet.bet_id, f"scratched (non-runner) — stake refunded"):
+                            logger.info(
+                                f"{_tag()} Auto-void: {bet.horse} at {bet.track} "
+                                f"R{bet.race_number} scratched (NR)")
+                            settled.append({
+                                "bet_id": bet.bet_id,
+                                "horse": bet.horse,
+                                "track": bet.track,
+                                "race_number": bet.race_number,
+                                "won": None,
+                                "void": True,
+                                "notes": "Scratched (NR) — stake refunded",
+                            })
+                    except Exception as void_err:
+                        logger.debug(f"NR void failed for {bet.bet_id}: {void_err}")
+                    continue
             result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
             if not result_text:
                 continue
@@ -872,18 +950,25 @@ class ResultTracker:
 
             if settle_needed:
                 settled_ok = False
+                placed = None
+                try:
+                    placed = await self._atr_placing(
+                        bet.track, bet.race_number, bet.horse, getattr(bet, "date", None)
+                    )
+                except Exception as place_err:
+                    logger.debug(f"Placing lookup skipped for {bet.bet_id}: {place_err}")
                 try:
                     if brain and brain.strike:
                         # settle_bet returns a status dict (never raises on a
                         # failed settle) — honor its "settled" flag instead of
                         # assuming success, or we log/notify phantom settles.
-                        _res = brain.strike.settle_bet(bet.bet_id, won=won, notes=notes)
+                        _res = brain.strike.settle_bet(bet.bet_id, won=won, notes=notes, placed=placed)
                         settled_ok = bool(_res.get("settled")) if isinstance(_res, dict) else bool(_res)
                 except Exception as brain_err:
                     logger.debug(f"Brain settle fallback to governor: {brain_err}")
 
                 if not settled_ok and gov:
-                    settled_ok = gov.settle_bet(bet.bet_id, won=won, notes=notes)
+                    settled_ok = gov.settle_bet(bet.bet_id, won=won, notes=notes, placed=placed)
 
                 if settled_ok:
                     logger.info(
@@ -939,6 +1024,8 @@ class ResultTracker:
 
                 _by_id = {getattr(b, "bet_id", ""): b for b in open_bets}
                 for _rec in settled:
+                    if _rec.get("void"):
+                        continue  # NR voids refund the stake; not a result
                     _b = _by_id.get(_rec.get("bet_id", ""))
                     _stake = float(getattr(_b, "stake", 0.0) or 0.0) if _b is not None else 0.0
                     _ret = float(getattr(_b, "actual_return", 0.0) or 0.0) if _b is not None else 0.0

@@ -143,10 +143,18 @@ class BetwayAPI:
                     None
                 )
                 name_price_map: dict = {}
+                # outcomeIds flagged nonRunner — scratched horses keep a
+                # roster slot (tagged below) instead of vanishing, so the
+                # snapshot carries the NR signal to settlement (auto-VOID)
+                # and the HUD (non-runner badge) instead of silent absence.
+                non_runner_oids: set = set()
                 for outcome in res.get("outcomes", []):
                     if winner_market_id and str(outcome.get("marketId")) != winner_market_id:
                         continue
                     if outcome.get("nonRunner"):
+                        _oid = str(outcome.get("outcomeId") or "")
+                        if _oid:
+                            non_runner_oids.add(_oid)
                         continue
                     oid = str(outcome.get("outcomeId") or "")
                     price = price_map.get(oid)
@@ -171,6 +179,7 @@ class BetwayAPI:
                             "outcomeId": outcome_id,
                             "name": r.get("outcomeName") or r.get("name") or "Unknown",
                             "outcomeName": r.get("outcomeName") or r.get("name") or "Unknown",
+                            "non_runner": outcome_id in non_runner_oids,
                             "jockeyName": r.get("jockeyName") or "TBA",
                             "trainerName": r.get("trainerName") or "TBA",
                             "age": r.get("age") or "U",
@@ -195,8 +204,7 @@ class BetwayAPI:
                     for outcome in res.get("outcomes", []):
                         if winner_market_id and str(outcome.get("marketId")) != winner_market_id:
                             continue
-                        if outcome.get("nonRunner"):
-                            continue
+                        is_nr = bool(outcome.get("nonRunner"))
                         name = outcome.get("outcomeName") or outcome.get("name") or "Unknown"
                         if name in seen:
                             continue
@@ -208,6 +216,7 @@ class BetwayAPI:
                             "outcomeId": outcome_id,
                             "name": name,
                             "outcomeName": name,
+                            "non_runner": is_nr,
                             "jockeyName": info.get("JockeyName") or "TBA",
                             "trainerName": info.get("TrainerName") or "TBA",
                             "age": info.get("Age") or "U",
