@@ -15,7 +15,7 @@ logger = logging.getLogger("gemini-provider")
 
 class GeminiProvider:
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-    MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash"]
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY", "") 

@@ -123,16 +123,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Alert condition cleanup skipped: {e}")
 
+    # NOTE (Sep-2026 outage): the full monitor.run() loop (scrapes +
+    # heartbeat dreams + swarm research) must NOT run inside web
+    # containers — the 5-min run_odds_monitor cron already covers scraping,
+    # and every web container duplicating it fork-bombed CPU/RAM, burned
+    # Groq quota, got the egress IP rate-limited (ATR tiers all failing),
+    # and starved the event loop until HTTP inputs hung and Modal reported
+    # init timeouts. Web lifespan serves requests + scheduler only.
     monitor = None
     tg_channel = None
     bg_task = None
-    try:
-        from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
-        monitor = AdaptiveOddsMonitor()
-        bg_task = asyncio.create_task(monitor.run())
-        logger.info("AdaptiveOddsMonitor started as background task")
-    except Exception as e:
-        logger.warning("AdaptiveOddsMonitor startup failed: %s", e)
+
+    # Task worker needs Redis (local docker / REDIS_URL host — absent on
+    # Modal by design). Starting it with no Redis just error-spams every 2s
+    # forever, so only start when Redis actually answers (Sep-2026 cleanup).
+    def _redis_present() -> bool:
+        try:
+            import socket as _socket
+            from urllib.parse import urlparse as _urlparse
+
+            _url = __import__("os").getenv("REDIS_URL", "redis://localhost:6379/0")
+            _pu = _urlparse(_url)
+            _host = _pu.hostname or "localhost"
+            _port = _pu.port or 6379
+            _s = _socket.create_connection((_host, _port), timeout=2)
+            _s.close()
+            return True
+        except Exception:
+            return False
 
     async def start_task_worker():
         from core_agent.core.task_worker import run_worker_loop
@@ -142,7 +160,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Task worker stopped: %s", e)
 
-    asyncio.create_task(start_task_worker())
+    if _redis_present():
+        asyncio.create_task(start_task_worker())
+    else:
+        logger.info("Task worker skipped (no local Redis on this host)")
 
     async def refresh_snapshot():
         try:
@@ -154,7 +175,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Redis subscriber failed, using disk fallback: %s", e)
 
-    asyncio.create_task(refresh_snapshot())
+    # Snapshot freshness: the monitor cron rewrites
+    # market_snapshot_latest.json every 5 min; the web in-memory copy must
+    # follow it. Redis pub/sub when available, always-on disk-mtime poll
+    # otherwise (Sep-2026: memory froze at keeper startup, bundle served
+    # 138 stale events all day).
+    from core_agent.core.snapshot_cache import disk_refresh_loop
+    asyncio.create_task(disk_refresh_loop(interval=60))
+    logger.info("Snapshot disk refresh started (60s)")
+    if _redis_present():
+        asyncio.create_task(refresh_snapshot())
+    else:
+        logger.info("Snapshot subscriber skipped (no local Redis; disk fallback)")
 
     brain.initialize()
 
@@ -185,16 +217,8 @@ async def lifespan(app: FastAPI):
 
     start_scheduler()
 
-    async def warmup_context():
-        try:
-            from core_agent.agent.context import ContextBuilder
-            cb = ContextBuilder()
-            await cb.build("_warmup", "warmup", [], None)
-            logger.info("ContextBuilder warmup complete")
-        except Exception as e:
-            logger.debug("ContextBuilder warmup skipped: %s", e)
-
-    asyncio.create_task(warmup_context())
+    # ContextBuilder warmup burns LLM calls on every cold start for zero
+    # request benefit — skip in web containers (Sep-2026 outage cleanup).
 
     try:
         from core_agent.channels.telegram import TelegramChannel

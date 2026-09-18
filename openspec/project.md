@@ -62,6 +62,9 @@ Vercel HUD --middleware.ts--> Cloudflare Edge (OKF/D1/KV, 16 MCP tools)
 - `strike-tips-hud/server/podcast-service.ts`, `strike-tips-hud/src/components/SwarmPodcastView.tsx` (Autonomous Swarm Racing Podcast)
 - `strike-tips-hud/src/engine/data-bridge.ts`, `strike-tips-hud/src/store/hud-store.ts` (`telemetry: []`), `strike-tips-hud/src/components/sidebar/TelemetryView.tsx`
 - `strike-tips-hud/src/components/RaceCard.tsx` (sub-row banner, sortable headers, Edge col, per-row ⚡)
+- Settlement voids: `core_agent/skills/result_tracker.py` (`_snapshot_non_runners`, `_meeting_is_abandoned`, `_void_abandoned_meetings`), bankroll `cancel_pending_bet` refunds (see `openspec/changes/stabilize-sep-ops/`)
+- Chat grounding: `core_agent/agent/providers/task_router.py` (existence gate, date+meetings prefix, pasted-card passthrough)
+- Web lifespan serves only (`core_agent/api_pkg/__init__.py`); loops live in cron cadence (`core_agent/core/modal_app.py`: `run_odds_monitor` + intelligence piggyback)
 
 ## Workflow
 

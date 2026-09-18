@@ -53,7 +53,7 @@ async def get_tts_voices():
         "providers": {
             "gemini": {
                 "name": "Gemini Natural TTS",
-                "model": "gemini-3.1-flash-tts-preview",
+                "model": "gemini-2.5-flash-preview-tts",
                 "available": bool(os.getenv("GEMINI_API_KEY")),
                 "defaultVoice": "Kore",
                 "voices": [
@@ -145,7 +145,7 @@ async def convert_text_to_speech(req: TTSRequest):
 
     voice_name = voice if voice in ["Kore", "Puck", "Charon", "Fenrir", "Zephyr"] else "Kore"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key={gemini_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key={gemini_key}"
     payload = {
         "contents": [{"parts": [{"text": clean_text}]}],
         "generationConfig": {

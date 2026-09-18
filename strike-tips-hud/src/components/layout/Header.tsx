@@ -52,6 +52,24 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
             <div className="px-1.5 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-md shrink-0">
               <span className="text-[7px] sm:text-[9px] font-black text-purple-400 uppercase tracking-widest">PRO</span>
             </div>
+            {/* Backend indicator: local dev must not silently burn prod.
+                import.meta.env.DEV + VITE_BACKEND=prod → amber PROD,
+                otherwise emerald LOCAL (docker :8000) or PROD build. */}
+            {(() => {
+              const isDev = (import.meta as any).env?.DEV;
+              const viteBackend = ((import.meta as any).env?.VITE_BACKEND || 'local').toLowerCase();
+              if (!isDev) return null;
+              const isProd = viteBackend === 'prod';
+              return (
+                <div className={`px-1.5 py-0.5 border rounded-md shrink-0 ${
+                  isProd ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'
+                }`} title={isProd ? 'Dev server → LIVE Modal backend (burns prod!)' : 'Dev server → local docker backend'}>
+                  <span className={`text-[7px] sm:text-[9px] font-black uppercase tracking-widest ${
+                    isProd ? 'text-amber-400' : 'text-emerald-400'
+                  }`}>{isProd ? 'PROD' : 'LOCAL'}</span>
+                </div>
+              );
+            })()}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_10px] shrink-0 transition-colors duration-500 ${

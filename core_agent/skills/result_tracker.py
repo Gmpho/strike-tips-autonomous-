@@ -34,6 +34,12 @@ _NON_NAME_WORDS = frozenset({
 # settlement (results need time to publish).
 OFF_TIME_GRACE_MINUTES = 15
 
+# Abandoned meetings: last off-time + this with zero results anywhere means
+# the meeting never ran (Sep-2026: Greyville abandoned, singles sat PENDING
+# with no path to a refund). Generous on purpose — a false void refunds a
+# live ticket, so declaration needs a fully dark board, not a slow feed.
+ABANDONED_GRACE_MINUTES = 90
+
 
 # Max age for AUTO-settlement. Older PENDING bets are left alone for manual
 # review: settling a week-old bet against yesterday's results for the same
@@ -334,6 +340,29 @@ def _iter_dates() -> List[str]:
         (today - timedelta(days=1)).strftime("%d %B %Y"),
         (today - timedelta(days=2)).strftime("%d %B %Y"),
     ]
+
+
+def _meeting_is_abandoned(off_times, atr_track_empty: bool,
+                          atr_day_ok: bool, now) -> bool:
+    """Pure decision: dark board long after the last off = abandoned.
+
+    off_times: scheduled offs (naive treated as SAST, mirroring the
+    singles path). Requires EVERY known off past grace — one live race
+    vetoes. Unknown offs (None) are ignored only when at least one known
+    off exists; a meeting with no known times can never be declared.
+    """
+    if not atr_day_ok or not atr_track_empty:
+        return False
+    known = []
+    for o in off_times or []:
+        if o is None:
+            continue
+        if o.tzinfo is None:
+            o = o.replace(tzinfo=_SAST)
+        known.append(o)
+    if not known:
+        return False
+    return now >= max(known) + timedelta(minutes=ABANDONED_GRACE_MINUTES)
 
 
 class ResultTracker:
@@ -1047,4 +1076,101 @@ class ResultTracker:
                     )
             except Exception as e:
                 logger.debug(f"D1 result mirror skipped: {e}")
+
+        # Abandoned meetings: void PENDING singles with refund (singles
+        # only — exotic pool rules for abandoned legs are a follow-up).
+        try:
+            await self._void_abandoned_meetings(open_bets, gov, settled, brain)
+        except Exception as e:
+            logger.debug(f"Abandoned-meeting sweep skipped: {e}")
         return settled
+
+    async def _void_abandoned_meetings(self, open_bets, gov, settled, brain) -> None:
+        """VOID singles for meetings that never ran (stake back, not EXPIRED).
+
+        Declaration needs a fully dark board: every open single past its
+        off + ABANDONED_GRACE_MINUTES, ATR serving the day fine overall,
+        but zero results for this track. One marker file per (day, track)
+        so the ATR probes run at most once a day per meeting. Singles only;
+        exotics stay PENDING (tote abandoned-leg rules TBD).
+        """
+        today = date.today()
+        valid_days = {today.isoformat(), (today - timedelta(days=1)).isoformat()}
+        groups: Dict[tuple, list] = {}
+        for b in open_bets or []:
+            if getattr(b, "status", "") != "PENDING":
+                continue
+            if _is_exotic_bet(b) or ":" in str(getattr(b, "horse", "") or ""):
+                continue
+            day = str(getattr(b, "date", "") or "")[:10]
+            if day not in valid_days:
+                continue
+            groups.setdefault((str(getattr(b, "track", "") or "").lower(), day), []).append(b)
+        if not groups:
+            return
+        try:
+            data_dir = getattr(gov, "data_dir", None) or "./data"
+            from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+            atr = AtTheRacesAPI()
+            day_ok_cache: Dict[str, bool] = {}
+            for (track, day), bets in groups.items():
+                marker = os.path.join(data_dir, f".abandon_checked_{day}_{track}.json")
+                if os.path.exists(marker):
+                    continue
+                try:
+                    offs = [self._race_off_datetime(
+                        getattr(b, "track", ""), getattr(b, "race_number", 0),
+                        getattr(b, "date", None)) for b in bets]
+                    label = atr_date_label(day)
+                    track_races = await atr.get_results_for_track(
+                        getattr(bets[0], "track", ""), date=label)
+                    if label not in day_ok_cache:
+                        try:
+                            day_ok_cache[label] = bool(await atr.get_results(date=label))
+                        except Exception:
+                            day_ok_cache[label] = False
+                    abandoned = _meeting_is_abandoned(
+                        offs, atr_track_empty=not track_races,
+                        atr_day_ok=day_ok_cache[label],
+                        now=datetime.now(_SAST))
+                except Exception as e:
+                    logger.debug(f"Abandon check skipped for {track} {day}: {e}")
+                    continue
+                try:
+                    with open(marker, "w") as f:
+                        json.dump({"checked_at": datetime.now(_SAST).isoformat(),
+                                   "abandoned": bool(abandoned)}, f)
+                except Exception:
+                    pass
+                if not abandoned:
+                    continue
+                n = 0
+                for b in bets:
+                    try:
+                        if gov.cancel_pending_bet(
+                                getattr(b, "bet_id", ""),
+                                "meeting abandoned — stake refunded"):
+                            n += 1
+                            settled.append({
+                                "bet_id": getattr(b, "bet_id", ""),
+                                "horse": getattr(b, "horse", ""),
+                                "track": getattr(b, "track", ""),
+                                "race_number": getattr(b, "race_number", 0),
+                                "won": None,
+                                "void": True,
+                                "notes": "Meeting abandoned — stake refunded",
+                            })
+                    except Exception as e:
+                        logger.debug(f"Abandon void failed for {getattr(b, 'bet_id', '?')}: {e}")
+                if n:
+                    logger.info(
+                        f"{track} {day} abandoned: voided {n} PENDING single(s), stakes refunded")
+                    try:
+                        tg = getattr(getattr(brain, "strike", None), "telegram", None)
+                        if tg:
+                            await tg.send_message(
+                                f"🏟️ <b>{track.title()} abandoned</b> — {n} stake(s) refunded (VOID).")
+                    except Exception as e:
+                        logger.debug(f"Abandon notify skipped: {e}")
+        except Exception as e:
+            logger.debug(f"Abandoned-meeting sweep failed: {e}")

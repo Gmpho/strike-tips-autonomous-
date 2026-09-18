@@ -38,6 +38,44 @@ def set_snapshot(data: Dict[str, Any]) -> None:
     _snapshot.update(data)
 
 
+_last_disk_mtime: float = 0.0
+
+
+async def disk_refresh_loop(interval: int = 60) -> None:
+    """Poll market_snapshot_latest.json mtime; reload on change.
+
+    The 5-min monitor cron is the writer; web containers are readers.
+    Without this, the web in-memory snapshot freezes at container startup
+    (Sep-2026: bundle served 138 morning events all day while the monitor
+    synced 90). One stat per interval; full parse only on change.
+    """
+    global _last_disk_mtime
+    import time as _time
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            try:
+                mtime = os.path.getmtime(MARKET_SNAPSHOT_PATH)
+            except OSError:
+                continue
+            if mtime <= _last_disk_mtime:
+                continue
+            with open(MARKET_SNAPSHOT_PATH) as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("events") is not None:
+                set_snapshot(data)
+                _last_disk_mtime = mtime
+                logger.info(
+                    "Snapshot reloaded from disk (%d events)",
+                    len(data.get("events", {})),
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug(f"Snapshot disk refresh skipped: {e}")
+
+
 async def ensure_populated() -> None:
     """If snapshot is empty, try to fetch live data from Betway."""
     if _snapshot:

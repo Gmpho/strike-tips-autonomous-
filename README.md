@@ -6,7 +6,7 @@
 
 A modular, AI-powered betting assistant that identifies value bets in South African horse racing using probability edge analysis and disciplined bankroll management.
 
-**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
+**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Cloudflare Pages HUD, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -59,7 +59,12 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📊 Dream Stress Index (DSI)** - Scales Half-Kelly staking defensively: DSI < 20% → 1.0x, 20-50% → 0.75x, > 50% → 0.50x (Quarter-Kelly)
 - **🌐 WebGPU Search Grounding** - Local browser models fetch live context (odds, runners, ChromaDB insights, DDG search) via `/api/agent/context` before inference
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
-- **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
+- **📰 Racing News Feed** - Zero-cost live headlines from BBC/Guardian/Mirror/TDN/Sporting Post/Gold Circle RSS — polled by the Swarm Researcher, delivered to the HUD via hash-first polling with a lazy image proxy (no API keys)
+- **🧠 Grounded AI Chat** - Existence gate refuses fantasy tracks/cards, every model-bound message carries today's real date + live meetings, pasted cards analyze untouched; Telegram `/model` mirrors the HUD pool (auto/groq/gemini/gemini-pro/gemini-lite)
+- **🎙️ Voice Studio** - Podcast synthesis, TTS voices, transcription + live voice HUD (see `openspec/changes/gemini-groq-tts/`, `autonomous-swarm-podcast` spec)
+- **💸 Settlement Truth** - Scratched horses auto-VOID with refund (never scored), abandoned meetings VOID singles with refund + Telegram note, exotic tickets need favourite/value anchors (no all-outsider lines), place capture (`placed`/`place_rate`), form-driven ticket budget (24 hot / 16 neutral / 10 cold) — full rules: [`docs/SETTLEMENT.md`](docs/SETTLEMENT.md)
+- **☁️ Live-Verified Cloud Pools** - Groq `gpt-oss-120b/20b`, Gemini 2.5 chain — IDs audited against live provider lists, prompt diet holds the 8k TPM ceiling ([`docs/CLOUD_MODELS.md`](docs/CLOUD_MODELS.md))
+- **💻 Local-First Dev** - `VITE_BACKEND=local` (default, docker `:8000`, zero prod spend) with LOCAL/PROD header badge ([`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md))
 - **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
 - **📡 Live Ops Telemetry** - Dedicated sidebar tab with engine status cards + live activity stream (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments), fed by 10s hash-first polling + disk-backed cross-container mirror — SSE retired to stop 24/7 billed executions ([docs](docs/LIVE_OPS_TELEMETRY.md))
 - **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header

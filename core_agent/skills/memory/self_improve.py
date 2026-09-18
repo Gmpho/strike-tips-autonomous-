@@ -68,7 +68,7 @@ DEFAULT_INSIGHTS: List[Dict] = [
     {
         "pattern_name": "ai_provider_chain",
         "description": (
-            "Primary: Groq llama-3.3-70b-versatile for race analysis and exotic generation. "
+            "Primary: Groq openai/gpt-oss-120b for race analysis and exotic generation. "
             "Fallback: Gemini 2.5 flash if Groq fails. No OpenAI/Kimi K providers. "
             "Multimodal: Gemini handles form image analysis. Provider selection in "
             "ai_providers.py via _call_parallel() (formerly _call_kimi_parallel)."

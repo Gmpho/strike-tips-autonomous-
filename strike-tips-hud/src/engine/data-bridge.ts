@@ -55,8 +55,15 @@ export class DataBridge {
       const data = await fullRes.json();
       this.lastSnapshotHash = data.snapshot_hash || snapshot_hash;
       const current = hudStore.getState();
+      // Drop finished races at ingestion: the backend prunes, but a stale
+      // bundle must never inflate the dashboard count (Sep-2026: 138 shown
+      // vs ~90 active). Belt-and-braces alongside server-side pruning.
+      const rawEvents = data.events || {};
+      const events = Object.fromEntries(
+        Object.entries(rawEvents).filter(([, e]) => !(e as any)?.isFinished)
+      );
       const patch: Record<string, unknown> = {
-        events: data.events || {},
+        events,
         alerts: data.alerts || [],
       };
       const unwrap = (v: unknown): unknown => {
@@ -237,6 +244,10 @@ export class DataBridge {
 
   private async runSlow() {
     try {
+      // Decoupled feeds (Sep-2026): telemetry + news do NOT change the race
+      // snapshot hash, so gating them on syncSnapshot left LiveOps/news
+      // frozen for hours. Refresh ungated every slow tick (tiny payloads).
+      await Promise.allSettled([this.hydrateTelemetry(), this.refreshNews()]);
       const activeView = typeof localStorage !== 'undefined' ? localStorage.getItem('strike_active_view') : 'dashboard';
 
       const needStats = ['analytics', 'bankroll'].includes(activeView || '');

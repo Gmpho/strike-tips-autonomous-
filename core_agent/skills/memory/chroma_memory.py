@@ -288,26 +288,36 @@ class RacingMemory:
     def search_form_insights(
         self, query: str, n_results: int = 5, where: Optional[Dict] = None
     ) -> List[Dict]:
-        """Semantic search over stored form insights"""
+        """Semantic search over stored form insights.
+
+        Chroma Cloud throws transient SSL EOFs / 408s under load (Sep-2026:
+        error-spam every cycle). Retry twice with backoff, then fail soft —
+        memory is best-effort enrichment, never worth breaking a scan/chat.
+        """
         if not self._is_ready:
             return []
-        try:
-            kwargs = {"query_texts": [query], "n_results": n_results}
-            if where:
-                kwargs["where"] = where
+        kwargs = {"query_texts": [query], "n_results": n_results}
+        if where:
+            kwargs["where"] = where
+        last_err = None
+        for attempt in range(3):
+            try:
+                results = self._form_collection.query(**kwargs)
+                docs = results.get("documents", [[]])[0]
+                metas = results.get("metadatas", [[]])[0]
+                distances = results.get("distances", [[]])[0]
+                return [
+                    {"content": doc, "metadata": meta, "distance": dist}
+                    for doc, meta, dist in zip(docs, metas, distances)
+                ]
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    import time as _time
 
-            results = self._form_collection.query(**kwargs)
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            distances = results.get("distances", [[]])[0]
-
-            return [
-                {"content": doc, "metadata": meta, "distance": dist}
-                for doc, meta, dist in zip(docs, metas, distances)
-            ]
-        except Exception as e:
-            logger.error(f"Memory search error: {e}")
-            return []
+                    _time.sleep(1.0 * (attempt + 1))
+        logger.warning(f"Memory search unavailable after retries: {last_err}")
+        return []
 
     # ─── Chat History ─────────────────────────────────────────────────────────
 

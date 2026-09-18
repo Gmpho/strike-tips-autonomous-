@@ -35,7 +35,7 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
     q.includes('monte carlo') || q.includes('permutation') || q.includes('compare runners')
   ) {
     if (hasKey.gemini) return { target: 'gemini-3.1-pro-preview', isGroq: false };
-    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
   }
 
   // 2. High-speed quick lookups, balance checks, short questions -> Groq Llama 8B or Gemini Lite
@@ -46,13 +46,13 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
       q.includes('status') || q.includes('ping')
     )
   ) {
-    if (hasKey.groq) return { target: 'llama-3.1-8b-instant', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-20b', isGroq: true };
     if (hasKey.gemini) return { target: 'gemini-3.1-flash-lite', isGroq: false };
   }
 
   // 3. Fast racing speed / versatile analysis -> Groq Llama 70B if available
   if (q.includes('fast') || q.includes('quick summary')) {
-    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
   }
 
   // Default champion: Gemini 3.5 Flash with Google Search Grounding for live race info
@@ -60,7 +60,7 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
     return { target: 'gemini-3.5-flash', isGroq: false };
   }
   if (hasKey.groq) {
-    return { target: 'llama-3.3-70b-versatile', isGroq: true };
+    return { target: 'openai/gpt-oss-120b', isGroq: true };
   }
   return { target: 'gemini-3.5-flash', isGroq: false };
 }
@@ -147,7 +147,7 @@ async function handleGeminiChat(
   } else if (modelName.includes('lite') || modelName.includes('fast')) {
     targetModel = 'gemini-3.1-flash-lite';
   } else if (modelName.includes('3.8-flash')) {
-    targetModel = 'gemini-3.8-flash';
+    targetModel = 'gemini-2.5-flash';
   }
 
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
@@ -269,15 +269,15 @@ async function handleGroqChat(
     return;
   }
 
-  let groqModel = 'llama-3.3-70b-versatile';
-  if (modelName.includes('8b')) {
-    groqModel = 'llama-3.1-8b-instant';
-  } else if (modelName.includes('70b') || modelName.includes('llama-3.3')) {
-    groqModel = 'llama-3.3-70b-versatile';
+  let groqModel = 'openai/gpt-oss-120b';
+  if (modelName.includes('8b') || modelName.includes('20b') || modelName.includes('instant')) {
+    groqModel = 'openai/gpt-oss-20b';
+  } else if (modelName.includes('70b') || modelName.includes('120b') || modelName.includes('llama-3.3')) {
+    groqModel = 'openai/gpt-oss-120b';
   } else if (modelName.includes('mixtral') || modelName.includes('8x7b')) {
-    groqModel = 'mixtral-8x7b-32768';
+    groqModel = 'openai/gpt-oss-20b';
   } else if (modelName.includes('gemma-2-9b') || modelName.includes('gemma2')) {
-    groqModel = 'gemma2-9b-it';
+    groqModel = 'openai/gpt-oss-20b';
   } else if (modelName.includes('llama3-70b-8192')) {
     groqModel = 'llama3-70b-8192';
   }

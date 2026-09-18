@@ -88,7 +88,7 @@ export function stitchWavBuffers(buffers: Buffer[]): Buffer {
 }
 
 /**
- * Synthesizes natural speech using Google Gemini TTS (gemini-3.1-flash-tts-preview).
+ * Synthesizes natural speech using Google Gemini TTS (gemini-2.5-flash-preview-tts).
  */
 export async function synthesizeGeminiTTS(text: string, voice = 'Kore'): Promise<Buffer> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -109,7 +109,7 @@ export async function synthesizeGeminiTTS(text: string, voice = 'Kore'): Promise
   const voiceName = validVoices.includes(voice) ? voice : 'Kore';
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.1-flash-tts-preview',
+    model: 'gemini-2.5-flash-preview-tts',
     contents: [{ parts: [{ text }] }],
     config: {
       responseModalities: [Modality.AUDIO],
@@ -189,7 +189,7 @@ export const TTS_METADATA = {
   providers: {
     gemini: {
       name: 'Gemini Natural TTS',
-      model: 'gemini-3.1-flash-tts-preview',
+      model: 'gemini-2.5-flash-preview-tts',
       available: Boolean(process.env.GEMINI_API_KEY),
       defaultVoice: 'Kore',
       voices: [

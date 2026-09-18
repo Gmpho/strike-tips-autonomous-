@@ -1028,9 +1028,9 @@ ${compiledContext || 'No context data available.'}`;
                     <option value="auto" className="bg-[#0c0817]">⚡ Auto Router (Dynamic Intent + Speed + Search)</option>
                   </optgroup>
                   <optgroup label="⚡ Groq Cloud (Ultra-Fast Inference)" className="bg-[#0c0817]">
-                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · Llama 3.3 70B (Versatile Racing AI)</option>
-                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · Llama 3.1 8B (Instant Speed ~100ms)</option>
-                    <option value="groq-mixtral" className="bg-[#0c0817]">Groq · Mixtral 8x7B (MoE Analysis)</option>
+                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · GPT-OSS 120B (Versatile Racing AI)</option>
+                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Instant Speed ~100ms)</option>
+                    <option value="groq-gpt-oss-20b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Fast Analysis)</option>
                     <option value="groq-gemma2" className="bg-[#0c0817]">Groq · Gemma 2 9B (Google Architecture)</option>
                   </optgroup>
                   <optgroup label="✨ Google Gemini AI" className="bg-[#0c0817]">

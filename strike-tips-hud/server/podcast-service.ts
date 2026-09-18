@@ -177,7 +177,7 @@ export async function synthesizePodcastLine(text: string, voice: string): Promis
   const voiceName = validVoices.includes(voice) ? voice : 'Kore';
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.1-flash-tts-preview',
+    model: 'gemini-2.5-flash-preview-tts',
     contents: [{ parts: [{ text }] }],
     config: {
       responseModalities: [Modality.AUDIO],
