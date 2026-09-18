@@ -35,7 +35,10 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=512,
+    # 1024: the web container also runs bg monitor.run() (playwright),
+    # APScheduler jobs, task worker and bus loops — 512 OOMed on a ~10min
+    # cycle (Sep-2026: init OK, death, hung replacement, repeat).
+    memory=1024,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
@@ -47,7 +50,10 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     # (~$4-6/mo). Proper fix later: slim browser-free image for serve_api.
     startup_timeout=300,
     min_containers=1,
-    max_containers=3,
+    # Single keeper: traffic is tiny and extra web containers each ran a
+    # full scheduler + monitor loop (3x scrapes, volume contention) and
+    # starved fresh starts into the 300s init timeout.
+    max_containers=1,
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app()
