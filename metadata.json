@@ -1,0 +1,6 @@
+{
+  "name": "STRIKE TIPS | HUD",
+  "description": "Strike Tips HUD — Real-time horse racing intelligence, AI predictions, and betting analysis dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

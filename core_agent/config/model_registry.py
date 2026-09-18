@@ -143,37 +143,37 @@ MODEL_REGISTRY: List[ModelInfo] = [
         frontend_visible=False,
     ),
     # ═══════════════════════════════════════════════════════════
-    # CLOUD MODELS - May Have Limits
+    # CLOUD MODELS - Production Providers
     # ═══════════════════════════════════════════════════════════
     ModelInfo(
-        id="openai/gpt-oss-120b",
-        name="Groq GPT-OSS 120B",
+        id="llama-3.3-70b-versatile",
+        name="Groq Llama 3.3 70B",
         type="cloud",
         provider="Groq",
-        description="OpenAI OSS 120B on Groq - primary cloud orchestrator (tool calling).",
+        description="Llama 3.3 70B on Groq - primary cloud orchestrator (tool calling).",
         taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_ANALYSIS],
         bestForTaskTypes=[TASK_CHAT, TASK_TOOLS, TASK_ANALYSIS],
-        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 20},
+        defaultConfig={"temperature": 0.3, "maxTokens": 800, "topK": 20},
     ),
     ModelInfo(
-        id="openai/gpt-oss-20b",
-        name="Groq GPT-OSS 20B",
+        id="llama-3.1-8b-instant",
+        name="Groq Llama 3.1 8B",
         type="cloud",
         provider="Groq",
-        description="OpenAI OSS 20B on Groq - fast lightweight chat.",
+        description="Llama 3.1 8B on Groq - fast lightweight chat and reads.",
         taskTypes=[TASK_CHAT, TASK_ANALYSIS],
         bestForTaskTypes=[TASK_CHAT],
-        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 20},
+        defaultConfig={"temperature": 0.3, "maxTokens": 800, "topK": 20},
     ),
     ModelInfo(
-        id="gemini-3.5-flash",
-        name="Gemini 3.5 Flash",
+        id="gemini-2.5-flash",
+        name="Gemini 2.5 Flash",
         type="cloud",
         provider="Google",
-        description="Google AI flagship - multimodal, function calling.",
+        description="Google AI flagship - multimodal, function calling, fast reasoning.",
         taskTypes=[TASK_CHAT, TASK_TOOLS, TASK_MULTIMODAL],
         bestForTaskTypes=[TASK_MULTIMODAL],
-        defaultConfig={"temperature": 0.3, "maxTokens": 400, "topK": 64},
+        defaultConfig={"temperature": 0.3, "maxTokens": 800, "topK": 64},
     ),
 ]
 
@@ -252,7 +252,7 @@ def get_best_orchestrator() -> Optional[ModelInfo]:
     local = get_model_by_id("qwen3.5:0.8b")
     if local:
         return local
-    return get_model_by_id("openai/gpt-oss-120b")
+    return get_model_by_id("llama-3.3-70b-versatile")
 
 
 def get_best_tool_model() -> Optional[ModelInfo]:

@@ -51,7 +51,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5173,
+      port: 3000,
+      host: '0.0.0.0',
+      allowedHosts: true,
       // COEP: `credentialless` (Chrome 96+) keeps WebLLM/SharedArrayBuffer
       // threading protected (COOP same-origin + COEP) WHILE allowing
       // cross-origin, no-CORP third-party scripts — e.g. the Telegram WebApp
@@ -85,31 +87,47 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path.replace(/^\/ollama/, ''),
           secure: false,
         },
-        '/api': {
-          target: 'http://127.0.0.1:8000',
-          changeOrigin: true,
-          secure: false,
-          headers: apiKeyHeader,
-        },
+        '/api/health': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/edge': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/kelly': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/circuit': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/bayesian': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/keywords': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/evaluate': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/verify-card': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/patch-html': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/racing/form': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/racing/odds': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
+        '/api/knowledge': { target: 'https://striketips-mcp.gmphorg379.workers.dev', changeOrigin: true, secure: true },
         '/mcp': {
-          target: 'http://127.0.0.1:8000',
+          target: 'https://striketips-mcp.gmphorg379.workers.dev',
           changeOrigin: true,
+          secure: true,
           ws: true,
           headers: apiKeyHeader,
         },
-        '/docs': {
-          target: 'http://127.0.0.1:8000',
+        '/api': {
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
+          secure: true,
+          headers: apiKeyHeader,
+        },
+        '/docs': {
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
+          changeOrigin: true,
+          secure: true,
           headers: apiKeyHeader,
         },
         '/openapi.json': {
-          target: 'http://127.0.0.1:8000',
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
+          secure: true,
           headers: apiKeyHeader,
         },
         '/v1': {
-          target: 'http://127.0.0.1:8000',
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
+          secure: true,
           headers: apiKeyHeader,
         }
       }

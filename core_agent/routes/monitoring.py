@@ -326,13 +326,6 @@ async def proxy_news_image(url: str = Query(...)):
         "i2-prod.dailystar.co.uk",
         "i.dailymail.co.uk",
         "www.justhorseracing.com.au",
-        # RSS feed image hosts (Sep-2026: every SA-feed image 400'd —
-        # substring match covers their subdomains/CDN paths too).
-        "thoroughbreddailynews.com",
-        "sportingpost.co.za",
-        "goldcircle.co.za",
-        "dubairacingclub.com",
-        "scmp.com",
     )
     if not any(h in url for h in allowed_hosts):
         return Response(status_code=400, content="Disallowed image source")

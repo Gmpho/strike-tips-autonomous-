@@ -15,13 +15,15 @@ class ModelConfig:
     OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")
     EMBEDDER = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
 
-    # Fallback chains — latest Gemini models (GA as of May 2026)
-    PARALLEL = "gemini-3.5-flash"
-    CLOUD_FALLBACK = "gemini-3.5-flash"
-    GEMINI_CHAIN = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash"]
+    # Fallback chains — production Gemini models
+    PARALLEL = "gemini-2.5-flash"
+    CLOUD_FALLBACK = "gemini-2.5-flash"
+    GEMINI_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash"]
 
-    # Groq model alias
-    ORCHESTRATOR = "openai/gpt-oss-120b"  # Tool calling + reasoning
+    # Groq production models
+    ORCHESTRATOR = "llama-3.3-70b-versatile"  # Tool calling + reasoning
+    GROQ_FAST = "llama-3.1-8b-instant"         # Fast reads
+    GROQ_REASONER = "deepseek-r1-distill-llama-70b"  # Deep math/edge calculations
 
     @classmethod
     def groq_available(cls) -> bool:

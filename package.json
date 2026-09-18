@@ -1,0 +1,12 @@
+{
+  "name": "strike-tips-racing-bot",
+  "private": true,
+  "workspaces": [
+    "strike-tips-hud"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=strike-tips-hud",
+    "build": "npm run build --workspace=strike-tips-hud && mkdir -p dist && cp -rf strike-tips-hud/dist/* dist/",
+    "lint": "npm run build --workspace=strike-tips-hud"
+  }
+}

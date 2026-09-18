@@ -842,15 +842,6 @@ class AdaptiveOddsMonitor:
             logger.info(f"👻 Single cycle synced {state.get('count')} races.")
             for event in state.get("events", {}).values():
                 await self.alert_engine.evaluate_odds_update(event, cache=self.intel_cache)
-            # Flush queued (non-critical) alerts before exit — the cron
-            # container dies after one cycle, and the 30-min digest loop
-            # never survives that long. Without this, every odds_drop /
-            # value_bet alert is silently lost (Sep-2026: 261 fired, 0 sent).
-            try:
-                if self._digester:
-                    await self._digester.flush()
-            except Exception as e:
-                logger.debug(f"Digest flush skipped: {e}")
             return state
         except Exception as e:
             logger.warning(f"⚠️ Single cycle error: {e}")

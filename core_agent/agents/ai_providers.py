@@ -23,8 +23,8 @@ class AIResponse:
 
 class AIProvider:
     ALLOWED_MODELS = {
-        "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
-        "gemini": ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash-lite"],
+        "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        "gemini": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
     }
 
     def __init__(self):
@@ -38,10 +38,10 @@ class AIProvider:
         from core_agent.config.model_factory import get_client
 
         async def _run(prompt: str) -> AIResponse:
-            # Primary: Groq gpt-oss-120b
+            # Primary: Groq llama-3.3-70b-versatile
             if ModelConfig.groq_available():
                 try:
-                    client = get_client("openai/gpt-oss-120b")
+                    client = get_client("llama-3.3-70b-versatile")
                     agent = client.as_agent()
                     session = agent.create_session()
                     from agent_framework import Message
@@ -49,9 +49,9 @@ class AIProvider:
                     return AIResponse(content=result.text, provider="groq")
                 except Exception as e:
                     logger.warning(f"Groq failed, falling back to Gemini: {e}")
-            # Fallback: Gemini 3.5 flash
+            # Fallback: Gemini 2.5 flash
             try:
-                client = get_client("gemini-3.5-flash")
+                client = get_client("gemini-2.5-flash")
                 agent = client.as_agent()
                 session = agent.create_session()
                 from agent_framework import Message
@@ -68,7 +68,7 @@ class AIProvider:
     _call_kimi_parallel = _call_parallel
 
     async def direct_chat(
-        self, prompt: str, model_name: str = "groq:openai/gpt-oss-20b"
+        self, prompt: str, model_name: str = "groq:llama-3.1-8b-instant"
     ) -> AIResponse:
         from core_agent.config.model_factory import get_client
 

@@ -35,24 +35,15 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    # 512MB: the Sep-2026 outage was loop starvation (fixed by slimming
-    # the lifespan), not OOM — no need to pay for 1024 around the clock.
-    memory=512,
+    memory=256,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
          "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    # Cold init pulls a multi-GB image (2x Chromium + torch, ~150s on fresh
-    # workers — Sep-2026: tripped the 120s limit overnight, HUD offline).
-    # One resident worker keeps the image cached and all reads fast
-    # (~$4-6/mo). Proper fix later: slim browser-free image for serve_api.
-    startup_timeout=300,
-    min_containers=1,
-    # Single keeper: traffic is tiny and extra web containers each ran a
-    # full scheduler + monitor loop (3x scrapes, volume contention) and
-    # starved fresh starts into the 300s init timeout.
-    max_containers=1,
+    startup_timeout=120,
+    min_containers=0,
+    max_containers=3,
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app()
@@ -503,89 +494,6 @@ async def run_odds_monitor():
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
-    # Intelligence piggyback: every 6th tick (≈30min) runs the swarm/news/
-    # heartbeat single pass (no free cron slot left for its own schedule).
-    try:
-        if _intel_tick_due():
-            await _intelligence_pass()
-    except Exception as e:
-        logger.warning(f"Intelligence pass skipped: {e}")
-    # Piggyback keep-warm: the dedicated keep_warm cron was cut for the
-    # free-tier 5-cron limit, so the 5-min monitor (already running) pings
-    # serve_api during racing hours. Best-effort, 10s cap, never fails
-    # the cycle. (Sep-2026: cold serve_api wedged past the init timeout
-    # overnight and the HUD showed offline.)
-    try:
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
-        _h = _dt.now(_ZI("Africa/Johannesburg")).hour
-        if 5 <= _h < 22:
-            import httpx as _hx
-            # /api/system/health is keyless (SAFE_PATHS) and cheap — /health
-            # 404'd (no such route), spamming+N confusing error counts.
-            _hx.get("https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health",
-                    timeout=10)
-    except Exception as _w:
-        logger.debug(f"serve_api warm ping skipped: {_w}")
-
-
-# ── Intelligence (swarm + news + heartbeat) — single pass ──────────────
-# Proper home for the loops that used to ride inside web containers (and
-# died with them — Sep-2026: LiveOps showed swarm/news idle, news 9h
-# stale). Runs piggybacked on the 5-min monitor (every 6th tick ≈ 30min)
-# because the free tier caps at 5 scheduled functions and all 5 are taken.
-async def _intelligence_pass() -> dict:
-    """Single-pass swarm backfill + news poll + dream heartbeat tick."""
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo as _ZI
-
-    if not 5 <= _dt.now(_ZI("Africa/Johannesburg")).hour < 22:
-        return {"status": "skipped"}
-
-    from core_agent.skills.parsers.betway_api import BetwayAPI
-
-    try:
-        snap = await BetwayAPI().get_snapshot_format() or {}
-    except Exception as e:
-        logger.warning(f"Intelligence snapshot failed: {e}")
-        snap = {}
-    try:
-        from core_agent.skills.swarm_researcher import backfill_form_insights, poll_news
-
-        if (snap.get("events")):
-            groq_used = await backfill_form_insights(snap)
-            logger.info(f"Intelligence swarm backfill used {groq_used} Groq calls")
-        news_n = await poll_news()
-        logger.info(f"Intelligence news poll: {news_n} items")
-    except Exception as e:
-        logger.warning(f"Intelligence swarm/news failed: {e}")
-    try:
-        from core_agent.core.heartbeat import _run_heartbeat_tick
-        from core_agent.skills.memory.chroma_memory import RacingMemory
-
-        await _run_heartbeat_tick(RacingMemory())
-        logger.info("Intelligence heartbeat tick complete")
-    except Exception as e:
-        logger.warning(f"Intelligence heartbeat failed: {e}")
-    return {"status": "complete"}
-
-
-def _intel_tick_due(every: int = 6) -> bool:
-    """True every `every`-th monitor tick (volume-backed counter)."""
-    import os as _os
-
-    try:
-        _p = "/app/data/.intel_tick"
-        _n = 0
-        if _os.path.exists(_p):
-            with open(_p) as _f:
-                _n = int((_f.read() or "0").strip() or 0)
-        _n += 1
-        with open(_p, "w") as _f:
-            _f.write(str(_n))
-        return _n % every == 0
-    except Exception:
-        return False
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
@@ -599,7 +507,7 @@ def keep_warm():
     """Ping serve_api health every 10 min during racing hours — prevents cold start."""
     import httpx
 
-    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health"
+    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/health"
     try:
         httpx.get(url, timeout=10)
         logger.info("keep_warm ping ok")
