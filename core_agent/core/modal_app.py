@@ -41,11 +41,12 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
          "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    # Cold init imports the full stack (~25s typical, 120s+ on fresh workers
-    # pulling image layers — Sep-2026: serve_api crash-looped overnight and
-    # the HUD reported offline). Allowance only, no running-cost impact.
+    # Cold init pulls a multi-GB image (2x Chromium + torch, ~150s on fresh
+    # workers — Sep-2026: tripped the 120s limit overnight, HUD offline).
+    # One resident worker keeps the image cached and all reads fast
+    # (~$4-6/mo). Proper fix later: slim browser-free image for serve_api.
     startup_timeout=300,
-    min_containers=0,
+    min_containers=1,
     max_containers=3,
 )
 @modal.concurrent(max_inputs=10)
