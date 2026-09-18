@@ -35,13 +35,16 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    memory=256,
+    memory=512,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
          "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    startup_timeout=120,
+    # Cold init imports the full stack (~25s typical, 120s+ on fresh workers
+    # pulling image layers — Sep-2026: serve_api crash-looped overnight and
+    # the HUD reported offline). Allowance only, no running-cost impact.
+    startup_timeout=300,
     min_containers=0,
     max_containers=3,
 )
@@ -494,6 +497,21 @@ async def run_odds_monitor():
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
+    # Piggyback keep-warm: the dedicated keep_warm cron was cut for the
+    # free-tier 5-cron limit, so the 5-min monitor (already running) pings
+    # serve_api during racing hours. Best-effort, 10s cap, never fails
+    # the cycle. (Sep-2026: cold serve_api wedged past the init timeout
+    # overnight and the HUD showed offline.)
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        _h = _dt.now(_ZI("Africa/Johannesburg")).hour
+        if 5 <= _h < 22:
+            import httpx as _hx
+            _hx.get("https://gmpho--strike-tips-racing-serve-api.modal.run/health",
+                    timeout=10)
+    except Exception as _w:
+        logger.debug(f"serve_api warm ping skipped: {_w}")
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
