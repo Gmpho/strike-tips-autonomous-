@@ -35,10 +35,9 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    # 1024: the web container also runs bg monitor.run() (playwright),
-    # APScheduler jobs, task worker and bus loops — 512 OOMed on a ~10min
-    # cycle (Sep-2026: init OK, death, hung replacement, repeat).
-    memory=1024,
+    # 512MB: the Sep-2026 outage was loop starvation (fixed by slimming
+    # the lifespan), not OOM — no need to pay for 1024 around the clock.
+    memory=512,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
@@ -522,7 +521,9 @@ async def run_odds_monitor():
         _h = _dt.now(_ZI("Africa/Johannesburg")).hour
         if 5 <= _h < 22:
             import httpx as _hx
-            _hx.get("https://gmpho--strike-tips-racing-serve-api.modal.run/health",
+            # /api/system/health is keyless (SAFE_PATHS) and cheap — /health
+            # 404'd (no such route), spamming+N confusing error counts.
+            _hx.get("https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health",
                     timeout=10)
     except Exception as _w:
         logger.debug(f"serve_api warm ping skipped: {_w}")
@@ -598,7 +599,7 @@ def keep_warm():
     """Ping serve_api health every 10 min during racing hours — prevents cold start."""
     import httpx
 
-    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/health"
+    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health"
     try:
         httpx.get(url, timeout=10)
         logger.info("keep_warm ping ok")

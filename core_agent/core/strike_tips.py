@@ -894,8 +894,39 @@ class StrikeTips:
                     "Race distance is UNKNOWN — do not state any distance. "
                 )
                 _bf_ctx = _bf_lines.get(int(r.race_number or 0), "")
+                # Prompt diet (Sep-2026: full asdict cards with 12-field
+                # Betfair enrichment hit 9-14k tokens/call vs Groq's 8k TPM
+                # ceiling → 413/429 spam + Gemini-fallback spend). The model
+                # prices from name/odds/form/jockey/trainer — long prose
+                # fields (verdict/comments/pedigree/owner) stay on the HUD,
+                # out of the prompt. Slim card ≈ 60-70% smaller.
+                _slim_runners = []
+                for _sr in (r.runners or [])[:14]:
+                    if isinstance(_sr, dict):
+                        _nm = _sr.get("horse_name") or _sr.get("name")
+                        _od = _sr.get("odds_decimal") or _sr.get("odds")
+                        _fm = _sr.get("form") or _sr.get("last_5_runs")
+                        _jk = _sr.get("jockey")
+                        _tr = _sr.get("trainer")
+                    else:
+                        _nm = getattr(_sr, "horse_name", None)
+                        _od = getattr(_sr, "odds_decimal", None)
+                        _fm = getattr(_sr, "form", None) or getattr(_sr, "last_5_runs", None)
+                        _jk = getattr(_sr, "jockey", None)
+                        _tr = getattr(_sr, "trainer", None)
+                    _slim_runners.append({
+                        "horse": _nm, "odds": _od, "form": _fm,
+                        "jockey": _jk, "trainer": _tr,
+                    })
+                _slim_race = {
+                    "track": getattr(r, "track", track),
+                    "race_number": getattr(r, "race_number", 0),
+                    "distance": getattr(r, "distance", None),
+                    "condition": getattr(r, "track_condition", None),
+                    "runners": _slim_runners,
+                }
                 prompt = (
-                    f"Analyze this single race for value: {json.dumps(asdict(r))}. "
+                    f"Analyze this single race for value: {json.dumps(_slim_race)}. "
                     f"Context: {track} Race {r.race_number}. {_dist_hint}"
                     + (_bf_ctx + " " if _bf_ctx else "") +
                     "Return ONLY valid JSON. Each value_bet MUST include these fields: "
