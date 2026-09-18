@@ -504,6 +504,13 @@ async def run_odds_monitor():
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
+    # Intelligence piggyback: every 6th tick (≈30min) runs the swarm/news/
+    # heartbeat single pass (no free cron slot left for its own schedule).
+    try:
+        if _intel_tick_due():
+            await _intelligence_pass()
+    except Exception as e:
+        logger.warning(f"Intelligence pass skipped: {e}")
     # Piggyback keep-warm: the dedicated keep_warm cron was cut for the
     # free-tier 5-cron limit, so the 5-min monitor (already running) pings
     # serve_api during racing hours. Best-effort, 10s cap, never fails
@@ -521,29 +528,17 @@ async def run_odds_monitor():
         logger.debug(f"serve_api warm ping skipped: {_w}")
 
 
-# ── Intelligence (swarm + news + heartbeat) — single pass every 30 min ──
+# ── Intelligence (swarm + news + heartbeat) — single pass ──────────────
 # Proper home for the loops that used to ride inside web containers (and
 # died with them — Sep-2026: LiveOps showed swarm/news idle, news 9h
-# stale). 4th cron of the 5-cron free-tier budget. Racing-hours guard in
-# code; overnight ticks exit in seconds.
-@app.function(
-    image=image,
-    secrets=secrets,
-    volumes={"/app/data": data_volume},
-    memory=512,
-    timeout=900,
-    max_containers=1,
-    scaledown_window=60,
-    schedule=modal.Cron("*/30 * * * *", timezone="Africa/Johannesburg"),
-    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
-)
-async def run_intelligence():
+# stale). Runs piggybacked on the 5-min monitor (every 6th tick ≈ 30min)
+# because the free tier caps at 5 scheduled functions and all 5 are taken.
+async def _intelligence_pass() -> dict:
     """Single-pass swarm backfill + news poll + dream heartbeat tick."""
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo as _ZI
 
     if not 5 <= _dt.now(_ZI("Africa/Johannesburg")).hour < 22:
-        logger.info("Intelligence tick skipped (outside 05:00-22:00 SAST)")
         return {"status": "skipped"}
 
     from core_agent.skills.parsers.betway_api import BetwayAPI
@@ -572,6 +567,24 @@ async def run_intelligence():
     except Exception as e:
         logger.warning(f"Intelligence heartbeat failed: {e}")
     return {"status": "complete"}
+
+
+def _intel_tick_due(every: int = 6) -> bool:
+    """True every `every`-th monitor tick (volume-backed counter)."""
+    import os as _os
+
+    try:
+        _p = "/app/data/.intel_tick"
+        _n = 0
+        if _os.path.exists(_p):
+            with open(_p) as _f:
+                _n = int((_f.read() or "0").strip() or 0)
+        _n += 1
+        with open(_p, "w") as _f:
+            _f.write(str(_n))
+        return _n % every == 0
+    except Exception:
+        return False
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
