@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
   BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
-  TrendingUp, Flag, Ticket, Newspaper, Radar
+  TrendingUp, Flag, Ticket, Newspaper, Radar, Radio
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 
@@ -22,6 +22,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
     { icon: BrainCircuit, label: 'AI Agents', id: 'agents' },
+    { icon: Radio, label: 'Swarm Podcast', id: 'podcast' },
     { icon: Sparkles, label: 'Dreaming', id: 'dreaming' },
     { icon: Ticket, label: 'Exotics', id: 'exotics' },
     { icon: Wallet, label: 'Bankroll', id: 'bankroll' },

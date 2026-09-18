@@ -1,188 +1,251 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  OFFLINE_MODELS,
-  TTS_VOICES,
-  XVECTOR_BASE,
-  ensureStorageFor,
-  formatMB,
-  isModelEnabled,
-  setModelEnabled,
-} from '../lib/offline-models';
-import { callWorker, getSharedWorker } from '../lib/worker-client';
-import TtsWorker from '../workers/tts.worker.ts?worker';
+  TTSProvider,
+  TTSVoiceProfile,
+  GEMINI_VOICES,
+  GROQ_VOICES,
+  ALL_VOICES,
+  fetchSpeechAudio,
+  SynthesizeOptions,
+} from '../lib/tts-api';
 
 const VOICE_KEY = 'strike_tts_voice';
-const VOICE_CACHE = 'tts-voices';
+const PROVIDER_KEY = 'strike_tts_provider';
 
-// In-memory voice bytes (copies are transferred to the worker per utterance).
-const voiceMem = new Map<string, ArrayBuffer>();
+let activeAudio: HTMLAudioElement | null = null;
 
-let audioCtx: AudioContext | null = null;
-let activeSource: AudioBufferSourceNode | null = null;
-
-function stopPlayback() {
-  try {
-    activeSource?.stop();
-  } catch {}
-  activeSource = null;
-}
-
-/** Voice embedding bytes with Cache API persistence so voices work fully
- * offline. Memory first, Cache API second, network last (then cached). */
-async function voiceBytes(file: string): Promise<ArrayBuffer | null> {
-  const mem = voiceMem.get(file);
-  if (mem) return mem.slice(0);
-  const url = `${XVECTOR_BASE}/${file}`;
-  try {
-    if ('caches' in window) {
-      const cache = await window.caches.open(VOICE_CACHE);
-      let res = await cache.match(url);
-      if (!res) {
-        const fresh = await fetch(url);
-        if (!fresh.ok) return null;
-        await cache.put(url, fresh.clone());
-        res = await cache.match(url);
-      }
-      if (res) {
-        const buf = await res.arrayBuffer();
-        if (buf.byteLength === 512 * 4) {
-          voiceMem.set(file, buf);
-          return buf.slice(0);
-        }
-        return null;
-      }
-    } else {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      return await res.arrayBuffer();
-    }
-  } catch {
-    return null;
+function stopActiveAudio() {
+  if (activeAudio) {
+    try {
+      activeAudio.pause();
+      activeAudio.currentTime = 0;
+    } catch {}
+    activeAudio = null;
   }
-  return null;
 }
 
 export interface TTSState {
+  provider: TTSProvider;
+  setProvider: (provider: TTSProvider) => void;
   voiceId: string;
+  setVoiceId: (id: string) => void;
+  availableVoices: TTSVoiceProfile[];
+  currentVoice: TTSVoiceProfile;
   cycleVoice: () => void;
   speaking: boolean;
+  paused: boolean;
   busy: boolean;
   progress: number;
   progressText: string;
   deniedReason: string | null;
   modelSize: string;
-  speak: (text: string) => Promise<boolean>;
+  currentAudioUrl: string | null;
+  playbackRate: number;
+  setPlaybackRate: (rate: number) => void;
+  speak: (text: string, options?: Partial<SynthesizeOptions>) => Promise<boolean>;
+  pause: () => void;
+  resume: () => void;
   stop: () => void;
 }
 
-/**
- * On-device speech for verdicts. Explicit tap = consent; the quota gate
- * still applies. Playback stops any in-flight utterance first.
- */
 export function useTTS(): TTSState {
-  const [voiceId, setVoiceId] = useState(() => {
+  const [provider, setProviderState] = useState<TTSProvider>(() => {
     try {
-      return localStorage.getItem(VOICE_KEY) || TTS_VOICES[0].id;
-    } catch {
-      return TTS_VOICES[0].id;
-    }
+      const saved = localStorage.getItem(PROVIDER_KEY);
+      if (saved === 'gemini' || saved === 'groq') return saved;
+    } catch {}
+    return 'gemini';
   });
+
+  const [voiceId, setVoiceIdState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(VOICE_KEY);
+      if (saved && ALL_VOICES.some((v) => v.id === saved)) return saved;
+    } catch {}
+    return 'Kore';
+  });
+
   const [speaking, setSpeaking] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('');
   const [deniedReason, setDeniedReason] = useState<string | null>(null);
+  const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRateState] = useState(1.0);
+
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
   const voiceRef = useRef(voiceId);
   voiceRef.current = voiceId;
+  const rateRef = useRef(playbackRate);
+  rateRef.current = playbackRate;
+
+  const setProvider = useCallback((newProvider: TTSProvider) => {
+    setProviderState(newProvider);
+    try {
+      localStorage.setItem(PROVIDER_KEY, newProvider);
+    } catch {}
+
+    // Pick appropriate default voice for new provider
+    if (newProvider === 'gemini') {
+      const fallback = 'Kore';
+      if (!GEMINI_VOICES.some((v) => v.id === voiceRef.current)) {
+        setVoiceIdState(fallback);
+        try {
+          localStorage.setItem(VOICE_KEY, fallback);
+        } catch {}
+      }
+    } else if (newProvider === 'groq') {
+      const fallback = 'autumn';
+      if (!GROQ_VOICES.some((v) => v.id === voiceRef.current)) {
+        setVoiceIdState(fallback);
+        try {
+          localStorage.setItem(VOICE_KEY, fallback);
+        } catch {}
+      }
+    }
+  }, []);
+
+  const setVoiceId = useCallback((id: string) => {
+    setVoiceIdState(id);
+    try {
+      localStorage.setItem(VOICE_KEY, id);
+    } catch {}
+  }, []);
+
+  const availableVoices = provider === 'groq' ? GROQ_VOICES : GEMINI_VOICES;
+  const currentVoice =
+    availableVoices.find((v) => v.id === voiceId) ||
+    ALL_VOICES.find((v) => v.id === voiceId) ||
+    GEMINI_VOICES[0];
 
   const cycleVoice = useCallback(() => {
-    const idx = TTS_VOICES.findIndex((v) => v.id === voiceRef.current);
-    const next = TTS_VOICES[(idx + 1) % TTS_VOICES.length];
-    voiceRef.current = next.id;
-    try {
-      localStorage.setItem(VOICE_KEY, next.id);
-    } catch {}
+    const list = providerRef.current === 'groq' ? GROQ_VOICES : GEMINI_VOICES;
+    const idx = list.findIndex((v) => v.id === voiceRef.current);
+    const next = list[(idx + 1) % list.length];
     setVoiceId(next.id);
+  }, [setVoiceId]);
+
+  const setPlaybackRate = useCallback((rate: number) => {
+    setPlaybackRateState(rate);
+    if (activeAudio) {
+      activeAudio.playbackRate = rate;
+    }
   }, []);
 
   const stop = useCallback(() => {
-    stopPlayback();
+    stopActiveAudio();
     setSpeaking(false);
+    setPaused(false);
   }, []);
 
-  const speak = useCallback(async (text: string): Promise<boolean> => {
-    const clean = (text ?? '').trim();
-    if (!clean) return false;
-    stopPlayback();
-    const gate = await ensureStorageFor('tts');
-    if (!gate.ok) {
-      setDeniedReason(gate.reason ?? 'Not enough storage.');
-      return false;
-    }
-    setDeniedReason(null);
-    if (!isModelEnabled('tts')) setModelEnabled('tts', true);
-    setBusy(true);
-    try {
-      const w = await getSharedWorker('tts', () => new TtsWorker(), (p, t) => {
-        setProgress(p);
-        setProgressText(t);
-      });
-      if (!w) return false;
-      const voice = TTS_VOICES.find((v) => v.id === voiceRef.current) ?? TTS_VOICES[0];
-      const bytes = await voiceBytes(voice.file);
-      if (!bytes) return false;
-      const msg = await callWorker<{
-        type: string;
-        audio?: ArrayBuffer;
-        samplingRate?: number;
-        error?: string;
-      }>(w, { type: 'SPEAK', text: clean, voiceData: bytes }, 120000, [bytes]);
-      if (!msg || msg.type !== 'RESULT' || !msg.audio) return false;
-      if (!audioCtx) audioCtx = new AudioContext();
-      if (audioCtx.state === 'suspended') await audioCtx.resume();
-      const rate = msg.samplingRate ?? 16000;
-      const buf = audioCtx.createBuffer(1, msg.audio.byteLength / 4, rate);
-      buf.copyToChannel(new Float32Array(msg.audio), 0);
-      const src = audioCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(audioCtx.destination);
-      activeSource = src;
-      setSpeaking(true);
-      src.onended = () => {
-        if (activeSource === src) {
-          activeSource = null;
-          setSpeaking(false);
-        }
-      };
-      src.start();
-      return true;
-    } catch {
-      return false;
-    } finally {
-      setBusy(false);
+  const pause = useCallback(() => {
+    if (activeAudio && !activeAudio.paused) {
+      activeAudio.pause();
+      setPaused(true);
     }
   }, []);
+
+  const resume = useCallback(() => {
+    if (activeAudio && activeAudio.paused) {
+      activeAudio.play().catch(() => {});
+      setPaused(false);
+    }
+  }, []);
+
+  const speak = useCallback(
+    async (text: string, options?: Partial<SynthesizeOptions>): Promise<boolean> => {
+      const clean = (text ?? '').trim();
+      if (!clean) return false;
+
+      stop();
+      setBusy(true);
+      setProgress(0.2);
+      setProgressText('Synthesizing natural voice…');
+      setDeniedReason(null);
+
+      try {
+        const targetProvider = options?.provider || providerRef.current;
+        const targetVoice = options?.voice || voiceRef.current;
+
+        const result = await fetchSpeechAudio({
+          text: clean,
+          provider: targetProvider,
+          voice: targetVoice,
+          style: options?.style,
+        });
+
+        setProgress(0.8);
+        setProgressText('Streaming audio…');
+        setCurrentAudioUrl(result.url);
+
+        const audio = new Audio(result.url);
+        audio.playbackRate = rateRef.current;
+        activeAudio = audio;
+
+        audio.onplay = () => {
+          setSpeaking(true);
+          setPaused(false);
+          setProgress(1.0);
+          setProgressText('');
+        };
+
+        audio.onended = () => {
+          if (activeAudio === audio) {
+            activeAudio = null;
+            setSpeaking(false);
+            setPaused(false);
+          }
+        };
+
+        audio.onerror = () => {
+          setSpeaking(false);
+          setPaused(false);
+          setDeniedReason('Audio playback error.');
+        };
+
+        await audio.play();
+        return true;
+      } catch (err: any) {
+        setDeniedReason(err.message || 'Failed to synthesize speech.');
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [stop]
+  );
 
   useEffect(() => {
     return () => {
-      stopPlayback();
+      stopActiveAudio();
     };
   }, []);
 
-  const voice = TTS_VOICES.find((v) => v.id === voiceId) ?? TTS_VOICES[0];
-
   return {
-    voiceId: voice.id,
+    provider,
+    setProvider,
+    voiceId: currentVoice.id,
+    setVoiceId,
+    availableVoices,
+    currentVoice,
     cycleVoice,
     speaking,
+    paused,
     busy,
     progress,
     progressText,
     deniedReason,
-    modelSize: formatMB(OFFLINE_MODELS.tts.bytes),
+    modelSize: 'Cloud Neural 24kHz',
+    currentAudioUrl,
+    playbackRate,
+    setPlaybackRate,
     speak,
+    pause,
+    resume,
     stop,
   };
 }
 
-export { TTS_VOICES };
+export { GEMINI_VOICES, GROQ_VOICES, ALL_VOICES };

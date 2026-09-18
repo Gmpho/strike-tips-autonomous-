@@ -1,13 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, Languages, ImagePlus } from 'lucide-react';
+import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, VolumeX, Languages, ImagePlus, Globe, ExternalLink, Mic, Square, Radio } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
 import { useTTS } from '../hooks/useTTS';
 import { useTranslation } from '../hooks/useTranslation';
 import { useFormReader } from '../hooks/useFormReader';
+import { useAudioRecorder } from '../hooks/useAudioRecorder';
+import { LiveVoiceModal } from './LiveVoiceModal';
 import type { RaceEvent, Runner } from '../types';
 
 const SESSIONS_STORAGE_KEY = 'strike_chat_sessions';
@@ -29,6 +31,8 @@ interface Message {
   content: string;
   timestamp: string;
   activity?: string;
+  groundingSources?: Array<{ title: string; url: string }>;
+  modelUsed?: string;
 }
 
 function formatRaceCardPrompt(event: RaceEvent, focusRunner?: Runner): string {
@@ -79,13 +83,19 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>('auto');
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('strike_selected_chat_model') || 'auto';
+  });
+  const [searchGrounding, setSearchGrounding] = useState<boolean>(true);
+  const [liveVoiceOpen, setLiveVoiceOpen] = useState<boolean>(false);
+  const transcribeProvider: 'gemini' | 'groq' = 'gemini';
   const [summarizeMode, setSummarizeMode] = useState(false);
   const [toolNote, setToolNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const tts = useTTS();
   const mt = useTranslation();
   const formReader = useFormReader();
+  const audioRecorder = useAudioRecorder();
 
   const flashNote = (text: string | null) => {
     setToolNote(text);
@@ -97,8 +107,12 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   };
 
   const onSpeakMessage = async (content: string) => {
+    if (tts.speaking) {
+      tts.stop();
+      return;
+    }
     const ok = await tts.speak(content);
-    if (!ok) flashNote('Voice not ready — first use downloads ~130MB (use Wi-Fi).');
+    if (!ok) flashNote(tts.deniedReason || 'Speech synthesis unavailable.');
   };
 
   const onTranslateMessage = async (index: number, content: string) => {
@@ -556,8 +570,8 @@ ${compiledContext || 'No context data available.'}`;
     // Cloud / Auto-Router API fetch
     try {
       const modelVal = selectedModel !== 'auto' ? selectedModel : undefined;
-      const modelUsed = modelVal || 'strike-tips';
-      const res = await apiFetch('/v1/chat/completions', {
+      const modelUsed = modelVal || 'gemini-3.5-flash';
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -574,6 +588,7 @@ ${compiledContext || 'No context data available.'}`;
             })),
           ],
           model: modelVal,
+          searchGrounding,
           stream: true,
         }),
       });
@@ -623,6 +638,14 @@ ${compiledContext || 'No context data available.'}`;
               setLastModelUsed(modelName);
               clearInterval(actInterval);
               setCurrentActivity(null);
+              if (parsed.groundingSources && parsed.groundingSources.length > 0) {
+                const sources = parsed.groundingSources;
+                setMessages(prev => prev.map((m, i) =>
+                  i === prev.length - 1 && m.role === 'ai'
+                    ? { ...m, groundingSources: sources, modelUsed: modelName }
+                    : m
+                ));
+              }
             }
           } catch {}
         }
@@ -766,6 +789,15 @@ ${compiledContext || 'No context data available.'}`;
             )}
             
             <div className="flex gap-2 items-center shrink-0">
+              <button
+                onClick={() => setLiveVoiceOpen(true)}
+                title="Start live 2-way voice conversation with Gemini 3.8 Live"
+                aria-label="Start Live Voice"
+                className="px-2.5 py-1.5 bg-gradient-to-r from-purple-600/30 to-indigo-600/30 border border-purple-500/50 hover:border-purple-400 rounded-xl text-xs font-black text-purple-200 hover:text-white transition-all flex items-center gap-1.5 shadow-[0_0_15px_rgba(168,85,247,0.2)]"
+              >
+                <Radio className="w-3.5 h-3.5 text-purple-300 animate-pulse" />
+                <span className="hidden sm:inline">Live Voice</span>
+              </button>
               <div className="px-2 py-1 bg-purple-900/30 border border-purple-500/50 rounded text-xs font-bold text-purple-300 uppercase">
                 {loading ? 'RUNNING' : 'ACTIVE'}
               </div>
@@ -874,6 +906,29 @@ ${compiledContext || 'No context data available.'}`;
                           >
                             {m.content}
                           </ReactMarkdown>
+                          {m.groundingSources && m.groundingSources.length > 0 && (
+                            <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-1.5">
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
+                                <Globe className="w-3.5 h-3.5" />
+                                <span>Google Search Verified Sources:</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {m.groundingSources.map((src, idx) => (
+                                  <a
+                                    key={idx}
+                                    href={src.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md transition-colors truncate max-w-[280px]"
+                                    title={src.title}
+                                  >
+                                    <span className="truncate">{src.title || src.url}</span>
+                                    <ExternalLink className="w-2.5 h-2.5 shrink-0 opacity-70" />
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         m.content
@@ -885,11 +940,15 @@ ${compiledContext || 'No context data available.'}`;
                   <div className="flex gap-1.5 pl-8">
                     <button
                       onClick={() => void onSpeakMessage(m.content)}
-                      title={`Read aloud (${tts.voiceId.toUpperCase()} voice)`}
+                      title={tts.speaking ? 'Stop speech' : `Read aloud (${tts.currentVoice.name} · ${tts.provider.toUpperCase()})`}
                       aria-label="Read this verdict aloud"
-                      className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+                      className={`p-1.5 rounded-lg border transition-all ${
+                        tts.speaking
+                          ? 'bg-purple-600/30 border-purple-500 text-purple-200 animate-pulse'
+                          : 'bg-white/5 border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30'
+                      }`}
                     >
-                      <Volume2 className="w-3.5 h-3.5" />
+                      {tts.speaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                     </button>
                     <button
                       onClick={() => void onTranslateMessage(i, m.content)}
@@ -922,11 +981,12 @@ ${compiledContext || 'No context data available.'}`;
           </select>
           <button
             onClick={tts.cycleVoice}
-            title="Tap to switch voice (2 female, 1 male — English)"
+            title={`Tap to switch voice (${tts.currentVoice.name} · ${tts.provider.toUpperCase()} neural speech)`}
             aria-label="Switch voice"
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all font-black text-[11px]"
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all font-black text-[11px] flex items-center gap-1"
           >
-            {tts.voiceId.toUpperCase()}
+            <Volume2 className="w-3 h-3 text-purple-400" />
+            {tts.currentVoice.name.toUpperCase()}
           </button>
           <button
             onClick={() => fileRef.current?.click()}
@@ -955,34 +1015,64 @@ ${compiledContext || 'No context data available.'}`;
 
         {/* Input box */}
         <div className="p-4 border-t border-white/10 bg-black/40 flex flex-col sm:flex-row gap-3 shrink-0">
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-[#0c0817] border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 w-full sm:w-auto min-h-[48px]"
-              >
-                <option value="auto" className="bg-[#0c0817]">⚡ Auto Router</option>
-                <optgroup label="☁️ Cloud" className="bg-[#0c0817]">
-                  <option value="groq" className="bg-[#0c0817]">Groq Llama 70B</option>
-                  <option value="gemini" className="bg-[#0c0817]">Gemini Flash</option>
-                </optgroup>
-                <optgroup label="🌐 Browser Local (WebGPU)" className="bg-[#0c0817]">
-                  <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
-                    Qwen 2.5 0.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
-                  </option>
-                  <option value="webllm-llama-1b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
-                    Llama 3.2 1B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
-                  </option>
-                  <option value="webllm-qwen-1.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
-                    Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
-                  </option>
-                  <option value="webllm-qwen3-1.7b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
-                    Qwen3 1.7B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
-                  </option>
-                  <option value="webllm-qwen35-2b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
-                    Qwen3.5 2B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
-                  </option>
-                </optgroup>
-              </select>
+              <div className="flex gap-2 items-center w-full sm:w-auto">
+                <select
+                  value={selectedModel}
+                  onChange={(e) => {
+                    setSelectedModel(e.target.value);
+                    localStorage.setItem('strike_selected_chat_model', e.target.value);
+                  }}
+                  className="bg-[#0c0817] border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 flex-1 sm:w-auto min-h-[48px]"
+                >
+                  <optgroup label="🧠 Intelligent Routing" className="bg-[#0c0817]">
+                    <option value="auto" className="bg-[#0c0817]">⚡ Auto Router (Dynamic Intent + Speed + Search)</option>
+                  </optgroup>
+                  <optgroup label="⚡ Groq Cloud (Ultra-Fast Inference)" className="bg-[#0c0817]">
+                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · Llama 3.3 70B (Versatile Racing AI)</option>
+                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · Llama 3.1 8B (Instant Speed ~100ms)</option>
+                    <option value="groq-mixtral" className="bg-[#0c0817]">Groq · Mixtral 8x7B (MoE Analysis)</option>
+                    <option value="groq-gemma2" className="bg-[#0c0817]">Groq · Gemma 2 9B (Google Architecture)</option>
+                  </optgroup>
+                  <optgroup label="✨ Google Gemini AI" className="bg-[#0c0817]">
+                    <option value="gemini-3.5-flash" className="bg-[#0c0817]">Gemini 3.5 Flash (Google Search Grounding)</option>
+                    <option value="gemini-3.1-pro-preview" className="bg-[#0c0817]">Gemini 3.1 Pro (Deep Math & Kelly Proofs)</option>
+                    <option value="gemini-3.1-flash-lite" className="bg-[#0c0817]">Gemini 3.1 Flash-Lite (Lightweight Chat)</option>
+                  </optgroup>
+                  <optgroup label="🌐 Browser Local (WebGPU Private)" className="bg-[#0c0817]">
+                    <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
+                      Qwen 2.5 0.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-llama-1b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
+                      Llama 3.2 1B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-qwen-1.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
+                      Qwen 2.5 1.5B {!webGpuSupported ? '❌ (No WebGPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-qwen3-1.7b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
+                      Qwen3 1.7B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
+                    </option>
+                    <option value="webllm-qwen35-2b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported || weakGpu}>
+                      Qwen3.5 2B {!webGpuSupported ? '❌ (No WebGPU)' : weakGpu ? '❌ (Weak GPU)' : '⚡'}
+                    </option>
+                  </optgroup>
+                </select>
+
+                {(selectedModel === 'gemini-3.5-flash' || selectedModel === 'auto') && (
+                  <button
+                    onClick={() => setSearchGrounding(v => !v)}
+                    aria-pressed={searchGrounding}
+                    title={searchGrounding ? 'Google Search Grounding active: live web racing data enabled' : 'Google Search Grounding disabled'}
+                    className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 text-xs font-bold ${
+                      searchGrounding
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
+                    }`}
+                  >
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline">Search</span>
+                  </button>
+                )}
+              </div>
               
             <div className="flex gap-2 flex-1 w-full min-w-0 items-start">
               <button
@@ -997,6 +1087,50 @@ ${compiledContext || 'No context data available.'}`;
               >
                 <FileText className="w-4 h-4" />
               </button>
+
+              {/* Microphone Audio Recording button */}
+              {audioRecorder.isRecording ? (
+                <button
+                  onClick={async () => {
+                    const text = await audioRecorder.stopRecording(transcribeProvider);
+                    if (text) {
+                      setInput(prev => (prev ? `${prev} ${text}` : text));
+                      flashNote(`Transcribed: "${text.slice(0, 30)}..."`);
+                    }
+                  }}
+                  title="Stop recording and transcribe speech"
+                  aria-label="Stop audio recording"
+                  className="shrink-0 min-h-[48px] px-3 rounded-xl bg-red-600 border border-red-500 text-white font-bold text-xs transition-all flex items-center justify-center gap-1.5 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)] self-start"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>{Math.floor(audioRecorder.recordingDuration / 60)}:{String(audioRecorder.recordingDuration % 60).padStart(2, '0')}</span>
+                </button>
+              ) : audioRecorder.isTranscribing ? (
+                <button
+                  disabled
+                  title="Transcribing audio with Gemini..."
+                  aria-label="Transcribing audio"
+                  className="shrink-0 min-h-[48px] px-3 rounded-xl bg-purple-600/30 border border-purple-500/50 text-purple-300 font-bold text-xs flex items-center justify-center gap-1.5 self-start"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
+                  <span className="hidden sm:inline">Transcribing...</span>
+                </button>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const ok = await audioRecorder.startRecording();
+                    if (!ok && audioRecorder.error) {
+                      flashNote(audioRecorder.error);
+                    }
+                  }}
+                  title="Record voice query (Gemini 3.5 Transcribe)"
+                  aria-label="Record voice query"
+                  className="shrink-0 min-h-[48px] px-3 rounded-xl bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all flex items-center justify-center self-start"
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+              )}
+
               <textarea 
                 ref={textareaRef}
                 value={input}
@@ -1007,7 +1141,7 @@ ${compiledContext || 'No context data available.'}`;
                     sendMessage();
                   }
                 }}
-                placeholder={summarizeMode ? "Paste article or report to summarize..." : "Type command..."}
+                placeholder={summarizeMode ? "Paste article or report to summarize..." : "Type command or click mic to speak..."}
                 aria-label="Chat input"
                 className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all min-h-[48px] max-h-[150px] resize-none overflow-y-auto custom-scrollbar leading-relaxed"
                 style={{ height: '48px' }}
@@ -1037,6 +1171,7 @@ ${compiledContext || 'No context data available.'}`;
             </div>
         </div>
       </div>
+      <LiveVoiceModal isOpen={liveVoiceOpen} onClose={() => setLiveVoiceOpen(false)} />
     </motion.div>
   );
 };

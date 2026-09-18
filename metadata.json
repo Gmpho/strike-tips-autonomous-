@@ -1,6 +1,6 @@
 {
   "name": "STRIKE TIPS | HUD",
-  "description": "Strike Tips HUD — Real-time horse racing intelligence, AI predictions, and betting analysis dashboard.",
-  "requestFramePermissions": [],
+  "description": "Strike Tips HUD — Real-time horse racing intelligence, natural Gemini & Groq speech synthesis, AI predictions, and betting analysis dashboard.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

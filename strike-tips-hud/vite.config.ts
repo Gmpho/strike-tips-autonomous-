@@ -6,6 +6,149 @@ import tailwindcss from '@tailwindcss/vite';
 
 import { loadEnv } from 'vite';
 
+function aiServicesPlugin(): import('vite').Plugin {
+  return {
+    name: 'ai-services-plugin',
+    configureServer(server) {
+      // WebSocket upgrade for /api/live
+      if (server.httpServer) {
+        import('ws').then(({ WebSocketServer }) => {
+          const wss = new WebSocketServer({ noServer: true });
+          import('./server/live-service.ts').then(({ setupLiveWebSocketServer }) => {
+            setupLiveWebSocketServer(wss);
+          });
+          server.httpServer?.on('upgrade', (request, socket, head) => {
+            const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+            if (url.pathname === '/api/live' || url.pathname === '/live') {
+              wss.handleUpgrade(request, socket as any, head, (ws) => {
+                wss.emit('connection', ws, request);
+              });
+            }
+          });
+        });
+      }
+
+      server.middlewares.use(async (req, res, next) => {
+        const url = req.url || '';
+
+        // 1. Text-To-Speech
+        if (url === '/api/tts' || url.startsWith('/api/tts/') || url.startsWith('/api/tts?')) {
+          try {
+            const { handleTTSRequest } = await import('./server/tts-service.ts');
+            await handleTTSRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'TTS handler failed' }));
+          }
+          return;
+        }
+
+        // 2. Audio Transcription
+        if (url === '/api/transcribe' || url.startsWith('/api/transcribe?') || url.startsWith('/api/transcribe/')) {
+          try {
+            const { handleTranscribeRequest } = await import('./server/transcribe-service.ts');
+            await handleTranscribeRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Transcription handler failed' }));
+          }
+          return;
+        }
+
+        // 3. AI Chat & Completions
+        if (url === '/api/chat' || url.startsWith('/api/chat?') || url === '/v1/chat/completions') {
+          try {
+            const { handleChatRequest } = await import('./server/chat-service.ts');
+            await handleChatRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Chat handler failed' }));
+          }
+          return;
+        }
+
+        // 4. Autonomous Swarm Racing Podcast
+        if (url === '/api/podcast' || url.startsWith('/api/podcast/') || url.startsWith('/api/podcast?')) {
+          try {
+            const { handlePodcastRequest } = await import('./server/podcast-service.ts');
+            await handlePodcastRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Podcast handler failed' }));
+          }
+          return;
+        }
+
+        next();
+      });
+    },
+    configurePreviewServer(server) {
+      if (server.httpServer) {
+        import('ws').then(({ WebSocketServer }) => {
+          const wss = new WebSocketServer({ noServer: true });
+          import('./server/live-service.ts').then(({ setupLiveWebSocketServer }) => {
+            setupLiveWebSocketServer(wss);
+          });
+          server.httpServer?.on('upgrade', (request, socket, head) => {
+            const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+            if (url.pathname === '/api/live' || url.pathname === '/live') {
+              wss.handleUpgrade(request, socket as any, head, (ws) => {
+                wss.emit('connection', ws, request);
+              });
+            }
+          });
+        });
+      }
+
+      server.middlewares.use(async (req, res, next) => {
+        const url = req.url || '';
+
+        if (url === '/api/tts' || url.startsWith('/api/tts/') || url.startsWith('/api/tts?')) {
+          try {
+            const { handleTTSRequest } = await import('./server/tts-service.ts');
+            await handleTTSRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'TTS handler failed' }));
+          }
+          return;
+        }
+
+        if (url === '/api/transcribe' || url.startsWith('/api/transcribe?') || url.startsWith('/api/transcribe/')) {
+          try {
+            const { handleTranscribeRequest } = await import('./server/transcribe-service.ts');
+            await handleTranscribeRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Transcription handler failed' }));
+          }
+          return;
+        }
+
+        if (url === '/api/chat' || url.startsWith('/api/chat?') || url === '/v1/chat/completions') {
+          try {
+            const { handleChatRequest } = await import('./server/chat-service.ts');
+            await handleChatRequest(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message || 'Chat handler failed' }));
+          }
+          return;
+        }
+
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd() + '/..', '');
   const key = env.STRIKE_TIPS_API_KEY || process.env.STRIKE_TIPS_API_KEY || '';
@@ -15,7 +158,8 @@ export default defineConfig(({ mode }) => {
     envDir: '..',
     plugins: [
       react(),
-      tailwindcss()
+      tailwindcss(),
+      aiServicesPlugin()
     ],
     resolve: {
       tsconfigPaths: true

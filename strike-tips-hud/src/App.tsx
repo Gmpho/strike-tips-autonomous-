@@ -31,6 +31,7 @@ const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').
 const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
 const TelemetryView = React.lazy(() => import('./components/sidebar/TelemetryView').then(m => ({ default: m.TelemetryView })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
+const SwarmPodcastView = React.lazy(() => import('./components/SwarmPodcastView').then(m => ({ default: m.SwarmPodcastView })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
 const FAQPage = React.lazy(() => import('./components/pages/FAQPage').then(m => ({ default: m.FAQPage })));
@@ -50,7 +51,7 @@ const ViewFallback = () => (
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
 const VALID_VIEWS = [
-  'dashboard', 'agents', 'chat', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
+  'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
@@ -200,6 +201,9 @@ export const App: React.FC = () => {
         return <Suspense key="agents-view" fallback={<ViewFallback />}><AgentDashboard /></Suspense>;
       case 'chat':
         return <Suspense key="chat-view" fallback={<ViewFallback />}><AIChat initialRaceEvent={pendingRaceEvent ?? undefined} initialRunner={pendingRunner} /></Suspense>;
+      case 'podcast':
+      case 'tts':
+        return <Suspense key="podcast-view" fallback={<ViewFallback />}><SwarmPodcastView /></Suspense>;
       case 'exotics':
         return <Suspense key="exotics-view" fallback={<ViewFallback />}><ExoticsView /></Suspense>;
       case 'bankroll':

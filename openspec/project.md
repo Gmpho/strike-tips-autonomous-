@@ -59,6 +59,7 @@ Vercel HUD --middleware.ts--> Cloudflare Edge (OKF/D1/KV, 16 MCP tools)
 
 - `core_agent/skills/swarm_researcher.py`, `core_agent/core/telemetry.py`, `core_agent/core/adaptive_odds_monitor.py:enrich_snapshot_with_insights`
 - `core_agent/routes/monitoring.py` (`GET /api/news`, `GET /api/telemetry`, `event:telemetry`), `core_agent/core/security.py` (`SAFE_PATHS`)
+- `strike-tips-hud/server/podcast-service.ts`, `strike-tips-hud/src/components/SwarmPodcastView.tsx` (Autonomous Swarm Racing Podcast)
 - `strike-tips-hud/src/engine/data-bridge.ts`, `strike-tips-hud/src/store/hud-store.ts` (`telemetry: []`), `strike-tips-hud/src/components/sidebar/TelemetryView.tsx`
 - `strike-tips-hud/src/components/RaceCard.tsx` (sub-row banner, sortable headers, Edge col, per-row ⚡)
 
