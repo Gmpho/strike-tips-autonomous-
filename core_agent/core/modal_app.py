@@ -521,6 +521,59 @@ async def run_odds_monitor():
         logger.debug(f"serve_api warm ping skipped: {_w}")
 
 
+# ── Intelligence (swarm + news + heartbeat) — single pass every 30 min ──
+# Proper home for the loops that used to ride inside web containers (and
+# died with them — Sep-2026: LiveOps showed swarm/news idle, news 9h
+# stale). 4th cron of the 5-cron free-tier budget. Racing-hours guard in
+# code; overnight ticks exit in seconds.
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=512,
+    timeout=900,
+    max_containers=1,
+    scaledown_window=60,
+    schedule=modal.Cron("*/30 * * * *", timezone="Africa/Johannesburg"),
+    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
+)
+async def run_intelligence():
+    """Single-pass swarm backfill + news poll + dream heartbeat tick."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+
+    if not 5 <= _dt.now(_ZI("Africa/Johannesburg")).hour < 22:
+        logger.info("Intelligence tick skipped (outside 05:00-22:00 SAST)")
+        return {"status": "skipped"}
+
+    from core_agent.skills.parsers.betway_api import BetwayAPI
+
+    try:
+        snap = await BetwayAPI().get_snapshot_format() or {}
+    except Exception as e:
+        logger.warning(f"Intelligence snapshot failed: {e}")
+        snap = {}
+    try:
+        from core_agent.skills.swarm_researcher import backfill_form_insights, poll_news
+
+        if (snap.get("events")):
+            groq_used = await backfill_form_insights(snap)
+            logger.info(f"Intelligence swarm backfill used {groq_used} Groq calls")
+        news_n = await poll_news()
+        logger.info(f"Intelligence news poll: {news_n} items")
+    except Exception as e:
+        logger.warning(f"Intelligence swarm/news failed: {e}")
+    try:
+        from core_agent.core.heartbeat import _run_heartbeat_tick
+        from core_agent.skills.memory.chroma_memory import RacingMemory
+
+        await _run_heartbeat_tick(RacingMemory())
+        logger.info("Intelligence heartbeat tick complete")
+    except Exception as e:
+        logger.warning(f"Intelligence heartbeat failed: {e}")
+    return {"status": "complete"}
+
+
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
 @app.function(
     image=image,
