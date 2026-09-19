@@ -67,3 +67,6 @@ gha-creds-*.json
 # Performance traces
 *.json.gz
 *.heapsnapshot
+
+# wrangler local state (pages dev / deploy caches)
+strike-tips-hud/.wrangler/
