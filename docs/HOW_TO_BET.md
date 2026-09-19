@@ -84,7 +84,7 @@ Reflective | Vaal R8 | 5.50 | +12.4% | R42 | HIGH
 
 ## 6. Web Dashboard (HUD)
 
-Visit `https://strike-tips-hud.vercel.app` for:
+Visit `https://strike-tips-hud.pages.dev` for:
 - Live race cards with AI selections
 - Bankroll history chart
 - Agent pipeline status

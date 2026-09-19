@@ -78,7 +78,7 @@ DEFAULT_INSIGHTS: List[Dict] = [
             "fallback_on_failure", "generate_exotic_plays"
         ],
         "key_insight": (
-            "Groq is primary for speed (llama-3.3-70b). Gemini is fallback only. "
+            "Groq is primary for speed (openai/gpt-oss-120b). Gemini is fallback only. "
             "Never use Kimi K. Provider routing is in ai_providers.py. "
             "Parallel calls use asyncio.gather for concurrent analysis."
         ),

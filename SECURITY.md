@@ -1,6 +1,11 @@
 # Security Audit — Strike Tips Racing Bot
 
 Audit conducted: 2026-06-02
+
+> **2026-09-19 amendment:** the frontend no longer deploys to Vercel. The
+> CORS allowlists now contain only Cloudflare Pages (`strike-tips-hud.pages.dev`)
+> plus localhost. Platform references below describe the stack as it stood at
+> audit time; the current contract is `openspec/specs/production-security/spec.md`.
 Scope: Full application (FastAPI backend, Modal deployment, Docker containers, Redis, browser automation)
 
 ---

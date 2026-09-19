@@ -8,6 +8,8 @@ dist/
 # Environment
 .env
 .env.local
+.dev.vars
+.dev.vars.*
 
 # Logs and Data
 *.log
@@ -61,7 +63,6 @@ __pycache__/
 
 .gemini/
 gha-creds-*.json
-.vercel
 
 # Performance traces
 *.json.gz

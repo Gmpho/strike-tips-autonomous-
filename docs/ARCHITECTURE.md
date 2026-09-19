@@ -53,8 +53,8 @@ graph TB
 
     %% ─── FALLBACK CHAIN ───
     subgraph FALLBACK["⬇️ LLM Fallback Chain"]
-        GROQ["Groq Cloud<br/>llama-3.3-70b"]
-        GEMINI["Gemini Chain<br/>2.0-flash→2.5-flash→2.5-pro"]
+        GROQ["Groq Cloud<br/>openai/gpt-oss-120b"]
+        GEMINI["Gemini Chain<br/>2.5-flash→2.5-flash-lite→3.5-flash"]
         LOCAL["Ollama Local<br/>racing_llama, racing_qwen<br/>func_gemma, lfm_racing, ds_racing"]
     end
     style FALLBACK fill:#312E81,stroke:#6366F1,stroke-width:2px,color:#E0E7FF

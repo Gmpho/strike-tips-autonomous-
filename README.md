@@ -68,7 +68,7 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
 - **📡 Live Ops Telemetry** - Dedicated sidebar tab with engine status cards + live activity stream (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments), fed by 10s hash-first polling + disk-backed cross-container mirror — SSE retired to stop 24/7 billed executions ([docs](docs/LIVE_OPS_TELEMETRY.md))
 - **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header
-- **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Vercel middleware `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
+- **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Pages Functions `[[catchall]]` proxy `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
 - **📊 Betfair Enriched Form (All Regions)** - 12 fields per runner (`gear`, `daysSinceRun`, `official_rating`, `pedigree` via `SIRE x DAM`, `owner`, `trainer`, `age`, `weight`, `form`, `jockey_claim`, `runner_comments`, `verdict`) across RSA/AUS/USA/GB/IRE/FRA/NZL (`_COUNTRY_FILTER=None`, case-insensitive `WEARING`/`DAYS_SINCE_LAST_RUN`, `marketId`/`id` fix; 169 events for TOMORROW vs 0 before)
 - **💬 Markdown AI Chat** - Assistant messages render full markdown (headings, tables via GFM, code) theme-mapped for dark/light; user bubbles stay plain
 - **🔭 Observability** - Correlation IDs per scan/settle/chat flow (trailing token on Telegram messages), JSON logs on Modal, honest log levels ([docs](docs/OBSERVABILITY.md))
@@ -248,7 +248,7 @@ region / swarmInsight / insightSource before set_snapshot → SSE push
 
 ## 🚀 Quick Start
 
-### Option A: Deploy Cloudflare Worker + Vercel HUD (Cloud-Native)
+### Option A: Deploy Cloudflare Pages HUD + Worker (Cloud-Native)
 
 ```bash
 # 1. Deploy Cloudflare Worker (always-free edge)
@@ -256,12 +256,12 @@ cd cloudflare_mcp_edge
 node scripts/build-knowledge.js
 npm run deploy
 
-# 2. Deploy Vercel HUD (frontend)
-cd ../strike-tips-hud
-vercel deploy --prod -y --force
-
+# 2. Deploy the HUD — the Pages project builds from the connected git repo
+#    (build command: npm run build, output directory: dist)
 # 3. Visit https://strike-tips-hud.pages.dev
 ```
+
+Full three-layer runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ### Option B: Docker (Local Development)
 
@@ -614,10 +614,11 @@ cloudflare_mcp_edge/                      # Cloudflare Worker (always-free edge)
 ├── package.json                          # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                        # D1 + KV bindings
 
-strike-tips-hud/                          # Vite + React + Three.js frontend (Vercel)
+strike-tips-hud/                          # Vite + React + Three.js frontend (Pages)
 ├── src/                                  # UI components
-├── middleware.ts                         # Routes API calls: Cloudflare vs Modal
-├── vercel.json                           # SPA rewrites only
+├── functions/api/[[catchall]].ts         # Routes API calls: Cloudflare vs Modal
+├── functions/v1/[[catchall]].ts          # OpenAI-compatible surface
+├── public/_headers                       # COOP/COEP + security headers
 └── package.json
 ```
 
@@ -663,7 +664,7 @@ strike = StrikeTips(bankroll_config=custom_config)
 ## 🧪 Testing
 
 ```bash
-# Run all tests (30 tests — governor, DSI staking, exotics, selections, pool legs, auto-bet odds)
+# Run all tests (261 collected — the local/CI count; verify with collect-only)
 pytest
 
 # Test specific component
@@ -730,7 +731,7 @@ Betting tips and data stay free forever; the project is community-funded
 
 - Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
-- HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages; Vercel URL kept paused as fallback)
+- HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages — the only frontend host)
 - Support the project: [https://strike-tips-hud.pages.dev/support](https://strike-tips-hud.pages.dev/support) — voluntary once-off contributions, tips stay free forever
 - MCP: `POST https://striketips-mcp.gmphorg379.workers.dev/mcp` (requires `x-api-key` + `Accept: application/json, text/event-stream`)
 

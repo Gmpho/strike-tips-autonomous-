@@ -46,9 +46,9 @@
          │
          ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Vercel Frontend (strike-tips-hud.vercel.app)                        │
+│  Cloudflare Pages HUD (strike-tips-hud.pages.dev)                        │
 │  • Proxies /api/* and /v1/* → Modal                                 │
-│  • Rewrites configured in vercel.json                                │
+│  • Static SPA served via public/_redirects fallback                                │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -198,18 +198,10 @@ qwen3.5:0.8b (final fallback)
 
 Both providers always fail, so all requests fall through to Ollama cloud. The 5s concurrent timeout is only hit on failures; a valid Groq key would return responses in ~1-3s.
 
-## Vercel Frontend
+## Cloudflare Pages HUD
 
-- **URL**: `https://strike-tips-hud.vercel.app`
-- **Rewrites** in `vercel.json`:
-  ```json
-  {
-    "rewrites": [
-      { "source": "/api/:path*", "destination": "https://gmpho--strike-tips-racing-serve-api.modal.run/api/:path*" },
-      { "source": "/v1/:path*", "destination": "https://gmpho--strike-tips-racing-serve-api.modal.run/v1/:path*" }
-    ]
-  }
-  ```
+- **URL**: `https://strike-tips-hud.pages.dev`
+- **Routing**: `functions/api/[[catchall]].ts` proxies keyed calls — compute-light paths go to the Cloudflare worker, everything else to Modal
 - **Streaming fix**: Changed `stream: false` → `stream: true` in `AIChat.tsx`
 
 ## Telegram Webhook
@@ -252,4 +244,4 @@ python3 -m core_agent.core.strike_tips chat
 - **No GPU**: All models run on CPU. Next step: GPU tier for faster inference.
 - **scaledown_window=300**: After deploy, old containers serve for 5min. Use `modal app stop` to kill immediately.
 - **Data volume**: `strike-tips-data` persists snapshots across deploys. Run `sync_data_to_modal.py` to push local data.
-- **Streaming timeout**: 25s `asyncio.wait_for` on bus subscriber prevents hanging past Vercel's 30s limit.
+- **Streaming timeout**: 25s `asyncio.wait_for` on bus subscriber prevents hanging past the edge proxy timeout.

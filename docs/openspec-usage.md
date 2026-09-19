@@ -3,7 +3,7 @@
 OpenSpec (v1.11.0) is the **spec-driven source of truth** for this repo. Every
 feature or behavior change flows through a *change proposal* whose spec deltas
 are reviewed, implemented, and then promoted into the canonical `openspec/specs/`
-store. This keeps the 3-layer racing stack (Cloudflare / Modal / Vercel)
+store. This keeps the 3-layer racing stack (Cloudflare / Modal)
 documented as enforceable `SHALL` requirements instead of tribal knowledge.
 
 > **Rule #1 — the spec is truth.** Before proposing or implementing anything,
@@ -148,9 +148,15 @@ Lifecycle as actually executed:
 
 ## 7. Current state
 
-- **Canonical specs:** `swarm-researcher` (archived & accepted).
-- **Active changes:** `core-value-bet-analyzer` (open — propose/apply pending).
-- Run `openspec list` (or `openspec list --specs`) any time for the live view.
+- **Canonical specs:** 25 capabilities in `openspec/specs/` as of 2026-09-19,
+  including the five promoted that day by the `openspec-convergence` change
+  (`cloud-models`, `chat-grounding`, `settlement-voids`, `ai-chat-agents`,
+  `text-to-speech`; six once `spec-governance` itself promotes).
+  `openspec validate --all` is fully green — confirm it yourself rather than
+  trusting this number.
+- **Active changes:** `openspec-convergence` only — the spec/docs governance
+  pass. Run `openspec list` (or `openspec list --specs`) any time for the
+  live view.
 
 ---
 

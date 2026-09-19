@@ -14,7 +14,7 @@
 
 ## Product Docs
 
-- [Documentation](https://strike-tips-hud.vercel.app/)
+- [Documentation](https://strike-tips-hud.pages.dev/)
 
 ## Notes
 

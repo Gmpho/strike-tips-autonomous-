@@ -27,7 +27,7 @@
 
 Visit the live racing intelligence dashboard:
 
-**URL:** https://strike-tips-hud.vercel.app
+**URL:** https://strike-tips-hud.pages.dev
 
 Features: Live race cards, bankroll tracking, AI agents, analytics, logs.
 

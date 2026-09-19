@@ -1,27 +1,29 @@
-# Cloud Models — Live-Verified Pools, TPM Budget, Fallbacks
+# Cloud Models — Single Source of Truth
+
+**The authoritative pool lives in the spec: [`openspec/specs/cloud-models/spec.md`](../openspec/specs/cloud-models/spec.md).**
+
+This document is a *pointer* plus the operational context that does not belong in a behaviour spec: how to re-verify the pool, and the budget rules that keep spend sane. Do **not** add a second model table here — a duplicated list is exactly what drifted out of sync before.
 
 Sep-2026 lesson: a refactor pinned model IDs that no longer exist on the
 provider (Groq retired Llama 3.3/3.1 + DeepSeek; Gemini retired 2.0/1.5).
-Every call 404'd into fallback spend. **Verify IDs against the live
-`/models` lists before changing them.**
+Every call 404'd into fallback spend, and the change's own premise ended up
+inverted against the live lists. **Verify IDs against `/models` before
+changing them.**
 
-## Production pools (live-verified Sep-2026)
-
-| Provider | Flagship / tools | Fast / light | Deep |
-|---|---|---|---|
-| Groq | `openai/gpt-oss-120b` | `openai/gpt-oss-20b` | `openai/gpt-oss-120b` |
-| Gemini | `gemini-2.5-flash` | `gemini-2.5-flash-lite` | `gemini-2.5-pro` (cards), `gemini-3.1-pro-preview` (chat math) |
-
-Also live: `gemini-3.5-flash`, `gemini-3.1-flash-lite`, Groq `whisper-large-v3`
-(+turbo), `gemini-2.5-flash-preview-tts`. Unverified: `gemini-3.8-live`
-(Live API has no list endpoint — confirm in console before relying on it).
-
-Check current availability any time (free, read-only):
+## Re-verifying the pool (free, read-only)
 
 ```bash
-curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY" | python3 -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data']]"
-curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY" | python3 -c "import json,sys; [print(m['name']) for m in json.load(sys.stdin).get('models',[])]"
+curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY" \
+  | python3 -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data']]"
+
+curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY" \
+  | python3 -c "import json,sys; [print(m['name']) for m in json.load(sys.stdin).get('models',[])]"
 ```
+
+Record the probe date in the spec's Purpose block after each re-probe. An
+identifier whose API exposes no enumeration endpoint — the Live API's
+`gemini-3.8-live` — stays marked **unverified** in the spec rather than being
+promoted to authoritative.
 
 ## TPM budget (the 413/429 incident)
 

@@ -43,7 +43,7 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    # Opt into cross-origin embedding: the HUD (Vercel/Pages) fetches this
+    # Opt into cross-origin embedding: the HUD (Cloudflare Pages) fetches this
     # API directly under a COEP document, which requires CORP on responses.
     # Readability is still gated by CORS (allow_origins below).
     response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
@@ -266,7 +266,6 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://strike-tips-hud.vercel.app",
         "https://strike-tips-hud.pages.dev",
     ],
     allow_credentials=True,

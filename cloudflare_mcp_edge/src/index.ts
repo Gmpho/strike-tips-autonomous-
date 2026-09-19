@@ -22,8 +22,6 @@ function isAuthorized(request: Request, env: Env): boolean {
 }
 
 const ALLOWED_ORIGINS = new Set([
-  "https://strike-tips-hud.vercel.app",
-  "https://www.strike-tips-hud.vercel.app",
   "https://strike-tips-hud.pages.dev",
   "http://localhost:3000",
   "http://localhost:5173",
@@ -31,7 +29,7 @@ const ALLOWED_ORIGINS = new Set([
 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
-  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.vercel.app";
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.pages.dev";
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -45,7 +43,7 @@ function corsHeaders(request: Request): Record<string, string> {
 function json(data: unknown, status = 200, request?: Request): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.vercel.app" }) },
+    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.pages.dev" }) },
   });
 }
 

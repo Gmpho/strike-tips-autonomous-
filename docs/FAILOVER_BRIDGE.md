@@ -25,12 +25,12 @@ optional self-hosted fallback (e.g. Cloud Run) when needed.
 
 ```
                          ┌── primary ──►  Modal serve-api (FastAPI + scrapers)
-Vercel HUD (middleware)  │
+Cloudflare Pages HUD      │
                          └── edge ─────►  Cloudflare Worker (read/MCP endpoints)
                          └── optional ──►  <YOUR_FALLBACK_URL>  (only when set)
 ```
 
-### HUD middleware (`strike-tips-hud/middleware.ts`)
+### HUD proxy (`strike-tips-hud/functions/api/[[catchall]].ts`)
 - **Modal is primary** — listed first, wins whenever healthy.
 - Routes a fixed set of endpoints to the **Cloudflare Worker** (read/MCP), the
   rest go to the backend.
@@ -42,22 +42,22 @@ Vercel HUD (middleware)  │
 
 ### HUD data bridge (`src/engine/data-bridge.ts`)
 - SSE (`/api/monitoring/stream`) connects **directly** to a backend origin
-  (bypasses Vercel Edge's ~300s runtime cap). Origins are probed at connect time:
+  (keeps long-lived SSE off the Pages Function proxy). Origins are probed at connect time:
   1. `''` (same-origin) — **dev only** (Vite proxy routes to `127.0.0.1:8000`)
   2. Modal
   3. `VITE_SSE_FALLBACK_ORIGIN` — **optional**, set to a fallback (e.g. Cloud Run)
 - Dark origins are **negative-cached for 60s** so reconnects don't stall.
 - REST hydration (`/api/news`, `/api/telemetry`) goes through relative paths —
-  Vercel middleware in prod, Vite proxy in dev.
+  the Pages Function proxy in prod, the Vite proxy in dev.
 
-### Vercel env vars (Production)
+### Cloudflare Pages env vars (Production)
 | Var | Value | Feeds |
 |---|---|---|
-| `BACKEND_FALLBACK_ORIGIN` *(optional)* | `<YOUR_FALLBACK_URL>` | `middleware.ts` fallback |
+| `BACKEND_FALLBACK_ORIGIN` *(optional)* | `<YOUR_FALLBACK_URL>` | proxy fallback |
 | `VITE_SSE_FALLBACK_ORIGIN` *(optional)* | `<YOUR_FALLBACK_URL>` | `data-bridge.ts` SSE fallback |
 
 > Leave both unset to run **Modal-only**. The URLs are never hard-coded — put
-> your own origin (e.g. a Cloud Run URL) in Vercel env vars when you opt in.
+> your own origin (e.g. a Cloud Run URL) in Cloudflare Pages env vars when you opt in.
 
 ---
 
@@ -73,7 +73,7 @@ outage, point the fallback at a self-hosted origin:
 
 1. Deploy your FastAPI to a fallback host (see `deploy-cloud-run.sh` for Cloud
    Run) and get a stable URL like `<YOUR_FALLBACK_URL>`.
-2. In Vercel Project Settings → Environment Variables, set:
+2. In Cloudflare Pages → Settings → Environment variables, set:
    - `BACKEND_FALLBACK_ORIGIN` = `<YOUR_FALLBACK_URL>`
    - `VITE_SSE_FALLBACK_ORIGIN` = `<YOUR_FALLBACK_URL>`
 3. Redeploy the HUD. Modal stays primary; the fallback is only contacted if the
