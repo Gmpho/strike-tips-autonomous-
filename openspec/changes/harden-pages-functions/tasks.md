@@ -21,7 +21,7 @@
 
 - [x] 4.1 Extend `tests/catchall.test.ts`: exact `/api/tasks` 401 (guarded now), 502 envelope on rejected upstream (fetch stubbed to throw), bounded-store unit case
 - [x] 4.2 Extend tests: throttle refill/drop + per-call caps pinned (`tests/spend-guard.test.ts`)
-- [ ] 4.3 Local proof via `wrangler pages dev` (`/api/session`, tasks 401, 502 envelope), then deploy and canary prod (tasks 401 live, reads unregressed, RO header present); full suite green + `openspec validate --all`
+- [x] 4.3 Local proof via `wrangler pages dev` (`/api/session`, tasks 401, 502 envelope), then deploy and canary prod (tasks 401 live, reads unregressed, RO header present); full suite green + `openspec validate --all`
 
 ## Verification
 
