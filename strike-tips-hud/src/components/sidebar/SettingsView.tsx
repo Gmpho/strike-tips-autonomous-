@@ -147,20 +147,27 @@ export const SettingsView: React.FC = () => {
   const save = async () => {
     setSaveState('saving');
     try {
-      const res = await apiFetch('/api/config', {
+      const payload = JSON.stringify({
+        ...settings.bankroll,
+        ...settings.alerts,
+        ...settings.schedule,
+        ...settings.ai,
+        paper_mode: settings.paper.paperMode,
+        paper_balance: settings.paper.paperBalance,
+        auto_bet_enabled: settings.autonomous.autoBetEnabled,
+        auto_bet_min_edge: settings.autonomous.autoBetMinEdge,
+      });
+      const doSave = () => apiFetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...settings.bankroll,
-          ...settings.alerts,
-          ...settings.schedule,
-          ...settings.ai,
-          paper_mode: settings.paper.paperMode,
-          paper_balance: settings.paper.paperBalance,
-          auto_bet_enabled: settings.autonomous.autoBetEnabled,
-          auto_bet_min_edge: settings.autonomous.autoBetMinEdge,
-        }),
+        body: payload,
       });
+      let res = await doSave();
+      if (res.status === 401) {
+        // Proof-of-browser: run the Turnstile challenge once, then retry.
+        const { ensureSession } = await import('../../lib/session-client');
+        if (await ensureSession()) res = await doSave();
+      }
       if (res.ok) {
         setSaveState('ok');
         localStorage.setItem('strike_sound_enabled', String(settings.alerts.soundEnabled));
@@ -176,7 +183,21 @@ export const SettingsView: React.FC = () => {
 
   const testTelegram = async () => {
     try {
-      await apiFetch('/api/config/test_telegram', { method: 'POST' });
+      const send = () => apiFetch('/api/config/test_telegram', { method: 'POST' });
+      let res = await send();
+      if (res.status === 401) {
+        const { ensureSession } = await import('../../lib/session-client');
+        if (await ensureSession()) res = await send();
+      }
+      if (!res.ok) {
+        alert(`Test failed (HTTP ${res.status}) — the backend rejected it. Check the session/console.`);
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      if (body && body.success === false) {
+        alert('Test failed — the backend reported an error.');
+        return;
+      }
       alert('Test message sent! Check your Telegram.');
     } catch {
       alert('Failed to send test message');

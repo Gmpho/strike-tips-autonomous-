@@ -1,7 +1,6 @@
 // Cloudflare Pages Function: /api/* reverse proxy.
-// Ports strike-tips-hud/middleware.ts (Vercel) routing:
-// - MCP/compute-light paths -> striketips-mcp worker (always-free edge)
-// - everything else          -> Modal backend (primary)
+// Routing: MCP/compute-light paths -> striketips-mcp worker (always-free edge)
+// everything else            -> Modal backend (primary)
 // The API secret is injected server-side from env; browsers never see it.
 //
 // Only keyed endpoints should reach here — keyless reads go direct to the
@@ -10,6 +9,7 @@
 interface Env {
   BACKEND_API_KEY?: string;
   BACKEND_FALLBACK_ORIGIN?: string;
+  SESSION_SECRET?: string;
 }
 
 const MODAL_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run';
@@ -46,7 +46,10 @@ function hitRate(
 }
 
 // State-changing API families: the proxy never spends the master key here
-// on an anonymous caller's behalf (Sep-2026 audit: confused-deputy).
+// on an anonymous caller's behalf (Sep-2026 audit: confused-deputy). A valid
+// browser session token (see functions/_middleware.ts + lib/session.ts) is
+// proof-of-browser for the SESSION families only — never for betting writes,
+// tasks, or the master-key-only actions below.
 const WRITE_PREFIXES = [
   '/api/betting/',
   '/api/config',
@@ -55,6 +58,38 @@ const WRITE_PREFIXES = [
   '/api/agent/kill',
   '/api/agent/reset',
 ];
+
+// Subset of WRITE_PREFIXES that a session token may satisfy. /api/betting/*,
+// /api/tasks/* and /api/agent/kill|reset stay master-key-only.
+const SESSION_WRITE_PREFIXES = [
+  '/api/config',
+  '/api/healing/',
+  '/api/dreaming/',
+];
+
+function readSessionCookie(request: Request): string {
+  const raw = request.headers.get('Cookie') || '';
+  const parts = raw.split(';');
+  for (const part of parts) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === 'st_session') return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return '';
+}
+
+async function hasValidSession(request: Request, env: Env): Promise<boolean> {
+  const secret = env.SESSION_SECRET || '';
+  const token = readSessionCookie(request);
+  if (!secret || !token) return false;
+  try {
+    const { verify } = await import('../lib/session.ts');
+    const claims = await verify({ secret, token });
+    return claims !== null;
+  } catch {
+    return false;
+  }
+}
 
 function matches(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
@@ -88,13 +123,23 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   // Sensitive actions + all state-changing calls: caller must present the
   // key (fail-closed). Reads keep flowing with server-side injection.
-  const needsCallerKey = isWrite
-    || SENSITIVE_PREFIXES.some((p) => matches(url.pathname, p));
+  // Proof-of-browser branch (master key first and independently below):
+  // a valid session token satisfies SESSION_WRITE_PREFIXES only.
+  const sensitive = SENSITIVE_PREFIXES.some((p) => matches(url.pathname, p));
+  const sessionScoped = !sensitive
+    && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+    && SESSION_WRITE_PREFIXES.some((p) => matches(url.pathname, p));
+  const needsCallerKey = isWrite || sensitive;
   if (needsCallerKey) {
     const caller = request.headers.get('x-api-key') || request.headers.get('X-API-KEY')
       || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
-    if (!env.BACKEND_API_KEY || caller !== env.BACKEND_API_KEY) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    const masterOk = Boolean(env.BACKEND_API_KEY) && caller !== '' && caller === env.BACKEND_API_KEY;
+    // Master key wins outright; for the session-scoped families a valid
+    // browser session token is also sufficient. Nothing else is.
+    if (!masterOk) {
+      if (!(sessionScoped && await hasValidSession(request, env))) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
   }
   if (isWrite && hitRate(writeStore, ip, WRITE_RATE_MAX)) {
@@ -106,7 +151,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const origin = isCF ? CF_MCP_ORIGIN : MODAL_ORIGIN;
 
   const headers = new Headers(request.headers);
-  headers.set('X-API-KEY', env.BACKEND_API_KEY || '');
+  headers.set('X-API-KEY', env.BACKEND_API_KEY || ''); // env typed as Env, always a string here
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25_000);
@@ -123,7 +168,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       headers: upstream.headers,
     });
   } catch (e) {
-    // Last resort: Modal directly (matches Vercel middleware fallback).
+    // Last resort: Modal directly (the primary origin for non-worker paths).
     if (!isCF) throw e;
     const headers2 = new Headers(request.headers);
     headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');

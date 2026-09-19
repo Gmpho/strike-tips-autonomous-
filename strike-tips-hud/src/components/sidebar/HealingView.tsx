@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Activity, ShieldCheck, Zap, GitBranch, Terminal } from 'lucide-react';
 import { useHUD } from '../../hooks/useHUD';
@@ -6,6 +6,23 @@ import { apiFetch } from '../../lib/api-fetch';
 
 export const HealingView: React.FC = () => {
   const { healing } = useHUD();
+  const [pulseState, setPulseState] = useState<'idle' | 'sending' | 'ok' | 'err'>('idle');
+
+  const pulse = async () => {
+    setPulseState('sending');
+    try {
+      const send = () => apiFetch('/api/healing/pulse', { method: 'POST' });
+      let res = await send();
+      if (res.status === 401) {
+        const { ensureSession } = await import('../../lib/session-client');
+        if (await ensureSession()) res = await send();
+      }
+      setPulseState(res.ok ? 'ok' : 'err');
+    } catch {
+      setPulseState('err');
+    }
+    setTimeout(() => setPulseState('idle'), 2500);
+  };
 
   return (
     <motion.div
@@ -26,12 +43,25 @@ export const HealingView: React.FC = () => {
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => apiFetch('/api/healing/pulse', { method: 'POST' })}
-          className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+          onClick={pulse}
+          disabled={pulseState === 'sending'}
+          aria-busy={pulseState === 'sending'}
+          title="Send healing pulse"
+          className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors shadow-[0_0_15px_rgba(16,185,129,0.1)] disabled:opacity-50 disabled:cursor-wait"
         >
           <Zap className="w-5 h-5 fill-current" />
         </motion.button>
       </div>
+      {pulseState !== 'idle' && (
+        <p
+          role="status"
+          className={`text-[10px] font-black uppercase tracking-widest -mt-4 ${
+            pulseState === 'ok' ? 'text-emerald-400' : pulseState === 'err' ? 'text-red-400' : 'text-theme-secondary'
+          }`}
+        >
+          {pulseState === 'sending' ? 'Sending healing pulse…' : pulseState === 'ok' ? '✓ Healing pulse delivered' : '✗ Healing pulse failed — check session/console'}
+        </p>
+      )}
 
       {/* Grid: Agent Stats & Selector Health */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
