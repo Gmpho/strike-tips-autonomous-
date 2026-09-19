@@ -8,6 +8,8 @@
 // Spend protection: 5 upgrades/min per IP; sessions auto-close after 10 min.
 // Model defaults to the cloud agent's pick, overridable via LIVE_MODEL env.
 
+import { hitRate as boundedHitRate, type RateEntry } from '../lib/rate-limit.ts';
+
 interface Env {
   GEMINI_API_KEY?: string;
   LIVE_MODEL?: string;
@@ -19,20 +21,39 @@ const LIVE_SYSTEM_INSTRUCTION = `You are Strike Tips Live Racing Agent, an inter
 - Keep spoken answers brief, punchy, and professional (avoid reading long tables aloud).`;
 
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX = 5;
+const RATE_MAX = 5; // upgrades/min per IP
 const MAX_SESSION_MS = 10 * 60_000;
-const rateStore = new Map<string, { count: number; resetAt: number }>();
+// Bounded store (shared limiter): evict-on-rollover + hard key cap.
+const rateStore = new Map<string, RateEntry>();
+// Concurrency ceilings (isolate-local best-effort — documented limitation):
+// one live session per IP, a handful isolate-wide. Keyless spend surface
+// stays capped even if per-IP limits are bypassed via many IPs.
+const GLOBAL_LIVE_CAP = 10;
+const activeSessions = new Set<WebSocket>();
+const liveIps = new Map<WebSocket, string>();
 
 function hitRate(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateStore.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateStore.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-  entry.count++;
-  return entry.count > RATE_MAX;
+  return boundedHitRate(rateStore, ip, RATE_MAX, RATE_WINDOW_MS);
 }
+
+// Frame throttle (pure, unit-testable): audio frames arrive ~constantly from
+// the mic relay; a runaway client cannot push more than FRAME_RATE_PER_SEC
+// upstream (burst bucket). Returns an allow() closure — true = relay frame.
+export function makeFrameThrottle(ratePerSec: number, burst: number): () => boolean {
+  let tokens = burst;
+  let last = Date.now();
+  return (): boolean => {
+    const now = Date.now();
+    tokens = Math.min(burst, tokens + ((now - last) / 1000) * ratePerSec);
+    last = now;
+    if (tokens < 1) return false; // throttle: drop, upstream stays within relay budget
+    tokens -= 1;
+    return true;
+  };
+}
+
+const FRAME_BURST = 200;
+const FRAME_RATE_PER_SEC = 80;
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
@@ -46,6 +67,14 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (hitRate(ip)) {
     return new Response('Too Many Requests', { status: 429 });
   }
+  // Concurrency ceilings: an IP with a live session cannot open a second
+  // one, and the isolate never relays more than GLOBAL_LIVE_CAP at once.
+  if ([...liveIps.values()].filter((v) => v === ip).length >= 1) {
+    return new Response('Live session already active for this IP', { status: 429 });
+  }
+  if (activeSessions.size >= GLOBAL_LIVE_CAP) {
+    return new Response('Live capacity reached', { status: 429 });
+  }
 
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -54,12 +83,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const model = env.LIVE_MODEL || 'gemini-3.8-live';
   let upstream: WebSocket | null = null;
   let closed = false;
+  const trackLive = () => {
+    activeSessions.add(server);
+    liveIps.set(server, ip);
+  };
   const closeAll = () => {
     if (closed) return;
     closed = true;
+    activeSessions.delete(server);
+    liveIps.delete(server);
     try { upstream?.close(); } catch { /* noop */ }
     try { server.close(); } catch { /* noop */ }
   };
+  trackLive();
+  const allowFrame = makeFrameThrottle(FRAME_RATE_PER_SEC, FRAME_BURST);
   setTimeout(closeAll, MAX_SESSION_MS);
 
   const send = (obj: unknown) => {
@@ -121,6 +158,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     try {
       const payload = JSON.parse(typeof evt.data === 'string' ? evt.data : '');
       if (payload.audio && upstream && (upstream as any).readyState === 1) {
+        if (!allowFrame()) return; // throttled: frame dropped
         upstream.send(JSON.stringify({
           realtimeInput: { audio: { data: payload.audio, mimeType: 'audio/pcm;rate=16000' } },
         }));

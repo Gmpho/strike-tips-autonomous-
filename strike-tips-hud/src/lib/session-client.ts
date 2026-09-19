@@ -76,55 +76,94 @@ function renderChallenge(siteKey: string): Promise<string | null> {
     overlay.appendChild(box);
     document.body.appendChild(overlay);
     let done = false;
+    let widgetId = "";
     const finish = (token: string | null) => {
       if (done) return;
       done = true;
       try {
-        const id = overlay.dataset.widgetId;
-        if (id && window.turnstile) window.turnstile.remove(id);
+        if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
       } catch { /* already gone */ }
       overlay.remove();
       resolve(token);
     };
+    // Explicit verification-failed state: the overlay STAYS MOUNTED with a
+    // retry affordance instead of silently closing (harden-pages-functions
+    // 3.2 — the 600010 silent-close UX bug). Cancel is always available.
+    const showFailed = (msg: string) => {
+      box.textContent = "";
+      const label = document.createElement("div");
+      label.textContent = msg;
+      label.style.cssText = "color:#f87171;font-size:14px;margin-bottom:12px;font-family:system-ui,sans-serif";
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px";
+      const retry = document.createElement("button");
+      retry.textContent = "Retry verification";
+      retry.style.cssText = "padding:8px 14px;border-radius:8px;background:#7c3aed;color:#fff;border:0;cursor:pointer;font-family:system-ui,sans-serif";
+      retry.onclick = () => {
+        // In-place reset: re-render the widget into the same overlay.
+        box.textContent = "";
+        box.appendChild(slot);
+        try { if (widgetId && window.turnstile) window.turnstile.remove(widgetId); } catch { /* noop */ }
+        try {
+          widgetId = window.turnstile!.render(slot, opts);
+          overlay.dataset.widgetId = String(widgetId);
+        } catch {
+          showFailed("Verification could not start. You can retry.");
+        }
+      };
+      const cancel = document.createElement("button");
+      cancel.textContent = "Cancel";
+      cancel.style.cssText = "padding:8px 14px;border-radius:8px;background:transparent;color:#94a3b8;border:1px solid #334155;cursor:pointer;font-family:system-ui,sans-serif";
+      cancel.onclick = () => finish(null);
+      row.appendChild(retry);
+      row.appendChild(cancel);
+      box.appendChild(label);
+      box.appendChild(row);
+    };
+    const opts = {
+      sitekey: siteKey,
+      callback: (t: string) => finish(t),
+      "error-callback": () => showFailed("Verification failed. You can retry."),
+      "expire-callback": () => showFailed("Verification expired. You can retry."),
+      "timeout-callback": () => showFailed("Verification timed out. You can retry."),
+      timeout: 120_000,
+    };
     try {
-      const id = window.turnstile!.render(slot, {
-        sitekey: siteKey,
-        callback: (t: string) => finish(t),
-        "error-callback": () => finish(null),
-        "expire-callback": () => finish(null),
-        timeout: 120_000,
-      });
-      overlay.dataset.widgetId = String(id);
+      widgetId = window.turnstile!.render(slot, opts);
+      overlay.dataset.widgetId = String(widgetId);
     } catch {
-      finish(null);
+      showFailed("Verification could not start. You can retry.");
     }
   });
 }
 
-let inflight: Promise<boolean> | null = null;
+let inflight: Promise<SessionOutcome> | null = null;
+
+export type SessionOutcome = "ok" | "challenge-failed" | "unavailable";
 
 /** Run the Turnstile challenge and exchange it for a session cookie.
- *  Resolves true only when the server accepted the challenge and set the
- *  cookie; false on every other path (no key configured, challenge failed,
- *  issuance 4xx/5xx). Never throws. */
-export async function ensureSession(): Promise<boolean> {
+ *  Resolves "ok" only when the server accepted the challenge and set the
+ *  cookie; "challenge-failed" when the challenge itself failed, expired,
+ *  timed out, or the user dismissed it; "unavailable" when sessions are not
+ *  configured or the network/bootstrap path failed. Never throws. */
+export async function ensureSession(): Promise<SessionOutcome> {
   if (inflight) return inflight;
-  inflight = (async () => {
+  inflight = (async (): Promise<SessionOutcome> => {
     try {
       const { siteKey, enabled } = await loadConfig();
-      if (!siteKey || !enabled) return false;
+      if (!siteKey || !enabled) return "unavailable";
       await loadTurnstile();
       const challenge = await renderChallenge(siteKey);
-      if (!challenge) return false;
+      if (!challenge) return "challenge-failed";
       const res = await fetch("/api/session", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ turnstileToken: challenge }),
       });
-      return res.ok;
+      return res.ok ? "ok" : "challenge-failed";
     } catch {
-      return false;
+      return "unavailable";
     } finally {
       inflight = null;
     }

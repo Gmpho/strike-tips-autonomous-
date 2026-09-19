@@ -4,6 +4,8 @@
 // Auth: keyless like other reads (browser carries no key); abuse contained
 // by IP rate limiting. Secrets come from Pages env (server-side only).
 
+import { hitRate as boundedHitRate, type RateEntry } from '../lib/rate-limit.ts';
+
 interface Env {
   GEMINI_API_KEY?: string;
   GROQ_API_KEY?: string;
@@ -16,18 +18,20 @@ interface GroundingSource {
 
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 20; // LLM calls/min per IP
-const MAX_BODY_BYTES = 32_768;
-const rateStore = new Map<string, { count: number; resetAt: number }>();
+const GLOBAL_RATE_MAX = 150; // isolate-wide ceiling: 20/IP no longer scales to many IPs
+// Exported for the ai-spend-guard pin tests (values must not silently drift).
+export const MAX_BODY_BYTES = 32_768; // per-call input cap (pinned; see ai-spend-guard spec)
+export const MAX_TOKENS = 1500; // per-call output cap (pinned; see ai-spend-guard spec)
+// Bounded stores (shared limiter): evict-on-rollover + hard key cap.
+const rateStore = new Map<string, RateEntry>();
+const globalStore = new Map<string, RateEntry>();
 
 function hitRate(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateStore.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateStore.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-  entry.count++;
-  return entry.count > RATE_MAX;
+  return boundedHitRate(rateStore, ip, RATE_MAX, RATE_WINDOW_MS);
+}
+
+function hitGlobalRate(): boolean {
+  return boundedHitRate(globalStore, '__global__', GLOBAL_RATE_MAX, RATE_WINDOW_MS);
 }
 
 function corsHeaders(origin: string): Record<string, string> {
@@ -89,7 +93,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return Response.json({ error: 'Method Not Allowed' }, { status: 405, headers: corsHeaders(url.origin) });
   }
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  if (hitRate(ip)) {
+  if (hitRate(ip) || hitGlobalRate()) {
     return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { ...corsHeaders(url.origin), 'Retry-After': '60' } });
   }
 
@@ -154,7 +158,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: String(m.content || '').slice(0, 8000) }],
     }));
-  const config: any = { systemInstruction, maxOutputTokens: 1500 };
+  const config: any = { systemInstruction, maxOutputTokens: MAX_TOKENS };
   if (targetModel === 'gemini-3.5-flash' && searchGrounding) {
     config.tools = [{ googleSearch: {} }];
   }
@@ -163,7 +167,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
     const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: 1500, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
+      body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
     });
     if (!resp.ok) {
       return Response.json({ error: `Gemini error: ${await resp.text()}` }, { status: resp.status, headers: corsHeaders(origin) });
@@ -181,7 +185,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
   const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:streamGenerateContent?alt=sse&key=${geminiApiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: 1500, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
+    body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
   });
   if (!upstream.ok || !upstream.body) {
     return Response.json({ error: `Gemini error: ${await upstream.text()}` }, { status: upstream.status, headers: corsHeaders(origin) });
@@ -251,7 +255,7 @@ async function handleGroqChat(env: Env, body: any, modelName: string, systemInst
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${groqApiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: groqModel, messages: groqMessages, stream: isStream, temperature: 0.6, max_tokens: 1500 }),
+    body: JSON.stringify({ model: groqModel, messages: groqMessages, stream: isStream, temperature: 0.6, max_tokens: MAX_TOKENS }),
   });
   if (!groqRes.ok) {
     return Response.json({ error: `Groq error: ${await groqRes.text()}` }, { status: groqRes.status, headers: corsHeaders(origin) });

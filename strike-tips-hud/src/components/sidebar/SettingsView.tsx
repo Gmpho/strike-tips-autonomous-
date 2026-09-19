@@ -28,7 +28,7 @@ const DEFAULTS: Settings = {
 
 export const SettingsView: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err' | 'verify'>('idle');
   const [webGpuSupported, setWebGpuSupported] = useState(false);
   const [storageEstimate, setStorageEstimate] = useState<StorageEstimateInfo | null>(null);
   const [clearingStorage, setClearingStorage] = useState(false);
@@ -165,8 +165,17 @@ export const SettingsView: React.FC = () => {
       let res = await doSave();
       if (res.status === 401) {
         // Proof-of-browser: run the Turnstile challenge once, then retry.
+        // A challenge failure is its own visible state with a retry button,
+        // not a generic save failure (harden-pages-functions 3.3).
         const { ensureSession } = await import('../../lib/session-client');
-        if (await ensureSession()) res = await doSave();
+        const outcome = await ensureSession();
+        if (outcome === 'ok') {
+          res = await doSave();
+        } else if (outcome === 'challenge-failed') {
+          setSaveState('verify');
+          setTimeout(() => setSaveState('idle'), 4000);
+          return;
+        }
       }
       if (res.ok) {
         setSaveState('ok');
@@ -187,7 +196,14 @@ export const SettingsView: React.FC = () => {
       let res = await send();
       if (res.status === 401) {
         const { ensureSession } = await import('../../lib/session-client');
-        if (await ensureSession()) res = await send();
+        const outcome = await ensureSession();
+        if (outcome === 'ok') {
+          res = await send();
+        } else if (outcome === 'challenge-failed') {
+          setSaveState('verify');
+          setTimeout(() => setSaveState('idle'), 4000);
+          return;
+        }
       }
       if (!res.ok) {
         alert(`Test failed (HTTP ${res.status}) — the backend rejected it. Check the session/console.`);
@@ -216,8 +232,8 @@ export const SettingsView: React.FC = () => {
     </button>
   );
 
-  const saveLabel = { idle: 'Save Protocol', saving: 'Saving...', ok: '✓ Saved', err: '✗ Failed' }[saveState];
-  const saveCls = saveState === 'err' ? 'bg-red-500 hover:bg-red-600' : saveState === 'ok' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-purple-500 hover:bg-purple-600';
+  const saveLabel = { idle: 'Save Protocol', saving: 'Saving...', ok: '✓ Saved', err: '✗ Failed', verify: '⚠ Verify & retry' }[saveState];
+  const saveCls = saveState === 'err' ? 'bg-red-500 hover:bg-red-600' : saveState === 'ok' ? 'bg-emerald-500 hover:bg-emerald-600' : saveState === 'verify' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-purple-500 hover:bg-purple-600';
 
   return (
     <motion.div

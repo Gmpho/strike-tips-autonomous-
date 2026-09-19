@@ -6,7 +6,7 @@ import { apiFetch } from '../../lib/api-fetch';
 
 export const HealingView: React.FC = () => {
   const { healing } = useHUD();
-  const [pulseState, setPulseState] = useState<'idle' | 'sending' | 'ok' | 'err'>('idle');
+  const [pulseState, setPulseState] = useState<'idle' | 'sending' | 'ok' | 'err' | 'verify'>('idle');
 
   const pulse = async () => {
     setPulseState('sending');
@@ -15,7 +15,15 @@ export const HealingView: React.FC = () => {
       let res = await send();
       if (res.status === 401) {
         const { ensureSession } = await import('../../lib/session-client');
-        if (await ensureSession()) res = await send();
+        const outcome = await ensureSession();
+        if (outcome === 'ok') {
+          res = await send();
+        } else if (outcome === 'challenge-failed') {
+          // Explicit verification-failed state (harden-pages-functions 3.3):
+          // stays visible until the user acts — no silent close, no reload.
+          setPulseState('verify');
+          return;
+        }
       }
       setPulseState(res.ok ? 'ok' : 'err');
     } catch {
@@ -56,10 +64,22 @@ export const HealingView: React.FC = () => {
         <p
           role="status"
           className={`text-[10px] font-black uppercase tracking-widest -mt-4 ${
-            pulseState === 'ok' ? 'text-emerald-400' : pulseState === 'err' ? 'text-red-400' : 'text-theme-secondary'
+            pulseState === 'ok'
+              ? 'text-emerald-400'
+              : pulseState === 'err'
+                ? 'text-red-400'
+                : pulseState === 'verify'
+                  ? 'text-amber-400'
+                  : 'text-theme-secondary'
           }`}
         >
-          {pulseState === 'sending' ? 'Sending healing pulse…' : pulseState === 'ok' ? '✓ Healing pulse delivered' : '✗ Healing pulse failed — check session/console'}
+          {pulseState === 'sending'
+            ? 'Sending healing pulse…'
+            : pulseState === 'ok'
+              ? '✓ Healing pulse delivered'
+              : pulseState === 'verify'
+                ? '⚠ Verification failed — complete the challenge and try again'
+                : '✗ Healing pulse failed — check session/console'}
         </p>
       )}
 

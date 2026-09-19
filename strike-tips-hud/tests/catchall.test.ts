@@ -177,11 +177,12 @@ describe("task 4.1: full accept/deny matrix", () => {
     ["money POST /api/betting/status x anon",  "POST", "/api/betting/status",  "anon",   401, false],
     ["money POST /api/betting/status x token", "POST", "/api/betting/status",  "token",  401, false],
     ["money POST /api/betting/status x master","POST", "/api/betting/status",  "master", 200, true],
-    // DOCUMENTED PRE-EXISTING HOLE (P2, owned by harden-pages-functions):
-    // '/api/tasks' exact does not match WRITE_PREFIXES '/api/tasks/', so it
-    // forwards anonymously today. This row pins CURRENT behaviour so the
-    // sibling change must flip it to 401 alongside its boundary fix.
-    ["P2 hole POST /api/tasks x anon (current behaviour)", "POST", "/api/tasks", "anon", 200, true],
+    // Tasks family (guarded since harden-pages-functions task 1.1: normalized
+    // prefixes cover the bare family root). Master-key-only like betting —
+    // a session token never satisfies it.
+    ["tasks POST /api/tasks x anon",   "POST", "/api/tasks",           "anon",   401, false],
+    ["tasks POST /api/tasks x token",  "POST", "/api/tasks",           "token",  401, false],
+    ["tasks POST /api/tasks x master", "POST", "/api/tasks",           "master", 200, true],
   ];
 
   for (const [label, method, path, cred, wantStatus, wantForward] of ROWS) {
@@ -193,4 +194,60 @@ describe("task 4.1: full accept/deny matrix", () => {
       if (wantForward) assert.equal(calls[0].key, MASTER, `${label}: master key injected`);
     });
   }
+});
+
+describe("proxy hardening (harden-pages-functions)", () => {
+  let calls: number;
+  let realFetch: typeof fetch;
+
+  beforeEach(async () => {
+    if (!mod) {
+      mod = (await import(new URL("../functions/api/%5B%5Bcatchall%5D%5D.ts", import.meta.url).href)) as unknown as { onRequest: OnRequest };
+    }
+    realFetch = globalThis.fetch;
+    calls = 0;
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async () => {
+      calls++;
+      throw new TypeError("fetch failed (simulated dead origin)");
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("dead Modal upstream -> structured 502 envelope, not a crash", async () => {
+    const res = await mod.onRequest(makeCtx(makeRequest("GET", "/api/news"), { BACKEND_API_KEY: MASTER }));
+    assert.equal(res.status, 502);
+    const body = (await res.json()) as { error?: string; upstream?: string; retryable?: boolean };
+    assert.equal(body.error, "Upstream unavailable");
+    assert.equal(body.upstream, "modal");
+    assert.equal(body.retryable, true);
+    assert.equal(res.headers.get("Retry-After"), "5");
+    assert.equal(calls, 1); // primary leg only; no worker fallback for Modal paths
+  });
+
+  it("dead worker + dead Modal -> envelope names both, fallback leg bounded", async () => {
+    const res = await mod.onRequest(makeCtx(makeRequest("GET", "/api/health"), { BACKEND_API_KEY: MASTER }));
+    assert.equal(res.status, 502);
+    const body = (await res.json()) as { upstream?: string };
+    assert.equal(body.upstream, "worker+modal");
+    assert.equal(calls, 2); // both legs attempted, neither escaped as a throw
+  });
+});
+
+describe("bounded rate store (harden-pages-functions 1.4)", () => {
+  it("enforces the window and never exceeds the hard key cap", async () => {
+    const { hitRate, RATE_STORE_CAP } = await import("../functions/lib/rate-limit.ts");
+    // Window semantics: max 5 per window, 6th hit is over.
+    const win = new Map<string, import("../functions/lib/rate-limit.ts").RateEntry>();
+    for (let i = 0; i < 5; i++) assert.equal(hitRate(win, "1.2.3.4", 5, 60_000), false);
+    assert.equal(hitRate(win, "1.2.3.4", 5, 60_000), true);
+    // Cap semantics: a store filled with live entries evicts instead of growing.
+    const full = new Map<string, import("../functions/lib/rate-limit.ts").RateEntry>();
+    for (let i = 0; i < RATE_STORE_CAP; i++) hitRate(full, `k${i}`, 1, 3_600_000);
+    assert.equal(full.size, RATE_STORE_CAP);
+    hitRate(full, "one-more", 1, 3_600_000); // triggers oldest-expiry eviction
+    assert.ok(full.size <= RATE_STORE_CAP, `store must stay bounded, got ${full.size}`);
+  });
 });

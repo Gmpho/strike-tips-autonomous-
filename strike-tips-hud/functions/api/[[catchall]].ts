@@ -6,6 +6,8 @@
 // Only keyed endpoints should reach here — keyless reads go direct to the
 // origins (see src/lib/backend-origin.ts), keeping invocations minimal.
 
+import { hitRate, type RateEntry } from '../lib/rate-limit.ts';
+
 interface Env {
   BACKEND_API_KEY?: string;
   BACKEND_FALLBACK_ORIGIN?: string;
@@ -27,45 +29,41 @@ const SENSITIVE_PREFIXES = ['/api/agent/kill', '/api/agent/reset'];
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 100; // reads/min per IP
 const WRITE_RATE_MAX = 20; // writes/min per IP (bet placement, config, healing)
-const rateStore = new Map<string, { count: number; resetAt: number }>();
-const writeStore = new Map<string, { count: number; resetAt: number }>();
-
-function hitRate(
-  store: Map<string, { count: number; resetAt: number }>,
-  ip: string,
-  max: number,
-): boolean {
-  const now = Date.now();
-  const entry = store.get(ip);
-  if (!entry || now > entry.resetAt) {
-    store.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-  entry.count++;
-  return entry.count > max;
-}
+// Bounded stores (shared limiter): evict-on-rollover + hard key cap, so no
+// isolate's limiter memory grows without bound under spoofed-IP load.
+const rateStore = new Map<string, RateEntry>();
+const writeStore = new Map<string, RateEntry>();
 
 // State-changing API families: the proxy never spends the master key here
 // on an anonymous caller's behalf (Sep-2026 audit: confused-deputy). A valid
 // browser session token (see functions/_middleware.ts + lib/session.ts) is
 // proof-of-browser for the SESSION families only — never for betting writes,
 // tasks, or the master-key-only actions below.
+// Canonical form: NO trailing slash (normalizePrefix). matches() treats a
+// path as in-family when it equals the prefix exactly OR sits under
+// `prefix + '/'` — so the bare family root (`POST /api/tasks`) and nested
+// subpaths (`/api/tasks/123`) are both guarded. This closes the P2 hole where
+// '/api/tasks/' (trailing slash) skipped the family's own primary route.
+function normalizePrefix(p: string): string {
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
+}
+
 const WRITE_PREFIXES = [
-  '/api/betting/',
+  '/api/betting',
   '/api/config',
-  '/api/healing/',
-  '/api/tasks/',
+  '/api/healing',
+  '/api/tasks',
   '/api/agent/kill',
   '/api/agent/reset',
-];
+].map(normalizePrefix);
 
 // Subset of WRITE_PREFIXES that a session token may satisfy. /api/betting/*,
 // /api/tasks/* and /api/agent/kill|reset stay master-key-only.
 const SESSION_WRITE_PREFIXES = [
   '/api/config',
-  '/api/healing/',
-  '/api/dreaming/',
-];
+  '/api/healing',
+  '/api/dreaming',
+].map(normalizePrefix);
 
 function readSessionCookie(request: Request): string {
   const raw = request.headers.get('Cookie') || '';
@@ -114,7 +112,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const ip = request.headers.get('cf-connecting-ip')
     || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || 'unknown';
-  if (hitRate(rateStore, ip, RATE_MAX)) {
+  if (hitRate(rateStore, ip, RATE_MAX, RATE_WINDOW_MS)) {
     return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': '60' } });
   }
 
@@ -142,7 +140,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       }
     }
   }
-  if (isWrite && hitRate(writeStore, ip, WRITE_RATE_MAX)) {
+  if (isWrite && hitRate(writeStore, ip, WRITE_RATE_MAX, RATE_WINDOW_MS)) {
     return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { 'Retry-After': '60' } });
   }
 
@@ -155,33 +153,43 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25_000);
+  const init = (hdrs: Headers, sig = true): RequestInit =>
+    ({
+      method: request.method,
+      headers: hdrs,
+      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+      ...(sig ? { signal: controller.signal } : {}),
+    }) as RequestInit;
   try {
-    const upstream = await fetch(`${origin}${url.pathname}${url.search}`, {
-      method: request.method,
-      headers,
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-      signal: controller.signal,
-    } as RequestInit);
+    const upstream = await fetch(`${origin}${url.pathname}${url.search}`, init(headers));
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: upstream.headers,
     });
-  } catch (e) {
-    // Last resort: Modal directly (the primary origin for non-worker paths).
-    if (!isCF) throw e;
-    const headers2 = new Headers(request.headers);
-    headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');
-    const upstream = await fetch(`${MODAL_ORIGIN}${url.pathname}${url.search}`, {
-      method: request.method,
-      headers: headers2,
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-    } as RequestInit);
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: upstream.headers,
-    });
+  } catch {
+    // An upstream failure (network error, abort, unreachable origin) must
+    // never escape this Function: an uncaught throw renders as a Cloudflare
+    // 1101 crash page. For CF-originated calls, try Modal directly as a last
+    // resort (same abort bound), then return the structured envelope.
+    if (isCF) {
+      try {
+        const headers2 = new Headers(request.headers);
+        headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');
+        const upstream = await fetch(`${MODAL_ORIGIN}${url.pathname}${url.search}`, init(headers2));
+        return new Response(upstream.body, {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers: upstream.headers,
+        });
+      } catch {
+        /* both legs failed — fall through to the envelope */
+      }
+    }
+    return Response.json(
+      { error: 'Upstream unavailable', upstream: isCF ? 'worker+modal' : 'modal', retryable: true },
+      { status: 502, headers: { 'Retry-After': '5' } },
+    );
   } finally {
     clearTimeout(timer);
   }

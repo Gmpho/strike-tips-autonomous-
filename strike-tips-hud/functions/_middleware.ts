@@ -8,6 +8,7 @@
 // The master backend key is NEVER named, read, or exposed here.
 
 import { mint, verify, SESSION_TTL_SECS, SESSION_COOKIE_NAME } from "./lib/session.ts";
+import { hitRate as boundedHitRate, type RateEntry } from "./lib/rate-limit.ts";
 
 interface Env {
   SESSION_SECRET?: string;
@@ -17,7 +18,7 @@ interface Env {
 }
 
 const CHALLENGE_TTL_SECS = 300; // Turnstile pass stays usable for 5 minutes
-const challengeStore = new Map<string, { count: number; resetAt: number }>();
+const challengeStore = new Map<string, RateEntry>(); // bounded (shared limiter)
 const ISSUE_WINDOW_MS = 60_000;
 const ISSUE_MAX = 10; // token issuances/min per IP
 
@@ -48,14 +49,7 @@ function setSessionCookie(token: string, name: string): string {
 }
 
 function hitIssueLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = challengeStore.get(ip);
-  if (!entry || now > entry.resetAt) {
-    challengeStore.set(ip, { count: 1, resetAt: now + ISSUE_WINDOW_MS });
-    return false;
-  }
-  entry.count++;
-  return entry.count > ISSUE_MAX;
+  return boundedHitRate(challengeStore, ip, ISSUE_MAX, ISSUE_WINDOW_MS);
 }
 
 function ipOf(request: Request): string {
