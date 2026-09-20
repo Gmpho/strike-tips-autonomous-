@@ -81,23 +81,80 @@ def _parse_race_off_time(t_str: str, race_date: datetime = None) -> Optional[dat
         parts = t_str.strip().split(":")
         h, m = int(parts[0]), int(parts[1])
         base = race_date or datetime.now()
-        return base.replace(hour=h, minute=m, second=0, microsecond=0)
+        parsed = base.replace(hour=h, minute=m, second=0, microsecond=0)
+        # Card rollover: a time more than 18h ahead belongs to yesterday's
+        # card (e.g. 23:44 seen at 00:14) — anchor it to the past so
+        # overnight leftovers close instead of lingering ~24h. Morning-scraped
+        # cards top out around 15h of lookahead, so 18h only catches the
+        # persisted-zombie window after midnight.
+        if (parsed - base).total_seconds() > 18 * 3600:
+            parsed -= timedelta(days=1)
+        return parsed
     except (ValueError, IndexError):
+        return None
+
+
+# Races whose off-time cannot be parsed from any source are dropped once they
+# have been observed (first_seen stamp) for longer than this — prevents
+# unfinished/unparseable races from hoarding the dashboard all day.
+UNPARSEABLE_RACE_TTL_SECS = 6 * 60 * 60
+
+# Gap between the previous snapshot's timestamp and the current cycle beyond
+# which a MONITOR_STALL healing event is recorded (cron stalled or missed).
+MONITOR_STALL_SECS = 15 * 60
+
+
+def _sast_to_utc(off_time: Optional[datetime]) -> Optional[datetime]:
+    """Convert a SAST wall-clock datetime to the container's UTC frame (-2h).
+
+    Betfair stamps ``bf_off_time`` as a SAST wall clock; the monitor container
+    runs UTC. SA has no DST, so a flat -2h shift is exact (mirrors the inverse
+    of ``_sast_wall``).
+    """
+    if off_time is None:
+        return None
+    try:
+        return off_time - timedelta(hours=2)
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
-    
-    Catches races where Betway never sets isFinished (common for UK/Ireland tracks).
+
+    Time preference: ``bf_off_time`` (stamped by the Betfair merge, SAST wall)
+    converted to UTC, then Betway display times (``t``/``st``). Catches races
+    where Betway never sets isFinished (common for UK/Ireland tracks) and where
+    Betway display times are placeholders. Races with no parseable time from
+    any source are stamped ``first_seen`` and dropped once older than
+    UNPARSEABLE_RACE_TTL_SECS so they cannot persist indefinitely.
     """
     now = datetime.now()
+    grace_secs = max_minutes_after_off * 60
     filtered = {}
     for eid, e in events.items():
-        t_str = e.get("t") or e.get("st")
-        off_time = _parse_race_off_time(t_str) if t_str else None
-        if off_time and (now - off_time).total_seconds() > max_minutes_after_off * 60:
-            logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {t_str}, now {now.strftime('%H:%M')})")
+        bf_off = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
+        bw_time = e.get("t") or e.get("st")
+        off_time = bf_off or (_parse_race_off_time(bw_time) if bw_time else None)
+        if off_time:
+            if (now - off_time).total_seconds() > grace_secs:
+                logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or bw_time}, now {now.strftime('%H:%M')})")
+                continue
+            e.pop("first_seen", None)
+            filtered[eid] = e
+            continue
+        # No parseable time from any source: stamp first sight, TTL-drop old ones.
+        first_seen = e.get("first_seen")
+        try:
+            age = now.timestamp() - float(first_seen) if first_seen is not None else None
+        except (TypeError, ValueError):
+            age = None
+        if age is None:
+            e["first_seen"] = now.timestamp()
+            filtered[eid] = e
+            continue
+        if age > UNPARSEABLE_RACE_TTL_SECS:
+            logger.info(f"Race dropped by first-seen TTL: {e.get('en','?')} R{e.get('raceNumber','?')} (unparseable off-time, seen {age / 3600:.1f}h)")
             continue
         filtered[eid] = e
     return filtered
@@ -752,10 +809,55 @@ class AdaptiveOddsMonitor:
         """Execute ONE odds sync cycle — for Modal scheduled cron (no infinite loop)."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
+            # Stall detection: if the previous snapshot is older than
+            # MONITOR_STALL_SECS the cron has been missing cycles — record it
+            # in the healing log (internal only, no Telegram).
+            try:
+                with open(MARKET_SNAPSHOT_PATH) as f:
+                    _prev = json.load(f)
+                _prev_ts = _prev.get("timestamp") if isinstance(_prev, dict) else None
+                if _prev_ts:
+                    _gap = (datetime.now() - datetime.fromisoformat(_prev_ts)).total_seconds()
+                    if _gap > MONITOR_STALL_SECS:
+                        _write_healing_event(
+                            "MONITOR_STALL",
+                            f"Previous snapshot was {_gap / 60:.0f} min old at cycle start",
+                            status="WARN",
+                        )
+            except Exception:
+                pass
             bw_task = asyncio.create_task(self.betway.get_snapshot_format())
             ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
             bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
-            state = await bw_task
+            # Betway is the base feed; unlike the RO/Betfair legs it is not
+            # optional — but a wall/exception must never freeze the snapshot
+            # silently (Sep-2026: unguarded leg froze dashboards for hours).
+            # Reuse the last-good file stamped stale instead, and keep the
+            # cycle running so merges/closing still advance it.
+            try:
+                state = await bw_task
+                if not isinstance(state, dict):
+                    raise ValueError(f"Betway snapshot unusable: {type(state).__name__}")
+                state.pop("stale", None)
+                state.pop("stale_since", None)
+            except Exception as bw_exc:
+                _write_healing_event(
+                    "BETWAY_FETCH_FAIL",
+                    f"Betway base fetch failed ({bw_exc!r}); reusing last-good snapshot",
+                    status="WARN",
+                )
+                state = None
+                try:
+                    with open(MARKET_SNAPSHOT_PATH) as f:
+                        prev = json.load(f)
+                    if isinstance(prev, dict) and prev.get("events") is not None:
+                        state = prev
+                except Exception as reload_exc:
+                    logger.debug(f"Last-good snapshot reload failed: {reload_exc}")
+                if state is None:
+                    state = {"events": {}, "count": 0}
+                state["stale"] = True
+                state["stale_since"] = datetime.now().isoformat()
             try:
                 ro_snapshot = await ro_task
             except Exception:
