@@ -159,6 +159,8 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   const flushTimerRef = useRef<number | null>(null);
   // Auto-scroll sticks to bottom unless the user scrolled up to read back.
   const stickRef = useRef(true);
+  // Drives the scroll-to-latest FAB: true when the user has scrolled up to read back.
+  const [scrolledUp, setScrolledUp] = useState(false);
 
   const stopStreamFlush = (flush = true) => {
     if (flushTimerRef.current) {
@@ -762,8 +764,8 @@ ${compiledContext || 'No context data available.'}`;
         )}
       </AnimatePresence>
 
-      {/* 3. Main Chat Panel */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* 3. Main Chat Panel — min-h-0 lets the message list shrink & scroll on mobile */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Chat Header */}
         <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -818,14 +820,16 @@ ${compiledContext || 'No context data available.'}`;
             </div>
         </div>
         
-        {/* Messages view */}
+        {/* Messages view — relative: anchors the scroll-to-latest FAB */}
         <div
           ref={scrollRef}
           onScroll={(e) => {
             const el = e.currentTarget;
-            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            stickRef.current = stuck;
+            setScrolledUp(!stuck && messages.length > 0);
           }}
-          className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10"
+          className="relative flex-1 p-3 sm:p-6 min-h-0 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10 [overscroll-behavior:contain] [-webkit-overflow-scrolling:touch]"
         >
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
@@ -835,14 +839,14 @@ ${compiledContext || 'No context data available.'}`;
             {messages.map((m, i) => (
             <div 
               key={i} 
-              className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : ''} ${
+              className={`flex flex-col gap-2 min-w-0 ${m.role === 'user' ? 'items-end' : ''} ${
                 i === messages.length - 1 ? 'animate-chat-fade-in-up' : ''
               }`}
             >
                 <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
-                <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
-                    {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1" />}
-                    <div className={`p-4 rounded-2xl max-w-[85%] break-words leading-relaxed ${
+                <div className={`flex gap-2 sm:gap-3 min-w-0 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
+                    {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1 hidden sm:block" />}
+                    <div className={`p-3 sm:p-4 rounded-2xl max-w-full sm:max-w-[85%] min-w-0 break-words overflow-wrap-anywhere leading-relaxed ${
                       m.role === 'user' 
                         ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto border border-purple-500/30' 
                         : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'
@@ -880,7 +884,7 @@ ${compiledContext || 'No context data available.'}`;
                           </span>
                         </div>
                       ) : m.role === 'ai' ? (
-                        <div className="markdown-body text-sm leading-relaxed">
+                        <div className="markdown-body text-sm leading-relaxed min-w-0 overflow-wrap-anywhere">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -894,8 +898,8 @@ ${compiledContext || 'No context data available.'}`;
                               ol: ({ children }) => <ol className="list-decimal pl-4 my-1.5 space-y-1">{children}</ol>,
                               li: ({ children }) => <li className="text-sm">{children}</li>,
                               code: ({ children }) => <code className="px-1 py-px rounded bg-black/30 border border-white/10 font-mono text-[12px] text-amber-300">{children}</code>,
-                              pre: ({ children }) => <pre className="p-2.5 rounded-xl bg-black/30 border border-white/10 overflow-x-auto text-[12px] font-mono my-2">{children}</pre>,
-                              table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-[12px] border-collapse">{children}</table></div>,
+                              pre: ({ children }) => <pre className="p-2.5 rounded-xl bg-black/30 border border-white/10 overflow-x-auto max-w-full text-[12px] font-mono my-2 custom-scrollbar">{children}</pre>,
+                              table: ({ children }) => <div className="overflow-x-auto max-w-full my-2 custom-scrollbar"><table className="w-full text-[12px] border-collapse">{children}</table></div>,
                               thead: ({ children }) => <thead className="text-purple-300 uppercase text-[10px]">{children}</thead>,
                               th: ({ children }) => <th className="text-left font-black px-2 py-1 border-b border-white/10">{children}</th>,
                               td: ({ children }) => <td className="px-2 py-1 border-b border-white/5 tabular-nums">{children}</td>,
@@ -962,6 +966,22 @@ ${compiledContext || 'No context data available.'}`;
                 )}
             </div>
             ))}
+            {/* Scroll-to-latest FAB — shows only when scrolled up reading back */}
+            {scrolledUp && (
+            <button
+              onClick={() => {
+                const el = scrollRef.current;
+                if (!el) return;
+                stickRef.current = true;
+                setScrolledUp(false);
+                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+              }}
+              aria-label="Scroll to latest message"
+              className="absolute bottom-4 right-4 z-10 p-2.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+            </button>
+            )}
         </div>
 
         {/* On-device AI toolbar: target language, voice, form-image reader */}
