@@ -296,10 +296,14 @@ class StrikeTipsScheduler:
             return
 
         # 2. Save latest market snapshot to file (for HUD dashboard)
-        snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
+        #    MUST go through write_market_snapshot: a raw dump here wiped the
+        #    monitor's pruning and re-served finished races for hours
+        #    (Sep-2026: 58 live ↔ 126-race morning card oscillation).
         try:
-            with open(snapshot_file, "w") as f:
-                json.dump(snapshot, f, indent=2, default=str)
+            from core_agent.core.snapshot_writer import write_market_snapshot
+
+            saved = write_market_snapshot(snapshot, source="scheduler_scan")
+            print(f"[SCAN] Saved market snapshot ({len(saved.get('events', {}))} live races)")
         except Exception as e:
             print(f"[WARN] Failed to save market snapshot: {e}")
 

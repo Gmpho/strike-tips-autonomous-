@@ -7,7 +7,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH, INTEL_CACHE_DIR, ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH, DATA_DIR
 from core_agent.core.alert_engine import AlertEngine
@@ -99,6 +99,13 @@ def _parse_race_off_time(t_str: str, race_date: datetime = None) -> Optional[dat
 # unfinished/unparseable races from hoarding the dashboard all day.
 UNPARSEABLE_RACE_TTL_SECS = 6 * 60 * 60
 
+# Betfair form cache manager: a market stays in the rolling cache while its
+# race is upcoming and is dropped once its off-time passes (grace mirrors
+# ``betfair_sa._EXPIRED_MARKET_GRACE_SECS``); an entry that stops refreshing
+# entirely ages out after BF_ENTRY_TTL_SECS.
+BF_GHOST_GRACE_SECS = 5 * 60
+BF_ENTRY_TTL_SECS = 6 * 60 * 60
+
 # Gap between the previous snapshot's timestamp and the current cycle beyond
 # which a MONITOR_STALL healing event is recorded (cron stalled or missed).
 MONITOR_STALL_SECS = 15 * 60
@@ -119,7 +126,7 @@ def _sast_to_utc(off_time: Optional[datetime]) -> Optional[datetime]:
         return None
 
 
-def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
+def _close_overdue_races(events: dict, max_minutes_after_off: int = 2) -> dict:
     """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
 
     Time preference: ``bf_off_time`` (stamped by the Betfair merge, SAST wall)
@@ -128,6 +135,14 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     Betway display times are placeholders. Races with no parseable time from
     any source are stamped ``first_seen`` and dropped once older than
     UNPARSEABLE_RACE_TTL_SECS so they cannot persist indefinitely.
+
+    Betfair-only events (bf_off_time present but no Betway t/st) that are
+    older than 2h are also dropped — these are ghost markets that Betfair
+    keeps open for settlement but Betway never listed.
+
+    Surviving races are stamped ``expires_at`` (epoch secs = off-time + grace)
+    so readers that see a snapshot minutes later (HUD, worker KV, Telegram)
+    can still drop a race that finished in the meantime.
     """
     now = datetime.now()
     grace_secs = max_minutes_after_off * 60
@@ -141,6 +156,7 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
                 logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or bw_time}, now {now.strftime('%H:%M')})")
                 continue
             e.pop("first_seen", None)
+            e["expires_at"] = off_time.timestamp() + grace_secs
             filtered[eid] = e
             continue
         # No parseable time from any source: stamp first sight, TTL-drop old ones.
@@ -157,7 +173,80 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
             logger.info(f"Race dropped by first-seen TTL: {e.get('en','?')} R{e.get('raceNumber','?')} (unparseable off-time, seen {age / 3600:.1f}h)")
             continue
         filtered[eid] = e
-    return filtered
+
+    # Second pass: drop Betfair-only ghost events. These are races that
+    # Betfair keeps open for settlement (often 2h+) but Betway never listed
+    # (no Betway-native t/st field). Without this pass they re-inflate the
+    # dashboard count on every cycle via the last-good fallback cache.
+    _BF_ONLY_GHOST_SECS = 2 * 60 * 60  # 2 hours
+    cleaned = {}
+    for eid, e in filtered.items():
+        if e.get("bf_off_time") and not (e.get("t") or e.get("st")):
+            # Betfair-injected only — check age via bf_off_time
+            bf_off2 = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
+            if bf_off2 and (now - bf_off2).total_seconds() > _BF_ONLY_GHOST_SECS:
+                logger.info(
+                    "Betfair-only ghost dropped: %s R%s (bf_off_time %s, age %.1fh)",
+                    e.get("en", "?"), e.get("raceNumber", "?"),
+                    e.get("bf_off_time", "?"),
+                    (now - bf_off2).total_seconds() / 3600,
+                )
+                continue
+        cleaned[eid] = e
+    return cleaned
+
+
+def _recover_empty_snapshot(state: dict) -> dict:
+    """Guard against persisting a 0-race card.
+
+    A cycle can legitimately prune to zero at the end of the racing day, but a
+    *sudden* empty result while the previous snapshot's races are still current
+    is almost always an upstream hiccup (Betway returns HTTP 200 with an empty
+    card, a parse miss, a partial feed). Persisting that blanks the HUD, the KV
+    odds cache and Telegram at once — the "data keeps disappearing" symptom.
+
+    Recovery: re-sanitize the previous file's events (so expired/finished races
+    are still dropped) and reuse the survivors, stamped ``stale`` with a
+    ``SNAPSHOT_EMPTY_GUARD`` healing event. When the previous card has genuinely
+    expired, the sanitizer returns nothing and the empty state stands.
+    """
+    try:
+        with open(MARKET_SNAPSHOT_PATH) as f:
+            prev = json.load(f)
+    except Exception as exc:
+        logger.debug("Empty-snapshot guard: no previous file (%s)", exc)
+        return state
+
+    prev_events = prev.get("events") if isinstance(prev, dict) else None
+    if not prev_events:
+        return state
+
+    try:
+        from core_agent.core.snapshot_writer import sanitize_snapshot
+
+        recovered = sanitize_snapshot({"events": prev_events}, source="monitor")["events"]
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Empty-snapshot guard: sanitize failed (%s)", exc)
+        return state
+
+    if not recovered:
+        # Previous card is genuinely over — accept the empty result.
+        return state
+
+    guarded = dict(state)
+    guarded["events"] = recovered
+    guarded["stale"] = True
+    guarded.setdefault("stale_since", datetime.now().isoformat())
+    _write_healing_event(
+        "SNAPSHOT_EMPTY_GUARD",
+        f"Cycle pruned to 0 races while {len(recovered)} previous race(s) were still current — reusing them (stale)",
+        status="WARN",
+    )
+    logger.warning(
+        "Empty-snapshot guard: cycle produced 0 races, reusing %d still-current race(s)",
+        len(recovered),
+    )
+    return guarded
 
 
 def _race_num_from_text(text) -> int:
@@ -700,25 +789,31 @@ class AdaptiveOddsMonitor:
         self.racing_odds = RacingOddsAPI()
         self.betfair = BetfairSA()
         self.at_races = AtTheRacesAPI()
-        # Last-good cache path for Betfair form data (used when a cycle fails
-        # so the snapshot still carries gear/days from the most recent good fetch).
-        self._bf_last_good_path = os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
+        # Betfair form lives in a rolling per-race cache (see
+        # _fetch_betfair_form_safely / _bf_cache_path).
 
         self.monitoring_active = True
         self._last_alert_ts: float = 0
         self._alert_cooldown: float = 120.0
 
     async def _fetch_betfair_form_safely(self) -> dict:
-        """Fetch Betfair SA form data with last-good-cache reuse.
+        """Fetch Betfair SA form data through the rolling per-race cache.
 
-        On success: persist to ``_bf_last_good_path`` so a future failed cycle
-        can fall back to the most recent good snapshot. On failure: read the
-        last-good cache; if missing or stale (>6h), log a healing event and
-        return an empty snapshot so the merge is a no-op (never breaks the
-        main cycle).
+        The live feed itself drops every market at its off-time, so a failed
+        or empty cycle used to blank Betfair fields off the whole card while
+        a long-lived file cache re-injected finished races ("Betfair data
+        blinks / old races come back", Sep-2026).
+
+        Cache discipline (mirrors Betway's snapshot cache):
+
+        1. Success → upsert every fetched market into the rolling cache.
+        2. Failure/empty → replay the cache, but prune per race: markets whose
+           off-time passed (beyond grace) and entries not refreshed for
+           ``BF_ENTRY_TTL_SECS`` are dropped, so a stale cache can never
+           resurrect a finished race.
+        3. Never raises — an empty snapshot makes the merge a no-op.
         """
         empty = {"events": {}, "count": 0}
-        cache_max_age = 6 * 60 * 60  # 6 hours
         try:
             form = await self.betfair.get_form_format()
         except Exception as e:
@@ -728,7 +823,7 @@ class AdaptiveOddsMonitor:
                 agent="OddsMonitor",
                 status="WARN",
             )
-            return self._load_bf_last_good(cache_max_age) or empty
+            return self._bf_cache_replay() or empty
 
         if not form or not form.get("events"):
             _write_healing_event(
@@ -737,47 +832,116 @@ class AdaptiveOddsMonitor:
                 agent="OddsMonitor",
                 status="WARN",
             )
-            return self._load_bf_last_good(cache_max_age) or empty
+            return self._bf_cache_replay() or empty
 
-        # Persist the good snapshot for fallback on future failure.
-        try:
-            import json as _json
-            with open(self._bf_last_good_path, "w") as f:
-                _json.dump(
-                    {"saved_at": datetime.now().isoformat(), "events": form.get("events", {})},
-                    f,
-                )
-        except Exception as e:
-            logger.debug("Betfair SA last-good cache write failed: %s", e)
-        return form
+        # Upsert the fresh markets into the rolling cache (per-race TTL).
+        cache = self._load_bf_cache()
+        now_ts = datetime.now().timestamp()
+        fresh = {
+            mid: {**ev, "_bf_cached_at": now_ts}
+            for mid, ev in (form.get("events") or {}).items()
+            if isinstance(ev, dict)
+        }
+        cache.update(fresh)
+        cache = self._prune_bf_events(cache)
+        self._save_bf_cache(cache)
+        return {"events": fresh, "count": len(fresh), "cached_count": len(cache)}
 
-    def _load_bf_last_good(self, max_age_secs: int) -> Optional[dict]:
+    def _bf_cache_path(self) -> str:
+        return os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
+
+    def _load_bf_cache(self) -> dict:
+        """Raw read of the rolling Betfair cache (tolerant; {} on any error)."""
         try:
-            import json as _json
-            import time as _time
-            if not os.path.exists(self._bf_last_good_path):
-                return None
-            with open(self._bf_last_good_path) as f:
-                cached = _json.load(f)
+            if not os.path.exists(self._bf_cache_path()):
+                return {}
+            with open(self._bf_cache_path()) as f:
+                cached = json.load(f)
+            events = cached.get("events") if isinstance(cached, dict) else None
+            if not isinstance(events, dict):
+                return {}
+            # Back-compat: pre-rolling files have no per-entry stamp — fall
+            # back to the file-level saved_at so their entries still age out.
             saved_at = cached.get("saved_at")
-            ts = (
-                datetime.fromisoformat(saved_at).timestamp() if saved_at else 0
-            )
-            if _time.time() - ts > max_age_secs:
-                _write_healing_event(
-                    "BETFAIR_CACHE_STALE",
-                    f"Betfair SA last-good cache older than {max_age_secs}s",
-                    agent="OddsMonitor",
-                    status="WARN",
-                )
-                return None
-            return {
-                "events": cached.get("events") or {},
-                "count": len(cached.get("events") or {}),
-            }
+            if saved_at:
+                try:
+                    stamp = datetime.fromisoformat(saved_at).timestamp()
+                    for ev in events.values():
+                        if isinstance(ev, dict) and "_bf_cached_at" not in ev:
+                            ev["_bf_cached_at"] = stamp
+                except (TypeError, ValueError):
+                    pass
+            return events
         except Exception as e:
-            logger.debug("Betfair SA last-good cache read failed: %s", e)
+            logger.debug("Betfair SA cache read failed: %s", e)
+            return {}
+
+    def _save_bf_cache(self, events: dict) -> None:
+        try:
+            _atomic_write_json(
+                self._bf_cache_path(),
+                {"saved_at": datetime.now().isoformat(), "events": events},
+            )
+        except Exception as e:
+            logger.debug("Betfair SA cache write failed: %s", e)
+
+    @staticmethod
+    def _bf_event_off_utc(ev: dict) -> Optional[datetime]:
+        """UTC off-time for a Betfair event (epoch first, then SAST wall HH:MM)."""
+        try:
+            from core_agent.skills.parsers.betfair_sa import _betfair_off_utc
+
+            return _betfair_off_utc(ev)
+        except Exception:
+            return _sast_to_utc(_parse_race_off_time(ev.get("offTime") or ev.get("t")))
+
+    def _prune_bf_events(self, events: dict, now: Optional[datetime] = None) -> dict:
+        """Drop finished Betfair markets and entries that stopped refreshing.
+
+        Per-race — the point of the rolling cache: a market stays usable while
+        its race is upcoming and disappears the moment it has run, no matter
+        how old the surrounding file is.
+        """
+        now = now or datetime.now()
+        now_ts = now.timestamp()
+        kept: Dict[str, Any] = {}
+        for mid, ev in events.items():
+            if not isinstance(ev, dict):
+                continue
+            off = self._bf_event_off_utc(ev)
+            if off is not None and (now - off).total_seconds() > BF_GHOST_GRACE_SECS:
+                continue
+            stamp = ev.get("_bf_cached_at")
+            try:
+                if stamp is not None and now_ts - float(stamp) > BF_ENTRY_TTL_SECS:
+                    continue
+            except (TypeError, ValueError):
+                pass
+            kept[mid] = ev
+        return kept
+
+    def _bf_cache_replay(self) -> Optional[dict]:
+        """Cache replay for a failed cycle: pruned per race, never ghosted."""
+        base = self._load_bf_cache()
+        if not base:
             return None
+        before = len(base)
+        pruned = self._prune_bf_events(base)
+        if not pruned:
+            _write_healing_event(
+                "BETFAIR_CACHE_STALE",
+                f"Betfair SA cache had {before} entr(ies), all finished/expired — merge skipped",
+                agent="OddsMonitor",
+                status="WARN",
+            )
+            return None
+        if len(pruned) != before:
+            self._save_bf_cache(pruned)
+        logger.info(
+            "Betfair SA: replaying %d cached market(s) (%d pruned as finished/expired)",
+            len(pruned), before - len(pruned),
+        )
+        return {"events": pruned, "count": len(pruned), "cached": True}
 
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
@@ -874,8 +1038,11 @@ class AdaptiveOddsMonitor:
                 if not e.get("isFinished")
             }
             state["events"] = _close_overdue_races(active)
+            if not state["events"]:
+                state = _recover_empty_snapshot(state)
             state["count"] = len(state["events"])
             state["timestamp"] = datetime.now().isoformat()
+            state["snapshot_source"] = "monitor"
             active_ids = list(state["events"].keys())
             _merge_daily_scan_into(state)
             _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
@@ -953,6 +1120,29 @@ class AdaptiveOddsMonitor:
                     await self._digester.flush()
             except Exception as e:
                 logger.debug(f"Digest flush skipped: {e}")
+            # Liveness signal: the cron container dies after one cycle, so
+            # without these the Live-Ops (healing) and Telemetry pages only
+            # ever show BETFAIR_* failures and look frozen for hours.
+            _write_healing_event(
+                action="SYNC_COMPLETE",
+                details=(
+                    f"Synchronized {state.get('count')} races"
+                    + (" (Betway fallback: stale snapshot)" if state.get("stale") else "")
+                    + "."
+                ),
+                agent="OddsMonitor",
+            )
+            try:
+                from core_agent.core.telemetry import emit
+
+                emit(
+                    "governor",
+                    f"Odds cycle: {state.get('count')} races live"
+                    f"{' (stale base feed)' if state.get('stale') else ''}",
+                    badge="ODDS SYNC",
+                )
+            except Exception:
+                pass
             return state
         except Exception as e:
             logger.warning(f"⚠️ Single cycle error: {e}")
@@ -1016,8 +1206,11 @@ class AdaptiveOddsMonitor:
                 }
                 # Off-time closure — catches races Betway never flags (common for UK/Ireland)
                 state["events"] = _close_overdue_races(active)
+                if not state["events"]:
+                    state = _recover_empty_snapshot(state)
                 state["count"] = len(state["events"])
                 state["timestamp"] = datetime.now().isoformat()
+                state["snapshot_source"] = "monitor"
                 active_ids = list(state["events"].keys())
                 active_count = len(active_ids)
 

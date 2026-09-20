@@ -2002,13 +2002,15 @@ class StrikeTips:
 
         # Save raw Betway snapshot for the HUD dashboard (reuse the gate
         # fetch when fresh so the scan costs one snapshot, not two).
+        # Goes through write_market_snapshot: the raw dump used to overwrite
+        # the monitor's pruned card with every finished race of the morning.
         try:
             snapshot = _snapshot_for_gates if _snapshot_for_gates.get("events") else await self.betway.get_snapshot_format()
             if snapshot.get("events"):
-                snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
-                with open(snapshot_file, "w") as f:
-                    json.dump(snapshot, f, indent=2, default=str)
-                print(f"[OK] Saved market snapshot ({len(snapshot['events'])} events)")
+                from core_agent.core.snapshot_writer import write_market_snapshot
+
+                saved = write_market_snapshot(snapshot, source="daily_scan")
+                print(f"[OK] Saved market snapshot ({len(saved.get('events', {}))} live events)")
         except Exception as e:
             print(f"[WARN] Could not save market snapshot: {e}")
 

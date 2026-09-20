@@ -180,9 +180,11 @@ async def lifespan(app: FastAPI):
     # follow it. Redis pub/sub when available, always-on disk-mtime poll
     # otherwise (Sep-2026: memory froze at keeper startup, bundle served
     # 138 stale events all day).
-    from core_agent.core.snapshot_cache import disk_refresh_loop
-    asyncio.create_task(disk_refresh_loop(interval=60))
-    logger.info("Snapshot disk refresh started (60s)")
+    from core_agent.core.snapshot_cache import disk_refresh_loop, news_mtime_refresh_loop
+    asyncio.create_task(disk_refresh_loop(interval=15))
+    logger.info("Snapshot disk refresh started (15s)")
+    asyncio.create_task(news_mtime_refresh_loop(interval=15))
+    logger.info("News disk refresh started (15s)")
     if _redis_present():
         asyncio.create_task(refresh_snapshot())
     else:

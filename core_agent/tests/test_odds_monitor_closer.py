@@ -269,3 +269,42 @@ def test_monitor_stall_silent_within_threshold(snap_file):
     _run_cycle(monitor, snap_file, healing)
 
     assert "MONITOR_STALL" not in healing
+
+
+# ── Empty-snapshot guard: a 0-race cycle must not blank the card ─────────────
+
+
+def test_empty_cycle_keeps_card_via_guard(snap_file):
+    """A cycle that prunes to 0 races while prior races are current must reuse
+    them (Sep-2026: an upstream hiccup blanked HUD + KV for a whole cycle)."""
+    # No parseable off-time: the race survives via the closer's first_seen TTL
+    # path, which keeps this assertion independent of the wall clock.
+    snap_file.write_text(
+        json.dumps({"events": {"prev1": {"en": "Vaal", "raceNumber": 1}}})
+    )
+    monitor = _make_monitor({"events": {}, "count": 0})
+    healing = []
+    result = _run_cycle(monitor, snap_file, healing)
+
+    assert result is not None
+    assert result["count"] == 1
+    assert set(result["events"]) == {"prev1"}
+    assert result["stale"] is True
+    assert "SNAPSHOT_EMPTY_GUARD" in healing
+
+    written = json.loads(snap_file.read_text())
+    assert set(written["events"]) == {"prev1"}  # persisted, not blanked
+    assert written["snapshot_source"] == "monitor"  # provenance for readers
+
+
+def test_empty_cycle_lets_card_end_when_previous_expired(snap_file):
+    """When the previous card is genuinely over, an empty snapshot is correct."""
+    past = (datetime.now() - timedelta(hours=3)).strftime("%H:%M")
+    snap_file.write_text(json.dumps({"events": {"old": {"en": "Vaal", "t": past}}}))
+    monitor = _make_monitor({"events": {}, "count": 0})
+    healing = []
+    result = _run_cycle(monitor, snap_file, healing)
+
+    assert result is not None
+    assert result["events"] == {}
+    assert "SNAPSHOT_EMPTY_GUARD" not in healing

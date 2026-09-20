@@ -30,6 +30,14 @@ export class DataBridge {
     this.hydrateFeeds();
     this.scheduleFast();
     this.scheduleSlow();
+    // Browsers throttle background timers to minutes, so a tab that was left
+    // open (or a phone that was locked) came back showing stale races, news,
+    // Live-Ops and Vitals. Refresh immediately when the tab is visible again
+    // instead of waiting out the 10s/60s timers.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.refreshNow);
+      window.addEventListener('focus', this.refreshNow);
+    }
   }
 
   stop() {
@@ -39,7 +47,24 @@ export class DataBridge {
     if (this.slowTimer) clearTimeout(this.slowTimer);
     this.fastTimer = null;
     this.slowTimer = null;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.refreshNow);
+      window.removeEventListener('focus', this.refreshNow);
+    }
   }
+
+  /** Immediate out-of-band refresh (focus/visibility) — resets backoff. */
+  private refreshNow = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (this.fastTimer) clearTimeout(this.fastTimer);
+    if (this.slowTimer) clearTimeout(this.slowTimer);
+    this.fastTimer = null;
+    this.slowTimer = null;
+    this.fastBackoffMs = FAST_INTERVAL;
+    this.slowBackoffMs = SLOW_INTERVAL;
+    void this.runFast();
+    void this.runSlow();
+  };
 
   /** Hash-first snapshot sync: tiny hash poll each tick, full download only
    * on change. Replaces the SSE stream (which billed a 24/7 execution per
@@ -55,12 +80,22 @@ export class DataBridge {
       const data = await fullRes.json();
       this.lastSnapshotHash = data.snapshot_hash || snapshot_hash;
       const current = hudStore.getState();
-      // Drop finished races at ingestion: the backend prunes, but a stale
-      // bundle must never inflate the dashboard count (Sep-2026: 138 shown
-      // vs ~90 active). Belt-and-braces alongside server-side pruning.
+      // Drop finished AND expired races at ingestion: `expires_at` (epoch
+      // secs = off-time + grace) is stamped server-side, so a snapshot that
+      // arrives minutes after it was written still cannot render a race that
+      // has already run (Sep-2026: dashboard showed 126 morning races while
+      // the monitor had pruned the card to 58). Belt-and-braces alongside the
+      // server-side prune in snapshot_writer.
+      const nowSecs = Date.now() / 1000;
       const rawEvents = data.events || {};
       const events = Object.fromEntries(
-        Object.entries(rawEvents).filter(([, e]) => !(e as any)?.isFinished)
+        Object.entries(rawEvents).filter(([, e]) => {
+          const ev = e as any;
+          if (!ev || ev.isFinished) return false;
+          const expires = Number(ev.expires_at);
+          if (Number.isFinite(expires) && expires > 0 && expires < nowSecs) return false;
+          return true;
+        })
       );
       const patch: Record<string, unknown> = {
         events,
