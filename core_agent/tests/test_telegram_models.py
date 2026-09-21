@@ -32,7 +32,7 @@ def test_every_menu_key_routes():
     """Each /model value must hit a provider branch, not the Ollama fallthrough."""
     router_src = open(tr.__file__).read()
     for key in ["auto", "groq", "gemini",
-                "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"]:
+                "gemini-3.5-flash", "gemini-2.5-flash-lite"]:
         assert f'"{key}"' in router_src, f"router cannot resolve: {key}"
 
 
@@ -61,11 +61,11 @@ async def test_model_command_roundtrip():
             mgr_session)
         return sent[-1].content if sent else ""
 
-    out = await run("/model gemini-pro")
-    assert "gemini-3.1-pro-preview" in out
-    assert mgr_session.metadata.get("preferred_model") == "gemini-3.1-pro-preview"
+    out = await run("/model gemini-turbo")
+    assert "gemini-3.5-flash" in out
+    assert mgr_session.metadata.get("preferred_model") == "gemini-3.5-flash"
     out = await run("/model gemini-lite")
-    assert mgr_session.metadata.get("preferred_model") == "gemini-3.1-flash-lite"
+    assert mgr_session.metadata.get("preferred_model") == "gemini-2.5-flash-lite"
     out = await run("/model nonsense")
     assert "Unknown model" in out
     out = await run("/model")

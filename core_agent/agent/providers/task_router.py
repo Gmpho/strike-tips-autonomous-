@@ -81,6 +81,12 @@ class TaskRouter:
     Routes chat requests to the optimal model based on detected intent.
     """
 
+    # Live model ids a chat user can pin (Groq + Gemini families).
+    GROQ_IDS = ("groq", "groq-llama", "openai/gpt-oss-120b", "openai/gpt-oss-20b")
+    GEMINI_IDS = ("gemini", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+                  "gemini-3.5-flash", "gemini-3.1-flash-lite",
+                  "gemini-3.1-pro-preview")
+
     def __init__(self) -> None:
         self.ollama = OllamaProvider()
         self.cloud_providers = [GroqProvider(), GeminiProvider()]
@@ -304,8 +310,20 @@ class TaskRouter:
                                 lines.append(f"  ... and {len(runners)-6} more runners")
                         return "\n".join(lines)
 
-                    elif "today" in last_msg or re.search(r"\brace[s]?\b", last_msg):
-                        # Generic "today's races" — list all tracks
+                    elif re.search(r"\b(full |daily )?(daily )?scan\b|analyse (all |those )?(the )?\d+ races|across (all |those )?(the )?\d+ races", last_msg):
+                        # Explicit scan request — snapshot has no analysis.
+                        # (Used to fall through to the card below, so "run a
+                        # full daily scan" printed the card again.)
+                        return ("I can run that — say **run the scan** (or `/scan`) "
+                                "and I'll kick off the full daily value scan "
+                                "across every track in the background. I'll "
+                                "report selections when it completes.")
+
+                    elif "today" in last_msg and re.search(r"\brace[s]?\b", last_msg) and not re.search(r"\b(tomorrow|yesterday)\b", last_msg):
+                        # Generic "today's races" — list all tracks. Requires an
+                        # explicit today+races ask (Sep-2026: bare "race" matched
+                        # here, so "what races we have tomorrow" / "analyse the
+                        # live cards across those 26 races" reprinted the card)
                         lines = [f"**Today's Racing — {len(events)} races across {len(snapshot_courses)} tracks:**\n"]
                         for course, course_evs in sorted(snapshot_courses.items()):
                             race_times = [ev.get("time") or ev.get("start_time") or "" for _, ev in course_evs]
@@ -326,6 +344,17 @@ class TaskRouter:
         # to a model to guess.
         try:
             if self._asks_for_card(last_msg):
+                # The meeting list is TODAY's live snapshot — never answer a
+                # tomorrow/yesterday question with it (Sep-2026: "races
+                # tomorrow" returned today's card verbatim).
+                if re.search(r"\btomorrow\b", last_msg):
+                    return ("I can only see today's live meetings right now — "
+                            "tomorrow's cards aren't published yet. Ask me "
+                            "again tomorrow morning and I'll pull them fresh.")
+                if re.search(r"\byesterday\b", last_msg):
+                    return ("For yesterday's racing, ask for **recent results** "
+                            "(or name a track, e.g. 'results at kenilworth') "
+                            "and I'll pull what came in.")
                 meetings = self._meeting_list_line()
                 if not meetings:
                     return ("I don't have live racing data right now — the "
@@ -415,7 +444,8 @@ class TaskRouter:
             if active_model in ("groq", "groq-llama", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
                 provider = GroqProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent):
+                    async for chunk in provider.stream(messages, None, intent,
+                                                       model_override=active_model):
                         yield chunk
                     return
                 except Exception as e:
@@ -423,7 +453,8 @@ class TaskRouter:
             elif active_model in ("gemini", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"):
                 provider = GeminiProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent):
+                    async for chunk in provider.stream(messages, None, intent,
+                                                       model_override=active_model):
                         yield chunk
                     return
                 except Exception as e:

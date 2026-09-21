@@ -37,7 +37,7 @@ def test_webhook_mapping_resolves_in_router():
                 k.value for k in node.keys
                 if isinstance(k, ast.Constant) and isinstance(k.value, str)
             ]
-            if {"auto", "groq", "gemini", "gemini-pro", "gemini-lite"} <= set(keys):
+            if {"auto", "groq", "gemini", "gemini-lite", "gemini-turbo"} <= set(keys):
                 for k, v in zip(node.keys, node.values):
                     if isinstance(v, ast.Constant):
                         mapping[k.value] = v.value
@@ -51,7 +51,7 @@ def test_webhook_mapping_resolves_in_router():
 
 def test_webhook_menu_matches_loop_menu():
     """Same offered keys in both menus — no orphan selections either way."""
-    for choice in ["auto", "groq", "gemini", "gemini-pro", "gemini-lite"]:
+    for choice in ["auto", "groq", "gemini", "gemini-lite", "gemini-turbo"]:
         assert f'"{choice}"' in _menu_src(), f"webhook missing /model {choice}"
         assert f'"{choice}"' in _loop_src(), f"loop missing /model {choice}"
 

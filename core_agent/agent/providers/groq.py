@@ -1,15 +1,14 @@
 from __future__ import annotations
-import os
-import json
 import inspect
+import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.agent.providers.retry import retry_on_429
 from core_agent.agent.prompts import build_system_prompt
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 from core_agent.core.http_client import get_async_client
-from core_agent.core.strike_brain import brain
 
 logger = logging.getLogger("groq-provider")
 
@@ -141,14 +140,17 @@ class GroqProvider:
 
         return content, tool_calls
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None,
+                    model_override: str | None = None) -> AsyncIterator[str]:
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not set")
 
         from core_agent.agent.providers.task_router import TaskRouter
         raw_msg = TaskRouter._extract_user_query(messages)
         needs_tools = self._needs_tools(raw_msg, intent)
-        model = "openai/gpt-oss-20b" if not needs_tools else "openai/gpt-oss-120b"
+        # Honor an explicit selection (Groq family) before intent heuristics.
+        model = model_override if model_override in self.MODELS else (
+            "openai/gpt-oss-20b" if not needs_tools else "openai/gpt-oss-120b")
 
         content, tool_calls = await self._post_and_parse(messages, needs_tools, model)
         if content:

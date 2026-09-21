@@ -167,8 +167,8 @@ def serve_api():
                         "auto": "auto",
                         "groq": "groq",
                         "gemini": "gemini",
-                        "gemini-pro": "gemini-3.1-pro-preview",
-                        "gemini-lite": "gemini-3.1-flash-lite",
+                        "gemini-lite": "gemini-2.5-flash-lite",
+                        "gemini-turbo": "gemini-3.5-flash",
                     }
                     session_key = f"tg:{chat_id}"
                     # Per-chat preference persists on the lifespan
@@ -187,8 +187,8 @@ def serve_api():
                             "• `/model auto` — ⚡ Auto Router (optimal)\n"
                             "• `/model groq` — ☁️ Groq GPT-OSS 120B (flagship, tools)\n"
                             "• `/model gemini` — ☁️ Gemini 2.5 Flash (grounded chat)\n"
-                            "• `/model gemini-pro` — 🧮 Gemini 3.1 Pro (deep math)\n"
-                            "• `/model gemini-lite` — 🪶 Gemini 3.1 Flash-Lite (fast)\n\n"
+                            "• `/model gemini-lite` — 🪶 Gemini 2.5 Flash-Lite (fast)\n"
+                            "• `/model gemini-turbo` — 🚀 Gemini 3.5 Flash (newest)\n\n"
                             f"Current selection: *{current}*"
                         )
                         await bot.send_message(chat_id=chat_id, text=menu, parse_mode="Markdown")
@@ -230,7 +230,7 @@ def serve_api():
                         "🧠 *Available Commands*\n\n"
                         "/auth <PIN> - Unlock bot access\n"
                         "/model - Show cloud model options\n"
-                        "/model <name> - Switch chat model (auto/groq/gemini/gemini-pro/gemini-lite)\n"
+                        "/model <name> - Switch chat model (auto/groq/gemini/gemini-lite/gemini-turbo)\n"
                         "/scan - Start today's full racing scan\n"
                         "/status - Get current bankroll & ROI stats\n"
                         "/chart - Show 15-day performance chart\n"

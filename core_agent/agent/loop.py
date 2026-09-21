@@ -130,8 +130,8 @@ class AgentLoop:
                     "• `/model auto` — ⚡ Auto Router (optimal)\n"
                     "• `/model groq` — ☁️ Groq GPT-OSS 120B (flagship, tools)\n"
                     "• `/model gemini` — ☁️ Gemini 2.5 Flash (grounded chat)\n"
-                    "• `/model gemini-pro` — 🧮 Gemini 3.1 Pro (deep math)\n"
-                    "• `/model gemini-lite` — 🪶 Gemini 3.1 Flash-Lite (fast)\n\n"
+                    "• `/model gemini-lite` — 🪶 Gemini 2.5 Flash-Lite (fast)\n"
+                    "• `/model gemini-turbo` — 🚀 Gemini 3.5 Flash (newest)\n\n"
                     f"Current selection: *{current_model}*"
                 )
             else:
@@ -140,8 +140,8 @@ class AgentLoop:
                     "auto": "auto",
                     "groq": "groq",
                     "gemini": "gemini",
-                    "gemini-pro": "gemini-3.1-pro-preview",
-                    "gemini-lite": "gemini-3.1-flash-lite",
+                    "gemini-lite": "gemini-2.5-flash-lite",
+                    "gemini-turbo": "gemini-3.5-flash",
                 }
                 
                 mapped = mapping.get(choice)
