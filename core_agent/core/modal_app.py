@@ -249,14 +249,18 @@ def serve_api():
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
                         return {"ok": True}
                     s = brain.strike.get_bankroll_status()
-                    reply = (
-                        f"💰 *Account Summary*\n\n"
-                        f"Balance: *R{s['current_bankroll']:.2f}*\n"
-                        f"P&L: *R{s['total_profit_loss']:.2f}*\n"
-                        f"Open Bets: *{s['open_bets']}*\n"
-                        f"Drawdown: *{s['drawdown_percent']:.1f}%*"
+                    reply_html = (
+                        "💰 <b>Account Summary</b>\n"
+                        "<pre>\n"
+                        "┌──────────────┬──────────────┐\n"
+                        f"│ Balance      │ R{s['current_bankroll']:>10.2f} │\n"
+                        f"│ Total P&L    │ R{s['total_profit_loss']:>10.2f} │\n"
+                        f"│ Open Bets    │ {s['open_bets']:>12} │\n"
+                        f"│ Drawdown     │ {s['drawdown_percent']:>11.1f}% │\n"
+                        "└──────────────┴──────────────┘\n"
+                        "</pre>"
                     )
-                    await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
+                    await bot.send_message(chat_id=chat_id, text=reply_html, parse_mode="HTML")
                     return {"ok": True}
 
                 if cmd == "/chart":
@@ -291,6 +295,21 @@ def serve_api():
 
             # ── AI pipeline (non-command): bus-based chat ─────────
             from core_agent.bus.events import InboundMessage, OutboundMessage
+            from core_agent.agent.telegram_format import (
+                markdown_to_telegram_html,
+                format_race_card_for_telegram,
+                split_for_telegram,
+            )
+
+            async def _send_typing_loop(b, c_id):
+                try:
+                    while True:
+                        await b.send_chat_action(chat_id=c_id, action="typing")
+                        await asyncio.sleep(4.0)
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            typing_task = asyncio.create_task(_send_typing_loop(bot, chat_id))
 
             inbound = InboundMessage(
                 session_key=f"tg:{chat_id}",
@@ -314,33 +333,25 @@ def serve_api():
             except asyncio.TimeoutError:
                 reply = "⏳ I'm still thinking. Please try a simpler question or check back later."
             finally:
+                typing_task.cancel()
                 bus.unsubscribe(sub)
 
             reply = _clean(reply)
-            MAX_LENGTH = 4000
 
-            async def _send(text: str) -> None:
-                """Send with Markdown, fall back to plain text on parse errors.
+            async def _send(raw_text: str) -> None:
+                """Send with Telegram HTML mode, formatting race cards and falling back to plain text."""
+                formatted_text = format_race_card_for_telegram(raw_text)
+                chunks = split_for_telegram(formatted_text, max_length=3800)
+                for chunk in chunks:
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
+                    except Exception as parse_err:
+                        if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
+                            await bot.send_message(chat_id=chat_id, text=raw_text[:4000])
+                        else:
+                            raise
 
-                Cloud models emit unbalanced entities (odds tables, apostrophes
-                in horse names like "Sascha's Dream"); Telegram rejects the
-                WHOLE message with "Can't parse entities", which is how
-                replies were lost (Sep-2026). The polling channel already
-                retried; the webhook path did not.
-                """
-                try:
-                    await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-                except Exception as parse_err:
-                    if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
-                        await bot.send_message(chat_id=chat_id, text=text)
-                    else:
-                        raise
-
-            if len(reply) > MAX_LENGTH:
-                for i in range(0, len(reply), MAX_LENGTH):
-                    await _send(reply[i:i+MAX_LENGTH])
-            else:
-                await _send(reply)
+            await _send(reply)
 
         except Exception as exc:
             logger.error("Webhook error: %s", exc, exc_info=True)

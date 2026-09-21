@@ -66,6 +66,10 @@ class TelegramChannel:
                     if update.message and update.message.text:
                         chat_id = str(update.message.chat.id)
                         text = update.message.text
+                        try:
+                            await self._bot.send_chat_action(chat_id=chat_id, action="typing")
+                        except Exception:
+                            pass
                         msg = InboundMessage(
                             session_key=f"tg:{chat_id}",
                             channel="telegram",
@@ -87,6 +91,10 @@ class TelegramChannel:
                 await asyncio.sleep(POLL_INTERVAL)
 
     async def _send_loop(self) -> None:
+        from core_agent.agent.telegram_format import (
+            format_race_card_for_telegram,
+            split_for_telegram,
+        )
         sub = self.bus.subscribe()
         try:
             while True:
@@ -101,22 +109,23 @@ class TelegramChannel:
                     continue
                 try:
                     prefixed_content = f"{PAPER_MODE_PREFIX}{out.content}"
-                    try:
-                        await self._bot.send_message(
-                            chat_id=out.chat_id,
-                            text=prefixed_content,
-                            parse_mode=out.parse_mode or "Markdown",
-                        )
-                    except Exception as parse_err:
-                        # Unbalanced Markdown entities crash Telegram's parser;
-                        # retry once as plain text so the message isn't lost.
-                        if "parse" in str(parse_err).lower():
+                    formatted_content = format_race_card_for_telegram(prefixed_content)
+                    chunks = split_for_telegram(formatted_content, max_length=3800)
+                    for chunk in chunks:
+                        try:
                             await self._bot.send_message(
                                 chat_id=out.chat_id,
-                                text=prefixed_content,
+                                text=chunk,
+                                parse_mode="HTML",
                             )
-                        else:
-                            raise
+                        except Exception as parse_err:
+                            if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
+                                await self._bot.send_message(
+                                    chat_id=out.chat_id,
+                                    text=prefixed_content[:4000],
+                                )
+                            else:
+                                raise
                 except Exception as e:
                     logger.warning("Telegram send error to %s: %s", out.chat_id, e)
         except asyncio.CancelledError:
