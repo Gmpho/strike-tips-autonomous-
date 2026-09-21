@@ -328,6 +328,10 @@ async def get_intelligence_vitals():
     # cadence is only observable through the snapshot it writes. Surfacing the
     # age here is what makes "is the feed current?" answerable on the Vitals
     # page instead of "vitals only shows the orchestrator".
+    #
+    # The 5-min monitor cron is the primary writer; the scheduler's 15-min
+    # BHM-time scan is a legit fallback source. LIVE threshold = 45min (3 scan
+    # intervals + margin) so the badge only flips when BOTH writers are dead.
     try:
         from core_agent.core.snapshot_cache import get_snapshot_meta
 
@@ -345,7 +349,7 @@ async def get_intelligence_vitals():
                 "id": "odds-monitor",
                 "name": "ODDS MONITOR (5-MIN CRON)",
                 "cpu": f"{ev_count} races",
-                "mem": "LIVE" if age is not None and age < 420 else "STALE",
+                "mem": "LIVE" if age is not None and age < 2700 else "STALE",
                 "mem_usage": (
                     f"snapshot {age / 60:.1f} min old · source {meta.get('source')}"
                     if age is not None

@@ -132,6 +132,39 @@ def _atomic_write_json(path: Any, data: Any, indent: int = 2) -> None:
         print(f"[WARN] Failed atomic write to {path}: {exc}")
 
 
+def _snapshot_file_timestamp(state: Dict[str, Any]) -> float:
+    """Epoch seconds for a snapshot payload's stamped ``timestamp`` (0.0 if absent)."""
+    try:
+        from datetime import datetime as _dt
+
+        raw = state.get("timestamp")
+        return _dt.fromisoformat(raw).timestamp() if raw else 0.0
+    except Exception:
+        return 0.0
+
+
+def _last_write_info(path: Any = None) -> Dict[str, Any]:
+    """(mtime, timestamp, source) of the current snapshot file (0.0/\"\" when unreadable)."""
+    path = path or MARKET_SNAPSHOT_PATH
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {"mtime": 0.0, "timestamp": 0.0, "source": ""}
+    try:
+        with open(path) as f:
+            prev = json.load(f)
+    except Exception:
+        return {"mtime": mtime, "timestamp": 0.0, "source": ""}
+    if not isinstance(prev, dict):
+        return {"mtime": mtime, "timestamp": 0.0, "source": ""}
+    source = prev.get("snapshot_source")
+    return {
+        "mtime": mtime,
+        "timestamp": _snapshot_file_timestamp(prev),
+        "source": source if isinstance(source, str) else "",
+    }
+
+
 def write_market_snapshot(
     state: Dict[str, Any],
     *,
@@ -140,11 +173,55 @@ def write_market_snapshot(
 ) -> Dict[str, Any]:
     """Prune + stamp + persist a market snapshot, then refresh the memory cache.
 
+    Source priority: the monitor ("monitor") is the live writer; scan-side
+    writers ("scheduler_scan" / "daily_scan") only provide the BHM-time card.
+    A scan write must never clobber a fresher monitor file — so when the
+    current file already carries a monitor timestamp newer than this payload,
+    the write is skipped and the payload is returned for its in-memory use.
+
     Returns the sanitized state (never raises).
     """
     path = path or MARKET_SNAPSHOT_PATH
     try:
         clean = sanitize_snapshot(state, source=source)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Snapshot write skipped (%s): %s", source, exc)
+        return state if isinstance(state, dict) else {"events": {}}
+
+    if source in ("scheduler_scan", "daily_scan"):
+        try:
+            from datetime import datetime as _dt
+
+            info = _last_write_info(path)
+            payload_ts = _snapshot_file_timestamp(clean)
+            # ISO timestamps carry microsecond resolution while filesystems /
+            # clocks can differ by a hair — give the incumbent a 60s grace so a
+            # same-minute scan payload never wins a photo-finish against the live
+            # monitor file.
+            if info.get("source") == "monitor" and info.get("timestamp", 0.0) + 60.0 > payload_ts:
+                logger.info(
+                    "Snapshot write skipped (%s): monitor file %s newer than payload %s",
+                    source,
+                    _dt.fromtimestamp(info["timestamp"]).isoformat(),
+                    _dt.fromtimestamp(payload_ts).isoformat() if payload_ts else "unstamped",
+                )
+                return clean
+            # The file's stat mtime is only a fallback: a monitor container that
+            # started before this deployment stamps "unknown" — its mtime still
+            # proves freshness versus this payload.
+            if (
+                not info.get("source")
+                and info.get("mtime", 0.0) > payload_ts > 0.0
+            ):
+                logger.info(
+                    "Snapshot write skipped (%s): existing file newer than payload",
+                    source,
+                )
+                return clean
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Source-priority check skipped: %s", exc)
+
+    try:
         _atomic_write_json(path, clean)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Snapshot write skipped (%s): %s", source, exc)

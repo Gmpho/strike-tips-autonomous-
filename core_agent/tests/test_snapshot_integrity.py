@@ -138,6 +138,77 @@ def test_set_snapshot_prefers_producer_source(tmp_path, monkeypatch):
     assert snapshot_cache.get_snapshot_meta()["source"] == "monitor"
 
 
+# ── Writer source priority ────────────────────────────────────────────────
+
+
+def _live_event(offset_minutes: float = 120.0):
+    future = datetime.now() + timedelta(minutes=offset_minutes)
+    return {"en": "Vaal", "raceNumber": 1, "t": future.strftime("%H:%M")}
+
+
+def test_scan_write_does_not_clobber_fresher_monitor_file(tmp_path, monkeypatch):
+    """The morning race: a scan payload must not overwrite the live monitor file."""
+    path = tmp_path / "market_snapshot_latest.json"
+    monkeypatch.setattr(snapshot_writer, "MARKET_SNAPSHOT_PATH", path)
+
+    monitor_state = {"events": {"m1": _live_event()}, "snapshot_source": "monitor"}
+    written = snapshot_writer.write_market_snapshot(monitor_state, source="monitor")
+    assert path.exists()
+    monitor_ts = json.loads(path.read_text())["timestamp"]
+
+    older_payload = {
+        "events": {"s1": _live_event()},
+        "timestamp": (datetime.now() - timedelta(minutes=30)).isoformat(),
+    }
+    out = snapshot_writer.write_market_snapshot(
+        older_payload, source="scheduler_scan", path=path
+    )
+    assert set(out["events"]) == {"s1"}  # payload returned for in-memory use
+    current = json.loads(path.read_text())
+    assert current["timestamp"] == monitor_ts  # file untouched
+    assert current["snapshot_source"] == "monitor"
+    assert set(current["events"]) == {"m1"}
+
+
+def test_scan_write_wins_when_monitor_file_is_stale(tmp_path, monkeypatch):
+    """Fallback path: an old monitor file yields to a fresh scan payload."""
+    path = tmp_path / "market_snapshot_latest.json"
+    monkeypatch.setattr(snapshot_writer, "MARKET_SNAPSHOT_PATH", path)
+
+    stale_monitor = {
+        "events": {"m1": _live_event()},
+        "snapshot_source": "monitor",
+        "timestamp": (datetime.now() - timedelta(hours=5)).isoformat(),
+    }
+    path.write_text(json.dumps(stale_monitor))
+
+    fresh = {"events": {"s1": _live_event()}}
+    out = snapshot_writer.write_market_snapshot(
+        fresh, source="scheduler_scan", path=path
+    )
+    current = json.loads(path.read_text())
+    assert set(current["events"]) == {"s1"}
+    assert set(out["events"]) == {"s1"}
+
+
+def test_monitor_write_never_blocked(tmp_path, monkeypatch):
+    """The live writer always persists, whatever the file holds."""
+    path = tmp_path / "market_snapshot_latest.json"
+    monkeypatch.setattr(snapshot_writer, "MARKET_SNAPSHOT_PATH", path)
+    path.write_text(json.dumps({
+        "events": {"s1": _live_event()},
+        "snapshot_source": "scheduler_scan",
+        "timestamp": datetime.now().isoformat(),
+    }))
+    out = snapshot_writer.write_market_snapshot(
+        {"events": {"m1": _live_event()}}, source="monitor", path=path
+    )
+    current = json.loads(path.read_text())
+    assert current["snapshot_source"] == "monitor"
+    assert set(current["events"]) == {"m1"}
+    assert set(out["events"]) == {"m1"}
+
+
 # ── Empty-snapshot guard ────────────────────────────────────────────────────
 
 
