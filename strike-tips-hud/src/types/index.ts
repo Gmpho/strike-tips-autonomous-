@@ -53,16 +53,18 @@ export interface RaceEvent {
 }
 
 export interface BankrollState {
-  /** Active betting bank: paperBalance when paperMode, else realBalance. */
-  balance: number;
+  /** Active betting bank: paperBalance when paperMode, else realBalance.
+   *  null until the governor has seeded state (no fake defaults). */
+  balance: number | null;
   dailyLimit: number;
   dailyLoss: number;
   maxStake: number;
   totalExposure: number;
   paperMode?: boolean;
-  paperBalance?: number;
-  /** Real-funds ledger (untouched while paperMode is on). */
-  realBalance?: number;
+  /** Paper simulation ledger; null until seeded (JSON null, not fake default). */
+  paperBalance?: number | null;
+  /** Real-funds ledger (untouched while paperMode is on); null until seeded. */
+  realBalance?: number | null;
 }
 
 export interface LearningState {

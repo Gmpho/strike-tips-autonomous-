@@ -141,7 +141,7 @@ export const BankrollView: React.FC = () => {
           <div className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Current Bankroll</div>
           <div className="flex items-baseline gap-3">
             <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">
-              {bankroll && bankroll.paperMode !== undefined
+              {bankroll && bankroll.paperMode !== undefined && bankroll.balance != null
                 ? `R ${bankroll.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                 : 'R —'}
             </span>
@@ -149,16 +149,16 @@ export const BankrollView: React.FC = () => {
           {/* Ledger split: active betting bank vs the untouched other ledger.
               Only render once paperMode is known — a stale cached bankroll
               (paperMode undefined) would fabricate a "LIVE R1,000" line. */}
-          {bankroll && bankroll.paperMode !== undefined && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
+          {bankroll && bankroll.paperMode !== undefined && (bankroll.paperBalance != null || bankroll.realBalance != null) && (
             <div className="mt-3 text-[10px] font-bold text-theme-secondary">
               {bankroll.paperMode ? (
-                <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance).toFixed(2)}</span>
-                {bankroll.realBalance !== undefined && (
+                <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance ?? 0).toFixed(2)}</span>
+                {bankroll.realBalance != null && (
                   <span className="opacity-70"> · Real funds: <span className="font-mono">R{bankroll.realBalance.toFixed(2)}</span> (untouched)</span>
                 )}</span>
               ) : (
-                <span>Betting bank (live): <span className="text-emerald-400 font-mono">R{bankroll.balance.toFixed(2)}</span>
-                {bankroll.paperBalance !== undefined && (
+                <span>Betting bank (live): <span className="text-emerald-400 font-mono">R{(bankroll.balance ?? 0).toFixed(2)}</span>
+                {bankroll.paperBalance != null && (
                   <span className="opacity-70"> · Paper bank: <span className="font-mono">R{bankroll.paperBalance.toFixed(2)}</span> (simulation)</span>
                 )}</span>
               )}

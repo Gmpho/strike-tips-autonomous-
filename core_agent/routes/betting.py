@@ -12,6 +12,7 @@ import os
 from core_agent.core.strike_brain import brain
 from core_agent.models.betting import BetRecord, DailyStats, BankrollState
 from core_agent.config.paths import DATA_DIR
+from core_agent.config.settings import BankrollConfig
 
 router = APIRouter(tags=["betting"])
 
@@ -332,7 +333,7 @@ async def get_bankroll_history():
 
     # Fallback from bet_history.json
     bets_data = _load_json("bet_history.json") or []
-    start_balance = 1000.0
+    start_balance = float(BankrollConfig.total_bankroll)
     history = [{"t": "Start", "balance": start_balance}]
     running = start_balance
     for b in bets_data:
@@ -361,16 +362,17 @@ async def get_bankroll_state():
     paper_mode = _settings.get("paper_mode", False)
 
     if not data:
-        base_bal = 1000.0
+        # No state on disk yet: surface a null balance instead of inventing a
+        # fake R1,000 — the HUD renders "—" until the governor seeds state.
         return {
-            "balance": base_bal,
-            "dailyLimit": 200.0,
+            "balance": None,
+            "dailyLimit": 0.0,
             "dailyLoss": 0.0,
-            "maxStake": 50.0,
+            "maxStake": 0.0,
             "totalExposure": 0.0,
             "paperMode": paper_mode,
-            "paperBalance": base_bal,
-            "realBalance": base_bal,
+            "paperBalance": None,
+            "realBalance": None,
         }
 
     # Use brain if available for more accurate data
@@ -380,7 +382,7 @@ async def get_bankroll_state():
         # Active exposure only (stale backlog excluded) — matches governor limits.
         total_exposure = bankroll.get_open_exposure()
         active_balance = (
-            getattr(bankroll, "paper_balance", _settings.get("paper_balance", 1000.0))
+            getattr(bankroll, "paper_balance", _settings.get("paper_balance", BankrollConfig.total_bankroll))
             if paper_mode
             else bankroll.current_bankroll
         )
@@ -393,12 +395,13 @@ async def get_bankroll_state():
             totalExposure=round(total_exposure, 2),
         ).model_dump(by_alias=True)
         result["paperMode"] = paper_mode
-        result["paperBalance"] = getattr(bankroll, "paper_balance", _settings.get("paper_balance", 1000.0))
+        result["paperBalance"] = getattr(bankroll, "paper_balance", _settings.get("paper_balance", BankrollConfig.total_bankroll))
         result["realBalance"] = bankroll.current_bankroll
         return result
 
     # Fallback to JSON file
-    active_balance = data.get("paper_balance", 1000.0) if paper_mode else data.get("current_bankroll", 1000.0)
+    _default_start = float(BankrollConfig.total_bankroll)
+    active_balance = data.get("paper_balance", _default_start) if paper_mode else data.get("current_bankroll", _default_start)
     tpl = data.get("total_profit_loss", 0.0)
     daily_loss = abs(tpl) if tpl < 0 else 0.0
     return {
@@ -408,6 +411,6 @@ async def get_bankroll_state():
         "maxStake": round(active_balance * 0.05, 2),
         "totalExposure": 0.0,
         "paperMode": paper_mode,
-        "paperBalance": data.get("paper_balance", 1000.0),
-        "realBalance": data.get("current_bankroll", 1000.0),
+        "paperBalance": data.get("paper_balance", _default_start),
+        "realBalance": data.get("current_bankroll", _default_start),
     }
