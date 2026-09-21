@@ -140,10 +140,16 @@ export const BankrollView: React.FC = () => {
         <div className="relative z-10">
           <div className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Current Bankroll</div>
           <div className="flex items-baseline gap-3">
-            <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">R {bankroll?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
+            <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">
+              {bankroll && bankroll.paperMode !== undefined
+                ? `R ${bankroll.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : 'R —'}
+            </span>
           </div>
-          {/* Ledger split: active betting bank vs the untouched other ledger */}
-          {bankroll && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
+          {/* Ledger split: active betting bank vs the untouched other ledger.
+              Only render once paperMode is known — a stale cached bankroll
+              (paperMode undefined) would fabricate a "LIVE R1,000" line. */}
+          {bankroll && bankroll.paperMode !== undefined && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
             <div className="mt-3 text-[10px] font-bold text-theme-secondary">
               {bankroll.paperMode ? (
                 <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance).toFixed(2)}</span>

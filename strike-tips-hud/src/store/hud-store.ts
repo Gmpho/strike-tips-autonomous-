@@ -2,7 +2,7 @@ import { HUDState } from '../types';
 
 type Listener = (state: HUDState) => void;
 
-const STORAGE_VERSION = 3;
+const STORAGE_VERSION = 4;
 const STORAGE_VERSION_KEY = 'strike_hud_version';
 
 class HUDStore {
@@ -71,6 +71,12 @@ class HUDStore {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        // Bankroll is server-owned ephemeral state — NEVER rehydrate it.
+        // A stale cache (e.g. pre-paperMode shape, or an old default
+        // R1,000/paperMode:false response) renders a wrong "LIVE R1,000"
+        // pill until the first poll lands. Always start neutral and let
+        // the DataBridge fill it in (Sep-2026 capital flap fix).
+        delete parsed.bankroll;
         this.state = { ...this.state, ...parsed };
       } catch (e) {
         console.error('Failed to load HUD state:', e);

@@ -120,7 +120,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
           <div>
             <div className="text-[7px] sm:text-[8px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter flex items-center gap-1">
               Capital
-              {state.bankroll && (
+              {state.bankroll && state.bankroll.paperMode !== undefined && (
                 <span
                   title={state.bankroll.paperMode ? 'Paper simulation bank — real funds untouched' : 'Live real-funds bank'}
                   className={`px-1 py-px text-[6px] sm:text-[7px] font-black rounded uppercase tracking-wider ${
@@ -134,7 +134,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
               )}
             </div>
             <div className="text-[10px] sm:text-xs md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">
-              R {state.bankroll?.balance ? Math.round(state.bankroll.balance).toLocaleString() : '0'}
+              R {state.bankroll && state.bankroll.paperMode !== undefined && state.bankroll.balance ? Math.round(state.bankroll.balance).toLocaleString() : '—'}
             </div>
           </div>
           <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500/50 group-hover:text-purple-500 transition-colors hidden xs:block" />
