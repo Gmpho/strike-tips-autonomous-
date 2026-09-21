@@ -45,7 +45,9 @@ class AgentLoop:
                     msg.session_key, msg.content, session.history, None
                 )
                 messages = [
-                    {"role": "system", "content": build_system_prompt()},
+                    # Pass the user turn so the card-intent gate can withhold
+                    # the race card on casual/identity turns (Sep-2026).
+                    {"role": "system", "content": build_system_prompt(user_message=msg.content)},
                     *session.history,
                     {"role": "user", "content": context},
                 ]

@@ -39,6 +39,12 @@ DEAD_IDS = [
 CODE_GLOBS = ["core_agent/**/*.py", "strike-tips-hud/src/**/*.[tj]s*",
               "strike-tips-hud/server/*.ts"]
 
+# Files allowed to CONTAIN retired IDs: the prompt sanitizer's rewrite table
+# (core_agent/agent/prompts.py) exists precisely to translate them back to the
+# live pool — it can never be a call target. Pinned by
+# tests/test_chat_grounding_gate.py::test_retired_models_rewritten.
+DEAD_ID_EXEMPT = {"core_agent/agent/prompts.py"}
+
 
 def _code_files():
     out = []
@@ -47,7 +53,8 @@ def _code_files():
     # Skip tests (this file defines the denylist) and caches.
     return [p for p in out
             if "__pycache__" not in str(p)
-            and "/tests/" not in str(p).replace("\\", "/")]
+            and "/tests/" not in str(p).replace("\\", "/")
+            and str(p.relative_to(REPO)) not in DEAD_ID_EXEMPT]
 
 
 def test_no_dead_model_ids_in_code():

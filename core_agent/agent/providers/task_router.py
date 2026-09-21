@@ -359,13 +359,26 @@ class TaskRouter:
         # Grounding prefix (Sep-2026: fallthrough answers invented tracks,
         # dates and cards). Every model-bound request carries today's real
         # date + live meetings, plus an explicit no-guessing rule.
+        #
+        # Card-intent gate: the meetings list only rides along when the turn
+        # is about race data — otherwise casual chat ("You good") triggered
+        # a full card recital. Non-card turns still get the date so the
+        # model can answer time questions correctly.
         try:
-            meetings = self._meeting_list_line()
-            _ground = (f"[Context: today is {self._today_sast()} (SAST, South Africa). "
-                       + (f"Live meetings today: {meetings}. " if meetings
-                          else "No live meeting data synced right now. ")
-                       + "Never invent tracks, races, dates, results or statistics. "
-                       + "If asked about a track with no live card, say so plainly.]\n")
+            last_q = self._extract_user_query(messages)
+            card_turn = self._asks_for_card(last_q) or bool(
+                re.search(r"\d+\.\d{2}|form\s*:|off\s*time", last_q)
+            )
+            if card_turn:
+                meetings = self._meeting_list_line()
+                _ground = (f"[Context: today is {self._today_sast()} (SAST, South Africa). "
+                           + (f"Live meetings today: {meetings}. " if meetings
+                              else "No live meeting data synced right now. ")
+                           + "Never invent tracks, races, dates, results or statistics. "
+                           + "If asked about a track with no live card, say so plainly.]\n")
+            else:
+                _ground = (f"[Context: today is {self._today_sast()} (SAST, South Africa).]"
+                           "\n")
             if messages and isinstance(messages[-1], dict) and messages[-1].get("content"):
                 messages[-1] = {**messages[-1],
                                 "content": _ground + str(messages[-1]["content"])}

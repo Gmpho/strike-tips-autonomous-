@@ -318,11 +318,29 @@ def serve_api():
 
             reply = _clean(reply)
             MAX_LENGTH = 4000
+
+            async def _send(text: str) -> None:
+                """Send with Markdown, fall back to plain text on parse errors.
+
+                Cloud models emit unbalanced entities (odds tables, apostrophes
+                in horse names like "Sascha's Dream"); Telegram rejects the
+                WHOLE message with "Can't parse entities", which is how
+                replies were lost (Sep-2026). The polling channel already
+                retried; the webhook path did not.
+                """
+                try:
+                    await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+                except Exception as parse_err:
+                    if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
+                        await bot.send_message(chat_id=chat_id, text=text)
+                    else:
+                        raise
+
             if len(reply) > MAX_LENGTH:
                 for i in range(0, len(reply), MAX_LENGTH):
-                    await bot.send_message(chat_id=chat_id, text=reply[i:i+MAX_LENGTH], parse_mode="Markdown")
+                    await _send(reply[i:i+MAX_LENGTH])
             else:
-                await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
+                await _send(reply)
 
         except Exception as exc:
             logger.error("Webhook error: %s", exc, exc_info=True)

@@ -793,7 +793,13 @@ class AdaptiveOddsMonitor:
         # _fetch_betfair_form_safely / _bf_cache_path).
 
         self.monitoring_active = True
-        self._last_alert_ts: float = 0
+        # Per race+horse alert gate (Sep-2026). This used to be a SINGLE
+        # global timestamp: the first alert in a cycle set it, and every
+        # other runner across all ~40 races was suppressed for 120s — which
+        # is why digests carried exactly one horse per cycle ("1 alert(s)")
+        # and the same race kept reappearing. Keyed now, so different
+        # markets/horses alert in the same sweep.
+        self._last_alert_by_key: dict = {}
         self._alert_cooldown: float = 120.0
 
     async def _fetch_betfair_form_safely(self) -> dict:
@@ -947,14 +953,20 @@ class AdaptiveOddsMonitor:
         """Callback fired by AlertEngine when a condition triggers."""
         if not self._telegram_notifier or not self._digester:
             return
-        now = datetime.now().timestamp()
-        if now - self._last_alert_ts < self._alert_cooldown:
-            logger.info(f"Alert rate-limited: {msg.get('type')} {msg.get('horse')} @ {msg.get('course')}")
-            return
-        self._last_alert_ts = now
-        tag = msg.get("type", "alert")
         horse = msg.get("horse", "?")
         course = msg.get("course", "?")
+        key = f"{course}::{horse}"
+        now = datetime.now().timestamp()
+        last = self._last_alert_by_key.get(key, 0.0)
+        if now - last < self._alert_cooldown:
+            logger.info(f"Alert rate-limited: {msg.get('type')} {horse} @ {course}")
+            return
+        # Bound the gate dict so a long day can't grow it without limit.
+        if len(self._last_alert_by_key) >= 2000:
+            newest = sorted(self._last_alert_by_key.items(), key=lambda kv: kv[1])[-1000:]
+            self._last_alert_by_key = dict(newest)
+        self._last_alert_by_key[key] = now
+        tag = msg.get("type", "alert")
         odds = msg.get("odds", "?")
         html = (
             f"🐎 {horse} @ {course}\n"
@@ -1117,6 +1129,12 @@ class AdaptiveOddsMonitor:
             # value_bet alert is silently lost (Sep-2026: 261 fired, 0 sent).
             try:
                 if self._digester:
+                    # Surface what the cooldowns suppressed, so a thin digest
+                    # is explainable instead of looking like lost alerts.
+                    try:
+                        self._digester.note_suppressed(self.alert_engine.stats)
+                    except Exception:
+                        pass
                     await self._digester.flush()
             except Exception as e:
                 logger.debug(f"Digest flush skipped: {e}")

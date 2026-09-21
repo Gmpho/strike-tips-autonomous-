@@ -154,9 +154,19 @@ class GeminiProvider:
         last_err = None
         active_model = None
 
+        # Card-intent gate: rebuild the cloud prompt with this turn's query
+        # so casual chat does not carry the race card (Sep-2026).
+        try:
+            from core_agent.agent.providers.task_router import TaskRouter as _TR
+            _sys_text = build_system_prompt(
+                for_cloud=True, user_message=_TR._extract_user_query(messages)
+            )
+        except Exception:
+            _sys_text = build_system_prompt(for_cloud=True)
+
         for model in self.MODELS:
             payload = {
-                "system_instruction": {"parts": [{"text": build_system_prompt(for_cloud=True)}]},
+                "system_instruction": {"parts": [{"text": _sys_text}]},
                 "contents": contents,
                 "generationConfig": {"maxOutputTokens": 400, "temperature": 0.3},
             }
