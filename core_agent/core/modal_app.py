@@ -160,6 +160,55 @@ def serve_api():
                 if cmd == "/auth":
                     return {"ok": True}
 
+                if cmd == "/model":
+                    from core_agent.config.model_config import ModelConfig as _MC
+                    choice = (parts[1].lower() if len(parts) > 1 else "")
+                    mapping = {
+                        "auto": "auto",
+                        "groq": "groq",
+                        "gemini": "gemini",
+                        "gemini-pro": "gemini-3.1-pro-preview",
+                        "gemini-lite": "gemini-3.1-flash-lite",
+                    }
+                    session_key = f"tg:{chat_id}"
+                    # Per-chat preference persists on the lifespan
+                    # AgentLoop session (same key the chat path reads).
+                    try:
+                        mgr = request.app.state.bus_loop.session_mgr
+                        sess = mgr.get(session_key)
+                        current = sess.metadata.get("preferred_model") or "auto"
+                    except Exception:
+                        sess = None
+                        current = "auto"
+                    if not choice:
+                        menu = (
+                            "🧠 *Select active model*\n"
+                            "To switch model, reply with `/model <name>`:\n\n"
+                            "• `/model auto` — ⚡ Auto Router (optimal)\n"
+                            "• `/model groq` — ☁️ Groq GPT-OSS 120B (flagship, tools)\n"
+                            "• `/model gemini` — ☁️ Gemini 2.5 Flash (grounded chat)\n"
+                            "• `/model gemini-pro` — 🧮 Gemini 3.1 Pro (deep math)\n"
+                            "• `/model gemini-lite` — 🪶 Gemini 3.1 Flash-Lite (fast)\n\n"
+                            f"Current selection: *{current}*"
+                        )
+                        await bot.send_message(chat_id=chat_id, text=menu, parse_mode="Markdown")
+                        return {"ok": True}
+                    mapped = mapping.get(choice)
+                    if mapped and sess is not None:
+                        sess.metadata["preferred_model"] = mapped
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ Active model switched to *{mapped}*. Subsequent requests in this chat will use this model.",
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"❌ Unknown model: *{choice}*. Type `/model` to see the list of valid models.",
+                            parse_mode="Markdown",
+                        )
+                    return {"ok": True}
+
                 if cmd == "/start":
                     from core_agent.config.settings import NOTIFICATIONS
                     welcome = (
@@ -180,6 +229,8 @@ def serve_api():
                     help_text = (
                         "🧠 *Available Commands*\n\n"
                         "/auth <PIN> - Unlock bot access\n"
+                        "/model - Show cloud model options\n"
+                        "/model <name> - Switch chat model (auto/groq/gemini/gemini-pro/gemini-lite)\n"
                         "/scan - Start today's full racing scan\n"
                         "/status - Get current bankroll & ROI stats\n"
                         "/chart - Show 15-day performance chart\n"
@@ -280,6 +331,41 @@ def serve_api():
             except Exception:
                 pass
         return {"ok": True}
+
+    @fastapi_app.get("/telegram-health")
+    async def telegram_health(request: Request):
+        """Probe the Telegram chat path without spamming the bot.
+
+        Reports bus liveness (queue depth, worker alive, active sessions)
+        plus the cloud model pool the chat path resolves to — the same
+        ModelConfig source the HUD auto-router uses.
+        """
+        from core_agent.config.model_config import ModelConfig as _MC
+        bus = getattr(request.app.state, "bus", None)
+        loop = getattr(request.app.state, "bus_loop", None)
+        try:
+            sessions = len(loop.session_mgr._sessions) if loop else -1
+        except Exception:
+            sessions = -1
+        try:
+            queued = bus.inbound.qsize() if bus else -1
+        except Exception:
+            queued = -1
+        task = getattr(request.app.state, "bus_task", None)
+        alive = bool(task is not None and not task.done())
+        return {
+            "ok": True,
+            "bus_alive": alive,
+            "queued_inbound": queued,
+            "active_sessions": sessions,
+            "cloud_pool": {
+                "orchestrator": _MC.ORCHESTRATOR,
+                "fast": getattr(_MC, "GROQ_FAST", None),
+                "fallback": getattr(_MC, "CLOUD_FALLBACK", None),
+                "gemini_chain": list(getattr(_MC, "GEMINI_CHAIN", [])),
+                "groq_key_set": _MC.groq_available(),
+            },
+        }
 
     # ── Auto-register webhook on boot ────────────────────────────────
     import os

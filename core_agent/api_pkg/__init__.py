@@ -59,7 +59,7 @@ _rate_store: dict = {}
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
+    if path in ("/", "/docs", "/openapi.json", "/telegram-webhook", "/telegram-health"):
         return await call_next(request)
 
     # Long-lived containers see a frozen volume view; pull the latest
@@ -205,6 +205,7 @@ async def lifespan(app: FastAPI):
     bus_task = asyncio.create_task(bus.worker_loop(processor))
 
     app.state.bus = bus
+    app.state.bus_loop = loop
     app.state.bus_task = bus_task
 
     def start_scheduler():
