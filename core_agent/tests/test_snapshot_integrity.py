@@ -272,6 +272,155 @@ def _write_cache(path, events):
     path.write_text(json.dumps({"saved_at": FROZEN_NOW.isoformat(), "events": events}))
 
 
+# ── Modal volume reload (cross-container visibility, Sep-2026) ───────────────
+
+
+def _write_snapshot_file(path, source="monitor"):
+    # A race ~30 min from now survives the off-time closer's pruning.
+    # Naive local (the closer compares against naive datetime.now()).
+    t = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
+    path.write_text(
+        json.dumps(
+            {
+                "events": {"a": {"en": "Vaal", "raceNumber": 1, "t": t}},
+                "count": 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "snapshot_source": source,
+            }
+        )
+    )
+
+
+async def _run_one_refresh_cycle():
+    """Drive disk_refresh_loop through exactly one pass, then break.
+
+    The loop sleeps first, so pass the initial sleep through (interval=0)
+    and raise on the next one — after the poll body has run once.
+    """
+    import asyncio
+
+    real_sleep = asyncio.sleep
+    passes = {"n": 0}
+
+    async def _sleep(_):
+        if passes["n"] >= 1:
+            raise KeyboardInterrupt
+        passes["n"] += 1
+        await real_sleep(0)
+
+    with patch("asyncio.sleep", _sleep):
+        with pytest.raises(KeyboardInterrupt):
+            await snapshot_cache.disk_refresh_loop(interval=0)
+
+
+@pytest.mark.asyncio
+async def test_disk_refresh_loop_reloads_modal_volume(tmp_path, monkeypatch):
+    """The web container's volume mount caches the startup view.
+
+    disk_refresh_loop must call volume.reload() before stat, or the monitor
+    cron's writes (Betfair gear, fresh card) stay invisible for the life of
+    the web container (Sep-2026: HUD sat on its own scheduler_scan card for
+    hours while the volume file carried a fresh monitor snapshot).
+    """
+    import sys
+
+    reload_calls = []
+
+    class _FakeVolume:
+        def reload(self):
+            reload_calls.append(True)
+
+    fake_modal = SimpleNamespace(
+        Volume=SimpleNamespace(from_name=lambda name, create_if_missing: _FakeVolume())
+    )
+    monkeypatch.setattr(snapshot_cache, "_volume_obj", None)
+    monkeypatch.setattr(snapshot_cache, "_volume_retry_at", 0.0)
+    monkeypatch.setattr(snapshot_cache, "_volume_lock", None)
+    monkeypatch.setattr(snapshot_cache, "_volume_last_reload", 0.0)
+    monkeypatch.setitem(sys.modules, "modal", fake_modal)
+
+    snap = tmp_path / "market_snapshot_latest.json"
+    _write_snapshot_file(snap)
+    monkeypatch.setattr(snapshot_cache, "MARKET_SNAPSHOT_PATH", snap)
+    monkeypatch.setattr(snapshot_cache, "_last_disk_mtime", 0.0)
+
+    await _run_one_refresh_cycle()
+
+    assert reload_calls == [True]
+    cached = snapshot_cache.get_snapshot()
+    assert cached.get("events"), "fresh monitor snapshot must enter memory"
+    # Producer label survives disk-poll ingress sanitization.
+    assert snapshot_cache.get_snapshot_meta()["source"] == "monitor"
+
+
+@pytest.mark.asyncio
+async def test_volume_reload_prefers_async_form(tmp_path, monkeypatch):
+    """On Modal, vol.reload.aio() is the event-loop-safe form; the sync
+    call must never run when .aio exists."""
+    import sys
+
+    sync_calls, aio_calls = [], []
+
+    class _ReloadFn:
+        def __call__(self):
+            sync_calls.append(True)
+
+        async def aio(self):
+            aio_calls.append(True)
+
+    class _FakeVolume:
+        reload = _ReloadFn()
+
+    fake_modal = SimpleNamespace(
+        Volume=SimpleNamespace(from_name=lambda name, create_if_missing: _FakeVolume())
+    )
+    for attr, val in (
+        ("_volume_obj", None),
+        ("_volume_retry_at", 0.0),
+        ("_volume_lock", None),
+        ("_volume_last_reload", 0.0),
+    ):
+        monkeypatch.setattr(snapshot_cache, attr, val)
+    monkeypatch.setitem(sys.modules, "modal", fake_modal)
+
+    snap = tmp_path / "market_snapshot_latest.json"
+    _write_snapshot_file(snap)
+    monkeypatch.setattr(snapshot_cache, "MARKET_SNAPSHOT_PATH", snap)
+    monkeypatch.setattr(snapshot_cache, "_last_disk_mtime", 0.0)
+
+    await _run_one_refresh_cycle()
+
+    assert aio_calls == [True]
+    assert sync_calls == []
+
+
+@pytest.mark.asyncio
+async def test_disk_refresh_loop_falls_back_to_local_stat(tmp_path, monkeypatch):
+    """Outside Modal (no modal module/token) the loop still refreshes from
+    the local mount — docker-compose and same-container writers — and the
+    volume lookup backs off instead of retrying every cycle."""
+    import sys
+
+    monkeypatch.setattr(snapshot_cache, "_volume_obj", None)
+    monkeypatch.setattr(snapshot_cache, "_volume_retry_at", 0.0)
+    monkeypatch.setattr(snapshot_cache, "_volume_lock", None)
+    monkeypatch.setattr(snapshot_cache, "_volume_last_reload", 0.0)
+    monkeypatch.setitem(sys.modules, "modal", None)  # `import modal` fails
+
+    snap = tmp_path / "market_snapshot_latest.json"
+    _write_snapshot_file(snap)
+    monkeypatch.setattr(snapshot_cache, "MARKET_SNAPSHOT_PATH", snap)
+    monkeypatch.setattr(snapshot_cache, "_last_disk_mtime", 0.0)
+
+    await _run_one_refresh_cycle()
+
+    assert snapshot_cache.get_snapshot().get("events")
+    assert snapshot_cache._volume_retry_at > 0.0, "failed lookup must back off"
+
+
+# ── Betfair pruning (rolling per-race cache) ─────────────────────────────────
+
+
 def test_bf_prune_drops_finished_market():
     m = _make_monitor("/tmp/unused.json")
     mid, ev = _bf_event(-2, cached_at=FROZEN_NOW.timestamp())

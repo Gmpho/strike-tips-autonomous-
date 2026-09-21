@@ -130,6 +130,92 @@ def get_news() -> List[Any]:
 
 
 _last_disk_mtime: float = 0.0
+_volume_obj: Optional[Any] = None
+_volume_retry_at: float = 0.0
+_volume_lock: Optional[Any] = None
+_volume_last_reload: float = 0.0
+
+_VOLUME_NAME = "strike-tips-data"
+_VOLUME_RETRY_SECS = 600.0
+# Two loops (snapshot + news) share one volume object; reloads are serialized
+# and throttled (Sep-2026: concurrent reloads deadlocked — exactly one ingest
+# at container startup, then every later monitor write was ignored).
+_VOLUME_RELOAD_MIN_SECS = 14.0
+_VOLUME_RELOAD_TIMEOUT = 30.0
+
+
+def _get_data_volume() -> Optional[Any]:
+    """The Modal volume backing ``/app/data``, or ``None`` outside Modal.
+
+    Cross-container visibility: Modal Volumes are cached per container.
+    The monitor cron writes ``market_snapshot_latest.json`` from its own
+    container, while this web container's mount keeps serving the view it
+    had at startup — ``volume.reload()`` is the documented way to see other
+    containers' writes. (Sep-2026: ``disk_refresh_loop`` polled mtime on the
+    stale view, so every monitor write was invisible to the web keeper and
+    the HUD stayed on the container's own ``scheduler_scan`` card for hours
+    while the volume file carried a fresh, Betfair-rich monitor snapshot.)
+    """
+    global _volume_obj, _volume_retry_at
+    if _volume_obj is not None:
+        return _volume_obj
+    if time.time() < _volume_retry_at:
+        return None
+    try:
+        import modal
+
+        _volume_obj = modal.Volume.from_name(_VOLUME_NAME, create_if_missing=False)
+        return _volume_obj
+    except Exception as e:
+        # No token / not on Modal / modal not installed — stat the local
+        # mount as before (works for same-container writers and shared
+        # bind mounts, e.g. docker-compose).
+        logger.debug("Modal volume unavailable for disk refresh: %s", e)
+        _volume_retry_at = time.time() + _VOLUME_RETRY_SECS
+        return None
+
+
+async def _reload_data_volume() -> None:
+    """Reload the Modal volume so cross-container writes become visible.
+
+    Serialized + throttled (the two refresh loops share one volume object —
+    concurrent reloads deadlocked, Sep-2026) and timeout-bounded so a hung
+    reload can never stall the refresh loops again.
+    """
+    global _volume_lock, _volume_last_reload
+    vol = _get_data_volume()
+    if vol is None:
+        return
+    if _volume_lock is None:
+        _volume_lock = asyncio.Lock()
+    since = time.time() - _volume_last_reload
+    if since < _VOLUME_RELOAD_MIN_SECS:
+        return
+    async with _volume_lock:
+        since = time.time() - _volume_last_reload
+        if since < _VOLUME_RELOAD_MIN_SECS:
+            return
+        try:
+            aio_reload = getattr(vol.reload, "aio", None)
+
+            async def _do_reload():
+                if aio_reload is not None:
+                    await aio_reload()
+                else:
+                    await asyncio.to_thread(vol.reload)
+
+            # wait_for cancels a hung reload instead of freezing the loop.
+            await asyncio.wait_for(_do_reload(), timeout=_VOLUME_RELOAD_TIMEOUT)
+            _volume_last_reload = time.time()
+            print(
+                f"[snapshot-cache] volume reloaded ok "
+                f"(last ingest age {since:.0f}s)",
+                flush=True,
+            )
+        except asyncio.TimeoutError:
+            print("[snapshot-cache] volume reload TIMED OUT", flush=True)
+        except Exception as e:
+            print(f"[snapshot-cache] volume reload failed: {e!r}", flush=True)
 
 
 async def disk_refresh_loop(interval: int = 15) -> None:
@@ -141,6 +227,10 @@ async def disk_refresh_loop(interval: int = 15) -> None:
     synced 90). One stat per interval; full parse only on change.
     Interval reduced from 60s → 15s (Sep-2026: 60s meant up to 1-min lag
     even when the monitor cron ran perfectly).
+
+    On Modal the volume must be reloaded each cycle before stat — the
+    mount caches the startup view, so monitor writes are otherwise
+    invisible for the life of the web container (see _get_data_volume).
     """
     global _last_disk_mtime
     import time as _time
@@ -148,6 +238,7 @@ async def disk_refresh_loop(interval: int = 15) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
+            await _reload_data_volume()
             try:
                 mtime = os.path.getmtime(MARKET_SNAPSHOT_PATH)
             except OSError:
@@ -184,6 +275,7 @@ async def news_mtime_refresh_loop(interval: int = 15) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
+            await _reload_data_volume()
             try:
                 mtime = os.path.getmtime(NEWS_PATH)
             except OSError:
