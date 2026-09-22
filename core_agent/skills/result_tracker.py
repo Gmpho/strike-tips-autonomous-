@@ -47,6 +47,43 @@ ABANDONED_GRACE_MINUTES = 90
 MAX_SETTLE_AGE_DAYS = 3
 
 
+def _healing_event(
+    action: str, details: str, agent: str = "ResultTracker", status: str = "SUCCESS"
+) -> None:
+    """Append a healing event so blockers show up in Live Ops instead of
+    living only in container logs (e.g. a won exotic awaiting its dividend).
+    Mirrors the monitor's event shape; never raises."""
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        path = DATA_DIR / "healing_events.json"
+        events = []
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list):
+                    events = loaded
+            except Exception:
+                events = []
+        events.append({
+            "id": f"{action.lower()}-{int(datetime.now().timestamp())}",
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "details": details,
+            "agent": agent,
+            "status": status,
+        })
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(events[-50:], f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except Exception:
+        pass
+
+
 def _log_settled_winner(bet, winner: str) -> None:
     """Append a confirmed winner for dream calibration.
 
@@ -459,9 +496,16 @@ class ResultTracker:
         return await self._scrape_sa_results_direct(track, race_number)
 
     async def _scrape_sa_results_direct(
-        self, track: str, race_number: int
+        self, track: str, race_number: int, bet_date: Optional[str] = None
     ) -> Optional[str]:
-        """Direct scrape of known SA racing results pages as last resort."""
+        """Direct scrape of known SA racing results pages as last resort.
+
+        ``bet_date`` (ISO YYYY-MM-DD) is the bet's own race day. It used to be
+        hardcoded to *yesterday*, so a same-day winner could never find its
+        tote dividend: the scrape looked at the wrong day's page every cycle
+        ("all legs placed, awaiting tote dividend" forever). The bet date is
+        tried first, then today, then yesterday as a last resort.
+        """
         from core_agent.core.http_client import get_async_client
 
         track_code_map = {
@@ -474,17 +518,28 @@ class ResultTracker:
             "greyville": "XGR",
         }
 
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
         code = track_code_map.get(track.lower())
         if not code:
             return None
 
-        urls = [
-            f"https://www.tab4racing.com/results/{yesterday}",
-            f"https://www.tab.co.za/tabs/horse/all/{yesterday}/{code}",
-            f"https://www.racingvitesse.co.za/results?track={code}&date={yesterday}",
-            "https://raceform.co.za/cards-results",
-        ]
+        # Candidate race days, most-likely first, de-duplicated.
+        days: List[str] = []
+        for candidate in (
+            str(bet_date)[:10] if bet_date else None,
+            date.today().isoformat(),
+            (date.today() - timedelta(days=1)).isoformat(),
+        ):
+            if candidate and candidate not in days:
+                days.append(candidate)
+
+        urls = []
+        for day in days:
+            urls.extend([
+                f"https://www.tab4racing.com/results/{day}",
+                f"https://www.tab.co.za/tabs/horse/all/{day}/{code}",
+                f"https://www.racingvitesse.co.za/results?track={code}&date={day}",
+            ])
+        urls.append("https://raceform.co.za/cards-results")
 
         client = get_async_client(timeout=8)
         for url in urls:
@@ -715,6 +770,17 @@ class ResultTracker:
         # logical combination across all legs.
         legs_state = [leg_status(e) for e in ticket["combos"]]
         if any(s == "unknown" for s in legs_state):
+            # Visible diagnostics: name the unresolved legs so a stuck ticket
+            # explains itself in the container logs instead of looking broken.
+            stuck = [
+                f"R{e['race']}" for e, s in zip(ticket["combos"], legs_state)
+                if s == "unknown"
+            ]
+            logger.info(
+                "Exotic %s (%s @ %s) awaiting results for leg(s): %s — left PENDING",
+                bet.bet_id, ticket["pool_type"], getattr(bet, "track", "?"),
+                ", ".join(stuck) or "?",
+            )
             return None
         if all(s == "pass" for s in legs_state):
             any_won_combo = True
@@ -728,13 +794,25 @@ class ResultTracker:
 
         if any_won_combo:
             div_text = await self._scrape_sa_results_direct(
-                getattr(bet, "track", ""), legs[0]
+                getattr(bet, "track", ""), legs[0],
+                bet_date=getattr(bet, "date", None),
             )
             div = _extract_pool_dividend(div_text or "", ticket["pool_type"])
             if div is None:
-                logger.info(
-                    "Exotic %s all legs placed, awaiting tote dividend — left PENDING",
-                    bet.bet_id,
+                # Reported (not silent): a won ticket whose dividend isn't
+                # published yet stays PENDING, and the reason is visible in
+                # Live Ops via the healing log + telemetry.
+                msg = (
+                    f"Exotic {bet.bet_id} ({ticket['pool_type']} @ "
+                    f"{getattr(bet, 'track', '?')}) all {len(legs_state)} legs "
+                    f"placed, awaiting tote dividend"
+                )
+                logger.info(msg)
+                _healing_event(
+                    "EXOTIC_AWAITING_DIVIDEND",
+                    msg,
+                    agent="ResultTracker",
+                    status="WARN",
                 )
                 return None
             pool_return = round(div * float(getattr(bet, "stake", 0.0) or 0.0), 2)
