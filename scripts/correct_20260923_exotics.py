@@ -23,20 +23,14 @@ app = modal.App("ledger-correction-20260923")
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("python-dotenv")
-    .add_local_dir(
-        REPO,
-        "/app",
-        # Keep the image small: venv/data/node_modules are GBs and unused.
-        ignore=[
-            "venv_linux",
-            ".venv",
-            "data",
-            "node_modules",
-            ".git",
-            "__pycache__",
-            ".modal.toml",
-            ".env",
-        ],
+    # Only the two modules the correction needs (KBs, not the whole repo).
+    .add_local_file(
+        f"{REPO}/core_agent/skills/bankroll_manager/governor.py",
+        "/app/core_agent/skills/bankroll_manager/governor.py",
+    )
+    .add_local_file(
+        f"{REPO}/core_agent/config/settings.py",
+        "/app/core_agent/config/settings.py",
     )
 )
 vol = modal.Volume.from_name("strike-tips-data", create_if_missing=False)
