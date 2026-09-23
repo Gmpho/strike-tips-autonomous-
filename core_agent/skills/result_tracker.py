@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
+from html import unescape as _html_unescape
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("result-tracker")
@@ -45,6 +46,16 @@ ABANDONED_GRACE_MINUTES = 90
 # review: settling a week-old bet against yesterday's results for the same
 # track+race number would usually settle the WRONG race (usually as LOST).
 MAX_SETTLE_AGE_DAYS = 3
+
+# Exotics get a wider window than singles: the Raceform archive
+# (/horse-racing-results/{track}/{date}, plain HTTP, no CF challenge) serves
+# SA meetings by exact date ~2 weeks back, so a historical ticket is only
+# ever scored against ITS OWN race day. Beyond this bound no source can prove
+# that day anymore — the ticket is expired/deferred for manual review, never
+# guessed. (Sep-2026: BIPOT/PA tickets from Sep 16-22 sat PENDING because
+# every past date collapsed to ATR's "yesterday" label and the 1-day gate
+# blocked scoring entirely.)
+EXOTIC_MAX_AGE_DAYS = 14
 
 
 def _healing_event(
@@ -227,6 +238,185 @@ def _extract_pool_dividend(text: str, pool_type: str) -> Optional[float]:
                 return val
         except (ValueError, TypeError):
             continue
+    return None
+
+
+def _finish_ordinal(n) -> Optional[str]:
+    """\"1st\"/\"2nd\"/\"3rd\"/... for a finishing position, None for non-finishers.
+
+    Raceform stamps runners that did not complete with ``finish: 0`` — they
+    can satisfy no pool requirement, so they get no ordinal (ATR-shaped
+    runners carry \"\" for unknown/unplaced positions too).
+    """
+    try:
+        n = int(n)
+    except (ValueError, TypeError):
+        return None
+    if n <= 0:
+        return None
+    if 10 <= n % 100 <= 20:
+        suf = "th"
+    else:
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+def _rf_text(page: str) -> str:
+    """Normalise a Raceform page for regex parsing.
+
+    The same data appears twice: HTML-entity encoded inside Livewire
+    ``wire:snapshot`` attributes (&quot;) and JSON-escaped in embedded JS
+    (\\", \\/). Unescape both so one regex set matches either copy.
+    """
+    return _html_unescape(str(page or "")).replace("\\/", "/").replace('\\"', '"')
+
+
+def _raceform_url(track: Optional[str], iso_date: Optional[str]) -> Optional[str]:
+    """Raceform archive URL for one track+date, None when inputs are invalid.
+
+    Path shape verified live (Sep-2026): /horse-racing-results/{track}/{date}
+    returns the full meeting page as plain HTML — unlike ATR, which serves
+    only today/yesterday labels and 404s on ISO dates behind a Fastly
+    challenge (postmortem 2026-09-04).
+    """
+    t = str(track or "").strip().lower()
+    d = str(iso_date or "")[:10]
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,24}", t):
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+        return None
+    return f"https://raceform.co.za/horse-racing-results/{t}/{d}"
+
+
+def _pool_key(pool_type) -> str:
+    """Uppercase alphanumeric pool key: \"Pick 6\"/\"PICK6\"/\"pick 6\" -> PICK6."""
+    return re.sub(r"[^A-Z0-9]", "", str(pool_type or "").upper())
+
+
+def _raceform_page_date(page: str) -> Optional[str]:
+    """The single racedate a Raceform results page actually serves, or None.
+
+    CRITICAL: Raceform answers a no-meeting (track, date) URL with HTTP 200
+    serving the NEAREST meeting instead of a 404 (verified live 2026-09:
+    /vaal/2026-09-16 returned the full 2026-09-22 card). Every results /
+    dividend consumer must check this against the requested date — scoring a
+    ticket against the fallback day is the exact wrong-day bug this source
+    exists to fix. None = ambiguous (several dates) or unreadable.
+    """
+    text = _rf_text(page)
+    dates = set(re.findall(r'"racedate":"(\d{4}-\d{2}-\d{2})"', text))
+    return dates.pop() if len(dates) == 1 else None
+
+
+def _rf_float(raw) -> Optional[float]:
+    """Parse a dividend amount to float (>0), None on anything unparseable.
+
+    SA format: space thousands, comma decimals (\"1 234,50\") or plain dots
+    in Raceform's JSON (\"53.500\") — mirrors _extract_pool_dividend.
+    """
+    try:
+        val = float(str(raw).strip().replace(" ", "").replace(",", "."))
+        return val if val > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
+    """Parse a Raceform archive page into ATR-shaped race dicts.
+
+    Raceform embeds flat JSON runner objects in the page:
+        {\"raceno\":1,\"finish\":2,\"horsename\":\"...\",\"racename\":\"...\", ...}
+    plus meeting headers {\"raceno\":1,\"raceofftime\":\"12:15\", ...}. The
+    output mirrors AtTheRacesAPI.get_results() so ``_race_runners_by_number``
+    (which matches titles like \"N HH:MM ...\") and the leg scorer work
+    unchanged:
+        [{\"course\", \"date\", \"time\", \"title\", \"runners\": [{name, position}]}]
+    Returns [] when nothing parseable — callers treat that as no-evidence
+    (ticket stays PENDING), never as a result.
+    """
+    if not page:
+        return []
+    # Wrong-day guard: reject Raceform's silent nearest-meeting fallback —
+    # a no-meeting URL serves another day's card with HTTP 200.
+    if _raceform_page_date(page) != iso_date:
+        logger.info(
+            "[RACEFORM] %s %s: page serves another meeting (or none) — rejected",
+            track, iso_date,
+        )
+        return []
+    text = _rf_text(page)
+    offtimes: Dict[int, str] = {}
+    for m in re.finditer(r'"raceno":(\d+),"raceofftime":"(\d{2}:\d{2})"', text):
+        offtimes[int(m.group(1))] = m.group(2)
+    course = ""
+    names: Dict[int, str] = {}
+    runners: Dict[int, List[Dict]] = {}
+    for m in re.finditer(r'\{[^{}]*"raceno":\d+[^{}]*\}', text):
+        obj = m.group(0)
+        if '"horsename"' not in obj or '"finish"' not in obj:
+            continue  # meeting/race header, not a runner row
+        try:
+            raceno = int(re.search(r'"raceno":(\d+)', obj).group(1))
+            fin = int(re.search(r'"finish":(\d+)', obj).group(1))
+            nm = re.search(r'"horsename":"((?:[^"\\]|\\.)*)"', obj)
+        except AttributeError:
+            continue
+        if not nm:
+            continue
+        rn = re.search(r'"racename":"((?:[^"\\]|\\.)*)"', obj)
+        tk = re.search(r'"trackname":"((?:[^"\\]|\\.)*)"', obj)
+        if tk and not course:
+            course = tk.group(1)
+        if rn and raceno not in names:
+            names[raceno] = rn.group(1)
+        runners.setdefault(raceno, []).append({
+            "name": nm.group(1),
+            "position": _finish_ordinal(fin) or "",
+        })
+    races: List[Dict] = []
+    for raceno in sorted(runners):
+        off = offtimes.get(raceno, "")
+        races.append({
+            "course": course or str(track or "").title(),
+            "date": iso_date,
+            "time": off,
+            # Title MUST carry \"N HH:MM\" — _race_runners_by_number keys on it.
+            "title": f"{raceno} {off} {names.get(raceno, '')}".strip(),
+            "runners": runners[raceno],
+        })
+    return races
+
+
+def _parse_raceform_dividend(page: str, pool_type: str) -> Optional[float]:
+    """Tote dividend (R per R1) for one pool from a Raceform archive page.
+
+    Primary: embedded JSON dividend rows (verified live Sep-2026):
+        {\"bet_type\":\"Bipot\",\"selections\":\"4,7/2,3,6/...\",\"dividend\":\"53.500\"}
+    Fallback: the rendered table row (\"Bipot 4,7/2,3,6/... R53.50\").
+    Returns None when the pool's dividend isn't published — callers must
+    keep the ticket PENDING (never fabricate a payout).
+    """
+    want = _pool_key(pool_type)
+    if not page or not want:
+        return None
+    text = _rf_text(page)
+    for m in re.finditer(
+        r'"bet_type"\s*:\s*"([A-Za-z0-9 ]+)"\s*,\s*'
+        r'"selections"\s*:\s*"[^"]*"\s*,\s*'
+        r'"dividend"\s*:\s*"([\d.,]+)"',
+        text,
+    ):
+        if _pool_key(m.group(1)) == want:
+            return _rf_float(m.group(2))
+    # Rendered-row fallback: \"Bipot 4,7/2,3,6/1,4,7 R53.50\" in tag-stripped text.
+    stripped = re.sub(r"<[^>]+>", " ", text)
+    for m in re.finditer(
+        r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot)\s+[\d/,]+\s+R\s*([\d.,]+)",
+        stripped,
+        flags=re.IGNORECASE,
+    ):
+        if _pool_key(m.group(1)) == want:
+            return _rf_float(m.group(2))
     return None
 
 
@@ -414,6 +604,138 @@ class ResultTracker:
         # track/day no matter how many singles settle from it.
         self._atr_track_cache: Dict = {}
 
+    async def _raceform_page(self, track: str, iso_date: str) -> Optional[str]:
+        """Raw Raceform archive HTML for one track+date (plain HTTP — no CF
+        challenge, unlike ATR/TAB). Cached per instance so the leg scorer and
+        the dividend lookup share one fetch per meeting per sweep; failures
+        are cached too (one attempt, no hammering). None on any failure or
+        on a date outside the archive (404).
+        """
+        url = _raceform_url(track, iso_date)
+        if not url:
+            return None
+        # Test instances may be built via __new__ — create the cache lazily.
+        cache = getattr(self, "_raceform_cache", None)
+        if cache is None:
+            cache = {}
+            self._raceform_cache = cache
+        if url in cache:
+            return cache[url]
+        try:
+            from core_agent.core.http_client import get_async_client
+            client = get_async_client(timeout=15)
+            resp = await client.get(url, headers={"Accept": "text/html"})
+            page = resp.text if getattr(resp, "status_code", 0) == 200 else None
+            if page and len(page) < 20_000:
+                page = None  # stub/error shell, not the ~600KB results page
+        except Exception as e:
+            logger.debug(f"Raceform fetch failed for {url}: {e}")
+            page = None
+        cache[url] = page
+        return page
+
+    async def _raceform_results(self, track: str, iso_date: str) -> List[Dict]:
+        """ATR-shaped results for an exact race day from the Raceform archive."""
+        page = await self._raceform_page(track, iso_date)
+        if not page:
+            return []
+        races = _parse_raceform_results(page, track, iso_date)
+        logger.info("[RACEFORM] %s %s: %d races", track, iso_date, len(races))
+        return races
+
+    async def _raceform_dividend(
+        self, track: str, iso_date: str, pool_type: str
+    ) -> Optional[float]:
+        """Tote dividend (R per R1) for one pool from the Raceform archive.
+
+        Refuses pages whose served racedate isn't the requested day (the
+        archive silently falls back to the nearest meeting) — a dividend
+        from another day must never settle this ticket.
+        """
+        page = await self._raceform_page(track, iso_date)
+        if not page or _raceform_page_date(page) != iso_date:
+            return None
+        return _parse_raceform_dividend(page, pool_type)
+
+    def _monitor_cached_results(self, track: str, iso_date: str) -> List[Dict]:
+        """Results the odds-monitor already scraped — the exact data the HUD
+        shows (``atr_results_snapshot.json`` written by the monitor's own
+        Fastly-solved ATR fetch). Reusing it means zero contention with the
+        headless-Chromium throttle slot and zero CF challenge risk.
+
+        Trusted only while its embedded timestamp is from TODAY: the file
+        holds ATR's \"today/yesterday\" labels, which shift meaning across
+        midnight — an older snapshot would silently describe different
+        calendar days than its labels suggest. Never raises; [] on any miss.
+        """
+        try:
+            from core_agent.config.paths import ATR_RESULTS_PATH
+            if not os.path.exists(ATR_RESULTS_PATH):
+                return []
+            with open(ATR_RESULTS_PATH) as f:
+                blob = json.load(f)
+            if str(blob.get("timestamp") or "")[:10] != date.today().isoformat():
+                return []
+            cal = {
+                "today": date.today().isoformat(),
+                "yesterday": (date.today() - timedelta(days=1)).isoformat(),
+            }
+            out = []
+            for race in blob.get("results") or []:
+                if not isinstance(race, dict):
+                    continue
+                if cal.get(str(race.get("date") or "").lower()) != iso_date:
+                    continue
+                if str(track or "").lower() not in str(race.get("course") or "").lower():
+                    continue
+                out.append(race)
+            return out
+        except Exception as e:
+            logger.debug(f"Monitor results cache read failed: {e}")
+            return []
+
+    async def _exotic_leg_races(
+        self, track: str, bet_date: Optional[str]
+    ) -> List[Dict]:
+        """Results for the bet's OWN race day — never another day's card.
+
+        Sources (least-blockable first for fresh days):
+        1. Monitor cache — the Fastly-solved ATR data the HUD already shows;
+           read while the bet is today/yesterday (ATR label semantics hold)
+           and the snapshot is fresh.
+        2. ATR live — only when ``atr_date_label`` maps to the bet's calendar
+           day (delta <= 1); ISO dates 404 there (postmortem 2026-09-04), so
+           older days never hit ATR at all.
+        3. Raceform archive — date-addressable plain-HTTP source covering
+           ~2 weeks back. This is what unblocks historical exotics: every
+           older date used to collapse to \"yesterday\", so a Sep-16 ticket
+           was scored (or, behind the 1-day gate, never scored at all)
+           against the wrong day's races.
+
+        Empty list = no evidence; the caller must leave the ticket PENDING.
+        """
+        try:
+            iso = str(bet_date)[:10] if bet_date else date.today().isoformat()
+            delta = (date.today() - date.fromisoformat(iso)).days
+            if delta < 0:  # future-dated input: treat as today
+                iso, delta = date.today().isoformat(), 0
+        except (ValueError, TypeError):
+            iso, delta = date.today().isoformat(), 0
+        if delta <= 1:
+            cached = self._monitor_cached_results(track, iso)
+            if cached:
+                return cached
+            try:
+                from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+                races = await AtTheRacesAPI().get_results_for_track(
+                    track, date=atr_date_label(iso)
+                )
+                if races:
+                    return races
+            except Exception as e:
+                logger.debug(f"Exotic ATR lookup failed for {track} {iso}: {e}")
+        return await self._raceform_results(track, iso)
+
     async def _atr_placing(self, track: str, race_number: int, horse: str,
                            bet_date: Optional[str] = None) -> Optional[str]:
         """Official finishing position for one single (ATR results).
@@ -432,6 +754,17 @@ class ResultTracker:
                 self._atr_track_cache[key] = (
                     await atr.get_results_for_track(track, date=key[1])
                 ) or []
+                if not self._atr_track_cache[key]:
+                    # CF/throttle fallback: the monitor's own scrape for the
+                    # bet's calendar day (the data the HUD already shows).
+                    # Date-scoped, so a stale/foreign day returns [] anyway.
+                    try:
+                        _iso = str(bet_date)[:10] if bet_date else date.today().isoformat()
+                        self._atr_track_cache[key] = self._monitor_cached_results(
+                            track, _iso
+                        )
+                    except Exception:
+                        pass
             runners = _race_runners_by_number(
                 self._atr_track_cache[key], int(race_number or 0)
             )
@@ -683,7 +1016,7 @@ class ResultTracker:
 
     async def _settle_exotic_ticket(self, bet, gov, brain) -> Optional[Dict]:
         from core_agent.core.correlation import tag as _tag
-        """Settle one exotic pool ticket from ATR placed results.
+        """Settle one exotic pool ticket from ATR/Raceform placed results.
 
         Leg logic (conservative — a ticket is only settled on proof):
         - each combination leg passes when the banker OR a saver finished
@@ -698,11 +1031,15 @@ class ResultTracker:
           Without a dividend the ticket stays PENDING ("awaiting dividend").
         Returns the settled record dict, or None when left PENDING.
         """
-        # ATR only serves today/yesterday result pages, so a ticket older
-        # than 1 day can NEVER be verified against its own race day —
-        # settling it would score it against a different day's winners.
+        # Results sources are day-scoped: ATR serves today/yesterday only and
+        # the Raceform archive covers ~2 weeks (EXOTIC_MAX_AGE_DAYS). Beyond
+        # that bound neither can prove the ticket's own day, so scoring would
+        # mean matching against some OTHER day's races. The outer sweep
+        # expires at the same bound; until then the ticket honestly stays
+        # PENDING. (Was a hard 1-day gate — every Sep-16..22 backlog ticket
+        # returned here without ever being looked at.)
         try:
-            if (_bet_age_days(getattr(bet, "date", None)) or 0) > 1:
+            if (_bet_age_days(getattr(bet, "date", None)) or 0) > EXOTIC_MAX_AGE_DAYS:
                 return None
         except Exception:
             pass
@@ -713,13 +1050,13 @@ class ResultTracker:
         legs = ticket["pool_legs"]
 
         try:
-            from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
-            atr = AtTheRacesAPI()
-            races = await atr.get_results_for_track(
-                getattr(bet, "track", ""), date=atr_date_label(getattr(bet, "date", None))
+            # Cache -> ATR (fresh days only) -> Raceform archive; always the
+            # bet's OWN race day, never a collapsed "yesterday" label.
+            races = await self._exotic_leg_races(
+                getattr(bet, "track", ""), getattr(bet, "date", None)
             )
         except Exception as e:
-            logger.debug(f"Exotic ATR lookup failed for {bet.bet_id}: {e}")
+            logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
             return None
         if not races:
             return None
@@ -799,6 +1136,23 @@ class ResultTracker:
             )
             div = _extract_pool_dividend(div_text or "", ticket["pool_type"])
             if div is None:
+                # The TAB-format scrape above only sees sources that still
+                # serve plain HTML (tab4racing/tab.co.za are JS shells now).
+                # Raceform's archive carries every SA pool's dividend for any
+                # past date — structured JSON in the page, no CF challenge.
+                _bd = str(getattr(bet, "date", "") or "")[:10]
+                try:
+                    date.fromisoformat(_bd)
+                except (ValueError, TypeError):
+                    _bd = date.today().isoformat()
+                try:
+                    div = await self._raceform_dividend(
+                        getattr(bet, "track", ""), _bd, ticket["pool_type"]
+                    )
+                except Exception as rf_err:
+                    logger.debug(f"Raceform dividend lookup failed: {rf_err}")
+                    div = None
+            if div is None:
                 # Reported (not silent): a won ticket whose dividend isn't
                 # published yet stays PENDING, and the reason is visible in
                 # Live Ops via the healing log + telemetry.
@@ -873,7 +1227,10 @@ class ResultTracker:
         Settles BOTH winning and losing bets once race results are confirmed.
         Bets older than max_age_days are DEFERRED (left PENDING for manual
         review) — settling them against recent results would usually hit the
-        wrong race. Unparseable dates fail open (settled normally).
+        wrong race. Exotics instead get EXOTIC_MAX_AGE_DAYS: their leg scorer
+        reads date-addressable sources (Raceform archive), so a historical
+        ticket is scored only against its own race day. Unparseable dates
+        fail open (settled normally).
         Returns list of settled bet records.
         """
         try:
@@ -908,7 +1265,13 @@ class ResultTracker:
         _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
         for bet in open_bets:
             age = _bet_age_days(getattr(bet, "date", None))
-            if age is not None and age > max_age_days:
+            # Singles keep the ATR-era cap (winner path is today/yesterday
+            # scoped). Exotics may be scored from the date-addressable
+            # Raceform archive up to EXOTIC_MAX_AGE_DAYS, so they get that
+            # window instead of being expired after 3 days with the
+            # Sep-16..22 BIPOT/PA backlog still unscored.
+            age_limit = EXOTIC_MAX_AGE_DAYS if _is_exotic_bet(bet) else max_age_days
+            if age is not None and age > age_limit:
                 # Over-age bets can never be verified (ATR serves today /
                 # yesterday only) — expire them out of the open book instead
                 # of letting PENDINGs pile up forever. No money moves.
