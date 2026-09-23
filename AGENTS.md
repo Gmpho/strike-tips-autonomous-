@@ -103,9 +103,10 @@ npm run dev            # Vite dev server
 npm run build
 ```
 
-Deployment: the Pages project builds from the connected git repository
-(build command `npm run build`, output directory `dist`, `functions/`
-auto-detected). See `docs/DEPLOY.md` for all three layers.
+Deployment: the Pages project has NO git connection — deploy by hand with wrangler
+from `strike-tips-hud/` (`npm run build` at repo root first, then
+`npx wrangler pages deploy dist --project-name strike-tips-hud`; `functions/`
+is picked up from the cwd). See `docs/DEPLOY.md` for all three layers.
 
 ---
 
@@ -532,7 +533,7 @@ pytest core_agent/tests/test_analyzer.py -v
 7. **OKF Compiles at Build Time**: Run `node scripts/build-knowledge.js` before `wrangler deploy` (auto-runs via `predeploy`)
 8. **MCP Stateless Transport**: `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` — fresh transport per request, required for Workers
 9. **Middleware Routes API**: `strike-tips-hud/middleware.ts` decides Cloudflare vs Modal per path — Cloudflare for knowledge/odds/form, Modal for AI/analysis
-10. **Single Deployment Truth**: `docs/DEPLOY.md` holds the deploy steps for all three layers — Pages builds the HUD from git, `wrangler deploy` ships the worker, `modal deploy` ships the backend
+10. **Single Deployment Truth**: `docs/DEPLOY.md` holds the deploy steps for all three layers — Pages ships the HUD via manual `wrangler pages deploy` (no git connection), `wrangler deploy` ships the worker, `modal deploy` ships the backend
 
 ---
 

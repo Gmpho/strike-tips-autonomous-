@@ -274,8 +274,10 @@ npx wrangler secret put SEARCH_API_KEY   # optional, for web search
 npm run build      # outputs ./dist for the Pages project
 ```
 
-The Pages project builds from the connected git repository (build command
-`npm run build`, output directory `dist`). See `docs/DEPLOY.md`.
+The Pages project has NO git connection — deploy by hand with wrangler
+(`npm run build` at repo root, then from `strike-tips-hud/`
+`npx wrangler pages deploy dist --project-name strike-tips-hud`).
+See `docs/DEPLOY.md`.
 
 ---
 

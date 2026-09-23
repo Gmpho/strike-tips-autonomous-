@@ -13,9 +13,13 @@ guarding only `/api/agent/{kill,reset}`).
 ## 1. Cloudflare Pages HUD (`strike-tips-hud/`)
 
 - **Live URL:** <https://strike-tips-hud.pages.dev>
-- The Pages project builds from the connected git repository:
-  - Build command: `npm run build` (npm workspace — builds `strike-tips-hud`, copies output to `<repo>/dist/`)
-  - Output directory: `dist`
+- The Pages project has NO git connection — deploy by hand with wrangler:
+  ```bash
+  npm run build   # repo root: builds strike-tips-hud, copies output to <repo>/dist/
+  cd strike-tips-hud
+  npx wrangler pages deploy dist --project-name strike-tips-hud
+  ```
+  (`functions/` is picked up from the cwd and uploaded as edge functions.)
 - `functions/` is auto-detected and deployed as edge functions:
   - `functions/api/chat.ts`, `live.ts`, `transcribe.ts`, `podcast/[[route]].ts` — edge AI endpoints (secrets server-side only)
   - `functions/api/[[catchall]].ts` — reverse proxy to worker/Modal with server-side key injection

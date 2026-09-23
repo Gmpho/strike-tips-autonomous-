@@ -256,8 +256,9 @@ cd cloudflare_mcp_edge
 node scripts/build-knowledge.js
 npm run deploy
 
-# 2. Deploy the HUD — the Pages project builds from the connected git repo
-#    (build command: npm run build, output directory: dist)
+# 2. Deploy the HUD — no git connection, deploy by hand with wrangler:
+#    npm run build (repo root), then from strike-tips-hud/:
+#    npx wrangler pages deploy dist --project-name strike-tips-hud
 # 3. Visit https://strike-tips-hud.pages.dev
 ```
 
