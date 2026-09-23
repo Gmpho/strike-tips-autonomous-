@@ -261,6 +261,16 @@ def _finish_ordinal(n) -> Optional[str]:
     return f"{n}{suf}"
 
 
+def _norm_name(value: str) -> str:
+    """Punctuation-insensitive name tokens.
+
+    Books disagree on punctuation ("Captain's Elect" vs "Captains
+    Elect"); overlap scoring must never hinge on an apostrophe —
+    2026-09-23 Durbanville BIPOT was falsely LOST on exactly that.
+    """
+    return re.sub(r"[^a-z0-9\s]", "", str(value or "").lower())
+
+
 def _rf_text(page: str) -> str:
     """Normalise a Raceform page for regex parsing.
 
@@ -387,12 +397,21 @@ def _parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
     return races
 
 
-def _parse_raceform_dividend(page: str, pool_type: str) -> Optional[float]:
+def _parse_raceform_dividend(
+    page: str, pool_type: str, pool_legs: Optional[List[int]] = None
+) -> Optional[float]:
     """Tote dividend (R per R1) for one pool from a Raceform archive page.
 
     Primary: embedded JSON dividend rows (verified live Sep-2026):
-        {\"bet_type\":\"Bipot\",\"selections\":\"4,7/2,3,6/...\",\"dividend\":\"53.500\"}
-    Fallback: the rendered table row (\"Bipot 4,7/2,3,6/... R53.50\").
+        {"id":..,"RacesID":137185,"bet_type":"Bipot","selections":"4,7/2,3,6/...","dividend":"53.500"}
+    A page carries one row per pool PER LEG-RANGE (e.g. two Jackpots when
+    both R4-7 and R5-8 are offered) — first-match used to return the wrong
+    pool's dividend (2026-09-23: R4-7's R496.50 paid out on the R5-8
+    ticket instead of R2,257.40). When ``pool_legs`` is given, a row is
+    accepted only if its leg range (end race from the RacesID→raceno map,
+    length from the selections slashes) covers exactly those legs;
+    otherwise None (callers keep the ticket PENDING, never guess).
+    Fallback: the rendered table row ("Bipot 4,7/2,3,6/... R53.50").
     Returns None when the pool's dividend isn't published — callers must
     keep the ticket PENDING (never fabricate a payout).
     """
@@ -400,15 +419,47 @@ def _parse_raceform_dividend(page: str, pool_type: str) -> Optional[float]:
     if not page or not want:
         return None
     text = _rf_text(page)
-    for m in re.finditer(
+    legs_wanted = {int(x) for x in pool_legs} if pool_legs else None
+    rid_to_race: Dict[str, int] = {}
+    if legs_wanted:
+        # "results":{"137185":[[[{"raceno":6,... — RacesID end-race map.
+        for m in re.finditer(
+            r'"(\d{5,})"\s*:\s*\[\[\[\{\s*"raceno"\s*:\s*(\d+)', text
+        ):
+            rid_to_race.setdefault(m.group(1), int(m.group(2)))
+    first: Optional[float] = None
+    row_pat = (
+        r'(?:\"RacesID\"\s*:\s*(\d+)\s*,\s*)?'
         r'"bet_type"\s*:\s*"([A-Za-z0-9 ]+)"\s*,\s*'
         r'"selections"\s*:\s*"[^"]*"\s*,\s*'
-        r'"dividend"\s*:\s*"([\d.,]+)"',
-        text,
-    ):
-        if _pool_key(m.group(1)) == want:
-            return _rf_float(m.group(2))
-    # Rendered-row fallback: \"Bipot 4,7/2,3,6/1,4,7 R53.50\" in tag-stripped text.
+        r'"dividend"\s*:\s*"([\d.,]+)"'
+    )
+    for m in re.finditer(row_pat, text):
+        if _pool_key(m.group(2)) != want:
+            continue
+        val = _rf_float(m.group(3))
+        if val is None:
+            continue
+        if legs_wanted is None:
+            return val  # legacy: single-pool pages, first match
+        if first is None:
+            first = val
+        rid = m.group(1) or ""
+        end = rid_to_race.get(rid)
+        if end is None:
+            continue  # unattributable row — never guess the leg range
+        sel = re.search(
+            r'"selections"\s*:\s*"([^"]*)"',
+            m.group(0),
+        )
+        nlegs = (sel.group(1).count("/") + 1) if sel else 0
+        if nlegs and set(range(end - nlegs + 1, end + 1)) == legs_wanted:
+            return val
+    if legs_wanted is not None:
+        return None
+    if first is not None:
+        return first
+    # Rendered-row fallback: "Bipot 4,7/2,3,6/1,4,7 R53.50" in tag-stripped text.
     stripped = re.sub(r"<[^>]+>", " ", text)
     for m in re.finditer(
         r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot)\s+[\d/,]+\s+R\s*([\d.,]+)",
@@ -644,18 +695,21 @@ class ResultTracker:
         return races
 
     async def _raceform_dividend(
-        self, track: str, iso_date: str, pool_type: str
+        self, track: str, iso_date: str, pool_type: str,
+        pool_legs: Optional[List[int]] = None,
     ) -> Optional[float]:
         """Tote dividend (R per R1) for one pool from the Raceform archive.
 
         Refuses pages whose served racedate isn't the requested day (the
         archive silently falls back to the nearest meeting) — a dividend
-        from another day must never settle this ticket.
+        from another day must never settle this ticket. ``pool_legs``
+        restricts the dividend to the row covering exactly the ticket's
+        legs (a page holds one row per offered leg-range).
         """
         page = await self._raceform_page(track, iso_date)
         if not page or _raceform_page_date(page) != iso_date:
             return None
-        return _parse_raceform_dividend(page, pool_type)
+        return _parse_raceform_dividend(page, pool_type, pool_legs)
 
     def _monitor_cached_results(self, track: str, iso_date: str) -> List[Dict]:
         """Results the odds-monitor already scraped — the exact data the HUD
@@ -778,8 +832,8 @@ class ResultTracker:
         return None
 
     def _fuzzy_match(self, name_a: str, name_b: str) -> float:
-        a = set(name_a.lower().split())
-        b = set(name_b.lower().split())
+        a = set(_norm_name(name_a).split())
+        b = set(_norm_name(name_b).split())
         if not a or not b:
             return 0.0
         intersection = len(a & b)
@@ -1147,7 +1201,8 @@ class ResultTracker:
                     _bd = date.today().isoformat()
                 try:
                     div = await self._raceform_dividend(
-                        getattr(bet, "track", ""), _bd, ticket["pool_type"]
+                        getattr(bet, "track", ""), _bd, ticket["pool_type"],
+                        ticket["pool_legs"],
                     )
                 except Exception as rf_err:
                     logger.debug(f"Raceform dividend lookup failed: {rf_err}")

@@ -387,7 +387,7 @@ def test_won_settles_with_raceform_dividend(stub_modules, past_off, gov):
                       new=AsyncMock(return_value=53.5)) as rf:
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is not None and rec["won"] is True
-    rf.assert_awaited_once_with("turffontein", bet.date, "BIPOT")
+    rf.assert_awaited_once_with("turffontein", bet.date, "BIPOT", [4, 5])
     args = gov.settle_exotic_bet.call_args[0]
     assert args[0] == bet.bet_id
     assert args[1] == pytest.approx(round(53.5 * 4.8, 2))
@@ -537,3 +537,68 @@ def test_raceform_dividend_rejects_wrong_day_page(stub_modules):
             tracker._raceform_dividend("vaal", "2026-09-22", "BIPOT"))
     assert wrong_day is None  # no fabricated payout from another day's page
     assert right_day == 53.5
+
+
+# --- Apostrophe-proof matching (2026-09-23 Durbanville BIPOT live bug) -----
+def test_fuzzy_match_ignores_punctuation():
+    tracker = ResultTracker.__new__(ResultTracker)
+    # The book spells it "Captains Elect"; the ticket "Captain's Elect".
+    assert tracker._fuzzy_match("Captain's Elect", "Captains Elect") == 1.0
+    assert tracker._fuzzy_match("Hey Jack Your Late", "Hey Jack Youre Late") >= 0.55
+    # Distinct horses still miss.
+    assert tracker._fuzzy_match("One Dawn", "Cold Summer") < 0.55
+    assert tracker._fuzzy_match("", "Something") == 0.0
+
+
+def test_apostrophe_winner_passes_bipot_leg(stub_modules, past_off, gov):
+    """Regression: source lists the winner WITHOUT the apostrophe while the
+    ticket has it — the leg must pass, not die as a false dead leg."""
+    races = [{"title": "1 13:07 Durbanville Maiden", "runners": [
+        {"name": "Captains Elect", "position": "1st"},
+        {"name": "One Dawn", "position": "3rd"},
+        {"name": "Cold Summer", "position": "12th"},
+    ]}]
+
+    class FakeATR3:
+        async def get_results_for_track(self, track, date="yesterday"):
+            return races
+
+    atr_stub = MagicMock(name="attheraces_api_stub3")
+    atr_stub.AtTheRacesAPI = FakeATR3
+    bet = _bet(horse="BIPOT:1", race_number=1, stake=7.2,
+               notes=_ticket_notes("BIPOT", [
+                   (1, "Captain's Elect", ["One Dawn", "Cold Summer"])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}):
+        with patch.object(ResultTracker, "_scrape_sa_results_direct",
+                          new=AsyncMock(return_value="")), \
+             patch.object(ResultTracker, "_raceform_dividend",
+                          new=AsyncMock(return_value=17.40)):
+            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is not None and rec["won"] is True
+    args = gov.settle_exotic_bet.call_args[0]
+    assert args[1] == pytest.approx(17.40 * 7.2)
+
+
+# --- Leg-set-matched pool dividends (2026-09-23 Jackpot live bug) ----------
+RF_DIV_MULTI = """
+"results":[{"137190":[[[{"raceno":7,"finish":1,"horsename":"Yamazaki"}]]]},
+ {"137191":[[[{"raceno":8,"finish":1,"horsename":"Scottish Links"}]]]},
+ {"137189":[[[{"raceno":6,"finish":1,"horsename":"Boozy Susie"}]]]}]
+{"id":8071,"RacesID":137190,"bet_type":"Jackpot","selections":"4,6,9/5/4/1","dividend":"496.500"}
+{"id":8072,"RacesID":137191,"bet_type":"Jackpot","selections":"5/4/1/1","dividend":"2257.400"}
+{"id":8073,"RacesID":137189,"bet_type":"Bipot","selections":"1,8/4,5/4,9,11/4,6,7,9/5,7/3,4","dividend":"17.400"}
+"""
+
+
+def test_parse_raceform_dividend_matches_ticket_legs():
+    # Each row pays only the ticket whose legs it exactly covers.
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [5, 6, 7, 8]) == 2257.4
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [4, 5, 6, 7]) == 496.5
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "BIPOT", [1, 2, 3, 4, 5, 6]) == 17.4
+    # No row covers these legs — never substitute another pool's dividend.
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [6, 7, 8, 9]) is None
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "PICK 6", [3, 4, 5, 6, 7, 8]) is None
+    # Legacy callers without legs keep first-match behaviour.
+    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT") == 496.5
+    assert _parse_raceform_dividend(RF_DIV, "BIPOT") == 53.5
