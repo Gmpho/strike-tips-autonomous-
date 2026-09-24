@@ -16,6 +16,8 @@ class HUDStore {
       totalExposure: 0
     },
     betHistory: [],
+    betHistoryTotal: 0,
+    betHistoryFull: false,
     betStats: {
       totalBets: 0,
       wins: 0,

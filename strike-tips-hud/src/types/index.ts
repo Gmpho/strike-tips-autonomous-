@@ -178,6 +178,10 @@ export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
   betHistory: BetRecord[];
+  /** Full ledger size; betHistory may hold a paint-fast window (?limit). */
+  betHistoryTotal: number;
+  /** User expanded past the window — polls must keep fetching full. */
+  betHistoryFull: boolean;
   betStats: BetStats | null;
   logs: string[];
   alerts: any[];

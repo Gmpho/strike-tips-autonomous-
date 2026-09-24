@@ -3,7 +3,7 @@ Strike Tips - Betting Routes
 Endpoints for placing, settling, and managing bets.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -137,15 +137,24 @@ async def void_bet(request: BetVoidRequest):
 
 
 @router.get("/history")
-async def get_bets():
-    """Get all bets - reads from bet_history.json"""
+async def get_bets(limit: Optional[int] = Query(default=None, ge=1)):
+    """Get all bets - reads from bet_history.json.
+
+    ``?limit=N`` returns the N most recent bets (by file order, newest
+    last) with the full ``count`` — paint fast, fetch full on demand
+    (Sep-2026: the 455 KB / 1.4k-row payload blocked bankroll LCP).
+    Omitted limit keeps the legacy full payload.
+    """
     bets_data = _load_json("bet_history.json")
     if not bets_data:
         return {"bets": [], "count": 0}
 
+    total = len(bets_data) if isinstance(bets_data, list) else 0
+    window = bets_data[-limit:] if isinstance(bets_data, list) and limit else bets_data
+
     # Convert to BetRecord format with camelCase
     bets = []
-    for b in bets_data if isinstance(bets_data, list) else []:
+    for b in window if isinstance(window, list) else []:
         settled = b.get("status") in ["WON", "LOST"]
         won = b.get("status") == "WON" if settled else None
         bets.append(
@@ -166,7 +175,7 @@ async def get_bets():
                 notes=b.get("notes", ""),
             ).model_dump(by_alias=True, exclude_none=True)
         )
-    return {"bets": bets, "count": len(bets)}
+    return {"bets": bets, "count": total}
 
 
 @router.get("/open")
