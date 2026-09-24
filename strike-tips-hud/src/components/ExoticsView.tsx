@@ -281,7 +281,7 @@ export const ExoticsView: React.FC = () => {
                                 <div className="flex items-center gap-3">
                                 <div className="text-[10px] font-black text-purple-400 w-12 shrink-0">LEG {idx + 1}</div>
                                 <div className="text-[9px] text-slate-500 uppercase shrink-0 font-bold">
-                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ''}
+                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ' · —'}
                                 </div>
                                 <div className="flex flex-wrap gap-1.5 flex-1 items-center">
                                   {/* Banker */}

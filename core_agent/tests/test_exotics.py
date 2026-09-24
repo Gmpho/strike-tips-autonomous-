@@ -5,6 +5,7 @@ from core_agent.skills.exotics import (
     get_jockey_trainer_multiplier,
     compute_win_probability,
     build_exotics_blueprint,
+    convention_pool_starts,
 )
 from core_agent.tools.maf_tool_registry import analyze_full_race_card
 
@@ -95,6 +96,26 @@ def test_pool_detection_exceeds_races():
     # 5 races, JP2 starts at race 6 (doesn't exist) — should be omitted
     _, starts = build_exotics_blueprint(races)
     assert "JP2" not in starts
+
+
+def test_convention_pool_starts_per_card_size():
+    """Single TAB-standard table (Sep-2026: 8-race Greyville carded Bipot
+    R2-7; TAB runs R1-6 on 8-race cards)."""
+    assert convention_pool_starts(8) == {"BI1": 1, "PA": 2, "P6": 3, "JP1": 4, "JP2": 5}
+    assert convention_pool_starts(9)["BI1"] == 2
+    assert convention_pool_starts(9)["JP2"] == 6
+    assert convention_pool_starts(10) == {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
+    assert convention_pool_starts(6) == {"BI1": 1, "P6": 1, "JP1": 3}
+    assert convention_pool_starts(5) == {"JP1": 1}
+
+
+def test_blueprint_fallback_uses_convention_starts():
+    """8 tag-less races fall back to Bipot R1 (not R2)."""
+    races = [{"number": i, "runners": [{"number": 1, "name": f"H{i}", "weight": 58, "jockey": "", "trainer": "", "form": "111", "prob": 0.3}], "pools": [], "header": f"Race {i}"} for i in range(1, 9)]
+    _, starts = build_exotics_blueprint(races)
+    assert starts["BI1"] == 1
+    assert starts["PA"] == 2
+    assert starts["JP2"] == 5
 
 
 @pytest.mark.asyncio
