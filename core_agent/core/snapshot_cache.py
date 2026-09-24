@@ -161,6 +161,15 @@ def _get_data_volume() -> Optional[Any]:
         return _volume_obj
     if time.time() < _volume_retry_at:
         return None
+    if not os.environ.get("MODAL_TASK_ID") and not os.environ.get("MODAL_TOKEN_ID"):
+        # Plain docker/local: bind mounts already share writes, so a Modal
+        # reload is pointless — and Volume.from_name() constructs lazily,
+        # meaning the AuthError only surfaces on reload(), spamming every
+        # refresh cycle (Sep-2026: docker logs full of AuthError noise while
+        # the disk fallback carried every read anyway).
+        logger.debug("Not on Modal — skipping volume reload (bind mount is live)")
+        _volume_retry_at = time.time() + _VOLUME_RETRY_SECS
+        return None
     try:
         import modal
 

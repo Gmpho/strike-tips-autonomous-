@@ -338,6 +338,7 @@ async def test_disk_refresh_loop_reloads_modal_volume(tmp_path, monkeypatch):
     monkeypatch.setattr(snapshot_cache, "_volume_lock", None)
     monkeypatch.setattr(snapshot_cache, "_volume_last_reload", 0.0)
     monkeypatch.setitem(sys.modules, "modal", fake_modal)
+    monkeypatch.setenv("MODAL_TASK_ID", "test-task")  # simulate Modal runtime
 
     snap = tmp_path / "market_snapshot_latest.json"
     _write_snapshot_file(snap)
@@ -382,6 +383,7 @@ async def test_volume_reload_prefers_async_form(tmp_path, monkeypatch):
     ):
         monkeypatch.setattr(snapshot_cache, attr, val)
     monkeypatch.setitem(sys.modules, "modal", fake_modal)
+    monkeypatch.setenv("MODAL_TASK_ID", "test-task")  # simulate Modal runtime
 
     snap = tmp_path / "market_snapshot_latest.json"
     _write_snapshot_file(snap)
