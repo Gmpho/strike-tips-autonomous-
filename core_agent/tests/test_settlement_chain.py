@@ -465,7 +465,8 @@ def test_scheduler_import_does_not_swap_stdout():
     assert sys.stdout is before
 
 
-def test_scheduler_has_both_report_jobs():    apscheduler = pytest.importorskip("apscheduler")
+def test_scheduler_has_both_report_jobs():
+    apscheduler = pytest.importorskip("apscheduler")
     from core_agent.core.scheduler import StrikeTipsScheduler
 
     sched = StrikeTipsScheduler()
