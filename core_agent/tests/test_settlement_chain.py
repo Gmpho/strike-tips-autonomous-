@@ -451,8 +451,21 @@ def test_daily_report_for_explicit_date_and_aged_section(tmp_path):
     assert "Beta Two" in report_old  # its open line + aged section
 
 
-def test_scheduler_has_both_report_jobs():
-    apscheduler = pytest.importorskip("apscheduler")
+def test_scheduler_import_does_not_swap_stdout():
+    """Regression (Sep-2026): importing the scheduler swapped sys.stdout
+    for an emoji wrapper, pinning pytest's capture buffer — one scheduler
+    test then failed and every later test errored on the closed file.
+    The filter may only install at process entry (main())."""
+    import importlib
+
+    import core_agent.core.scheduler as sched_mod
+
+    before = sys.stdout
+    importlib.reload(sched_mod)
+    assert sys.stdout is before
+
+
+def test_scheduler_has_both_report_jobs():    apscheduler = pytest.importorskip("apscheduler")
     from core_agent.core.scheduler import StrikeTipsScheduler
 
     sched = StrikeTipsScheduler()
