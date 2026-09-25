@@ -619,9 +619,9 @@ def test_apostrophe_winner_passes_bipot_leg(stub_modules, past_off, gov):
 
 # --- Leg-set-matched pool dividends (2026-09-23 Jackpot live bug) ----------
 RF_DIV_MULTI = """
-"results":[{"137190":[[[{"raceno":7,"finish":1,"horsename":"Yamazaki"}]]]},
- {"137191":[[[{"raceno":8,"finish":1,"horsename":"Scottish Links"}]]]},
- {"137189":[[[{"raceno":6,"finish":1,"horsename":"Boozy Susie"}]]]}]
+"results":[{"137190":[{"results":[[[{"raceno":7,"finish":1,"horsename":"Yamazaki"}]]]},
+ {"137191":[{"results":[[[{"raceno":8,"finish":1,"horsename":"Scottish Links"}]]]},
+ {"137189":[{"results":[[[{"raceno":6,"finish":1,"horsename":"Boozy Susie"}]]]}]
 {"id":8071,"RacesID":137190,"bet_type":"Jackpot","selections":"4,6,9/5/4/1","dividend":"496.500"}
 {"id":8072,"RacesID":137191,"bet_type":"Jackpot","selections":"5/4/1/1","dividend":"2257.400"}
 {"id":8073,"RacesID":137189,"bet_type":"Bipot","selections":"1,8/4,5/4,9,11/4,6,7,9/5,7/3,4","dividend":"17.400"}

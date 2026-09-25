@@ -422,11 +422,17 @@ def _parse_raceform_dividend(
     legs_wanted = {int(x) for x in pool_legs} if pool_legs else None
     rid_to_race: Dict[str, int] = {}
     if legs_wanted:
-        # "results":{"137185":[[[{"raceno":6,... — RacesID end-race map.
-        for m in re.finditer(
-            r'"(\d{5,})"\s*:\s*\[\[\[\{\s*"raceno"\s*:\s*(\d+)', text
-        ):
-            rid_to_race.setdefault(m.group(1), int(m.group(2)))
+        # Per-race results blocks look like
+        # "results":[{"137185":[{"results":[[[{"raceno":6,... — map each
+        # block's RacesID to the first raceno inside it (blocks are
+        # per-race; bracket depth varies by page).
+        block_pat = re.compile(r'"(\d{5,})"\s*:\s*\[\{"results"')
+        blocks = list(block_pat.finditer(text))
+        for _bi, _bm in enumerate(blocks):
+            _end = blocks[_bi + 1].start() if _bi + 1 < len(blocks) else len(text)
+            _rm = re.search(r'"raceno"\s*:\s*(\d+)', text[_bm.end():_end])
+            if _rm:
+                rid_to_race.setdefault(_bm.group(1), int(_rm.group(1)))
     first: Optional[float] = None
     row_pat = (
         r'(?:\"RacesID\"\s*:\s*(\d+)\s*,\s*)?'
