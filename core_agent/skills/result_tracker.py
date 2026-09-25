@@ -753,18 +753,22 @@ class ResultTracker:
     ) -> List[Dict]:
         """Results for the bet's OWN race day — never another day's card.
 
-        Sources (least-blockable first for fresh days):
+        Sources are MERGED per race (union of runners by name), not
+        first-non-empty-wins: the monitor cache / ATR lists only placed
+        horses and truncates 3rd+ (Sep-2026: Greyville PA sat PENDING with
+        R6/R7 "unknown" because Scandalize 3rd and What A Classic 3rd were
+        cut, while the full-field Raceform page was never consulted).
         1. Monitor cache — the Fastly-solved ATR data the HUD already shows;
            read while the bet is today/yesterday (ATR label semantics hold)
            and the snapshot is fresh.
-        2. ATR live — only when ``atr_date_label`` maps to the bet's calendar
-           day (delta <= 1); ISO dates 404 there (postmortem 2026-09-04), so
-           older days never hit ATR at all.
-        3. Raceform archive — date-addressable plain-HTTP source covering
-           ~2 weeks back. This is what unblocks historical exotics: every
-           older date used to collapse to \"yesterday\", so a Sep-16 ticket
-           was scored (or, behind the 1-day gate, never scored at all)
-           against the wrong day's races.
+        2. Raceform archive — date-addressable plain-HTTP source covering
+           ~2 weeks back with full fields. This is what unblocks historical
+           exotics: every older date used to collapse to "yesterday", so a
+           Sep-16 ticket was scored (or, behind the 1-day gate, never scored
+           at all) against the wrong day's races.
+        3. ATR live — only when ``atr_date_label`` maps to the bet's calendar
+           day (delta <= 1) AND the merged view is still empty; ISO dates
+           404 there (postmortem 2026-09-04), so older days never hit ATR.
 
         Empty list = no evidence; the caller must leave the ticket PENDING.
         """
@@ -775,20 +779,49 @@ class ResultTracker:
                 iso, delta = date.today().isoformat(), 0
         except (ValueError, TypeError):
             iso, delta = date.today().isoformat(), 0
+        merged: Dict[int, Dict[str, Dict]] = {}
+        titles: Dict[int, str] = {}
+
+        def _fold(races: Optional[List[Dict]]) -> None:
+            for race in races or []:
+                m = re.search(r"(\d+)\s+\d{2}:\d{2}", str(race.get("title", "")))
+                if not m:
+                    continue
+                rn = int(m.group(1))
+                titles.setdefault(rn, str(race.get("title", "")))
+                slot = merged.setdefault(rn, {})
+                for r in race.get("runners") or []:
+                    key = _norm_name(str(r.get("name", "")))
+                    if not key:
+                        continue
+                    pos = str(r.get("position", "") or "").strip()
+                    prev = slot.get(key)
+                    if prev is None or (not prev.get("position") and pos):
+                        slot[key] = {
+                            "name": str(r.get("name", "")),
+                            "position": pos,
+                        }
+
         if delta <= 1:
-            cached = self._monitor_cached_results(track, iso)
-            if cached:
-                return cached
+            _fold(self._monitor_cached_results(track, iso))
+        _fold(await self._raceform_results(track, iso))
+        if not merged and delta <= 1:
             try:
                 from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
-                races = await AtTheRacesAPI().get_results_for_track(
+                _fold(await AtTheRacesAPI().get_results_for_track(
                     track, date=atr_date_label(iso)
-                )
-                if races:
-                    return races
+                ))
             except Exception as e:
                 logger.debug(f"Exotic ATR lookup failed for {track} {iso}: {e}")
-        return await self._raceform_results(track, iso)
+        return [
+            {
+                "course": track,
+                "date": iso,
+                "title": titles[rn],
+                "runners": list(merged[rn].values()),
+            }
+            for rn in sorted(merged)
+        ]
 
     async def _atr_placing(self, track: str, race_number: int, horse: str,
                            bet_date: Optional[str] = None) -> Optional[str]:
@@ -838,6 +871,42 @@ class ResultTracker:
             return 0.0
         intersection = len(a & b)
         return intersection / max(len(a), len(b))
+
+    async def _structured_placing(
+        self, track: str, race_number: int, horse: str,
+        bet_date: Optional[str] = None,
+    ) -> Optional[tuple]:
+        """Official (position, winner) for one single from merged day results.
+
+        Same day-scoped sources the exotic scorer uses (monitor cache +
+        Raceform archive, ATR live backstop) — structured proof beats the
+        DDGS text search below it. (Sep-2026: nine Greyville singles sat
+        PENDING 29h+ because ATR structured was throttle-starved and DDGS
+        text confirmed nothing, while the results sat in the snapshot.)
+        Returns (position, winner_name) with position like "1st", or None
+        when the horse isn't found — never fabricate.
+        """
+        if not horse or ":" in str(horse):
+            return None
+        try:
+            races = await self._exotic_leg_races(track, bet_date)
+            runners = _race_runners_by_number(races, int(race_number or 0))
+            if not runners:
+                return None
+            winner = next(
+                (str(r.get("name", "")) for r in runners
+                 if str(r.get("position", "")).strip() == "1st"),
+                "",
+            )
+            for r in runners:
+                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
+                    pos = str(r.get("position", "")).strip() or None
+                    if pos:
+                        return (pos, winner)
+                    return None
+        except Exception as e:
+            logger.debug(f"Structured placing lookup failed for {horse}: {e}")
+        return None
 
     async def _search_result(self, track: str, race_number: int, bet_date: Optional[str] = None) -> Optional[str]:
         """Search for race result text — tries ATR first, then DDGS + direct SA sites."""
@@ -1442,36 +1511,67 @@ class ResultTracker:
                     except Exception as void_err:
                         logger.debug(f"NR void failed for {bet.bet_id}: {void_err}")
                     continue
-            result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
-            if not result_text:
-                continue
-
-            # 1. Direct check if our horse is declared winner
-            winner, confidence = self._extract_winner(result_text, [bet.horse])
+            # 0. Structured proof first: merged day results (monitor cache +
+            # Raceform archive, ATR backstop). On a hit the DDGS text search
+            # below is skipped entirely — it confirmed nothing for a day+ on
+            # Greyville while the results sat in the snapshot (and once
+            # fabricated a WON from a preview snippet).
             settle_needed = False
             won = False
             notes = ""
-
-            if winner and confidence >= 0.55:
-                won = True
-                settle_needed = True
-                notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
-                _log_settled_winner(bet, winner)
-            else:
-                # 2. Check if a DIFFERENT winner was confirmed for this race
-                confirmed_winner = self._extract_race_winner(result_text)
-                if confirmed_winner:
-                    match_score = self._fuzzy_match(confirmed_winner, bet.horse)
-                    if match_score >= 0.55:
-                        won = True
-                        settle_needed = True
-                        notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
-                        _log_settled_winner(bet, confirmed_winner)
+            try:
+                _structured = await self._structured_placing(
+                    bet.track, bet.race_number, bet.horse, getattr(bet, "date", None)
+                )
+            except Exception as struct_err:
+                logger.debug(f"Structured placing skipped for {bet.bet_id}: {struct_err}")
+                _structured = None
+            if _structured:
+                _placed, _winner = _structured
+                if _placed == "1st":
+                    won = True
+                    notes = "Auto-settled (WINNER confirmed, structured)"
+                    _log_settled_winner(bet, bet.horse)
+                else:
+                    won = False
+                    if _winner:
+                        notes = f"Auto-settled (LOST - 1st was {_winner})"
                     else:
-                        won = False
-                        settle_needed = True
-                        notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
-                        _log_settled_winner(bet, confirmed_winner)
+                        notes = f"Auto-settled (LOST - unplaced {_placed}, structured)"
+                    _log_settled_winner(bet, _winner or bet.horse)
+                settle_needed = True
+            else:
+                result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
+                if not result_text:
+                    continue
+
+            # 1. Text fallback — skipped when structured proof already spoke.
+            if not settle_needed:
+                winner, confidence = self._extract_winner(result_text, [bet.horse])
+                settle_needed = False
+                won = False
+                notes = ""
+
+                if winner and confidence >= 0.55:
+                    won = True
+                    settle_needed = True
+                    notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
+                    _log_settled_winner(bet, winner)
+                else:
+                    # 2. Check if a DIFFERENT winner was confirmed for this race
+                    confirmed_winner = self._extract_race_winner(result_text)
+                    if confirmed_winner:
+                        match_score = self._fuzzy_match(confirmed_winner, bet.horse)
+                        if match_score >= 0.55:
+                            won = True
+                            settle_needed = True
+                            notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
+                            _log_settled_winner(bet, confirmed_winner)
+                        else:
+                            won = False
+                            settle_needed = True
+                            notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
+                            _log_settled_winner(bet, confirmed_winner)
 
             if settle_needed:
                 settled_ok = False

@@ -432,13 +432,50 @@ def test_monitor_cache_serves_fresh_exotic_without_atr(stub_modules, past_off, g
     tracker = ResultTracker(bankroll_governor=gov)
     with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}), \
          patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(side_effect=AssertionError(
-                          "Raceform must not be reached when the cache has the day"))):
+                      new=AsyncMock(return_value=[])):
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    # Cache first: ATR never dialed, Raceform never dialed.
+    # Merged sources: ATR live never dialed (cache + Raceform suffice);
+    # the dead legs still resolve LOST from the cache rows.
     assert atr_calls == []
     assert rec is not None and rec["won"] is False
     gov.settle_exotic_bet.assert_called_once()
+
+
+# --- Merged day sources (Sep-2026 Greyville PA stall) -----------------------
+def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
+    """The monitor cache lists placed horses only (R6 1st/2nd); the full
+    field (Scandalize 3rd) must still arrive via the Raceform fold —
+    first-non-empty-wins left the PA leg 'unknown' forever."""
+    cache_races = [{
+        "course": "Greyville", "date": "today",
+        "title": "6 15:05 Lucky Fish Monopoly",
+        "runners": [
+            {"name": "Your Ladyship", "position": "1st"},
+            {"name": "Poursomesugaronme", "position": "2nd"},
+        ],
+    }]
+    rf_races = [{
+        "course": "Greyville", "date": date.today().isoformat(),
+        "title": "6 15:05 Lucky Fish Monopoly",
+        "runners": [
+            {"name": "Your Ladyship", "position": "1st"},
+            {"name": "Poursomesugaronme", "position": "2nd"},
+            {"name": "Scandalize", "position": "3rd"},
+        ],
+    }]
+    tracker = ResultTracker(bankroll_governor=MagicMock())
+    with patch.object(ResultTracker, "_monitor_cached_results",
+                      return_value=cache_races), \
+         patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=rf_races)):
+        races = asyncio.run(tracker._exotic_leg_races(
+            "greyville", date.today().isoformat()))
+    r6 = _race_runners_by_number(races, 6)
+    assert r6 is not None
+    pos = {r["name"]: r["position"] for r in r6}
+    assert pos == {"Your Ladyship": "1st",
+                   "Poursomesugaronme": "2nd",
+                   "Scandalize": "3rd"}
 
 
 # --- Raceform parsers (shape verified against live Sep-2026 pages) ------------

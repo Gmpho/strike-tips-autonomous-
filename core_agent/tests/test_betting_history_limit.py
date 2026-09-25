@@ -2,6 +2,10 @@
 import asyncio
 import json
 
+import pytest
+
+pytest.importorskip("fastapi")
+
 
 def _bets(n):
     return [
