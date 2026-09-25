@@ -59,7 +59,7 @@ const FILTERS: { key: ExecFilter; label: string }[] = [
 const PAGE = 30;
 
 export const BankrollView: React.FC = () => {
-  const { bankroll, betStats, betHistory, betHistoryTotal, betHistoryFull, systemHealth } = useHUD();
+  const { bankroll, betStats, betHistory, betHistoryTotal, betHistoryFull, betHistoryReady, systemHealth } = useHUD();
   const [loadingFull, setLoadingFull] = React.useState(false);
 
   // "Show more" past the paint-fast window pulls the full ledger once,
@@ -248,9 +248,32 @@ export const BankrollView: React.FC = () => {
 
         <div className="divide-y divide-theme overflow-y-auto max-h-[460px] min-h-[100px]">
           {visible.length === 0 ? (
-            <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
-              {sortedExecs.length === 0 ? 'Awaiting Market Entry...' : `No ${FILTERS.find((f) => f.key === execFilter)?.label.toLowerCase()} executions.`}
-            </div>
+            !betHistoryReady ? (
+              // Skeleton rows: same row skeleton as real entries (px-6
+              // py-3.5, two-line body) so rows arriving causes zero layout
+              // shift (CLS, Sep-2026).
+              <div aria-hidden="true">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="px-6 py-3.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-2 h-2 rounded-full bg-white/10 animate-pulse shrink-0" />
+                      <div className="min-w-0">
+                        <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
+                        <div className="h-3 w-24 rounded bg-white/5 animate-pulse mt-1.5" />
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <div className="h-4 w-14 rounded bg-white/10 animate-pulse ml-auto" />
+                      <div className="h-3 w-10 rounded bg-white/5 animate-pulse mt-1.5 ml-auto" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
+                {sortedExecs.length === 0 ? 'Awaiting Market Entry...' : `No ${FILTERS.find((f) => f.key === execFilter)?.label.toLowerCase()} executions.`}
+              </div>
+            )
           ) : (
             grouped.map((group) => (
               <div key={group.day}>

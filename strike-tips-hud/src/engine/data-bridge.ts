@@ -395,6 +395,8 @@ export class DataBridge {
       hudStore.updateState({
         betHistory: history.bets || [],
         betHistoryTotal: history.count ?? (history.bets || []).length,
+        // Ledger skeletons retire only on a resolved fetch (CLS, Sep-2026).
+        ...(historyRes && historyRes.ok ? { betHistoryReady: true } : {}),
         betStats: stats,
         logs: logs.logs || [],
         learning: {

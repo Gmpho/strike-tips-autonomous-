@@ -18,6 +18,7 @@ class HUDStore {
     betHistory: [],
     betHistoryTotal: 0,
     betHistoryFull: false,
+    betHistoryReady: false,
     betStats: {
       totalBets: 0,
       wins: 0,

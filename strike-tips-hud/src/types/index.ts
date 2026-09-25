@@ -182,6 +182,8 @@ export interface HUDState {
   betHistoryTotal: number;
   /** User expanded past the window — polls must keep fetching full. */
   betHistoryFull: boolean;
+  /** A history fetch has resolved at least once (vs still loading). */
+  betHistoryReady: boolean;
   betStats: BetStats | null;
   logs: string[];
   alerts: any[];
