@@ -197,11 +197,11 @@ export const BankrollView: React.FC = () => {
           <div className="mt-4 flex gap-6">
             <div>
               <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Daily Limit</div>
-              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.dailyLimit.toFixed(2) || '0.00'}</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {(bankroll?.dailyLimit ?? 0).toFixed(2)}</div>
             </div>
             <div>
               <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Max Stake</div>
-              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.maxStake.toFixed(2) || '0.00'}</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {(bankroll?.maxStake ?? 0).toFixed(2)}</div>
             </div>
           </div>
         </div>
@@ -308,7 +308,7 @@ export const BankrollView: React.FC = () => {
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <div className="text-sm font-black text-theme-primary tabular">R {bet.stake.toFixed(2)}</div>
+                        <div className="text-sm font-black text-theme-primary tabular">R {(bet.stake ?? 0).toFixed(2)}</div>
                         <div className="text-[10px] font-black tabular">
                           {pnl !== null ? (
                             <span className={pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>

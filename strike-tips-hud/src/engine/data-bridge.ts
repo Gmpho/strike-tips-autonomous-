@@ -233,11 +233,14 @@ export class DataBridge {
   private mapBankroll(bankroll: any, openBets: any) {
     if (!bankroll) return null;
     return {
-      balance: bankroll.balance,
-      dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,
-      dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
-      maxStake: bankroll.maxStake || bankroll.max_stake,
-      totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets?.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0,
+      balance: bankroll.balance ?? null,
+      // Numeric guards: a partial/error payload must never hand the views
+      // undefined (Sep-2026: bankroll?.dailyLimit.toFixed crashed the
+      // bankroll page into a blank screen on a slow poll).
+      dailyLimit: bankroll.dailyLimit ?? bankroll.daily_limit ?? 0,
+      dailyLoss: bankroll.dailyLoss ?? bankroll.daily_loss ?? 0,
+      maxStake: bankroll.maxStake ?? bankroll.max_stake ?? 0,
+      totalExposure: bankroll.totalExposure ?? bankroll.total_exposure ?? openBets?.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) ?? 0,
       // Preserve ledger identity on every poll — dropping these flips the
       // UI to LIVE and hides the paper/real split (Sep-2026 bug).
       paperMode: bankroll.paperMode,
