@@ -151,6 +151,16 @@ function aiServicesPlugin(): import('vite').Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd() + '/..', '');
+  // Server middleware (chat/podcast/tts/live/form services) reads
+  // process.env directly, but loadEnv() never populates it — bridge the
+  // server-side keys from the repo-root .env so `npm run dev` works
+  // without exporting vars first. Real env always wins.
+  for (const k of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'STRIKE_TIPS_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) {
+    if (!process.env[k] && env[k]) process.env[k] = env[k];
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    console.warn('[dev] GEMINI_API_KEY missing — podcast/chat/tts/live endpoints will 500. Add it to the repo-root .env.');
+  }
   const key = env.STRIKE_TIPS_API_KEY || process.env.STRIKE_TIPS_API_KEY || '';
   const apiKeyHeader = key ? { 'X-API-KEY': key } : {};
 
