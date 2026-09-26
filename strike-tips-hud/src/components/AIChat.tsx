@@ -658,7 +658,14 @@ ${compiledContext || 'No context data available.'}`;
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        // Surface the server's friendly error (e.g. MODEL_UNAVAILABLE with
+        // support link) instead of a generic connectivity message.
+        let friendly: string | null = null;
+        try {
+          const body = await res.clone().json();
+          if (body && typeof body.error === 'string' && body.error) friendly = body.error;
+        } catch {}
+        throw new Error(friendly || `HTTP ${res.status}`);
       }
 
       const reader = res.body?.getReader();
@@ -720,9 +727,10 @@ ${compiledContext || 'No context data available.'}`;
         return;
       }
       clearInterval(actInterval);
+      const friendly = err?.message && !/^HTTP \d+$/.test(err.message) ? err.message : null;
       setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === 'ai'
-          ? { ...m, content: 'Error connecting to brain.' }
+          ? { ...m, content: friendly || 'Error connecting to brain.' }
           : m
       ));
     } finally {
@@ -1179,6 +1187,12 @@ ${compiledContext || 'No context data available.'}`;
                     <option value="gemini-3.1-flash-lite" className="bg-[#0c0817]">Gemini 3.1 Flash-Lite (Lightweight Chat)</option>
                   </optgroup>
                   <optgroup label="⚡ Groq Cloud (Ultra-Fast LPUs ~400 t/s)" className="bg-[#0c0817]">
+                    <option value="groq-qwen-3.8-27b" className="bg-[#0c0817]">Groq · Qwen 3.8 27B (Elite Racecard & Tabular Summarizer)</option>
+                    <option value="groq-qwen-3.6-27b" className="bg-[#0c0817]">Groq · Qwen 3.6 27B (Rapid Steward Reports & Form Parser)</option>
+                    <option value="groq-gemma2" className="bg-[#0c0817]">Groq · Gemma 2 9B (Google Architecture ~450 t/s)</option>
+                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · Llama 3.3 70B (Versatile Racing AI)</option>
+                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · Llama 3.1 8B (Instant Speed ~100ms)</option>
+                    <option value="groq-mixtral" className="bg-[#0c0817]">Groq · Mixtral 8x7B (MoE Analysis)</option>
                     <option value="groq-oss-120b" className="bg-[#0c0817]">Groq · GPT-OSS 120B (Deep Reasoning & Tools)</option>
                     <option value="groq-oss-20b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Instant Speed)</option>
                   </optgroup>

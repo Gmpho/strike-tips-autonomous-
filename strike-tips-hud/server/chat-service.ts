@@ -308,12 +308,25 @@ async function handleGroqChat(
     return;
   }
 
-  // Live Groq IDs only (llama/qwen/mistral retired Sep-2026 -> 404s).
-  let groqModel = 'openai/gpt-oss-120b';
-  if (modelName.includes('20b') || modelName.includes('fast') ||
-      modelName.includes('8b') || modelName.includes('lite') ||
-      modelName.includes('flash-lite')) {
+  let groqModel = 'llama-3.3-70b-versatile';
+  if (modelName.includes('gpt-oss-20b') || modelName.includes('oss-20b')) {
     groqModel = 'openai/gpt-oss-20b';
+  } else if (modelName.includes('gpt-oss-120b') || modelName.includes('oss-120b')) {
+    groqModel = 'openai/gpt-oss-120b';
+  } else if (modelName.includes('qwen3.8') || modelName.includes('qwen-3.8')) {
+    groqModel = 'qwen/qwen3.8-27b';
+  } else if (modelName.includes('qwen3.6') || modelName.includes('qwen-3.6')) {
+    groqModel = 'qwen/qwen3.6-27b';
+  } else if (modelName.includes('qwen')) {
+    groqModel = 'qwen/qwen3.8-27b';
+  } else if (modelName.includes('8b')) {
+    groqModel = 'llama-3.1-8b-instant';
+  } else if (modelName.includes('70b') || modelName.includes('llama-3.3')) {
+    groqModel = 'llama-3.3-70b-versatile';
+  } else if (modelName.includes('mixtral') || modelName.includes('8x7b')) {
+    groqModel = 'mixtral-8x7b-32768';
+  } else if (modelName.includes('gemma-2-9b') || modelName.includes('gemma2') || modelName.includes('gemma')) {
+    groqModel = 'gemma2-9b-it';
   }
 
   // If an attachment is present, extract document tables/text for Groq
@@ -359,28 +372,23 @@ async function handleGroqChat(
 
   if (!groqRes.ok) {
     const errText = await groqRes.text();
-    // Fallback: If Groq model alias is not enabled on account, fallback to llama-3.3-70b-versatile
-    if (groqModel !== 'llama-3.3-70b-versatile' && (errText.includes('model_not_found') || errText.includes('does not exist'))) {
-      console.warn(`[Groq Model Fallback] Model ${groqModel} not found on Groq, retrying with llama-3.3-70b-versatile`);
-      const fallbackRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          stream: isStream,
-          temperature: body.summarizeMode ? 0.3 : 0.6,
-          max_tokens: 2048,
-        }),
-      });
-
-      if (fallbackRes.ok && isStream && fallbackRes.body) {
-        pipeStream(res, fallbackRes.body, 'llama-3.3-70b-versatile');
-        return;
-      }
+    // Friendly model-availability message: Groq retires/gates IDs
+    // aggressively (llama = Enterprise-only, qwen3.8 = preview, mixtral /
+    // gemma2 / qwen3.6 unlisted). Tell the user plainly instead of a
+    // bare 500 / "Error connecting to brain".
+    const lower = errText.toLowerCase();
+    const modelGone = groqRes.status === 404 || groqRes.status === 400 &&
+      (lower.includes('model') && (lower.includes('not found') || lower.includes('does not exist') ||
+        lower.includes('decommission') || lower.includes('deprecated') || lower.includes('invalid model')));
+    if (modelGone) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: `⚠️ ${groqModel} isn't available on your Groq plan (retired, preview-ended, or Enterprise-only). Switch to Auto Router or GPT-OSS 120B/20B — live list: https://console.groq.com/docs/models`,
+        supportUrl: 'https://console.groq.com/docs/models',
+        model: groqModel,
+        code: 'MODEL_UNAVAILABLE',
+      }));
+      return;
     }
 
     res.writeHead(groqRes.status, { 'Content-Type': 'application/json' });
