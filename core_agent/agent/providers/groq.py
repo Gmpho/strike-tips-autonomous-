@@ -16,14 +16,7 @@ logger = logging.getLogger("groq-provider")
 
 class GroqProvider:
     URL = "https://api.groq.com/openai/v1/chat/completions"
-    MODELS = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "deepseek-r1-distill-llama-70b",
-        "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-27b",
-        "gemma2-9b-it",
-    ]
+    MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GROQ_API_KEY", "")
@@ -148,7 +141,7 @@ class GroqProvider:
         from core_agent.agent.providers.task_router import TaskRouter
         raw_msg = TaskRouter._extract_user_query(messages)
         needs_tools = self._needs_tools(raw_msg, intent)
-        model = "llama-3.1-8b-instant" if not needs_tools else "llama-3.3-70b-versatile"
+        model = "openai/gpt-oss-20b" if not needs_tools else "openai/gpt-oss-120b"
 
         content, tool_calls = await self._post_and_parse(messages, needs_tools, model)
         if content:

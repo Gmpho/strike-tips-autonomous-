@@ -1282,7 +1282,7 @@ class StrikeTips:
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                         json={
-                            "model": "llama-3.3-70b-versatile",
+                            "model": "openai/gpt-oss-120b",
                             "messages": [{"role": "user", "content": card_context}],
                             "temperature": 0.2,
                             "max_tokens": 1200,

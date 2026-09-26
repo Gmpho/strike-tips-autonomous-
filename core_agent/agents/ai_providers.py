@@ -23,7 +23,7 @@ class AIResponse:
 
 class AIProvider:
     ALLOWED_MODELS = {
-        "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
         "gemini": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
     }
 

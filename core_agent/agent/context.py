@@ -64,8 +64,12 @@ class ContextBuilder:
                     lines.append(f"• {r.get('title','')} ({r.get('url','')}):\n  {r.get('snippet','')}")
                 if lines:
                     parts.append(f"[WEB SEARCH RESULTS]\n" + "\n".join(lines)[:2000])
-        except Exception:
-            logger.exception("ContextBuilder web search failed")
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            # Search timeouts are routine (slow engines, cancelled warmups) —
+            # grounding simply proceeds without web context. No traceback.
+            logger.debug("ContextBuilder web search timed out; continuing without it")
+        except Exception as e:
+            logger.warning("ContextBuilder web search failed: %r", e)
 
         try:
             from core_agent.core.snapshot_cache import get_snapshot
