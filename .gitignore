@@ -66,3 +66,7 @@ gha-creds-*.json
 # Performance traces
 *.json.gz
 *.heapsnapshot
+
+# Wrangler local state
+.wrangler/
+.dev.vars

@@ -176,7 +176,7 @@ export const BankrollView: React.FC = () => {
               doesn't shift the hero (CLS). */}
           <div className="mt-3 text-[10px] font-bold text-theme-secondary min-h-[16px]">
           {bankroll && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
-              {bankroll.paperMode ? (
+              bankroll.paperMode ? (
                 <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance ?? 0).toFixed(2)}</span>
                 {bankroll.realBalance !== undefined && (
                   <span className="opacity-70"> · Real funds: <span className="font-mono">R{(bankroll.realBalance ?? 0).toFixed(2)}</span> (untouched)</span>
@@ -186,7 +186,7 @@ export const BankrollView: React.FC = () => {
                 {bankroll.paperBalance !== undefined && (
                   <span className="opacity-70"> · Paper bank: <span className="font-mono">R{(bankroll.paperBalance ?? 0).toFixed(2)}</span> (simulation)</span>
                 )}</span>
-              )}
+              )
           )}
           </div>
           <div className="mt-4 flex gap-6">
