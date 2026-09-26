@@ -17,19 +17,22 @@ interface SwarmAgentDialogue {
 }
 
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX = 5;
+// Split budgets (Sep-2026: one shared 5/min bucket meant a single episode's
+// 8 lookahead synth calls 429'd everything, then regenerate clicks spiralled).
+const GENERATE_RATE_MAX = 5; // full episode scripts are expensive
+const SYNTH_RATE_MAX = 30; // one per dialogue line + lookahead headroom
 const MAX_SYNTH_CHARS = 1000;
 const rateStore = new Map<string, { count: number; resetAt: number }>();
 
-function hitRate(ip: string): boolean {
+function hitRate(ip: string, max: number): boolean {
   const now = Date.now();
-  const entry = rateStore.get(ip);
+  const entry = rateStore.get(ip + ':' + max);
   if (!entry || now > entry.resetAt) {
-    rateStore.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    rateStore.set(ip + ':' + max, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
   }
   entry.count++;
-  return entry.count > RATE_MAX;
+  return entry.count > max;
 }
 
 function corsHeaders(origin: string): Record<string, string> {
@@ -113,7 +116,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  if (hitRate(ip)) {
+  const isSynth = request.method === 'POST' && path.endsWith('/synthesize-line');
+  if (hitRate(ip, isSynth ? SYNTH_RATE_MAX : GENERATE_RATE_MAX)) {
     return Response.json({ error: 'Too Many Requests' }, { status: 429, headers: { ...corsHeaders(url.origin), 'Retry-After': '60' } });
   }
   if (!env.GEMINI_API_KEY) {

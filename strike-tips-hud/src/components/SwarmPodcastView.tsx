@@ -176,6 +176,7 @@ export const SwarmPodcastView: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<number, string>>(new Map());
   const inFlightFetches = useRef<Map<number, Promise<string | null>>>(new Map());
+  const limitedUntilRef = useRef<Map<number, number>>(new Map());
 
   // Collect live races from HUD state or fall back to verified presets
   const rawRaces = Object.values(state.events || {});
@@ -209,6 +210,11 @@ export const SwarmPodcastView: React.FC = () => {
     if (audioCacheRef.current.has(lineIdx)) {
       return Promise.resolve(audioCacheRef.current.get(lineIdx)!);
     }
+    // 429 cool-down: a rate-limited line isn't retried for 60s (Sep-2026:
+    // fallback timers re-fired prefetches into a 429 spiral that muted
+    // every later speaker).
+    const limitedUntil = limitedUntilRef.current.get(lineIdx) || 0;
+    if (Date.now() < limitedUntil) return Promise.resolve(null);
     if (inFlightFetches.current.has(lineIdx)) {
       return inFlightFetches.current.get(lineIdx)!;
     }
@@ -226,6 +232,7 @@ export const SwarmPodcastView: React.FC = () => {
         });
 
         if (!res.ok) {
+          if (res.status === 429) limitedUntilRef.current.set(lineIdx, Date.now() + 60000);
           throw new Error('TTS service returned non-200');
         }
 
