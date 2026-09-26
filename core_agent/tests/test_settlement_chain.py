@@ -162,6 +162,42 @@ def test_single_bet_settles_win_and_loss(stub_brain_module):
     assert gov.settle_bet.call_args[1]["won"] is False
 
 
+def test_single_settles_from_structured_without_text_search(stub_brain_module):
+    """Structured day results beat DDGS text: Captain's Jet won R4 (source
+    spells it without the apostrophe), Cali Bullet ran 2nd in R1 — both
+    settle with zero text search (Sep-2026: nine Greyville singles sat
+    PENDING 29h+ while the results sat in the snapshot)."""
+    gov = MagicMock()
+    gov.get_open_bets.return_value = [
+        _bet(horse="Captain's Jet", race_number=4, track="greyville"),
+        _bet(horse="Cali Bullet", race_number=1, track="greyville"),
+    ]
+    races = [
+        {"title": "4 13:55 Greyville", "runners": [
+            {"name": "Captains Jet", "position": "1st"},
+            {"name": "Hearts On Fire", "position": "2nd"},
+        ]},
+        {"title": "1 12:07 Greyville", "runners": [
+            {"name": "Indignation", "position": "1st"},
+            {"name": "Cali Bullet", "position": "2nd"},
+        ]},
+    ]
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_exotic_leg_races",
+                      new=AsyncMock(return_value=races)), \
+         patch.object(ResultTracker, "_search_result",
+                      new=AsyncMock(side_effect=AssertionError(
+                          "text search must not run on structured proof"))) as mock_search, \
+         patch.object(ResultTracker, "_atr_placing",
+                      new=AsyncMock(return_value=None)):
+        settled = asyncio.run(tracker.check_and_settle_open_bets())
+    mock_search.assert_not_called()
+    by_horse = {r["horse"]: r for r in settled}
+    assert by_horse["Captain's Jet"]["won"] is True
+    assert by_horse["Cali Bullet"]["won"] is False
+    assert "1st was Indignation" in by_horse["Cali Bullet"]["notes"]
+
+
 def _bet_on(date_str, **kw):
     kw["date"] = date_str
     b = _bet(**kw)
@@ -449,6 +485,21 @@ def test_daily_report_for_explicit_date_and_aged_section(tmp_path):
     assert f"DAILY REPORT FOR {old_day}" in report_old
     assert "Alpha One" not in report_old.split("Lifetime")[0]
     assert "Beta Two" in report_old  # its open line + aged section
+
+
+def test_scheduler_import_does_not_swap_stdout():
+    """Regression (Sep-2026): importing the scheduler swapped sys.stdout
+    for an emoji wrapper, pinning pytest's capture buffer — one scheduler
+    test then failed and every later test errored on the closed file.
+    The filter may only install at process entry (main())."""
+    pytest.importorskip("apscheduler")
+    import importlib
+
+    import core_agent.core.scheduler as sched_mod
+
+    before = sys.stdout
+    importlib.reload(sched_mod)
+    assert sys.stdout is before
 
 
 def test_scheduler_has_both_report_jobs():

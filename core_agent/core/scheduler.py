@@ -27,8 +27,21 @@ import io
 import sys
 
 
+_emoji_filter_installed = False
+
+
 def setup_emoji_filter():
-    """Setup to replace ASCII tags with emojis in stdout."""
+    """Swap sys.stdout for an emoji-rewriting wrapper (process entry only).
+
+    Must NEVER run at import time: the wrapper pins the current stdout
+    buffer, so importing this module under pytest permanently redirects
+    later tests at a closed capture file (Sep-2026: one scheduler test
+    failed and ~150 later tests errored after it). Call from main().
+    Idempotent — repeat calls are no-ops.
+    """
+    global _emoji_filter_installed
+    if _emoji_filter_installed:
+        return
 
     class EmojiFilter(io.TextIOWrapper):
         def __init__(self, buffer):
@@ -69,13 +82,11 @@ def setup_emoji_filter():
                 text = text.replace(tag, emoji)
             super().write(text)
 
-    sys.stdout = EmojiFilter(sys.stdout.buffer)
-
-
-try:
-    setup_emoji_filter()
-except:
-    pass
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        return  # non-console stdout (captured/redirected) — leave it alone
+    sys.stdout = EmojiFilter(buffer)
+    _emoji_filter_installed = True
 
 
 class StrikeTipsScheduler:
@@ -622,6 +633,7 @@ def main():
     parser = argparse.ArgumentParser(description="Strike Tips Scheduler")
     parser.add_argument("command", choices=["start", "scan"])
     args = parser.parse_args()
+    setup_emoji_filter()
     if args.command == "start":
         StrikeTipsScheduler().start()
     elif args.command == "scan":

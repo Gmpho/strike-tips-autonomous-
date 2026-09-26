@@ -702,7 +702,14 @@ class BankrollGovernor:
 
             bet.profit_loss = (bet.actual_return or 0.0) - bet.stake
             if notes:
-                existing = json.loads(bet.notes) if bet.notes else {}
+                try:
+                    existing = json.loads(bet.notes) if bet.notes else {}
+                except (ValueError, TypeError):
+                    existing = {}
+                if not isinstance(existing, dict):
+                    # Void/retry tags ("... | VOID (...)") are appended as
+                    # plain text; nest them so notes stay valid JSON.
+                    existing = {"prior_notes": bet.notes} if bet.notes else {}
                 existing["settlement_notes"] = notes
                 bet.notes = json.dumps(existing)
 

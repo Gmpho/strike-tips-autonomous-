@@ -1215,14 +1215,10 @@ class StrikeTips:
         from_pdf = bool(pool_starts)
 
         if not pool_starts:
-            if total_races >= 10:
-                pool_starts = {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
-            elif total_races in (8, 9):
-                pool_starts = {"BI1": 2, "PA": 2, "P6": 3, "JP1": 4, "JP2": 6 if total_races >= 9 else 5}
-            elif total_races >= 6:
-                pool_starts = {"BI1": 1, "P6": 1, "JP1": 3}
-            else:
-                pool_starts = {"JP1": 1}
+            from core_agent.skills.exotics.builder import convention_pool_starts
+            # Single shared TAB-standard table (PDF/TAB-sheet ranges win
+            # when present) — kept in builder so both exotic paths agree.
+            pool_starts = convention_pool_starts(total_races)
 
         # 2. Build full-card context from Betway data
         card_sections = []

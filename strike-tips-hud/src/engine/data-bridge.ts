@@ -207,11 +207,14 @@ export class DataBridge {
           status: 'ONLINE',
         },
         bankroll: bankroll ? {
-          balance: bankroll.balance,
-          dailyLimit: bankroll.dailyLimit || bankroll.daily_limit,
-          dailyLoss: bankroll.dailyLoss || bankroll.daily_loss,
-          maxStake: bankroll.maxStake || bankroll.max_stake,
-          totalExposure: bankroll.totalExposure || bankroll.total_exposure || openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) || 0,
+          balance: bankroll.balance ?? null,
+          // Numeric guards: a partial/error payload must never hand the views
+          // undefined (Sep-2026: bankroll?.dailyLimit.toFixed crashed the
+          // bankroll page into a blank screen on a slow poll).
+          dailyLimit: bankroll.dailyLimit ?? bankroll.daily_limit ?? 0,
+          dailyLoss: bankroll.dailyLoss ?? bankroll.daily_loss ?? 0,
+          maxStake: bankroll.maxStake ?? bankroll.max_stake ?? 0,
+          totalExposure: bankroll.totalExposure ?? bankroll.total_exposure ?? openBets.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) ?? 0,
           // Preserve ledger identity on every poll — dropping these flips the
           // UI to LIVE and hides the paper/real split (Sep-2026 bug).
           paperMode: bankroll.paperMode,
@@ -248,8 +251,15 @@ export class DataBridge {
       const needVitals = ['vitals'].includes(activeView || '');
       const needMemory = ['agents'].includes(activeView || '');
 
+      // Paint-fast ledger window on bankroll (Sep-2026: the full 455 KB /
+      // 1.4k-row history blocked LCP). Other views keep the full payload.
+      // Once the user expands past the window, polls stay full.
+      const wantFull = activeView !== 'bankroll' || hudStore.getState().betHistoryFull;
+      const historyUrl = wantFull
+        ? BETTING_ENDPOINTS.history
+        : `${BETTING_ENDPOINTS.history}?limit=120`;
       const [historyRes, statsRes, roiRes, roiOddsRes, logsRes, healingRes, selectorsRes, vitalsRes, bankrollHistRes, memoryRes] = await Promise.all([
-        needHistory ? apiFetch(BETTING_ENDPOINTS.history) : Promise.resolve(null),
+        needHistory ? apiFetch(historyUrl) : Promise.resolve(null),
         needStats ? apiFetch(BETTING_ENDPOINTS.stats) : Promise.resolve(null),
         needRoi ? apiFetch('/api/betting/learning/roi-by-track') : Promise.resolve(null),
         needRoi ? apiFetch('/api/betting/learning/roi-by-odds-range') : Promise.resolve(null),
@@ -278,6 +288,9 @@ export class DataBridge {
 
       hudStore.updateState({
         betHistory: history.bets || [],
+        betHistoryTotal: history.count ?? (history.bets || []).length,
+        // Ledger skeletons retire only on a resolved fetch (CLS, Sep-2026).
+        ...(historyRes && historyRes.ok ? { betHistoryReady: true } : {}),
         betStats: stats,
         logs: logs.logs || [],
         learning: {

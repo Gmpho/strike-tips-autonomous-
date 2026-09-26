@@ -4,7 +4,7 @@ import re
 import random
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from .tab4racing import ScrapedRace, ScrapedRunner
+from .tab4racing import ScrapedRace, ScrapedRunner, _parse_distance_m
 from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("betway-api")
@@ -296,7 +296,11 @@ class BetwayAPI:
                             track=track,
                             race_number=int(e.get("raceNumber", 1)),
                             race_time=e.get("t", "12:00"),
-                            distance=1600,
+                            # Real distance from the snapshot (distance_m);
+                            # None when absent — never a 1600m placeholder.
+                            distance=_parse_distance_m(
+                                e.get("distance_m"), e.get("name")
+                            ),
                             track_condition="Good",
                             runners=runners,
                         )
