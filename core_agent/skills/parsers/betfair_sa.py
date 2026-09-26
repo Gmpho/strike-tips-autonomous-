@@ -104,58 +104,6 @@ def _normalise(name: str) -> str:
     return "".join(c for c in name.lower() if c.isalnum())
 
 
-# Grace window: keep a market even if it started up to this many seconds ago.
-# Set deliberately short — Betfair keeps settled markets in the feed for
-# hours, so without a cutoff they re-inject as "live" ghost races each cycle.
-_EXPIRED_MARKET_GRACE_SECS = 5 * 60  # 5 min post-off
-
-
-def _betfair_off_utc(event: dict) -> Optional[datetime]:
-    """Convert a Betfair market's off-time to a naive UTC datetime.
-
-    Priority:
-    1. ``offTimeEpochMs`` — raw epoch stored by _parse_market; exact, no
-       date-anchor ambiguity. The epoch is UTC so just convert directly.
-    2. ``offTime``/``t`` (HH:MM SAST wall-clock) + ``eventDate`` (YYYY-MM-DD)
-       for date anchoring so TOMORROW cards aren't dropped prematurely.
-    3. ``offTime``/``t`` alone with an 18h rollover heuristic (same as the
-       monitor's _parse_race_off_time) — least precise, last resort.
-
-    Returns None when no parseable off-time is present.
-    """
-    # 1. Exact epoch path — no ambiguity
-    epoch_ms = event.get("offTimeEpochMs")
-    if epoch_ms:
-        try:
-            return datetime.fromtimestamp(int(epoch_ms) / 1000, tz=timezone.utc).replace(tzinfo=None)
-        except (ValueError, TypeError, OSError):
-            pass
-
-    # 2. HH:MM + eventDate anchor
-    off_str = event.get("offTime") or event.get("t") or ""
-    if not off_str or ":" not in str(off_str):
-        return None
-    try:
-        parts = str(off_str).strip().split(":")
-        h, m = int(parts[0]), int(parts[1])
-        event_date_str = event.get("eventDate") or ""
-        if event_date_str:
-            try:
-                anchor = datetime.strptime(event_date_str[:10], "%Y-%m-%d")
-                sast = anchor.replace(hour=h, minute=m, second=0, microsecond=0)
-                return sast - timedelta(hours=2)  # SAST → UTC
-            except (ValueError, TypeError):
-                pass
-        # 3. Today's date with midnight-rollover guard
-        base = datetime.now()
-        sast = base.replace(hour=h, minute=m, second=0, microsecond=0)
-        if (sast - base).total_seconds() > 18 * 3600:
-            sast -= timedelta(days=1)
-        return sast - timedelta(hours=2)  # SAST → UTC
-    except (ValueError, IndexError, TypeError):
-        return None
-
-
 class BetfairSA:
     """Betfair form-data source: enriched runner fields (gear, days, comments, rating...)."""
 
@@ -282,47 +230,14 @@ class BetfairSA:
                     event["t"] = info["t"]
                 events[mid] = event
 
-        # 4. Drop markets whose off-time has already passed (+ grace window).
-        # Betfair keeps settled markets in the feed for hours after the race
-        # finishes — without this filter they re-inject as "live" ghost races
-        # on every merge cycle.
-        now_utc = datetime.now(tz=timezone.utc).replace(tzinfo=None)
-        live_events: Dict[str, Any] = {}
-        dropped = 0
-        for mid, ev in events.items():
-            off_utc = _betfair_off_utc(ev)
-            if off_utc is None:
-                # No off-time at all — keep it (merge will handle via first_seen TTL).
-                live_events[mid] = ev
-                continue
-            elapsed = (now_utc - off_utc).total_seconds()
-            if elapsed > _EXPIRED_MARKET_GRACE_SECS:
-                dropped += 1
-                logger.debug(
-                    "Betfair SA: dropping expired market %s %s %s (off %s, elapsed %.0fs)",
-                    ev.get("course", "?"), ev.get("raceName", "?"), mid,
-                    ev.get("offTime") or ev.get("t", "?"), elapsed,
-                )
-                continue
-            live_events[mid] = ev
-        if dropped:
-            logger.info(
-                "Betfair SA: dropped %d expired market(s) before merge (grace %ds)",
-                dropped, _EXPIRED_MARKET_GRACE_SECS,
-            )
-        events = live_events
-
-        # 5. Cache raw responses for debugging / last-good reuse.
+        # 4. Cache raw responses for debugging / last-good reuse.
         try:
             cache_file = self.cache_dir / f"betfair_form_{datetime.now().strftime('%Y%m%d')}.json"
             cache_file.write_text(json.dumps(cache_payload, indent=2))
         except Exception as e:
             logger.debug("Betfair SA cache write failed: %s", e)
 
-        logger.info(
-            "Betfair SA: parsed %d live market(s) with runner details (%d expired dropped)",
-            len(events), dropped,
-        )
+        logger.info("Betfair SA: parsed %d races with runner details", len(events))
         return {"events": events, "count": len(events)}
 
     async def _fetch_market(
@@ -441,7 +356,6 @@ class BetfairSA:
             return None
 
         off_time = self._off_time_from_market(data)
-        off_epoch_ms = self._off_epoch_ms_from_market(data)  # raw epoch for exact filter
         event: Dict[str, Any] = {
             "course": self._course_from_market(data),
             "t": off_time or "00:00",
@@ -453,8 +367,6 @@ class BetfairSA:
         # trust placeholder display times. Absent when the payload lacks them.
         if off_time:
             event["offTime"] = off_time
-        if off_epoch_ms:
-            event["offTimeEpochMs"] = off_epoch_ms  # UTC ms epoch; used by expired-market filter
         race_num = self._race_number_from_market(data)
         if race_num is not None:
             event["raceNumber"] = race_num
@@ -626,27 +538,3 @@ class BetfairSA:
     def _time_from_market(data: Dict) -> str:
         """Best-effort race time (HH:MM) from a market payload."""
         return BetfairSA._off_time_from_market(data) or "00:00"
-
-    @staticmethod
-    def _off_epoch_ms_from_market(data: Dict) -> Optional[int]:
-        """Return the raw epoch-ms for the market start time, or None.
-
-        Used by the expired-market filter in get_form_format so it can compare
-        the absolute UTC timestamp rather than a wall-clock HH:MM string (which
-        is ambiguous without a date anchor — HH:MM from a TOMORROW card looks
-        identical to today's).
-        """
-        for path in (("marketStartTime",), ("event", "startTime"), ("startTime",)):
-            obj: Any = data
-            for key in path:
-                if isinstance(obj, dict):
-                    obj = obj.get(key)
-                else:
-                    obj = None
-                    break
-            if isinstance(obj, (int, float)) and obj > 0:
-                try:
-                    return int(obj)
-                except Exception:
-                    pass
-        return None

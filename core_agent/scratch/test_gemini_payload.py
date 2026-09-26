@@ -24,7 +24,7 @@ async def test_payload():
     ]
     
     # Case 1: Test with standard prompt
-    url = f"{provider.BASE}/gemini-2.5-flash:generateContent?key={provider.api_key}"
+    url = f"{provider.BASE}/gemini-2.0-flash:generateContent?key={provider.api_key}"
     payload_with_tools = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": contents,

@@ -15,7 +15,7 @@ logger = logging.getLogger("gemini-provider")
 
 class GeminiProvider:
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-    MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash"]
+    MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY", "") 
@@ -89,17 +89,14 @@ class GeminiProvider:
         except Exception as e:
             return {"error": str(e)}
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None,
-                    model_override: str | None = None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> AsyncIterator[str]:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not set")
 
         from core_agent.agent.providers.task_router import TaskRouter
         raw_msg = TaskRouter._extract_user_query(messages)
         needs_tools = self._needs_tools(raw_msg, intent)
-        # Honor an explicit selection (Gemini family) before the fallback
-        # chain — /model picks used to be silently dropped here (Sep-2026).
-        model = model_override if model_override in self.MODELS else self.MODELS[0]
+        model = self.MODELS[0]
 
         contents = []
         for m in messages:
@@ -157,21 +154,9 @@ class GeminiProvider:
         last_err = None
         active_model = None
 
-        # Card-intent gate: rebuild the cloud prompt with this turn's query
-        # so casual chat does not carry the race card (Sep-2026).
-        try:
-            from core_agent.agent.providers.task_router import TaskRouter as _TR
-            _sys_text = build_system_prompt(
-                for_cloud=True, user_message=_TR._extract_user_query(messages)
-            )
-        except Exception:
-            _sys_text = build_system_prompt(for_cloud=True)
-
-        # Pinned selection first, then the rest of the chain as fallback.
-        candidates = list(dict.fromkeys([model, *self.MODELS]))
-        for model in candidates:
+        for model in self.MODELS:
             payload = {
-                "system_instruction": {"parts": [{"text": _sys_text}]},
+                "system_instruction": {"parts": [{"text": build_system_prompt(for_cloud=True)}]},
                 "contents": contents,
                 "generationConfig": {"maxOutputTokens": 400, "temperature": 0.3},
             }

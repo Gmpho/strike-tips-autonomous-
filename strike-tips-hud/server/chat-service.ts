@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { extractDocumentContent, type FormAttachment } from './form-reader-service.js';
 
 export interface GroundingSource {
   title: string;
@@ -12,6 +13,8 @@ export interface ChatRequestPayload {
   searchGrounding?: boolean;
   systemInstruction?: string;
   stream?: boolean;
+  summarizeMode?: boolean;
+  attachment?: FormAttachment;
 }
 
 const DEFAULT_SYSTEM_INSTRUCTION = `You are Strike Tips Racing AI, an elite South African horse racing intelligence analyst.
@@ -21,6 +24,13 @@ Your mission:
 3. Enforce disciplined bankroll governance with Half-Kelly criteria (never risking more than 5% of bankroll).
 4. For exotics (Pick 6, Jackpot, Trifecta), prioritize high-value bankers and smart permutation spreads.
 5. Provide concise, bold, professional verdicts with clear bottom-line recommendations.`;
+
+const DEFAULT_EXECUTIVE_DOC_PROMPT = `Please analyze this attached racecard / form / racing document.
+Provide an Executive Meeting Overview:
+- Course & Conditions (Track, Rail, Going, Weather if stated)
+- Schedule & Key Races
+- Notable Contenders & Equipment Changes
+Unless the user explicitly asks for betting picks, provide an objective, structured summary rather than unsolicited bets.`;
 
 /**
  * Intelligent auto-router: analyzes query intent and context to pick the optimal model.
@@ -35,7 +45,7 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
     q.includes('monte carlo') || q.includes('permutation') || q.includes('compare runners')
   ) {
     if (hasKey.gemini) return { target: 'gemini-3.1-pro-preview', isGroq: false };
-    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
+    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
   }
 
   // 2. High-speed quick lookups, balance checks, short questions -> Groq Llama 8B or Gemini Lite
@@ -46,13 +56,13 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
       q.includes('status') || q.includes('ping')
     )
   ) {
-    if (hasKey.groq) return { target: 'openai/gpt-oss-20b', isGroq: true };
+    if (hasKey.groq) return { target: 'llama-3.1-8b-instant', isGroq: true };
     if (hasKey.gemini) return { target: 'gemini-3.1-flash-lite', isGroq: false };
   }
 
   // 3. Fast racing speed / versatile analysis -> Groq Llama 70B if available
   if (q.includes('fast') || q.includes('quick summary')) {
-    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
+    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
   }
 
   // Default champion: Gemini 3.5 Flash with Google Search Grounding for live race info
@@ -60,7 +70,7 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
     return { target: 'gemini-3.5-flash', isGroq: false };
   }
   if (hasKey.groq) {
-    return { target: 'openai/gpt-oss-120b', isGroq: true };
+    return { target: 'llama-3.3-70b-versatile', isGroq: true };
   }
   return { target: 'gemini-3.5-flash', isGroq: false };
 }
@@ -104,7 +114,14 @@ export async function handleChatRequest(req: IncomingMessage, res: ServerRespons
         const routed = resolveAutoModel(lastUserMsg, { gemini: hasGeminiKey, groq: hasGroqKey });
         chosenModel = routed.target;
         isGroq = routed.isGroq;
-      } else if (rawModel.includes('groq') || rawModel.includes('llama') || rawModel.includes('mixtral') || rawModel.includes('gemma-2')) {
+      } else if (
+        rawModel.includes('groq') ||
+        rawModel.includes('llama') ||
+        rawModel.includes('mixtral') ||
+        rawModel.includes('gemma-2') ||
+        rawModel.includes('gemma2') ||
+        rawModel.includes('qwen')
+      ) {
         isGroq = true;
       }
 
@@ -113,7 +130,7 @@ export async function handleChatRequest(req: IncomingMessage, res: ServerRespons
         return;
       }
 
-      // Gemini models
+      // Gemini & Google AI Studio models
       await handleGeminiChat(res, body, chosenModel, systemInstruction, searchGrounding, isStream);
     } catch (err: any) {
       console.error('[Chat Service Error]', err);
@@ -146,26 +163,48 @@ async function handleGeminiChat(
     targetModel = 'gemini-3.1-pro-preview';
   } else if (modelName.includes('lite') || modelName.includes('fast')) {
     targetModel = 'gemini-3.1-flash-lite';
-  } else if (modelName.includes('3.8-flash')) {
-    targetModel = 'gemini-2.5-flash';
+  } else if (modelName.includes('3.8') || modelName.includes('3.8-flash')) {
+    targetModel = 'gemini-3.8-flash';
+  } else if (modelName.includes('gemma-4') || modelName.includes('gemma4')) {
+    targetModel = 'gemma-2-27b-it';
   }
 
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
-  // Map messages to Gemini format
-  const formattedContents = body.messages
-    .filter(m => m.role !== 'system')
-    .map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+  // Map messages to Gemini format, injecting attachment if present
+  const userMessages = body.messages.filter(m => m.role !== 'system');
+  const lastUserIndex = userMessages.findLastIndex(m => m.role === 'user');
 
-  // Configure tools (Google Search Grounding for gemini-3.5-flash)
+  const formattedContents = userMessages.map((m, idx) => {
+    const isLastUser = idx === lastUserIndex;
+    const parts: any[] = [];
+    const textContent = m.content || (isLastUser && body.attachment ? DEFAULT_EXECUTIVE_DOC_PROMPT : '');
+    if (textContent) {
+      parts.push({ text: textContent });
+    }
+
+    if (isLastUser && body.attachment?.data) {
+      parts.push({
+        inlineData: {
+          mimeType: body.attachment.mimeType,
+          data: body.attachment.data,
+        },
+      });
+    }
+
+    return {
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts,
+    };
+  });
+
+  // Configure tools (Google Search Grounding for gemini-3.5-flash when no binary attachment is present)
   const config: any = {
     systemInstruction,
+    temperature: body.summarizeMode ? 0.3 : 0.6,
   };
 
-  if (targetModel === 'gemini-3.5-flash' && searchGrounding) {
+  if (targetModel === 'gemini-3.5-flash' && searchGrounding && !body.attachment) {
     config.tools = [{ googleSearch: {} }];
   }
 
@@ -269,25 +308,47 @@ async function handleGroqChat(
     return;
   }
 
-  let groqModel = 'openai/gpt-oss-120b';
-  if (modelName.includes('8b') || modelName.includes('20b') || modelName.includes('instant')) {
-    groqModel = 'openai/gpt-oss-20b';
-  } else if (modelName.includes('70b') || modelName.includes('120b') || modelName.includes('llama-3.3')) {
-    groqModel = 'openai/gpt-oss-120b';
+  let groqModel = 'llama-3.3-70b-versatile';
+  if (modelName.includes('qwen3.8') || modelName.includes('qwen-3.8')) {
+    groqModel = 'qwen/qwen3.8-27b';
+  } else if (modelName.includes('qwen3.6') || modelName.includes('qwen-3.6')) {
+    groqModel = 'qwen/qwen3.6-27b';
+  } else if (modelName.includes('qwen')) {
+    groqModel = 'qwen/qwen3.8-27b';
+  } else if (modelName.includes('8b')) {
+    groqModel = 'llama-3.1-8b-instant';
+  } else if (modelName.includes('70b') || modelName.includes('llama-3.3')) {
+    groqModel = 'llama-3.3-70b-versatile';
   } else if (modelName.includes('mixtral') || modelName.includes('8x7b')) {
-    groqModel = 'openai/gpt-oss-20b';
-  } else if (modelName.includes('gemma-2-9b') || modelName.includes('gemma2')) {
-    groqModel = 'openai/gpt-oss-20b';
-  } else if (modelName.includes('llama3-70b-8192')) {
-    groqModel = 'llama3-70b-8192';
+    groqModel = 'mixtral-8x7b-32768';
+  } else if (modelName.includes('gemma-2-9b') || modelName.includes('gemma2') || modelName.includes('gemma')) {
+    groqModel = 'gemma2-9b-it';
   }
+
+  // If an attachment is present, extract document tables/text for Groq
+  let attachmentContext = '';
+  if (body.attachment) {
+    attachmentContext = await extractDocumentContent(body.attachment, body.summarizeMode);
+  }
+
+  const userMessages = body.messages.filter(m => m.role !== 'system');
+  const lastUserIndex = userMessages.findLastIndex(m => m.role === 'user');
 
   const groqMessages = [
     { role: 'system', content: systemInstruction },
-    ...body.messages.map(m => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: m.content,
-    })),
+    ...userMessages.map((m, idx) => {
+      const isLastUser = idx === lastUserIndex;
+      let content = m.content;
+      if (isLastUser && attachmentContext) {
+        content = content
+          ? `${content}\n\n---\n${attachmentContext}`
+          : `${DEFAULT_EXECUTIVE_DOC_PROMPT}\n\n---\n${attachmentContext}`;
+      }
+      return {
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content,
+      };
+    }),
   ];
 
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -300,44 +361,72 @@ async function handleGroqChat(
       model: groqModel,
       messages: groqMessages,
       stream: isStream,
-      temperature: 0.6,
-      max_tokens: 1500,
+      temperature: body.summarizeMode ? 0.3 : 0.6,
+      max_tokens: 2048,
     }),
   });
 
   if (!groqRes.ok) {
     const errText = await groqRes.text();
+    // Fallback: If Groq model alias is not enabled on account, fallback to llama-3.3-70b-versatile
+    if (groqModel !== 'llama-3.3-70b-versatile' && (errText.includes('model_not_found') || errText.includes('does not exist'))) {
+      console.warn(`[Groq Model Fallback] Model ${groqModel} not found on Groq, retrying with llama-3.3-70b-versatile`);
+      const fallbackRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: groqMessages,
+          stream: isStream,
+          temperature: body.summarizeMode ? 0.3 : 0.6,
+          max_tokens: 2048,
+        }),
+      });
+
+      if (fallbackRes.ok && isStream && fallbackRes.body) {
+        pipeStream(res, fallbackRes.body, 'llama-3.3-70b-versatile');
+        return;
+      }
+    }
+
     res.writeHead(groqRes.status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: `Groq error: ${errText}` }));
     return;
   }
 
   if (isStream && groqRes.body) {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    });
-
-    const reader = groqRes.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunkStr = decoder.decode(value, { stream: true });
-      res.write(chunkStr);
-    }
-    const endChunk = {
-      choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
-      model: groqModel,
-    };
-    res.write(`data: ${JSON.stringify(endChunk)}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
+    pipeStream(res, groqRes.body, groqModel);
   } else {
     const data = await groqRes.json();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   }
+}
+
+async function pipeStream(res: ServerResponse, bodyStream: ReadableStream<Uint8Array>, modelName: string) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const reader = bodyStream.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunkStr = decoder.decode(value, { stream: true });
+    res.write(chunkStr);
+  }
+  const endChunk = {
+    choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
+    model: modelName,
+  };
+  res.write(`data: ${JSON.stringify(endChunk)}\n\n`);
+  res.write('data: [DONE]\n\n');
+  res.end();
 }

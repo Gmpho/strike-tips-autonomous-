@@ -46,7 +46,7 @@ export async function handleTranscribeRequest(req: IncomingMessage, res: ServerR
         }
       }
 
-      // Default: gemini-2.5-flash
+      // Default: gemini-3.5-transcribe
       const geminiApiKey = process.env.GEMINI_API_KEY;
       if (!geminiApiKey) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -58,7 +58,7 @@ export async function handleTranscribeRequest(req: IncomingMessage, res: ServerR
       const cleanBase64 = body.audioBase64.replace(/^data:[^;]+;base64,/, '');
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-transcribe',
         contents: [
           {
             inlineData: {
@@ -72,7 +72,7 @@ export async function handleTranscribeRequest(req: IncomingMessage, res: ServerR
 
       const text = (response.text || '').trim();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ text, provider: 'gemini', model: 'gemini-2.5-flash' }));
+      res.end(JSON.stringify({ text, provider: 'gemini', model: 'gemini-3.5-transcribe' }));
     } catch (err: any) {
       console.error('[Transcribe Service Error]', err);
       if (!res.headersSent) {

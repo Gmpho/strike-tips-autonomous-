@@ -38,6 +38,13 @@ The **Swarm Researcher** (`core_agent/skills/swarm_researcher.py`) backfills for
 *   **📰 News Tab** (`/news`): live racing headlines from BBC Sport / The Guardian / Daily Mirror RSS — polled free every 10 min by the same researcher loop, pushed over SSE `event: news`, images served through a lazy disk-cached proxy (7-day TTL). See the [Racing News Pipeline](../README.md#-racing-news-pipeline) section in the README.
 *   **📡 Live Ops Tab** (`/telemetry`): dedicated "Agents in Action" view — one status card per background engine (Swarm Researcher, News RAG, Dreaming Engine, Governor) with Active/Idle badges, relative timestamps and latest message, plus a chronological activity stream. Pushed over SSE `event: telemetry`; the Agent Pipeline widget stays untouched. RaceCards additionally render a DSI stress chip when the Governor has computed dream stress for that track:race. See [`docs/LIVE_OPS_TELEMETRY.md`](LIVE_OPS_TELEMETRY.md).
 
+### 6. Swarm Podcast, Hands-Free Voice & Decoupled Form Ingestion
+*   **Zero-Buffer Lookahead Pre-fetching**: The Swarm Podcast pre-fetches upcoming dialogue lines in parallel ($N+1, N+2$), providing 0ms gapless broadcast playback.
+*   **Multi-Engine & 5-Agent Cast**: Choose between Google AI Studio Gemma 4, Groq LPUs, and Gemini 3.5 with Gemma AI joining the roundtable.
+*   **Auto-Voice Hands-Free Chat**: Automatic voice readout of AI responses for trackside punters and drivers.
+*   **Decoupled Form/PDF Reader**: Reads official TAB Computaforms, tipping sheets, and racecard PDFs with interactive action chips (`🎯 Top Value Picks`, `⚡ Pace & Bias`, `📋 Condensed Table`).
+*   See the full architectural guide: [`docs/PODCAST_VOICE_FORM_CLOUD_MODELS.md`](PODCAST_VOICE_FORM_CLOUD_MODELS.md).
+
 ---
 
 ## 🛠️ Tech Stack & Integration

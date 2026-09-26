@@ -68,7 +68,7 @@ DEFAULT_INSIGHTS: List[Dict] = [
     {
         "pattern_name": "ai_provider_chain",
         "description": (
-            "Primary: Groq openai/gpt-oss-120b for race analysis and exotic generation. "
+            "Primary: Groq llama-3.3-70b-versatile for race analysis and exotic generation. "
             "Fallback: Gemini 2.5 flash if Groq fails. No OpenAI/Kimi K providers. "
             "Multimodal: Gemini handles form image analysis. Provider selection in "
             "ai_providers.py via _call_parallel() (formerly _call_kimi_parallel)."
@@ -78,7 +78,7 @@ DEFAULT_INSIGHTS: List[Dict] = [
             "fallback_on_failure", "generate_exotic_plays"
         ],
         "key_insight": (
-            "Groq is primary for speed (openai/gpt-oss-120b). Gemini is fallback only. "
+            "Groq is primary for speed (llama-3.3-70b). Gemini is fallback only. "
             "Never use Kimi K. Provider routing is in ai_providers.py. "
             "Parallel calls use asyncio.gather for concurrent analysis."
         ),

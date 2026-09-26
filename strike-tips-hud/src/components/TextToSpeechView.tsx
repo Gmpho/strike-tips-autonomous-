@@ -366,7 +366,7 @@ export const TextToSpeechView: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span>Active Model</span>
                 <span className="text-white font-mono text-[11px]">
-                  {tts.provider === 'gemini' ? 'gemini-2.5-flash-preview-tts' : 'canopylabs/orpheus-v1-english'}
+                  {tts.provider === 'gemini' ? 'gemini-3.1-flash-tts-preview' : 'canopylabs/orpheus-v1-english'}
                 </span>
               </div>
               <div className="flex items-center justify-between">

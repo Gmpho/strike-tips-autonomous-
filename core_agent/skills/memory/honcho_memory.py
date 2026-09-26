@@ -29,16 +29,6 @@ logger = logging.getLogger("honcho-memory")
 WORKSPACE_ID = os.getenv("HONCHO_WORKSPACE_ID", "strike-tips-prod")
 
 
-def _safe_honcho_id(raw: str) -> str:
-    """Honcho IDs must match ^[a-zA-Z0-9_-]+$ — callers pass session IDs
-    like 'api:session_17897...' (Sep-2026: every peer init 422'd). The
-    JSONL layer keeps the raw key; only Honcho-facing IDs are sanitised."""
-    import re as _re
-
-    safe = _re.sub(r"[^a-zA-Z0-9_-]", "-", str(raw or "anon"))
-    return safe.strip("-") or "anon"
-
-
 def _make_honcho_client():
     """Return a Honcho client if API key is configured, else None."""
     api_key = os.getenv("HONCHO_API_KEY", "")
@@ -75,7 +65,7 @@ class HonchoMemory:
             return False
         try:
             self._honcho = client
-            self._user_peer = client.peer(f"user_{_safe_honcho_id(self._user_id)}")
+            self._user_peer = client.peer(f"user_{self._user_id}")
             self._agent_peer = client.peer("agent_strike")
             return True
         except Exception as e:
@@ -83,7 +73,7 @@ class HonchoMemory:
             return False
 
     def _honcho_session_id(self) -> str:
-        return f"{_safe_honcho_id(self._user_id)}_{date.today().isoformat()}"
+        return f"{self._user_id}_{date.today().isoformat()}"
 
     def get_context(self, query: Optional[str] = None) -> str:
         """

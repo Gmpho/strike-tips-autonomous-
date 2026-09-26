@@ -234,35 +234,6 @@ def _snapshot_non_runners(data_dir, today_iso: str) -> set:
     return out
 
 
-def _slim_race_for_prompt(r, track: str) -> dict:
-    """Minimal race card for LLM value prompts (see prompt-diet note at call site)."""
-    _slim_runners = []
-    for _sr in (r.runners or [])[:14]:
-        if isinstance(_sr, dict):
-            _nm = _sr.get("horse_name") or _sr.get("name")
-            _od = _sr.get("odds_decimal") or _sr.get("odds")
-            _fm = _sr.get("form") or _sr.get("last_5_runs")
-            _jk = _sr.get("jockey")
-            _tr = _sr.get("trainer")
-        else:
-            _nm = getattr(_sr, "horse_name", None)
-            _od = getattr(_sr, "odds_decimal", None)
-            _fm = getattr(_sr, "form", None) or getattr(_sr, "last_5_runs", None)
-            _jk = getattr(_sr, "jockey", None)
-            _tr = getattr(_sr, "trainer", None)
-        _slim_runners.append({
-            "horse": _nm, "odds": _od, "form": _fm,
-            "jockey": _jk, "trainer": _tr,
-        })
-    return {
-        "track": getattr(r, "track", track),
-        "race_number": getattr(r, "race_number", 0),
-        "distance": getattr(r, "distance", None),
-        "condition": getattr(r, "track_condition", None),
-        "runners": _slim_runners,
-    }
-
-
 # TAB Daily Tipping Sheet prints exact pool ranges per meeting, e.g.
 # "Bipot (1-6)", "PA (2-8)", "Pick 6 (3-8)", "Jackpot 1 (4-7)".
 # (pool label, leg count, code prefix)
@@ -923,15 +894,8 @@ class StrikeTips:
                     "Race distance is UNKNOWN — do not state any distance. "
                 )
                 _bf_ctx = _bf_lines.get(int(r.race_number or 0), "")
-                # Prompt diet (Sep-2026: full asdict cards with 12-field
-                # Betfair enrichment hit 9-14k tokens/call vs Groq's 8k TPM
-                # ceiling → 413/429 spam + Gemini-fallback spend). The model
-                # prices from name/odds/form/jockey/trainer — long prose
-                # fields (verdict/comments/pedigree/owner) stay on the HUD,
-                # out of the prompt. Slim card ≈ 60-70% smaller.
-                _slim_race = _slim_race_for_prompt(r, track)
                 prompt = (
-                    f"Analyze this single race for value: {json.dumps(_slim_race)}. "
+                    f"Analyze this single race for value: {json.dumps(asdict(r))}. "
                     f"Context: {track} Race {r.race_number}. {_dist_hint}"
                     + (_bf_ctx + " " if _bf_ctx else "") +
                     "Return ONLY valid JSON. Each value_bet MUST include these fields: "
@@ -1251,10 +1215,14 @@ class StrikeTips:
         from_pdf = bool(pool_starts)
 
         if not pool_starts:
-            from core_agent.skills.exotics.builder import convention_pool_starts
-            # Single shared TAB-standard table (PDF/TAB-sheet ranges win
-            # when present) — kept in builder so both exotic paths agree.
-            pool_starts = convention_pool_starts(total_races)
+            if total_races >= 10:
+                pool_starts = {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
+            elif total_races in (8, 9):
+                pool_starts = {"BI1": 2, "PA": 2, "P6": 3, "JP1": 4, "JP2": 6 if total_races >= 9 else 5}
+            elif total_races >= 6:
+                pool_starts = {"BI1": 1, "P6": 1, "JP1": 3}
+            else:
+                pool_starts = {"JP1": 1}
 
         # 2. Build full-card context from Betway data
         card_sections = []
@@ -1318,7 +1286,7 @@ class StrikeTips:
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                         json={
-                            "model": "openai/gpt-oss-120b",
+                            "model": "llama-3.3-70b-versatile",
                             "messages": [{"role": "user", "content": card_context}],
                             "temperature": 0.2,
                             "max_tokens": 1200,
@@ -1998,15 +1966,13 @@ class StrikeTips:
 
         # Save raw Betway snapshot for the HUD dashboard (reuse the gate
         # fetch when fresh so the scan costs one snapshot, not two).
-        # Goes through write_market_snapshot: the raw dump used to overwrite
-        # the monitor's pruned card with every finished race of the morning.
         try:
             snapshot = _snapshot_for_gates if _snapshot_for_gates.get("events") else await self.betway.get_snapshot_format()
             if snapshot.get("events"):
-                from core_agent.core.snapshot_writer import write_market_snapshot
-
-                saved = write_market_snapshot(snapshot, source="daily_scan")
-                print(f"[OK] Saved market snapshot ({len(saved.get('events', {}))} live events)")
+                snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
+                with open(snapshot_file, "w") as f:
+                    json.dump(snapshot, f, indent=2, default=str)
+                print(f"[OK] Saved market snapshot ({len(snapshot['events'])} events)")
         except Exception as e:
             print(f"[WARN] Could not save market snapshot: {e}")
 

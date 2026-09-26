@@ -22,6 +22,8 @@ function isAuthorized(request: Request, env: Env): boolean {
 }
 
 const ALLOWED_ORIGINS = new Set([
+  "https://strike-tips-hud.vercel.app",
+  "https://www.strike-tips-hud.vercel.app",
   "https://strike-tips-hud.pages.dev",
   "http://localhost:3000",
   "http://localhost:5173",
@@ -29,7 +31,7 @@ const ALLOWED_ORIGINS = new Set([
 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
-  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.pages.dev";
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.vercel.app";
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -43,7 +45,7 @@ function corsHeaders(request: Request): Record<string, string> {
 function json(data: unknown, status = 200, request?: Request): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.pages.dev" }) },
+    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.vercel.app" }) },
   });
 }
 
@@ -147,26 +149,6 @@ function triggerPatch(selector: string) {
 
 // ── D1 / KV HELPERS (parameterized queries + LIKE escape) ──────────
 
-/** Drop finished/expired races from a cached snapshot.
- *
- * KV serves an entry for up to its TTL after the monitor wrote it. The
- * snapshot builder stamps `expires_at` (epoch secs = off-time + grace) on
- * every race, so the edge can keep a late cron from showing finished races —
- * the "races come back / count jumps to 126" bug, Sep-2026.
- */
-function pruneSnapshot(body: Record<string, unknown>): Record<string, unknown> {
-  const events = (body.events || {}) as Record<string, Record<string, unknown>>;
-  const nowSecs = Date.now() / 1000;
-  const live: Record<string, unknown> = {};
-  for (const [id, ev] of Object.entries(events)) {
-    if (!ev || typeof ev !== "object" || ev.isFinished) continue;
-    const expires = Number(ev.expires_at);
-    if (Number.isFinite(expires) && expires > 0 && expires < nowSecs) continue;
-    live[id] = ev;
-  }
-  return { ...body, events: live, count: Object.keys(live).length };
-}
-
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
 }
@@ -192,7 +174,7 @@ async function getOddsSnapshot(kv: KVNamespace, track: string, raceNumber: numbe
   if (!full) return { note: "No cached odds for this race" };
   try {
     const body = JSON.parse(full) as { events?: Record<string, Record<string, unknown>> };
-    const events = (pruneSnapshot(body).events || {}) as Record<string, Record<string, unknown>>;
+    const events = body.events || {};
     const t = track.toLowerCase();
     for (const event of Object.values(events)) {
       const course = String(event.course || event.en || "").toLowerCase();
@@ -309,7 +291,7 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       // Return full snapshot when no specific track/race
       const full = await env.ODDS_KV.get("odds:full_snapshot", "text");
       if (!full) return json({ note: "No snapshot available" });
-      try { return json(pruneSnapshot(JSON.parse(full))); } catch { return json({ error: "corrupted snapshot" }); }
+      try { return json(JSON.parse(full)); } catch { return json({ error: "corrupted snapshot" }); }
     }
 
     // ── OKF Knowledge endpoints ────────────────────────────────────
@@ -370,10 +352,7 @@ async function handlePOST(request: Request, url: URL, env: Env): Promise<Respons
     if (path === "/api/ingest-snapshot") {
       const body = (await request.json()) as Record<string, unknown>;
       if (!body.events || typeof body.events !== "object") return error("events object required");
-      // Prune at ingest too: finished/expired races never reach KV, so a stale
-      // read can't resurrect them and the payload stays small.
-      const pruned = pruneSnapshot(body);
-      const payload = JSON.stringify(pruned);
+      const payload = JSON.stringify(body);
       // Write-gate: KV free allows ~1k writes/day and the monitor pushes
       // every 5 min. Skip the write when nothing changed (overnight the
       // snapshot is static for hours). Reads are 100x cheaper quota-wise.
@@ -382,10 +361,8 @@ async function handlePOST(request: Request, url: URL, env: Env): Promise<Respons
       // Single put only. The old per-event fan-out (~130 puts per push)
       // exhausted the daily write quota within the first hour, every day.
       // Readers filter the full snapshot in code instead.
-      // TTL 900s (was 300s = the cron period): a single delayed monitor cycle
-      // used to expire the key and blank /api/racing/odds for readers.
-      await env.ODDS_KV.put("odds:full_snapshot", payload, { expirationTtl: 900 });
-      return json({ status: "ingested", events: Object.keys((pruned.events || {}) as object).length });
+      await env.ODDS_KV.put("odds:full_snapshot", payload, { expirationTtl: 300 });
+      return json({ status: "ingested", events: Object.keys(body.events as object).length });
     }
 
     if (path === "/api/ingest-insight") {

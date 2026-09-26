@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, VolumeX, Languages, ImagePlus, Globe, ExternalLink, Mic, Square, Radio } from 'lucide-react';
+import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, VolumeX, Languages, ImagePlus, Globe, ExternalLink, Mic, Square, Radio, Sparkles, Zap, Table } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
@@ -127,16 +127,69 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     );
   };
 
-  const onImagePicked = async (file: File | undefined) => {
+  const [attachedDoc, setAttachedDoc] = useState<{
+    name: string;
+    mimeType: string;
+    data: string;
+    previewUrl?: string;
+  } | null>(null);
+
+  const [autoSpeak, setAutoSpeak] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('strike_auto_voice') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleAutoSpeak = () => {
+    setAutoSpeak((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('strike_auto_voice', String(next));
+      } catch {}
+      flashNote(next ? '🔊 Auto-Voice active: responses speak automatically' : '🔇 Auto-Voice off');
+      return next;
+    });
+  };
+
+  const onFilePicked = async (file: File | undefined) => {
     if (!file) return;
     if (fileRef.current) fileRef.current.value = '';
-    flashNote('Reading form image on-device…');
-    const text = await formReader.readImage(file);
-    if (text) {
-      setInput((prev) => (prev ? `${prev}\n\n` : '') + `[Form image]\n${text}`);
-      flashNote(null);
-    } else {
-      flashNote('Could not read that image — try a closer crop of the text.');
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/');
+
+    if (!isPdf && !isImage) {
+      flashNote('Unsupported file format. Please upload a PDF or racecard image.');
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Str = (reader.result as string).split(',')[1] || '';
+        setAttachedDoc({
+          name: file.name,
+          mimeType: isPdf ? 'application/pdf' : (file.type || 'image/jpeg'),
+          data: base64Str,
+          previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+        });
+        flashNote(`Attached ${file.name} (${isPdf ? 'PDF Racecard' : 'Image'})`);
+
+        // If in on-device WebLLM mode with an image, also extract on-device text as fallback
+        if (selectedModel.startsWith('webllm-') && isImage) {
+          flashNote('Reading form image on-device…');
+          const text = await formReader.readImage(file);
+          if (text) {
+            setInput((prev) => (prev ? `${prev}\n\n` : '') + `[Form image]\n${text}`);
+            flashNote(null);
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (e: any) {
+      flashNote(`Failed to load file: ${e.message}`);
     }
   };
   const [lastModelUsed, setLastModelUsed] = useState<string | null>(null);
@@ -159,8 +212,6 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
   const flushTimerRef = useRef<number | null>(null);
   // Auto-scroll sticks to bottom unless the user scrolled up to read back.
   const stickRef = useRef(true);
-  // Drives the scroll-to-latest FAB: true when the user has scrolled up to read back.
-  const [scrolledUp, setScrolledUp] = useState(false);
 
   const stopStreamFlush = (flush = true) => {
     if (flushTimerRef.current) {
@@ -384,11 +435,16 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     setCurrentActivity(null);
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = input;
+  const sendMessage = async (overridePrompt?: string | React.MouseEvent | unknown) => {
+    const rawInput = typeof overridePrompt === 'string' ? overridePrompt : input;
+    if ((!rawInput.trim() && !attachedDoc) || loading) return;
+    const currentDoc = attachedDoc;
+    const userMsg = rawInput.trim() || (currentDoc ? `Analyze attached document: ${currentDoc.name}` : '');
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
+    // Clear attachment state once sent
+    setAttachedDoc(null);
+
     // Create new message array
     const updatedMessages: Message[] = [...messages, { role: 'user', content: userMsg, timestamp: now }];
     setMessages(updatedMessages);
@@ -592,6 +648,12 @@ ${compiledContext || 'No context data available.'}`;
           model: modelVal,
           searchGrounding,
           stream: true,
+          summarizeMode,
+          attachment: currentDoc ? {
+            name: currentDoc.name,
+            mimeType: currentDoc.mimeType,
+            data: currentDoc.data,
+          } : undefined,
         }),
       });
 
@@ -669,6 +731,14 @@ ${compiledContext || 'No context data available.'}`;
       setCurrentActivity(null);
       abortControllerRef.current = null;
       stopStreamFlush();
+
+      // Hands-Free Trackside Auto-Voice: automatically speak completed verdict
+      if (autoSpeak && streamBufRef.current.trim() && !controller.signal.aborted) {
+        const textToRead = streamBufRef.current.trim();
+        setTimeout(() => {
+          void onSpeakMessage(textToRead);
+        }, 150);
+      }
     }
   };
 
@@ -764,8 +834,8 @@ ${compiledContext || 'No context data available.'}`;
         )}
       </AnimatePresence>
 
-      {/* 3. Main Chat Panel — min-h-0 lets the message list shrink & scroll on mobile */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      {/* 3. Main Chat Panel */}
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Chat Header */}
         <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -820,16 +890,14 @@ ${compiledContext || 'No context data available.'}`;
             </div>
         </div>
         
-        {/* Messages view — relative: anchors the scroll-to-latest FAB */}
+        {/* Messages view */}
         <div
           ref={scrollRef}
           onScroll={(e) => {
             const el = e.currentTarget;
-            const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-            stickRef.current = stuck;
-            setScrolledUp(!stuck && messages.length > 0);
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
-          className="relative flex-1 p-3 sm:p-6 min-h-0 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10 [overscroll-behavior:contain] [-webkit-overflow-scrolling:touch]"
+          className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10"
         >
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
@@ -839,14 +907,14 @@ ${compiledContext || 'No context data available.'}`;
             {messages.map((m, i) => (
             <div 
               key={i} 
-              className={`flex flex-col gap-2 min-w-0 ${m.role === 'user' ? 'items-end' : ''} ${
+              className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : ''} ${
                 i === messages.length - 1 ? 'animate-chat-fade-in-up' : ''
               }`}
             >
                 <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
-                <div className={`flex gap-2 sm:gap-3 min-w-0 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
-                    {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1 hidden sm:block" />}
-                    <div className={`p-3 sm:p-4 rounded-2xl max-w-full sm:max-w-[85%] min-w-0 break-words overflow-wrap-anywhere leading-relaxed ${
+                <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
+                    {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1" />}
+                    <div className={`p-4 rounded-2xl max-w-[85%] break-words leading-relaxed ${
                       m.role === 'user' 
                         ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto border border-purple-500/30' 
                         : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'
@@ -884,7 +952,7 @@ ${compiledContext || 'No context data available.'}`;
                           </span>
                         </div>
                       ) : m.role === 'ai' ? (
-                        <div className="markdown-body text-sm leading-relaxed min-w-0 overflow-wrap-anywhere">
+                        <div className="markdown-body text-sm leading-relaxed">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -898,8 +966,8 @@ ${compiledContext || 'No context data available.'}`;
                               ol: ({ children }) => <ol className="list-decimal pl-4 my-1.5 space-y-1">{children}</ol>,
                               li: ({ children }) => <li className="text-sm">{children}</li>,
                               code: ({ children }) => <code className="px-1 py-px rounded bg-black/30 border border-white/10 font-mono text-[12px] text-amber-300">{children}</code>,
-                              pre: ({ children }) => <pre className="p-2.5 rounded-xl bg-black/30 border border-white/10 overflow-x-auto max-w-full text-[12px] font-mono my-2 custom-scrollbar">{children}</pre>,
-                              table: ({ children }) => <div className="overflow-x-auto max-w-full my-2 custom-scrollbar"><table className="w-full text-[12px] border-collapse">{children}</table></div>,
+                              pre: ({ children }) => <pre className="p-2.5 rounded-xl bg-black/30 border border-white/10 overflow-x-auto text-[12px] font-mono my-2">{children}</pre>,
+                              table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-[12px] border-collapse">{children}</table></div>,
                               thead: ({ children }) => <thead className="text-purple-300 uppercase text-[10px]">{children}</thead>,
                               th: ({ children }) => <th className="text-left font-black px-2 py-1 border-b border-white/10">{children}</th>,
                               td: ({ children }) => <td className="px-2 py-1 border-b border-white/5 tabular-nums">{children}</td>,
@@ -941,47 +1009,61 @@ ${compiledContext || 'No context data available.'}`;
                     {m.role === 'user' && <User className="w-5 h-5 text-slate-500 shrink-0 mt-1" />}
                 </div>
                 {m.role === 'ai' && m.content && !m.content.startsWith('Loading:') && !m.content.startsWith('Initializing') && (
-                  <div className="flex gap-1.5 pl-8">
-                    <button
-                      onClick={() => void onSpeakMessage(m.content)}
-                      title={tts.speaking ? 'Stop speech' : `Read aloud (${tts.currentVoice.name} · ${tts.provider.toUpperCase()})`}
-                      aria-label="Read this verdict aloud"
-                      className={`p-1.5 rounded-lg border transition-all ${
-                        tts.speaking
-                          ? 'bg-purple-600/30 border-purple-500 text-purple-200 animate-pulse'
-                          : 'bg-white/5 border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30'
-                      }`}
-                    >
-                      {tts.speaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      onClick={() => void onTranslateMessage(i, m.content)}
-                      title={`Translate to ${mt.langs.find((l) => l.id === mt.langId)?.label ?? mt.langId} on-device`}
-                      aria-label="Translate this verdict"
-                      className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
-                    >
-                      <Languages className="w-3.5 h-3.5" />
-                    </button>
+                  <div className="flex flex-col gap-2 pl-8 pt-1">
+                    {/* Interactive Quick-Action Chips */}
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <button
+                        onClick={() => void sendMessage('🎯 Give me the top mathematical value betting picks and Half-Kelly staking for this meeting.')}
+                        title="Analyze value edges and Half-Kelly staking"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/25 text-purple-300 border border-purple-500/20 hover:border-purple-500/40 transition-all active:scale-95"
+                      >
+                        <Sparkles className="w-3 h-3 text-purple-400" />
+                        <span>🎯 Top Value Picks</span>
+                      </button>
+                      <button
+                        onClick={() => void sendMessage('⚡ Analyze track pace bias, draw statistics, and running styles for this card.')}
+                        title="Extract draw advantage and running styles"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-300 border border-amber-500/20 hover:border-amber-500/40 transition-all active:scale-95"
+                      >
+                        <Zap className="w-3 h-3 text-amber-400" />
+                        <span>⚡ Pace & Draw Bias</span>
+                      </button>
+                      <button
+                        onClick={() => void sendMessage('📋 Output a condensed markdown table of all runners, jockeys, merit ratings, and recent form.')}
+                        title="Display clean markdown runner table"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/25 text-blue-300 border border-blue-500/20 hover:border-blue-500/40 transition-all active:scale-95"
+                      >
+                        <Table className="w-3 h-3 text-blue-400" />
+                        <span>📋 Condensed Table</span>
+                      </button>
+                    </div>
+
+                    <div className="flex gap-1.5 items-center">
+                      <button
+                        onClick={() => void onSpeakMessage(m.content)}
+                        title={tts.speaking ? 'Stop speech' : `Read aloud (${tts.currentVoice.name} · ${tts.provider.toUpperCase()})`}
+                        aria-label="Read this verdict aloud"
+                        className={`p-1.5 rounded-lg border transition-all ${
+                          tts.speaking
+                            ? 'bg-purple-600/30 border-purple-500 text-purple-200 animate-pulse'
+                            : 'bg-white/5 border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30'
+                        }`}
+                      >
+                        {tts.speaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        onClick={() => void onTranslateMessage(i, m.content)}
+                        title={`Translate to ${mt.langs.find((l) => l.id === mt.langId)?.label ?? mt.langId} on-device`}
+                        aria-label="Translate this verdict"
+                        className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+                      >
+                        <Languages className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 )}
             </div>
             ))}
-            {/* Scroll-to-latest FAB — shows only when scrolled up reading back */}
-            {scrolledUp && (
-            <button
-              onClick={() => {
-                const el = scrollRef.current;
-                if (!el) return;
-                stickRef.current = true;
-                setScrolledUp(false);
-                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-              }}
-              aria-label="Scroll to latest message"
-              className="absolute bottom-4 right-4 z-10 p-2.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-            </button>
-            )}
         </div>
 
         {/* On-device AI toolbar: target language, voice, form-image reader */}
@@ -1009,21 +1091,38 @@ ${compiledContext || 'No context data available.'}`;
             {tts.currentVoice.name.toUpperCase()}
           </button>
           <button
+            onClick={toggleAutoSpeak}
+            title={autoSpeak ? "Auto-Voice active: responses speak automatically (tap to disable)" : "Enable Auto-Voice: hands-free paddock audio replies"}
+            aria-label="Toggle Auto-Voice"
+            className={`px-2.5 py-1.5 rounded-lg border transition-all font-black text-[11px] flex items-center gap-1.5 ${
+              autoSpeak
+                ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-[0_0_12px_rgba(168,85,247,0.35)] animate-pulse'
+                : 'bg-white/5 border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30'
+            }`}
+          >
+            <Radio className={`w-3 h-3 ${autoSpeak ? 'text-purple-300' : 'text-slate-400'}`} />
+            <span>AUTO-VOICE</span>
+          </button>
+          <button
             onClick={() => fileRef.current?.click()}
-            title="Attach a form/racecard image to read its text"
-            aria-label="Attach form image"
-            className="p-1.5 rounded-lg bg-white/5 border border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30 transition-all"
+            title="Attach a form, TAB Computaform, or racecard PDF/Image"
+            aria-label="Attach racecard PDF or image"
+            className={`p-1.5 rounded-lg border transition-all ${
+              attachedDoc
+                ? 'bg-purple-600/30 border-purple-500 text-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                : 'bg-white/5 border-white/10 text-theme-secondary hover:text-purple-300 hover:border-purple-500/30'
+            }`}
           >
             <ImagePlus className="w-4 h-4" />
           </button>
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf,.pdf"
             className="hidden"
             aria-hidden="true"
             tabIndex={-1}
-            onChange={(e) => void onImagePicked(e.target.files?.[0])}
+            onChange={(e) => void onFilePicked(e.target.files?.[0])}
           />
           {(tts.busy || tts.speaking || mt.translating || formReader.reading) && (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
@@ -1032,6 +1131,31 @@ ${compiledContext || 'No context data available.'}`;
             <span className="text-[11px] text-slate-400 font-semibold truncate">{toolNote}</span>
           )}
         </div>
+
+        {/* Attached Document Preview Chip */}
+        {attachedDoc && (
+          <div className="mx-4 mt-2 px-3 py-2 bg-purple-950/40 border border-purple-500/30 rounded-xl flex items-center justify-between text-xs animate-chat-fade-in-up">
+            <div className="flex items-center gap-2 text-purple-200 truncate min-w-0">
+              {attachedDoc.mimeType === 'application/pdf' ? (
+                <FileText className="w-4 h-4 text-red-400 shrink-0" />
+              ) : (
+                <ImagePlus className="w-4 h-4 text-emerald-400 shrink-0" />
+              )}
+              <span className="font-bold truncate">{attachedDoc.name}</span>
+              <span className="text-[9px] text-purple-300 uppercase font-mono px-1.5 py-0.5 rounded bg-purple-500/20 shrink-0">
+                {attachedDoc.mimeType === 'application/pdf' ? 'PDF Racecard' : 'Image Form'}
+              </span>
+            </div>
+            <button
+              onClick={() => setAttachedDoc(null)}
+              className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors ml-2 shrink-0"
+              title="Remove attached document"
+              aria-label="Remove attached document"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Input box */}
         <div className="p-4 border-t border-white/10 bg-black/40 flex flex-col sm:flex-row gap-3 shrink-0">
@@ -1047,16 +1171,20 @@ ${compiledContext || 'No context data available.'}`;
                   <optgroup label="🧠 Intelligent Routing" className="bg-[#0c0817]">
                     <option value="auto" className="bg-[#0c0817]">⚡ Auto Router (Dynamic Intent + Speed + Search)</option>
                   </optgroup>
-                  <optgroup label="⚡ Groq Cloud (Ultra-Fast Inference)" className="bg-[#0c0817]">
-                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · GPT-OSS 120B (Versatile Racing AI)</option>
-                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Instant Speed ~100ms)</option>
-                    <option value="groq-gpt-oss-20b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Fast Analysis)</option>
-                    <option value="groq-gemma2" className="bg-[#0c0817]">Groq · Gemma 2 9B (Google Architecture)</option>
-                  </optgroup>
-                  <optgroup label="✨ Google Gemini AI" className="bg-[#0c0817]">
-                    <option value="gemini-3.5-flash" className="bg-[#0c0817]">Gemini 3.5 Flash (Google Search Grounding)</option>
+                  <optgroup label="🧠 Google AI Studio (1,500 Free Daily · High Reasoning)" className="bg-[#0c0817]">
+                    <option value="gemma-4-31b" className="bg-[#0c0817]">Gemma 4 · 31B (Deep Form & Steward Reasoning)</option>
+                    <option value="gemini-3.5-flash" className="bg-[#0c0817]">Gemini 3.5 Flash (Google Search Grounding & PDF)</option>
+                    <option value="gemini-3.8-flash" className="bg-[#0c0817]">Gemini 3.8 Flash (Multimodal Document Master)</option>
                     <option value="gemini-3.1-pro-preview" className="bg-[#0c0817]">Gemini 3.1 Pro (Deep Math & Kelly Proofs)</option>
                     <option value="gemini-3.1-flash-lite" className="bg-[#0c0817]">Gemini 3.1 Flash-Lite (Lightweight Chat)</option>
+                  </optgroup>
+                  <optgroup label="⚡ Groq Cloud (Ultra-Fast LPUs ~400 t/s)" className="bg-[#0c0817]">
+                    <option value="groq-qwen-3.8-27b" className="bg-[#0c0817]">Groq · Qwen 3.8 27B (Elite Racecard & Tabular Summarizer)</option>
+                    <option value="groq-qwen-3.6-27b" className="bg-[#0c0817]">Groq · Qwen 3.6 27B (Rapid Steward Reports & Form Parser)</option>
+                    <option value="groq-gemma2" className="bg-[#0c0817]">Groq · Gemma 2 9B (Google Architecture ~450 t/s)</option>
+                    <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · Llama 3.3 70B (Versatile Racing AI)</option>
+                    <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · Llama 3.1 8B (Instant Speed ~100ms)</option>
+                    <option value="groq-mixtral" className="bg-[#0c0817]">Groq · Mixtral 8x7B (MoE Analysis)</option>
                   </optgroup>
                   <optgroup label="🌐 Browser Local (WebGPU Private)" className="bg-[#0c0817]">
                     <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
@@ -1181,7 +1309,7 @@ ${compiledContext || 'No context data available.'}`;
                 </button>
               ) : (
                 <button 
-                  onClick={sendMessage} 
+                  onClick={() => void sendMessage()} 
                   aria-label="Send message"
                   className="bg-purple-600 hover:bg-purple-500 px-4 rounded-xl transition-all font-black uppercase text-sm tracking-wider shadow-[0_0_15px_rgba(168,85,247,0.3)] shrink-0 min-h-[48px] flex items-center justify-center self-start text-white"
                 >

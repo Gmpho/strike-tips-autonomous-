@@ -6,16 +6,16 @@
 
 ## Overview
 
-The Cloudflare MCP Edge layer sits between the Cloudflare Pages HUD and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
+The Cloudflare MCP Edge layer sits between the Vercel HUD frontend and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
 
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                   Cloudflare Pages HUD (Vite + React)                │
-│                  https://strike-tips-hud.pages.dev                   │
-│                        functions/api/**                              │
-│              Routes /api/* /v1/* /mcp based on path                  │
+│                        Vercel HUD (Vite + React)                     │
+│                  https://strike-tips-hud.vercel.app                   │
+│                          middleware.ts                                │
+│              Routes /api/* /v1/* /mcp based on path                   │
 └─────────────────┬───────────────────────────────────┬────────────────┘
                   │                                   │
                   ▼                                   ▼
@@ -50,11 +50,11 @@ A Cloudflare Workers script (564 lines TypeScript) that provides both REST API a
 - Auth: Optional `x-api-key` header
 - Version: 2.0.0
 
-### Layer 2: Cloudflare Pages Functions
+### Layer 2: Vercel HUD Middleware
 
-**Deployed at:** `https://strike-tips-hud.pages.dev`
+**Deployed at:** `https://strike-tips-hud.vercel.app`
 
-`functions/api/**` Pages Functions act as the routing point. Requests are classified into two buckets:
+The `middleware.ts` file acts as a single routing point. Requests are classified into two buckets:
 
 | Bucket | Route To | Endpoints |
 |--------|----------|-----------|
@@ -267,17 +267,22 @@ npx wrangler secret put BACKEND_API_KEY
 npx wrangler secret put SEARCH_API_KEY   # optional, for web search
 ```
 
-### Cloudflare Pages HUD
+### Vercel HUD
 
 ```bash
-# From the repository root (npm workspace)
-npm run build      # outputs ./dist for the Pages project
+cd strike-tips-hud
+
+# Preview deploy
+vercel
+
+# Production deploy
+vercel --prod
+
+# Force fresh build (no cache)
+vercel deploy --prod -y --force
 ```
 
-The Pages project has NO git connection — deploy by hand with wrangler
-(`npm run build` at repo root, then from `strike-tips-hud/`
-`npx wrangler pages deploy dist --project-name strike-tips-hud`).
-See `docs/DEPLOY.md`.
+A fresh build requires `--force` flag to skip Vercel's build cache.
 
 ---
 
@@ -291,7 +296,7 @@ See `docs/DEPLOY.md`.
 | `BACKEND_API_KEY` | Yes | Shared API key for Modal auth |
 | `SEARCH_API_KEY` | No | Brave Search API key for `web_search_racing` |
 
-### Cloudflare Pages HUD
+### Vercel HUD
 
 | Variable | Description |
 |----------|-------------|
@@ -305,7 +310,7 @@ See `docs/DEPLOY.md`.
 
 2. **OKF Compiled at Build Time**: Workers have no filesystem — markdown is converted to TypeScript via `scripts/build-knowledge.js` and bundled into the worker. Zero runtime fetch overhead.
 
-3. **Pages Functions as Single Routing Point**: `functions/api/**` provides clear routing: Cloudflare for compute-light operations, Modal for heavy workloads.
+3. **Middleware as Single Routing Point**: The Vercel `middleware.ts` replaces API rewrites in `vercel.json`, providing clear routing: Cloudflare for compute-light operations, Modal for heavy workloads.
 
 4. **Docker Odds Monitor → Cloudflare KV**: Odds monitor runs locally, pushes snapshots to Cloudflare KV. Modal's `run_odds_monitor` is the fallback with `min_containers=0`.
 

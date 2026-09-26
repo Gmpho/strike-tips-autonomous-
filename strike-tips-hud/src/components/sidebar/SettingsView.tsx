@@ -28,7 +28,7 @@ const DEFAULTS: Settings = {
 
 export const SettingsView: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err' | 'verify'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [webGpuSupported, setWebGpuSupported] = useState(false);
   const [storageEstimate, setStorageEstimate] = useState<StorageEstimateInfo | null>(null);
   const [clearingStorage, setClearingStorage] = useState(false);
@@ -147,36 +147,20 @@ export const SettingsView: React.FC = () => {
   const save = async () => {
     setSaveState('saving');
     try {
-      const payload = JSON.stringify({
-        ...settings.bankroll,
-        ...settings.alerts,
-        ...settings.schedule,
-        ...settings.ai,
-        paper_mode: settings.paper.paperMode,
-        paper_balance: settings.paper.paperBalance,
-        auto_bet_enabled: settings.autonomous.autoBetEnabled,
-        auto_bet_min_edge: settings.autonomous.autoBetMinEdge,
-      });
-      const doSave = () => apiFetch('/api/config', {
+      const res = await apiFetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: payload,
+        body: JSON.stringify({
+          ...settings.bankroll,
+          ...settings.alerts,
+          ...settings.schedule,
+          ...settings.ai,
+          paper_mode: settings.paper.paperMode,
+          paper_balance: settings.paper.paperBalance,
+          auto_bet_enabled: settings.autonomous.autoBetEnabled,
+          auto_bet_min_edge: settings.autonomous.autoBetMinEdge,
+        }),
       });
-      let res = await doSave();
-      if (res.status === 401) {
-        // Proof-of-browser: run the Turnstile challenge once, then retry.
-        // A challenge failure is its own visible state with a retry button,
-        // not a generic save failure (harden-pages-functions 3.3).
-        const { ensureSession } = await import('../../lib/session-client');
-        const outcome = await ensureSession();
-        if (outcome === 'ok') {
-          res = await doSave();
-        } else if (outcome === 'challenge-failed') {
-          setSaveState('verify');
-          setTimeout(() => setSaveState('idle'), 4000);
-          return;
-        }
-      }
       if (res.ok) {
         setSaveState('ok');
         localStorage.setItem('strike_sound_enabled', String(settings.alerts.soundEnabled));
@@ -192,28 +176,7 @@ export const SettingsView: React.FC = () => {
 
   const testTelegram = async () => {
     try {
-      const send = () => apiFetch('/api/config/test_telegram', { method: 'POST' });
-      let res = await send();
-      if (res.status === 401) {
-        const { ensureSession } = await import('../../lib/session-client');
-        const outcome = await ensureSession();
-        if (outcome === 'ok') {
-          res = await send();
-        } else if (outcome === 'challenge-failed') {
-          setSaveState('verify');
-          setTimeout(() => setSaveState('idle'), 4000);
-          return;
-        }
-      }
-      if (!res.ok) {
-        alert(`Test failed (HTTP ${res.status}) — the backend rejected it. Check the session/console.`);
-        return;
-      }
-      const body = await res.json().catch(() => null);
-      if (body && body.success === false) {
-        alert('Test failed — the backend reported an error.');
-        return;
-      }
+      await apiFetch('/api/config/test_telegram', { method: 'POST' });
       alert('Test message sent! Check your Telegram.');
     } catch {
       alert('Failed to send test message');
@@ -232,8 +195,8 @@ export const SettingsView: React.FC = () => {
     </button>
   );
 
-  const saveLabel = { idle: 'Save Protocol', saving: 'Saving...', ok: '✓ Saved', err: '✗ Failed', verify: '⚠ Verify & retry' }[saveState];
-  const saveCls = saveState === 'err' ? 'bg-red-500 hover:bg-red-600' : saveState === 'ok' ? 'bg-emerald-500 hover:bg-emerald-600' : saveState === 'verify' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-purple-500 hover:bg-purple-600';
+  const saveLabel = { idle: 'Save Protocol', saving: 'Saving...', ok: '✓ Saved', err: '✗ Failed' }[saveState];
+  const saveCls = saveState === 'err' ? 'bg-red-500 hover:bg-red-600' : saveState === 'ok' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-purple-500 hover:bg-purple-600';
 
   return (
     <motion.div

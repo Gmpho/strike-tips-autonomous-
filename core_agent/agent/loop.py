@@ -45,9 +45,7 @@ class AgentLoop:
                     msg.session_key, msg.content, session.history, None
                 )
                 messages = [
-                    # Pass the user turn so the card-intent gate can withhold
-                    # the race card on casual/identity turns (Sep-2026).
-                    {"role": "system", "content": build_system_prompt(user_message=msg.content)},
+                    {"role": "system", "content": build_system_prompt()},
                     *session.history,
                     {"role": "user", "content": context},
                 ]
@@ -128,10 +126,8 @@ class AgentLoop:
                     "🧠 *Select active model*\n"
                     "To switch model, reply with `/model <name>`:\n\n"
                     "• `/model auto` — ⚡ Auto Router (optimal)\n"
-                    "• `/model groq` — ☁️ Groq GPT-OSS 120B (flagship, tools)\n"
-                    "• `/model gemini` — ☁️ Gemini 2.5 Flash (grounded chat)\n"
-                    "• `/model gemini-lite` — 🪶 Gemini 2.5 Flash-Lite (fast)\n"
-                    "• `/model gemini-turbo` — 🚀 Gemini 3.5 Flash (newest)\n\n"
+                    "• `/model groq` — ☁️ Groq Llama 70B\n"
+                    "• `/model gemini` — ☁️ Gemini Flash\n\n"
                     f"Current selection: *{current_model}*"
                 )
             else:
@@ -139,9 +135,7 @@ class AgentLoop:
                 mapping = {
                     "auto": "auto",
                     "groq": "groq",
-                    "gemini": "gemini",
-                    "gemini-lite": "gemini-2.5-flash-lite",
-                    "gemini-turbo": "gemini-3.5-flash",
+                    "gemini": "gemini"
                 }
                 
                 mapped = mapping.get(choice)

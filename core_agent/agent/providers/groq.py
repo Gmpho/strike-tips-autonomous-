@@ -1,21 +1,29 @@
 from __future__ import annotations
-import inspect
-import json
-import logging
 import os
+import json
+import inspect
+import logging
 from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.agent.providers.retry import retry_on_429
 from core_agent.agent.prompts import build_system_prompt
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 from core_agent.core.http_client import get_async_client
+from core_agent.core.strike_brain import brain
 
 logger = logging.getLogger("groq-provider")
 
 
 class GroqProvider:
     URL = "https://api.groq.com/openai/v1/chat/completions"
-    MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    MODELS = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "deepseek-r1-distill-llama-70b",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-27b",
+        "gemma2-9b-it",
+    ]
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GROQ_API_KEY", "")
@@ -89,26 +97,19 @@ class GroqProvider:
 
     async def _post_and_parse(self, messages: list[dict], needs_tools: bool, model: str) -> tuple[str, list[dict]]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-
-        # Rebuild the cloud system prompt with THIS turn's user text so the
-        # card-intent gate can withhold the race card on casual turns
-        # (Sep-2026: every reply parroted the meeting list).
-        from core_agent.agent.providers.task_router import TaskRouter as _TR
-        _user_msg = _TR._extract_user_query(messages)
-        _sys = build_system_prompt(for_cloud=True, user_message=_user_msg)
-
+        
         # Build a clean message list for the API call to avoid system prompt duplication
         api_messages = []
         for i, m in enumerate(messages):
             if i == 0 and m.get("role") == "system":
                 # Override the system prompt with the cloud-clean one
-                api_messages.append({"role": "system", "content": _sys})
+                api_messages.append({"role": "system", "content": build_system_prompt(for_cloud=True)})
             else:
                 api_messages.append(m)
-
+                
         # If no system prompt was present at all, prepend it
         if not api_messages or api_messages[0].get("role") != "system":
-            api_messages.insert(0, {"role": "system", "content": _sys})
+            api_messages.insert(0, {"role": "system", "content": build_system_prompt(for_cloud=True)})
 
         payload = {
             "model": model,
@@ -140,17 +141,14 @@ class GroqProvider:
 
         return content, tool_calls
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None,
-                    model_override: str | None = None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> AsyncIterator[str]:
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not set")
 
         from core_agent.agent.providers.task_router import TaskRouter
         raw_msg = TaskRouter._extract_user_query(messages)
         needs_tools = self._needs_tools(raw_msg, intent)
-        # Honor an explicit selection (Groq family) before intent heuristics.
-        model = model_override if model_override in self.MODELS else (
-            "openai/gpt-oss-20b" if not needs_tools else "openai/gpt-oss-120b")
+        model = "llama-3.1-8b-instant" if not needs_tools else "llama-3.3-70b-versatile"
 
         content, tool_calls = await self._post_and_parse(messages, needs_tools, model)
         if content:

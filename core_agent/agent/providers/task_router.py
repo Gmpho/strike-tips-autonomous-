@@ -81,12 +81,6 @@ class TaskRouter:
     Routes chat requests to the optimal model based on detected intent.
     """
 
-    # Live model ids a chat user can pin (Groq + Gemini families).
-    GROQ_IDS = ("groq", "groq-llama", "openai/gpt-oss-120b", "openai/gpt-oss-20b")
-    GEMINI_IDS = ("gemini", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-                  "gemini-3.5-flash", "gemini-3.1-flash-lite",
-                  "gemini-3.1-pro-preview")
-
     def __init__(self) -> None:
         self.ollama = OllamaProvider()
         self.cloud_providers = [GroqProvider(), GeminiProvider()]
@@ -164,65 +158,9 @@ class TaskRouter:
             return after
         return raw
 
-    @staticmethod
-    def _today_sast() -> str:
-        from datetime import datetime, timedelta, timezone
-
-        sast = timezone(timedelta(hours=2))  # SA has no DST
-        return datetime.now(sast).strftime("%A %-d %b %Y")
-
-    @staticmethod
-    def _asks_for_card(text: str) -> bool:
-        """True when the user wants meeting/card data (vs pasting their own).
-
-        Runner data present (odds like 23.00, 'Form:') means analysis of a
-        PROVIDED card — always allowed through. Otherwise a what/which/list
-        request about races/cards/odds/today needs live data to answer.
-        """
-        if re.search(r"\d+\.\d{2}|form\s*:|odds\s*:", text):
-            return False
-        wants = ("race" in text or "card" in text or "meeting" in text
-                 or "odds" in text or "runner" in text or "today" in text)
-        asks = ("what" in text or "which" in text or "list" in text
-                or "show" in text or "have" in text or "how many" in text
-                or "upcoming" in text or "schedule" in text or "calendar" in text
-                or "search" in text or "find" in text or "give" in text
-                or "tell me" in text or "latest" in text)
-        return wants and asks
-
-    def _meeting_list_line(self) -> str:
-        """'turffontein (9 races), vaal (8)' from the live snapshot."""
-        try:
-            from core_agent.core.snapshot_cache import get_snapshot
-            events = (get_snapshot() or {}).get("events", {}) or {}
-        except Exception:
-            events = {}
-        courses: dict = {}
-        for ev in events.values():
-            c = ((ev or {}).get("course") or (ev or {}).get("venue") or "").strip()
-            if c:
-                courses[c] = courses.get(c, 0) + 1
-        if not courses:
-            return ""
-        return ", ".join(f"{c} ({n} race{'s' if n != 1 else ''})"
-                         for c, n in sorted(courses.items()))
-
     async def _try_snapshot_answer(self, messages: list[dict]) -> str | None:
         """Answer data-retrieval queries directly from local JSON snapshots."""
         last_msg = self._extract_user_query(messages)
-
-        # Explicit scan requests are ACTION asks — answer them before any
-        # snapshot-dependent branch. (This used to live inside `if events:`,
-        # so a stale/empty evening feed downgraded "run a full daily scan"
-        # to the "no live data" refusal instead of scan guidance.)
-        if re.search(
-            r"\b(full |daily )?(daily )?scan\b|analyse (all |those )?(the )?\d+ races|across (all |those )?(the )?\d+ races",
-            last_msg,
-        ):
-            return ("I can run that — say **run the scan** (or `/scan`) "
-                    "and I'll kick off the full daily value scan "
-                    "across every track in the background. I'll "
-                    "report selections when it completes.")
 
         try:
             import json
@@ -323,11 +261,8 @@ class TaskRouter:
                                 lines.append(f"  ... and {len(runners)-6} more runners")
                         return "\n".join(lines)
 
-                    elif "today" in last_msg and re.search(r"\brace[s]?\b", last_msg) and not re.search(r"\b(tomorrow|yesterday)\b", last_msg):
-                        # Generic "today's races" — list all tracks. Requires an
-                        # explicit today+races ask (Sep-2026: bare "race" matched
-                        # here, so "what races we have tomorrow" / "analyse the
-                        # live cards across those 26 races" reprinted the card)
+                    elif "today" in last_msg or re.search(r"\brace[s]?\b", last_msg):
+                        # Generic "today's races" — list all tracks
                         lines = [f"**Today's Racing — {len(events)} races across {len(snapshot_courses)} tracks:**\n"]
                         for course, course_evs in sorted(snapshot_courses.items()):
                             race_times = [ev.get("time") or ev.get("start_time") or "" for _, ev in course_evs]
@@ -340,37 +275,6 @@ class TaskRouter:
 
         except Exception as e:
             logger.debug("[TASK_ROUTER] snapshot answer failed: %s", e)
-
-        # Existence gate (Sep-2026: raw LLM invented "Rand Stadium" /
-        # "Ohlange" cards with wrong dates). Runs LAST so real data paths
-        # (movers/predictor/results/track match) always win. A request FOR
-        # card data that matched nothing must be refused here, never passed
-        # to a model to guess.
-        try:
-            if self._asks_for_card(last_msg):
-                # The meeting list is TODAY's live snapshot — never answer a
-                # tomorrow/yesterday question with it (Sep-2026: "races
-                # tomorrow" returned today's card verbatim).
-                if re.search(r"\btomorrow\b", last_msg):
-                    return ("I can only see today's live meetings right now — "
-                            "tomorrow's cards aren't published yet. Ask me "
-                            "again tomorrow morning and I'll pull them fresh.")
-                if re.search(r"\byesterday\b", last_msg):
-                    return ("For yesterday's racing, ask for **recent results** "
-                            "(or name a track, e.g. 'results at kenilworth') "
-                            "and I'll pull what came in.")
-                meetings = self._meeting_list_line()
-                if not meetings:
-                    return ("I don't have live racing data right now — the "
-                            "data feed hasn't synced yet. Please try again in "
-                            "a few minutes rather than trusting any card "
-                            "details I might guess.")
-                return (f"**Today's Racing ({self._today_sast()}, SAST):** "
-                        f"{meetings}.\n\nAsk me about a track above and I'll "
-                        f"pull its card. If a track isn't listed, it isn't "
-                        f"racing today — I won't guess cards.")
-        except Exception as e:
-            logger.debug("[TASK_ROUTER] existence gate failed: %s", e)
         return None
 
 
@@ -388,35 +292,6 @@ class TaskRouter:
         if snap:
             yield snap
             return
-
-        # Grounding prefix (Sep-2026: fallthrough answers invented tracks,
-        # dates and cards). Every model-bound request carries today's real
-        # date + live meetings, plus an explicit no-guessing rule.
-        #
-        # Card-intent gate: the meetings list only rides along when the turn
-        # is about race data — otherwise casual chat ("You good") triggered
-        # a full card recital. Non-card turns still get the date so the
-        # model can answer time questions correctly.
-        try:
-            last_q = self._extract_user_query(messages)
-            card_turn = self._asks_for_card(last_q) or bool(
-                re.search(r"\d+\.\d{2}|form\s*:|off\s*time", last_q)
-            )
-            if card_turn:
-                meetings = self._meeting_list_line()
-                _ground = (f"[Context: today is {self._today_sast()} (SAST, South Africa). "
-                           + (f"Live meetings today: {meetings}. " if meetings
-                              else "No live meeting data synced right now. ")
-                           + "Never invent tracks, races, dates, results or statistics. "
-                           + "If asked about a track with no live card, say so plainly.]\n")
-            else:
-                _ground = (f"[Context: today is {self._today_sast()} (SAST, South Africa).]"
-                           "\n")
-            if messages and isinstance(messages[-1], dict) and messages[-1].get("content"):
-                messages[-1] = {**messages[-1],
-                                "content": _ground + str(messages[-1]["content"])}
-        except Exception as e:
-            logger.debug("[TASK_ROUTER] grounding prefix skipped: %s", e)
 
         # Load system configuration settings
         settings = self._load_settings()
@@ -445,20 +320,18 @@ class TaskRouter:
         # If a specific model is explicitly requested, route directly to it
         if active_model and active_model != "auto":
             logger.info("[TASK_ROUTER] explicit model override/preference → %s", active_model)
-            if active_model in ("groq", "groq-llama", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+            if active_model in ("groq", "groq-llama", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
                 provider = GroqProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent,
-                                                       model_override=active_model):
+                    async for chunk in provider.stream(messages, None, intent):
                         yield chunk
                     return
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Groq override failed: %s", e)
-            elif active_model in ("gemini", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"):
+            elif active_model in ("gemini", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
                 provider = GeminiProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent,
-                                                       model_override=active_model):
+                    async for chunk in provider.stream(messages, None, intent):
                         yield chunk
                     return
                 except Exception as e:

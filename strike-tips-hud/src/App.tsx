@@ -139,7 +139,7 @@ export const App: React.FC = () => {
   };
 
   const renderView = () => {
-    const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);
+    const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll && state.bankroll.balance > 0);
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (

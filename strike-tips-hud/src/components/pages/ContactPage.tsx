@@ -111,12 +111,12 @@ export const ContactPage: React.FC = () => {
             <div className="flex-1">
               <div className="text-sm font-black text-theme-primary mb-1">Strike Tips HUD</div>
               <a
-                href="https://strike-tips-hud.pages.dev"
+                href="https://strike-tips-hud.vercel.app"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-cyan-400 hover:text-cyan-300 font-mono transition-colors flex items-center gap-1"
               >
-                https://strike-tips-hud.pages.dev
+                https://strike-tips-hud.vercel.app
                 <ExternalLink className="w-3 h-3" />
               </a>
               <p className="text-xs text-theme-secondary mt-2 leading-relaxed">

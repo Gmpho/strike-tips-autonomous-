@@ -6,7 +6,7 @@
 
 A modular, AI-powered betting assistant that identifies value bets in South African horse racing using probability edge analysis and disciplined bankroll management.
 
-**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Cloudflare Pages HUD, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
+**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -59,16 +59,11 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 - **📊 Dream Stress Index (DSI)** - Scales Half-Kelly staking defensively: DSI < 20% → 1.0x, 20-50% → 0.75x, > 50% → 0.50x (Quarter-Kelly)
 - **🌐 WebGPU Search Grounding** - Local browser models fetch live context (odds, runners, ChromaDB insights, DDG search) via `/api/agent/context` before inference
 - **📱 Telegram `/dream` Command** - `/dream <track> race <num> - <scenario>` runs custom simulations and returns edge change reports directly to chat
-- **📰 Racing News Feed** - Zero-cost live headlines from BBC/Guardian/Mirror/TDN/Sporting Post/Gold Circle RSS — polled by the Swarm Researcher, delivered to the HUD via hash-first polling with a lazy image proxy (no API keys)
-- **🧠 Grounded AI Chat** - Existence gate refuses fantasy tracks/cards, every model-bound message carries today's real date + live meetings, pasted cards analyze untouched; Telegram `/model` mirrors the HUD pool (auto/groq/gemini/gemini-pro/gemini-lite)
-- **🎙️ Voice Studio** - Podcast synthesis, TTS voices, transcription + live voice HUD (see `openspec/changes/gemini-groq-tts/`, `autonomous-swarm-podcast` spec)
-- **💸 Settlement Truth** - Scratched horses auto-VOID with refund (never scored), abandoned meetings VOID singles with refund + Telegram note, exotic tickets need favourite/value anchors (no all-outsider lines), place capture (`placed`/`place_rate`), form-driven ticket budget (24 hot / 16 neutral / 10 cold) — full rules: [`docs/SETTLEMENT.md`](docs/SETTLEMENT.md)
-- **☁️ Live-Verified Cloud Pools** - Groq `gpt-oss-120b/20b`, Gemini 2.5 chain — IDs audited against live provider lists, prompt diet holds the 8k TPM ceiling ([`docs/CLOUD_MODELS.md`](docs/CLOUD_MODELS.md))
-- **💻 Local-First Dev** - `VITE_BACKEND=local` (default, docker `:8000`, zero prod spend) with LOCAL/PROD header badge ([`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md))
+- **📰 Racing News Feed** - Zero-cost live headlines from BBC Sport, The Guardian & Daily Mirror RSS — polled by the Swarm Researcher, streamed to the HUD over SSE with a lazy image proxy (no API keys)
 - **🐝 Swarm Researcher (All-Region Form Insights)** - Backfills form commentary for every region Betway's Timeform doesn't cover (USA, Japan, South Africa, Australia, NZ, Hong Kong…): free deterministic field blurbs for all runners, web-grounded Groq summaries gated to aiSelections/movers/short-priced (max 6 calls/cycle), persisted to ChromaDB learning memory and surfaced in the HUD with region chips + reliability badges
 - **📡 Live Ops Telemetry** - Dedicated sidebar tab with engine status cards + live activity stream (Swarm Researcher, News RAG, Dreaming Engine, Governor DSI adjustments), fed by 10s hash-first polling + disk-backed cross-container mirror — SSE retired to stop 24/7 billed executions ([docs](docs/LIVE_OPS_TELEMETRY.md))
 - **📊 RaceCard Table Upgrades** - Sortable columns, full-width collapsible insight banners, per-row model Edge column, one-click ⚡ per runner into AI chat, and a live Dream Stress Index chip on the race header
-- **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Pages Functions `[[catchall]]` proxy `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
+- **🔒 Security Hardening (2026-09-02)** - Cloudflare Worker fail-closed `isAuthorized` + `ALLOWED_ORIGINS` allowlist + `OPTIONS` preflight, Vercel middleware `100 req/min` rate limiting + `401` kill-switch protection, `BACKEND_API_KEY`/`STRIKE_TIPS_API_KEY` rotation ([docs](docs/RELEASE_2026_09_02_SECURITY_BETFAIR_MOBILE.md))
 - **📊 Betfair Enriched Form (All Regions)** - 12 fields per runner (`gear`, `daysSinceRun`, `official_rating`, `pedigree` via `SIRE x DAM`, `owner`, `trainer`, `age`, `weight`, `form`, `jockey_claim`, `runner_comments`, `verdict`) across RSA/AUS/USA/GB/IRE/FRA/NZL (`_COUNTRY_FILTER=None`, case-insensitive `WEARING`/`DAYS_SINCE_LAST_RUN`, `marketId`/`id` fix; 169 events for TOMORROW vs 0 before)
 - **💬 Markdown AI Chat** - Assistant messages render full markdown (headings, tables via GFM, code) theme-mapped for dark/light; user bubbles stay plain
 - **🔭 Observability** - Correlation IDs per scan/settle/chat flow (trailing token on Telegram messages), JSON logs on Modal, honest log levels ([docs](docs/OBSERVABILITY.md))
@@ -248,7 +243,7 @@ region / swarmInsight / insightSource before set_snapshot → SSE push
 
 ## 🚀 Quick Start
 
-### Option A: Deploy Cloudflare Pages HUD + Worker (Cloud-Native)
+### Option A: Deploy Cloudflare Worker + Vercel HUD (Cloud-Native)
 
 ```bash
 # 1. Deploy Cloudflare Worker (always-free edge)
@@ -256,13 +251,12 @@ cd cloudflare_mcp_edge
 node scripts/build-knowledge.js
 npm run deploy
 
-# 2. Deploy the HUD — no git connection, deploy by hand with wrangler:
-#    npm run build (repo root), then from strike-tips-hud/:
-#    npx wrangler pages deploy dist --project-name strike-tips-hud
+# 2. Deploy Vercel HUD (frontend)
+cd ../strike-tips-hud
+vercel deploy --prod -y --force
+
 # 3. Visit https://strike-tips-hud.pages.dev
 ```
-
-Full three-layer runbook: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ### Option B: Docker (Local Development)
 
@@ -615,11 +609,10 @@ cloudflare_mcp_edge/                      # Cloudflare Worker (always-free edge)
 ├── package.json                          # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                        # D1 + KV bindings
 
-strike-tips-hud/                          # Vite + React + Three.js frontend (Pages)
+strike-tips-hud/                          # Vite + React + Three.js frontend (Vercel)
 ├── src/                                  # UI components
-├── functions/api/[[catchall]].ts         # Routes API calls: Cloudflare vs Modal
-├── functions/v1/[[catchall]].ts          # OpenAI-compatible surface
-├── public/_headers                       # COOP/COEP + security headers
+├── middleware.ts                         # Routes API calls: Cloudflare vs Modal
+├── vercel.json                           # SPA rewrites only
 └── package.json
 ```
 
@@ -665,7 +658,7 @@ strike = StrikeTips(bankroll_config=custom_config)
 ## 🧪 Testing
 
 ```bash
-# Run all tests (261 collected — the local/CI count; verify with collect-only)
+# Run all tests (30 tests — governor, DSI staking, exotics, selections, pool legs, auto-bet odds)
 pytest
 
 # Test specific component
@@ -732,7 +725,7 @@ Betting tips and data stay free forever; the project is community-funded
 
 - Issues: [GitHub Issues](https://github.com/Gmpho/strike-tips-autonomous-/issues)
 - Telegram: [@StrikeTipsBot](https://t.me/StrikeTipsBot)
-- HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages — the only frontend host)
+- HUD: [https://strike-tips-hud.pages.dev/](https://strike-tips-hud.pages.dev/) (Cloudflare Pages; Vercel URL kept paused as fallback)
 - Support the project: [https://strike-tips-hud.pages.dev/support](https://strike-tips-hud.pages.dev/support) — voluntary once-off contributions, tips stay free forever
 - MCP: `POST https://striketips-mcp.gmphorg379.workers.dev/mcp` (requires `x-api-key` + `Accept: application/json, text/event-stream`)
 

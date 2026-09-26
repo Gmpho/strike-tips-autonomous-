@@ -259,7 +259,7 @@ export const HowToBetPage: React.FC = () => {
           Web Dashboard (HUD)
         </h2>
         <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20">
-          <div className="text-xs font-mono text-purple-400 mb-3">https://strike-tips-hud.pages.dev</div>
+          <div className="text-xs font-mono text-purple-400 mb-3">https://strike-tips-hud.vercel.app</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {[
               'Live race cards with AI selections',

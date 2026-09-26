@@ -139,9 +139,7 @@ async def test_get_form_format_end_to_end(tmp_path):
             _runner("Task Force", "blinkers and tongue strap", "16"),
             _runner("Diaval", None, "21"),
         ],
-        # startTime: 2027-01-01 12:07 SAST (future epoch — filter must keep it).
-        # eventDate anchors the date so HH:MM comparison doesn't use today.
-        "event": {"name": "Scottsville", "startTime": 1798798020000},
+        "event": {"name": "Scottsville", "startTime": 1788084420000},
         "markets": [{"name": "R1 1200m Mdn"}],
     }
     api = BetfairSA(cache_dir=tmp_path)

@@ -38,10 +38,6 @@ class AlertDigester:
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
         self._running = False
-        # Suppression accounting (from AlertEngine.stats) so a thin digest can
-        # explain itself instead of looking like alerts went missing.
-        self._suppressed: dict = {}
-        self._last_flush_ts: Optional[datetime] = None
 
     async def push(self, category: str, html: str) -> None:
         """Queue a non-critical alert for the next digest."""
@@ -66,48 +62,18 @@ class AlertDigester:
         if not batch:
             return
 
-        # Honest window: buffers flush per monitor cycle (~5 min on Modal),
-        # so the header must not claim "last 30 min".
-        now = datetime.now()
-        if self._last_flush_ts is not None:
-            elapsed_min = max(1, int((now - self._last_flush_ts).total_seconds() // 60))
-        else:
-            elapsed_min = self._interval // 60
-        self._last_flush_ts = now
-
         lines = [
-            f"📋 <b>Alert Digest</b> — {now.strftime('%H:%M')}",
-            f"({len(batch)} alert(s) in the last {elapsed_min} min)\n",
+            f"📋 <b>Alert Digest</b> — {datetime.now().strftime('%H:%M')}",
+            f"({len(batch)} alert(s) in the last {self._interval // 60} min)\n",
         ]
 
         for category, html in batch[-20:]:  # cap at 20 to avoid message length limits
             icon = {"odds_drop": "📉", "value_bet": "💰"}.get(category, "ℹ️")
             lines.append(f"{icon} {html}")
 
-        suppressed = []
-        if self._suppressed:
-            race_cd = int(self._suppressed.get("race_cooldown_prevents", 0) or 0)
-            key_cd = int(self._suppressed.get("cooldown_prevents", 0) or 0)
-            if race_cd:
-                suppressed.append(f"{race_cd} by per-race cooldown")
-            if key_cd:
-                suppressed.append(f"{key_cd} by per-horse cooldown")
-            self._suppressed = {}
-        if suppressed:
-            lines.append(f"\n⏱ Suppressed: {', '.join(suppressed)}")
-
         lines.append("\n⚡ Critical alerts are sent immediately — not batched.")
 
         await self._notifier.broadcast("\n".join(lines))
-
-    def note_suppressed(self, stats: dict) -> None:
-        """Record AlertEngine cooldown counters for the next digest header."""
-        if not stats:
-            return
-        self._suppressed = {
-            "race_cooldown_prevents": stats.get("race_cooldown_prevents", 0),
-            "cooldown_prevents": stats.get("cooldown_prevents", 0),
-        }
 
     async def _loop(self) -> None:
         """Background loop that flushes on interval."""

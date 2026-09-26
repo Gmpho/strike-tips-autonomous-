@@ -52,24 +52,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
             <div className="px-1.5 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-md shrink-0">
               <span className="text-[7px] sm:text-[9px] font-black text-purple-400 uppercase tracking-widest">PRO</span>
             </div>
-            {/* Backend indicator: local dev must not silently burn prod.
-                import.meta.env.DEV + VITE_BACKEND=prod → amber PROD,
-                otherwise emerald LOCAL (docker :8000) or PROD build. */}
-            {(() => {
-              const isDev = (import.meta as any).env?.DEV;
-              const viteBackend = ((import.meta as any).env?.VITE_BACKEND || 'local').toLowerCase();
-              if (!isDev) return null;
-              const isProd = viteBackend === 'prod';
-              return (
-                <div className={`px-1.5 py-0.5 border rounded-md shrink-0 ${
-                  isProd ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'
-                }`} title={isProd ? 'Dev server → LIVE Modal backend (burns prod!)' : 'Dev server → local docker backend'}>
-                  <span className={`text-[7px] sm:text-[9px] font-black uppercase tracking-widest ${
-                    isProd ? 'text-amber-400' : 'text-emerald-400'
-                  }`}>{isProd ? 'PROD' : 'LOCAL'}</span>
-                </div>
-              );
-            })()}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className={`w-1.5 h-1.5 rounded-full shadow-[0_0_10px] shrink-0 transition-colors duration-500 ${
@@ -120,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
           <div>
             <div className="text-[7px] sm:text-[8px] font-black text-theme-secondary opacity-70 uppercase tracking-tighter flex items-center gap-1">
               Capital
-              {state.bankroll && state.bankroll.paperMode !== undefined && (
+              {state.bankroll && (
                 <span
                   title={state.bankroll.paperMode ? 'Paper simulation bank — real funds untouched' : 'Live real-funds bank'}
                   className={`px-1 py-px text-[6px] sm:text-[7px] font-black rounded uppercase tracking-wider ${
@@ -134,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
               )}
             </div>
             <div className="text-[10px] sm:text-xs md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">
-              R {state.bankroll && state.bankroll.paperMode !== undefined && state.bankroll.balance ? Math.round(state.bankroll.balance).toLocaleString() : '—'}
+              R {state.bankroll?.balance ? Math.round(state.bankroll.balance).toLocaleString() : '0'}
             </div>
           </div>
           <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500/50 group-hover:text-purple-500 transition-colors hidden xs:block" />

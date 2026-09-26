@@ -16,21 +16,21 @@ Core promise: **Probability edge analysis + Half-Kelly staking with hard guards*
 - AI: Ollama local (`racing_llama`, `racing_qwen`, `func_gemma`, `lfm_racing`, `ds_racing`) via Intel GPU, cloud fallbacks Groq (`openai/gpt-oss-20b`, `llama-3.3-70b`) + Gemini (`gemini-2.0-flash`), `sentence-transformers` + ChromaDB (local/persistent or Chroma Cloud)
 - Memory: ChromaDB `form_insights` + JSONL + Honcho + `curated_memory` (agent_notes.md / user_prefs.md)
 - Data: Betway API (`betway_api.py`), Racing Odds API, AtTheRaces (`attheraces_api.py`), RSS (BBC/Guardian/Mirror)
-- Tests: `pytest` (261 collected), Black/flake8
+- Tests: `pytest` (44 tests), Black/flake8
 
 **Edge — `cloudflare_mcp_edge/` (always-free Worker):**
 - TypeScript, `@modelcontextprotocol/sdk` v1.29.0 (stateless `WebStandardStreamableHTTPServerTransport`), Zod, Wrangler
 - D1 (244 form insights) + KV (live odds cache TTL 300s), OKF knowledge bundle (12 curated SA docs compiled via `node scripts/build-knowledge.js`)
 
-**Frontend — `strike-tips-hud/` (Cloudflare Pages):**
+**Frontend — `strike-tips-hud/` (Vercel):**
 - Vite 8 + React 19 + TypeScript + Three.js, Tailwind CSS 4.0, Framer Motion, WebLLM (MLC-AI) for browser-local LLM, `middleware.ts` routing (Cloudflare vs Modal)
 
 ## Architecture & Conventions
 
 **3-Layer Flow:**
 ```
-Cloudflare Pages HUD --functions/api--> Cloudflare Edge (OKF/D1/KV, 16 MCP tools)
-                                     \-> Modal Backend (FastAPI, Telegram bot, AI swarm, Dream/DSI, odds processing)
+Vercel HUD --middleware.ts--> Cloudflare Edge (OKF/D1/KV, 16 MCP tools)
+                          \-> Modal Backend (FastAPI, Telegram bot, AI swarm, Dream/D SI, odds processing)
 ```
 - `Docker` 4-container stack: `strike-bot-new` (FastAPI :8000), `odds-monitor-new`, `redis`, `ollama`, `redisinsight`
 - `core_agent/core/strike_brain.py` singleton, `core_agent/agent/intent_classifier.py` (~0ms regex), gateway `core_agent/agent/providers/task_router.py`
@@ -62,9 +62,6 @@ Cloudflare Pages HUD --functions/api--> Cloudflare Edge (OKF/D1/KV, 16 MCP tools
 - `strike-tips-hud/server/podcast-service.ts`, `strike-tips-hud/src/components/SwarmPodcastView.tsx` (Autonomous Swarm Racing Podcast)
 - `strike-tips-hud/src/engine/data-bridge.ts`, `strike-tips-hud/src/store/hud-store.ts` (`telemetry: []`), `strike-tips-hud/src/components/sidebar/TelemetryView.tsx`
 - `strike-tips-hud/src/components/RaceCard.tsx` (sub-row banner, sortable headers, Edge col, per-row ⚡)
-- Settlement voids: `core_agent/skills/result_tracker.py` (`_snapshot_non_runners`, `_meeting_is_abandoned`, `_void_abandoned_meetings`), bankroll `cancel_pending_bet` refunds (see `openspec/changes/stabilize-sep-ops/`)
-- Chat grounding: `core_agent/agent/providers/task_router.py` (existence gate, date+meetings prefix, pasted-card passthrough)
-- Web lifespan serves only (`core_agent/api_pkg/__init__.py`); loops live in cron cadence (`core_agent/core/modal_app.py`: `run_odds_monitor` + intelligence piggyback)
 
 ## Workflow
 

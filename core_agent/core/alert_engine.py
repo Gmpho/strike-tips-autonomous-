@@ -43,7 +43,7 @@ class AlertEngine:
         self.last_alerted_odds: Dict[str, float] = {}  # Track last odds we alerted on for each key
         # Per-race cooldown to prevent alert bursts from same race
         self.last_race_alert_time: Dict[str, datetime] = {}
-        self.race_cooldown_minutes = 5  # Minimum minutes between alerts for same race
+        self.race_cooldown_minutes = 10  # Minimum minutes between alerts for same race
 
         self.stats = {
             "total_evaluations": 0,

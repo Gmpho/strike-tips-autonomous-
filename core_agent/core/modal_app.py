@@ -35,24 +35,15 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     image=image,
     secrets=secrets,
     volumes={"/app/data": data_volume},
-    # 512MB: the Sep-2026 outage was loop starvation (fixed by slimming
-    # the lifespan), not OOM — no need to pay for 1024 around the clock.
-    memory=512,
+    memory=256,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
-         # Explicit (beats secrets): TWA must open the live Pages HUD.
+         # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
          "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    # Cold init pulls a multi-GB image (2x Chromium + torch, ~150s on fresh
-    # workers — Sep-2026: tripped the 120s limit overnight, HUD offline).
-    # One resident worker keeps the image cached and all reads fast.
-    # Proper fix later: slim browser-free image for serve_api.
-    startup_timeout=300,
-    min_containers=1,
-    # Single keeper: traffic is tiny and extra web containers each ran a
-    # full scheduler + monitor loop (3x scrapes, volume contention) and
-    # starved fresh starts into the 300s init timeout.
-    max_containers=1,
+    startup_timeout=120,
+    min_containers=0,
+    max_containers=3,
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app()
@@ -160,55 +151,6 @@ def serve_api():
                 if cmd == "/auth":
                     return {"ok": True}
 
-                if cmd == "/model":
-                    from core_agent.config.model_config import ModelConfig as _MC
-                    choice = (parts[1].lower() if len(parts) > 1 else "")
-                    mapping = {
-                        "auto": "auto",
-                        "groq": "groq",
-                        "gemini": "gemini",
-                        "gemini-lite": "gemini-2.5-flash-lite",
-                        "gemini-turbo": "gemini-3.5-flash",
-                    }
-                    session_key = f"tg:{chat_id}"
-                    # Per-chat preference persists on the lifespan
-                    # AgentLoop session (same key the chat path reads).
-                    try:
-                        mgr = request.app.state.bus_loop.session_mgr
-                        sess = mgr.get(session_key)
-                        current = sess.metadata.get("preferred_model") or "auto"
-                    except Exception:
-                        sess = None
-                        current = "auto"
-                    if not choice:
-                        menu = (
-                            "🧠 *Select active model*\n"
-                            "To switch model, reply with `/model <name>`:\n\n"
-                            "• `/model auto` — ⚡ Auto Router (optimal)\n"
-                            "• `/model groq` — ☁️ Groq GPT-OSS 120B (flagship, tools)\n"
-                            "• `/model gemini` — ☁️ Gemini 2.5 Flash (grounded chat)\n"
-                            "• `/model gemini-lite` — 🪶 Gemini 2.5 Flash-Lite (fast)\n"
-                            "• `/model gemini-turbo` — 🚀 Gemini 3.5 Flash (newest)\n\n"
-                            f"Current selection: *{current}*"
-                        )
-                        await bot.send_message(chat_id=chat_id, text=menu, parse_mode="Markdown")
-                        return {"ok": True}
-                    mapped = mapping.get(choice)
-                    if mapped and sess is not None:
-                        sess.metadata["preferred_model"] = mapped
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=f"✅ Active model switched to *{mapped}*. Subsequent requests in this chat will use this model.",
-                            parse_mode="Markdown",
-                        )
-                    else:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=f"❌ Unknown model: *{choice}*. Type `/model` to see the list of valid models.",
-                            parse_mode="Markdown",
-                        )
-                    return {"ok": True}
-
                 if cmd == "/start":
                     from core_agent.config.settings import NOTIFICATIONS
                     welcome = (
@@ -229,8 +171,6 @@ def serve_api():
                     help_text = (
                         "🧠 *Available Commands*\n\n"
                         "/auth <PIN> - Unlock bot access\n"
-                        "/model - Show cloud model options\n"
-                        "/model <name> - Switch chat model (auto/groq/gemini/gemini-lite/gemini-turbo)\n"
                         "/scan - Start today's full racing scan\n"
                         "/status - Get current bankroll & ROI stats\n"
                         "/chart - Show 15-day performance chart\n"
@@ -249,18 +189,14 @@ def serve_api():
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
                         return {"ok": True}
                     s = brain.strike.get_bankroll_status()
-                    reply_html = (
-                        "💰 <b>Account Summary</b>\n"
-                        "<pre>\n"
-                        "┌──────────────┬──────────────┐\n"
-                        f"│ Balance      │ R{s['current_bankroll']:>10.2f} │\n"
-                        f"│ Total P&L    │ R{s['total_profit_loss']:>10.2f} │\n"
-                        f"│ Open Bets    │ {s['open_bets']:>12} │\n"
-                        f"│ Drawdown     │ {s['drawdown_percent']:>11.1f}% │\n"
-                        "└──────────────┴──────────────┘\n"
-                        "</pre>"
+                    reply = (
+                        f"💰 *Account Summary*\n\n"
+                        f"Balance: *R{s['current_bankroll']:.2f}*\n"
+                        f"P&L: *R{s['total_profit_loss']:.2f}*\n"
+                        f"Open Bets: *{s['open_bets']}*\n"
+                        f"Drawdown: *{s['drawdown_percent']:.1f}%*"
                     )
-                    await bot.send_message(chat_id=chat_id, text=reply_html, parse_mode="HTML")
+                    await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
                     return {"ok": True}
 
                 if cmd == "/chart":
@@ -295,21 +231,6 @@ def serve_api():
 
             # ── AI pipeline (non-command): bus-based chat ─────────
             from core_agent.bus.events import InboundMessage, OutboundMessage
-            from core_agent.agent.telegram_format import (
-                markdown_to_telegram_html,
-                format_race_card_for_telegram,
-                split_for_telegram,
-            )
-
-            async def _send_typing_loop(b, c_id):
-                try:
-                    while True:
-                        await b.send_chat_action(chat_id=c_id, action="typing")
-                        await asyncio.sleep(4.0)
-                except (asyncio.CancelledError, Exception):
-                    pass
-
-            typing_task = asyncio.create_task(_send_typing_loop(bot, chat_id))
 
             inbound = InboundMessage(
                 session_key=f"tg:{chat_id}",
@@ -333,25 +254,15 @@ def serve_api():
             except asyncio.TimeoutError:
                 reply = "⏳ I'm still thinking. Please try a simpler question or check back later."
             finally:
-                typing_task.cancel()
                 bus.unsubscribe(sub)
 
             reply = _clean(reply)
-
-            async def _send(raw_text: str) -> None:
-                """Send with Telegram HTML mode, formatting race cards and falling back to plain text."""
-                formatted_text = format_race_card_for_telegram(raw_text)
-                chunks = split_for_telegram(formatted_text, max_length=3800)
-                for chunk in chunks:
-                    try:
-                        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-                    except Exception as parse_err:
-                        if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
-                            await bot.send_message(chat_id=chat_id, text=raw_text[:4000])
-                        else:
-                            raise
-
-            await _send(reply)
+            MAX_LENGTH = 4000
+            if len(reply) > MAX_LENGTH:
+                for i in range(0, len(reply), MAX_LENGTH):
+                    await bot.send_message(chat_id=chat_id, text=reply[i:i+MAX_LENGTH], parse_mode="Markdown")
+            else:
+                await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
 
         except Exception as exc:
             logger.error("Webhook error: %s", exc, exc_info=True)
@@ -360,41 +271,6 @@ def serve_api():
             except Exception:
                 pass
         return {"ok": True}
-
-    @fastapi_app.get("/telegram-health")
-    async def telegram_health(request: Request):
-        """Probe the Telegram chat path without spamming the bot.
-
-        Reports bus liveness (queue depth, worker alive, active sessions)
-        plus the cloud model pool the chat path resolves to — the same
-        ModelConfig source the HUD auto-router uses.
-        """
-        from core_agent.config.model_config import ModelConfig as _MC
-        bus = getattr(request.app.state, "bus", None)
-        loop = getattr(request.app.state, "bus_loop", None)
-        try:
-            sessions = len(loop.session_mgr._sessions) if loop else -1
-        except Exception:
-            sessions = -1
-        try:
-            queued = bus.inbound.qsize() if bus else -1
-        except Exception:
-            queued = -1
-        task = getattr(request.app.state, "bus_task", None)
-        alive = bool(task is not None and not task.done())
-        return {
-            "ok": True,
-            "bus_alive": alive,
-            "queued_inbound": queued,
-            "active_sessions": sessions,
-            "cloud_pool": {
-                "orchestrator": _MC.ORCHESTRATOR,
-                "fast": getattr(_MC, "GROQ_FAST", None),
-                "fallback": getattr(_MC, "CLOUD_FALLBACK", None),
-                "gemini_chain": list(getattr(_MC, "GEMINI_CHAIN", [])),
-                "groq_key_set": _MC.groq_available(),
-            },
-        }
 
     # ── Auto-register webhook on boot ────────────────────────────────
     import os
@@ -618,89 +494,6 @@ async def run_odds_monitor():
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
-    # Intelligence piggyback: every 6th tick (≈30min) runs the swarm/news/
-    # heartbeat single pass (no free cron slot left for its own schedule).
-    try:
-        if _intel_tick_due():
-            await _intelligence_pass()
-    except Exception as e:
-        logger.warning(f"Intelligence pass skipped: {e}")
-    # Piggyback keep-warm: the dedicated keep_warm cron was cut for the
-    # free-tier 5-cron limit, so the 5-min monitor (already running) pings
-    # serve_api during racing hours. Best-effort, 10s cap, never fails
-    # the cycle. (Sep-2026: cold serve_api wedged past the init timeout
-    # overnight and the HUD showed offline.)
-    try:
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
-        _h = _dt.now(_ZI("Africa/Johannesburg")).hour
-        if 5 <= _h < 22:
-            import httpx as _hx
-            # /api/system/health is keyless (SAFE_PATHS) and cheap — /health
-            # 404'd (no such route), spamming+N confusing error counts.
-            _hx.get("https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health",
-                    timeout=10)
-    except Exception as _w:
-        logger.debug(f"serve_api warm ping skipped: {_w}")
-
-
-# ── Intelligence (swarm + news + heartbeat) — single pass ──────────────
-# Proper home for the loops that used to ride inside web containers (and
-# died with them — Sep-2026: LiveOps showed swarm/news idle, news 9h
-# stale). Runs piggybacked on the 5-min monitor (every 6th tick ≈ 30min)
-# because the free tier caps at 5 scheduled functions and all 5 are taken.
-async def _intelligence_pass() -> dict:
-    """Single-pass swarm backfill + news poll + dream heartbeat tick."""
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo as _ZI
-
-    if not 5 <= _dt.now(_ZI("Africa/Johannesburg")).hour < 22:
-        return {"status": "skipped"}
-
-    from core_agent.skills.parsers.betway_api import BetwayAPI
-
-    try:
-        snap = await BetwayAPI().get_snapshot_format() or {}
-    except Exception as e:
-        logger.warning(f"Intelligence snapshot failed: {e}")
-        snap = {}
-    try:
-        from core_agent.skills.swarm_researcher import backfill_form_insights, poll_news
-
-        if (snap.get("events")):
-            groq_used = await backfill_form_insights(snap)
-            logger.info(f"Intelligence swarm backfill used {groq_used} Groq calls")
-        news_n = await poll_news()
-        logger.info(f"Intelligence news poll: {news_n} items")
-    except Exception as e:
-        logger.warning(f"Intelligence swarm/news failed: {e}")
-    try:
-        from core_agent.core.heartbeat import _run_heartbeat_tick
-        from core_agent.skills.memory.chroma_memory import RacingMemory
-
-        await _run_heartbeat_tick(RacingMemory())
-        logger.info("Intelligence heartbeat tick complete")
-    except Exception as e:
-        logger.warning(f"Intelligence heartbeat failed: {e}")
-    return {"status": "complete"}
-
-
-def _intel_tick_due(every: int = 6) -> bool:
-    """True every `every`-th monitor tick (volume-backed counter)."""
-    import os as _os
-
-    try:
-        _p = "/app/data/.intel_tick"
-        _n = 0
-        if _os.path.exists(_p):
-            with open(_p) as _f:
-                _n = int((_f.read() or "0").strip() or 0)
-        _n += 1
-        with open(_p, "w") as _f:
-            _f.write(str(_n))
-        return _n % every == 0
-    except Exception:
-        return False
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
@@ -714,7 +507,7 @@ def keep_warm():
     """Ping serve_api health every 10 min during racing hours — prevents cold start."""
     import httpx
 
-    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health"
+    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/health"
     try:
         httpx.get(url, timeout=10)
         logger.info("keep_warm ping ok")

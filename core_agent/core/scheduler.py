@@ -27,21 +27,8 @@ import io
 import sys
 
 
-_emoji_filter_installed = False
-
-
 def setup_emoji_filter():
-    """Swap sys.stdout for an emoji-rewriting wrapper (process entry only).
-
-    Must NEVER run at import time: the wrapper pins the current stdout
-    buffer, so importing this module under pytest permanently redirects
-    later tests at a closed capture file (Sep-2026: one scheduler test
-    failed and the other ~150 errored after it). Call from start()/main().
-    Idempotent — repeat calls are no-ops.
-    """
-    global _emoji_filter_installed
-    if _emoji_filter_installed:
-        return
+    """Setup to replace ASCII tags with emojis in stdout."""
 
     class EmojiFilter(io.TextIOWrapper):
         def __init__(self, buffer):
@@ -82,11 +69,13 @@ def setup_emoji_filter():
                 text = text.replace(tag, emoji)
             super().write(text)
 
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        return  # non-console stdout (captured/redirected) — leave it alone
-    sys.stdout = EmojiFilter(buffer)
-    _emoji_filter_installed = True
+    sys.stdout = EmojiFilter(sys.stdout.buffer)
+
+
+try:
+    setup_emoji_filter()
+except:
+    pass
 
 
 class StrikeTipsScheduler:
@@ -307,14 +296,10 @@ class StrikeTipsScheduler:
             return
 
         # 2. Save latest market snapshot to file (for HUD dashboard)
-        #    MUST go through write_market_snapshot: a raw dump here wiped the
-        #    monitor's pruning and re-served finished races for hours
-        #    (Sep-2026: 58 live ↔ 126-race morning card oscillation).
+        snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
         try:
-            from core_agent.core.snapshot_writer import write_market_snapshot
-
-            saved = write_market_snapshot(snapshot, source="scheduler_scan")
-            print(f"[SCAN] Saved market snapshot ({len(saved.get('events', {}))} live races)")
+            with open(snapshot_file, "w") as f:
+                json.dump(snapshot, f, indent=2, default=str)
         except Exception as e:
             print(f"[WARN] Failed to save market snapshot: {e}")
 
@@ -637,7 +622,6 @@ def main():
     parser = argparse.ArgumentParser(description="Strike Tips Scheduler")
     parser.add_argument("command", choices=["start", "scan"])
     args = parser.parse_args()
-    setup_emoji_filter()
     if args.command == "start":
         StrikeTipsScheduler().start()
     elif args.command == "scan":

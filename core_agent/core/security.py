@@ -9,7 +9,6 @@ SAFE_PATHS = {
     "/docs",
     "/openapi.json",
     "/telegram-webhook",
-    "/telegram-health",
     "/api/system/health",
     "/api/agent/chat",
     "/api/agent/chat/stream",

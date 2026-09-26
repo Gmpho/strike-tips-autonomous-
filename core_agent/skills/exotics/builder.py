@@ -19,26 +19,6 @@ def resolve_pool_legs(pool_code: str) -> Tuple[str, int]:
     return POOL_LABELS.get(prefix, "JACKPOT"), POOL_LEG_COUNTS.get(prefix, 4)
 
 
-def convention_pool_starts(total_races: int) -> Dict[str, int]:
-    """TAB-standard pool start races per card size — FALLBACK ONLY.
-
-    PDF leg_info and the TAB tipping sheet always win when present; this
-    table is used only when neither exists. Single source of truth shared
-    by strike_tips exotic analysis and build_exotics_blueprint (Sep-2026:
-    two disagreeing tables carded Bipot R2-7 on an 8-race Greyville card
-    that TAB runs as R1-6).
-    """
-    if total_races >= 10:
-        return {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
-    if total_races == 9:
-        return {"BI1": 2, "PA": 2, "P6": 3, "JP1": 4, "JP2": 6}
-    if total_races == 8:
-        return {"BI1": 1, "PA": 2, "P6": 3, "JP1": 4, "JP2": 5}
-    if total_races >= 6:
-        return {"BI1": 1, "P6": 1, "JP1": 3}
-    return {"JP1": 1}
-
-
 def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
     total_races = len(races)
     race_map = {r["number"]: r for r in races}
@@ -54,9 +34,30 @@ def build_exotics_blueprint(races: List[Dict]) -> Tuple[Dict, Dict]:
             if key not in pool_starts:
                 pool_starts[key] = race["number"]
 
-    for _code, _start in convention_pool_starts(total_races).items():
-        if _code not in pool_starts:
-            pool_starts[_code] = _start
+    if "BI1" not in pool_starts:
+        pool_starts["BI1"] = 2 if total_races >= 10 else 1
+
+    if "PA" not in pool_starts:
+        pool_starts["PA"] = 3 if total_races >= 12 else 2
+
+    if "P6" not in pool_starts:
+        if total_races >= 12:
+            pool_starts["P6"] = 4
+        elif total_races in (9, 10):
+            pool_starts["P6"] = 3
+        else:
+            pool_starts["P6"] = 3
+
+    if "JP1" not in pool_starts:
+        if total_races >= 12:
+            pool_starts["JP1"] = 1
+        elif total_races in (9, 10):
+            pool_starts["JP1"] = 4
+        else:
+            pool_starts["JP1"] = 5
+
+    if "JP2" not in pool_starts and total_races >= 9:
+        pool_starts["JP2"] = 5 if total_races >= 12 else 6
 
     if "JP3" not in pool_starts and total_races >= 12:
         pool_starts["JP3"] = 9

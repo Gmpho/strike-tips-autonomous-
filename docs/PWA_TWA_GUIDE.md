@@ -57,7 +57,7 @@ To remove the URL address bar and run the app in fullscreen mode, you must verif
       }
     ]
     ```
-3.  **Static Configuration**: Ensure your server configuration serves this file with Content-Type `application/json` without redirects.
+3.  **Vercel/Static Configuration**: Ensure your server configuration serves this file with Content-Type `application/json` without redirects.
 
 ### 2. Packaging the TWA via CLI (Bubblewrap)
 The fastest way to build your TWA Android package (.apk / .aab) is using Google's **Bubblewrap CLI**:
@@ -65,7 +65,7 @@ The fastest way to build your TWA Android package (.apk / .aab) is using Google'
 1.  **Initialize Bubblewrap**:
     ```bash
     npm install -g @bubblewrap/cli
-    bubblewrap init --manifest=https://strike-tips-hud.pages.dev/manifest.json
+    bubblewrap init --manifest=https://strike-tips-hud.vercel.app/manifest.json
     ```
 2.  **Configure App parameters**:
     Bubblewrap will read your PWA manifest and prompt you for:
@@ -79,6 +79,6 @@ The fastest way to build your TWA Android package (.apk / .aab) is using Google'
     This generates a signed Release App Bundle (`app-release-bundle.aab`) ready to upload to the Google Play Console!
 
 ### 3. Benefits of PWA + TWA:
-*   **Instant Updates**: Because the app runs your PWA, any frontend updates you push to GitHub are instantly visible to Android app users without needing to re-submit packages to the Google Play Store!
+*   **Instant Updates**: Because the app runs your PWA, any frontend updates you push to Vercel/GitHub are instantly visible to Android app users without needing to re-submit packages to the Google Play Store!
 *   **Native Feel**: Access to full native sharing sheets, notification trays, launcher shortcuts, and standalone task switcher entries.
 *   **Ultra-lightweight**: The native APK size is under **2 MB**, as the browser engine (Chrome/custom tabs) is shared.

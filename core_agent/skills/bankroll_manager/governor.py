@@ -11,31 +11,21 @@ import uuid
 import fcntl
 import time
 from dataclasses import dataclass, asdict, field
-
-from core_agent.config.settings import BankrollConfig
 from datetime import date, datetime
 from typing import List, Optional, Dict, Generator
 from contextlib import contextmanager
 
 def _load_paper_settings(data_dir: str) -> dict:
-    """Read paper_mode and paper_balance from settings.json.
-
-    Missing keys fall back to ``BankrollConfig.total_bankroll`` (the single
-    sanctioned starting-bank constant) instead of scattered 1000.0 literals.
-    """
-    default_start = float(BankrollConfig.total_bankroll)
+    """Read paper_mode and paper_balance from settings.json"""
     path = os.path.join(data_dir, "settings.json")
     if os.path.exists(path):
         try:
             with open(path) as f:
                 s = json.load(f)
-            return {
-                "paper_mode": bool(s.get("paper_mode", False)),
-                "paper_balance": float(s.get("paper_balance", default_start)),
-            }
+            return {"paper_mode": s.get("paper_mode", False), "paper_balance": s.get("paper_balance", 1000.0)}
         except Exception:
             pass
-    return {"paper_mode": False, "paper_balance": default_start}
+    return {"paper_mode": False, "paper_balance": 1000.0}
 
 
 logger = logging.getLogger("bankroll-governor")
@@ -180,49 +170,16 @@ class BankrollGovernor:
 
     # ─── Persistence ────────────────────────────────────────────────────────
 
-    def _unique_bet_id(self, base_id: str) -> str:
-        """Ensure bet_id uniqueness: same-second placements used to collide
-        (two Jackpots in one scan both became `..._JAC`, and the settle path
-        forever found only the first one). Appends -2, -3… on collision."""
-        if not any(b.bet_id == base_id for b in self._bets):
-            return base_id
-        n = 2
-        while any(b.bet_id == f"{base_id}-{n}" for b in self._bets):
-            n += 1
-        return f"{base_id}-{n}"
-
-    @staticmethod
-    def _find_bet(bets: List["BetRecord"], bet_id: str) -> Optional["BetRecord"]:
-        """Lookup that prefers PENDING records. Legacy IDs (pre-fix) can be
-        shared by two tickets where one already settled — first-match lookup
-        then shadows the live ticket forever ('already settled as LOST'
-        warnings on a bet that is still open in the ledger)."""
-        pending = [b for b in bets if b.bet_id == bet_id and b.status == "PENDING"]
-        if pending:
-            return pending[0]
-        return next((b for b in bets if b.bet_id == bet_id), None)
-
     @contextmanager
     def _atomic_transaction(self) -> Generator[None, None, None]:
         """
         Context manager for thread-safe and process-safe state modifications.
-        1. Pull latest committed volume state (cross-container safety)
-        2. Acquire exclusive file lock
-        3. Reload state from disk
-        4. Yield to the operation
-        5. Save updated state back to disk
-        6. Release lock
+        1. Acquire exclusive file lock
+        2. Reload state from disk
+        3. Yield to the operation
+        4. Save updated state back to disk
+        5. Release lock
         """
-        # Sep-2026 clobber: a long-lived container (e.g. the 03:09 auto-bet
-        # run) loaded the ledger before a sibling's settlement landed, then
-        # its full-file save erased the settlement. Reload the volume BEFORE
-        # taking the lock so we never overwrite fresher disk state.
-        try:
-            from core_agent.core.volume_sync import sync_volume
-
-            sync_volume(max_age_secs=5)
-        except Exception:
-            pass
         lock_fd = open(self._lock_file, "w")
         try:
             # Block until lock is acquired
@@ -241,11 +198,7 @@ class BankrollGovernor:
             lock_fd.close()
 
     def _load_state(self, starting_bankroll: float):
-        """Load persisted bankroll state.
-
-        Missing keys or a corrupt file seed from ``starting_bankroll`` (the
-        sanctioned starting-bank constant) — no scattered hardcoded defaults.
-        """
+        """Load persisted bankroll state"""
         if os.path.exists(self._state_file):
             try:
                 with open(self._state_file) as f:
@@ -253,68 +206,27 @@ class BankrollGovernor:
                 self.current_bankroll = state.get("current_bankroll", starting_bankroll)
                 self.peak_bankroll = state.get("peak_bankroll", starting_bankroll)
                 self.total_profit_loss = state.get("total_profit_loss", 0.0)
-                self.paper_balance = state.get("paper_balance", starting_bankroll)
+                self.paper_balance = state.get("paper_balance", 1000.0)
             except Exception as e:
                 logger.warning(f"Could not load bankroll state: {e}")
                 self.current_bankroll = starting_bankroll
                 self.peak_bankroll = starting_bankroll
                 self.total_profit_loss = 0.0
-                self.paper_balance = starting_bankroll
+                self.paper_balance = 1000.0
         else:
             self.current_bankroll = starting_bankroll
             self.peak_bankroll = starting_bankroll
             self.total_profit_loss = 0.0
-            self.paper_balance = starting_bankroll
+            self.paper_balance = 1000.0
 
         if os.path.exists(self._bets_file):
             try:
                 with open(self._bets_file) as f:
                     raw_bets = json.load(f)
-                self._bets = self._dedupe_shadowed_bets(
-                    [BetRecord(**b) for b in raw_bets]
-                )
+                self._bets = [BetRecord(**b) for b in raw_bets]
             except Exception as e:
                 logger.warning(f"Could not load bet history: {e}")
                 self._bets = []
-
-    @staticmethod
-    def _dedupe_shadowed_bets(bets: List["BetRecord"]) -> List["BetRecord"]:
-        """Self-heal legacy same-second ID collisions on load.
-
-        Two distinct cases share a bet_id:
-        - TRUE duplicate recordings (same horse/track/date — overlapping
-          monitor runs recorded one bet twice): the settled twin is truth,
-          the lingering PENDING copy is dropped.
-        - DIFFERENT tickets (two Jackpots, e.g. 4-5-6-7 and 5-6-7-8, placed
-          in the same second): the PENDING record is a live ticket that must
-          survive — the prefers-PENDING lookup makes it settleable.
-        """
-        settled = {
-            b.bet_id: b
-            for b in bets
-            if b.status in ("WON", "LOST", "EXPIRED", "VOID")
-        }
-        kept: List[BetRecord] = []
-        dropped = 0
-        for b in bets:
-            twin = settled.get(b.bet_id)
-            if (
-                b.status == "PENDING"
-                and twin is not None
-                and str(b.horse) == str(twin.horse)
-                and str(b.track).lower() == str(twin.track).lower()
-                and str(b.date) == str(twin.date)
-            ):
-                dropped += 1
-                continue
-            kept.append(b)
-        if dropped:
-            logger.info(
-                "Ledger self-heal: dropped %d duplicate PENDING recording(s) "
-                "sharing a settled record's bet_id",
-                dropped,
-            )
-        return kept
 
     def _save_state(self):
         """Persist bankroll state and bet history atomically"""
@@ -654,9 +566,7 @@ class BankrollGovernor:
                     return None
 
             now = datetime.now()
-            bet_id = self._unique_bet_id(
-                f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
-            )
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
 
             bet = BetRecord(
                 bet_id=bet_id,
@@ -733,9 +643,7 @@ class BankrollGovernor:
             combo_desc = ";".join(
                 f"R{c.get('race','?')}#{c.get('banker','?')}" for c in combinations[:3]
             )
-            bet_id = self._unique_bet_id(
-                f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}"
-            )
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}"
 
             bet = BetRecord(
                 bet_id=bet_id,
@@ -776,7 +684,7 @@ class BankrollGovernor:
     def settle_exotic_bet(self, bet_id: str, pool_return: float, notes: str = "") -> bool:
         """Settle an exotic pool bet with its actual pool dividend return."""
         with self._atomic_transaction():
-            bet = self._find_bet(self._bets, bet_id)
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
             if not bet:
                 logger.warning(f"Exotic bet not found: {bet_id}")
                 return False
@@ -794,14 +702,7 @@ class BankrollGovernor:
 
             bet.profit_loss = (bet.actual_return or 0.0) - bet.stake
             if notes:
-                try:
-                    existing = json.loads(bet.notes) if bet.notes else {}
-                except (ValueError, TypeError):
-                    existing = {}
-                if not isinstance(existing, dict):
-                    # Void/retry tags ("... | VOID (...)") are appended as
-                    # plain text; nest them so notes stay valid JSON.
-                    existing = {"prior_notes": bet.notes} if bet.notes else {}
+                existing = json.loads(bet.notes) if bet.notes else {}
                 existing["settlement_notes"] = notes
                 bet.notes = json.dumps(existing)
 
@@ -826,7 +727,7 @@ class BankrollGovernor:
     def settle_bet(self, bet_id: str, won: bool, notes: str = "", placed: Optional[str] = None) -> bool:
         """Settle a pending bet with a result (Atomic)"""
         with self._atomic_transaction():
-            bet = self._find_bet(self._bets, bet_id)
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
             if not bet:
                 logger.warning(f"Bet not found: {bet_id}")
                 return False
@@ -908,7 +809,7 @@ class BankrollGovernor:
         impact beyond the refund. Idempotent: already-VOID/settled bets
         are left alone (settled ones need void_settlement instead)."""
         with self._atomic_transaction():
-            bet = self._find_bet(self._bets, bet_id)
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
             if not bet:
                 logger.warning(f"Cancel failed, bet not found: {bet_id}")
                 return False
@@ -941,7 +842,7 @@ class BankrollGovernor:
         clears it from the open book so backlogs can't pile up forever.
         Idempotent."""
         with self._atomic_transaction():
-            bet = self._find_bet(self._bets, bet_id)
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
             if not bet:
                 return False
             if bet.status != "PENDING":
@@ -965,7 +866,7 @@ class BankrollGovernor:
           it; void-WON subtracts the credited dividend.
         """
         with self._atomic_transaction():
-            bet = self._find_bet(self._bets, bet_id)
+            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
             if not bet:
                 logger.warning(f"Void failed, bet not found: {bet_id}")
                 return False

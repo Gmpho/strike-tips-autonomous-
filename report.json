@@ -1,5 +1,5 @@
 {
-  "url": "https://strike-tips-hud.pages.dev/",
+  "url": "https://strike-tips-hud.vercel.app/",
   "timestamp": "2026-07-14 20:00:44",
   "metrics": {
     "ttfb": 128.10000000009313,
@@ -98,9 +98,9 @@
     },
     {
       "type": "log",
-      "text": "[SW] Registered successfully: https://strike-tips-hud.pages.dev/",
+      "text": "[SW] Registered successfully: https://strike-tips-hud.vercel.app/",
       "location": {
-        "url": "https://strike-tips-hud.pages.dev/",
+        "url": "https://strike-tips-hud.vercel.app/",
         "lineNumber": 26,
         "columnNumber": 33
       }

@@ -25,7 +25,7 @@ async def test_payload():
     
     # Case 1: Test with tools
     payload_with_tools = {
-        "model": "openai/gpt-oss-120b",
+        "model": "llama-3.3-70b-versatile",
         "messages": [{"role": "system", "content": build_system_prompt()}] + messages,
         "max_tokens": 800,
         "temperature": 0.3,
@@ -43,7 +43,7 @@ async def test_payload():
 
     # Case 2: Test without tools
     payload_without_tools = {
-        "model": "openai/gpt-oss-20b",
+        "model": "llama-3.1-8b-instant",
         "messages": [{"role": "system", "content": build_system_prompt()}] + messages,
         "max_tokens": 800,
         "temperature": 0.3,

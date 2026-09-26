@@ -13,7 +13,7 @@ This document provides guidelines for AI agents working in this repository.
 - Check status: `openspec status --change <name> --json` ; Instructions: `openspec instructions <artifact> --change <name> --json`
 - CLI: `openspec --version` (now 1.11.0), `openspec update --force` to refresh prompts
 
-Archived changes (2026-08-31): `add-betfair-form-data` (Betfair SA gear + days-since-run merged into the market snapshot; spec at `openspec/specs/betfair-form-data/spec.md`) and `core-value-bet-analyzer` (value-bet analyzer; spec at `openspec/specs/core-value-bet-analysis/spec.md`). Archived changes (2026-09-19, via `openspec-convergence`): `stabilize-sep-ops` (settlement voids, chat grounding, prod survival → canonical `chat-grounding`, `settlement-voids`, plus the `cloud-models` correction folded into `refactor-cloud-models`) and `refactor-cloud-models` (live-verified Groq/Gemini pools, tier mapping, TPM budget → canonical `cloud-models`), plus `gemini-groq-chat-agents` (→ `ai-chat-agents`) and `gemini-groq-tts` (→ `text-to-speech`); logs at `openspec/changes/archive/2026-09-19-*/`. Archived (2026-09-20): `fix-monitor-stall-resurrection` (Betway failover + stale stamping, off-time closing via Betfair `bf_off_time`, first-seen TTL, MONITOR_STALL detection → `racecard-integrity` +4 requirements). Archived (2026-09-20, evening): `fix-stale-race-resurrection` (single sanctioned snapshot writer — the scheduler + daily-scan raw dumps were re-serving the 126-race morning card over the monitor's 58 live races; per-race `expires_at` stamp + snapshot-cache ingress sanitization; Betfair rolling per-race form cache replacing the 1h all-or-nothing last-good file; edge KV TTL 300→900s with prune-on-ingest/read; snapshot age+source in monitoring/vitals and per-cycle telemetry/`SYNC_COMPLETE` liveness → `racecard-integrity` +4, `observability` +3, `cloudflare-hud-hosting` +3). Archived (2026-09-19, evening): `harden-pages-functions` (edge rate-limit ceilings, JSON 502 envelopes, Turnstile retry UX, CSP-Report-Only → canonical `ai-spend-guard`, `api-resilience`, `edge-csp`, plus `browser-write-auth` + `production-security` deltas) and `openspec-convergence` (→ `spec-governance`). 31 canonical capabilities in `openspec/specs/` (`openspec validate --all` green). No active changes — next features queue feature-by-feature.
+Archived changes (2026-08-31): `add-betfair-form-data` (Betfair SA gear + days-since-run merged into the market snapshot; spec at `openspec/specs/betfair-form-data/spec.md`) and `core-value-bet-analyzer` (value-bet analyzer; spec at `openspec/specs/core-value-bet-analysis/spec.md`). No active change folders remain — next features queue feature-by-feature; ask which one to propose next.
 
 **Full guide:** `docs/openspec-usage.md` — lifecycle, `tasks.md` checkbox format, spec/convention rules, worked example, and CLI cheat sheet. Read it before running propose/apply/archive.
 **Refference:** 'Readme' with docs.
@@ -26,7 +26,7 @@ Archived changes (2026-08-31): `add-betfair-form-data` (Betfair SA gear + days-s
 
 - **Cloudflare MCP Edge** (`cloudflare_mcp_edge/`): Always-free edge worker with 16 MCP tools, OKF knowledge bundle, REST API, D1 + KV
 - **Modal Backend** (`core_agent/`): Serverless Python backend for AI analysis, scrapers, Telegram bot, Bayesian dream engine, DSI Kelly scaling, WebGPU context API
-- **Cloudflare Pages HUD** (`strike-tips-hud/`): Vite + React + Three.js frontend with Pages Functions routing, WebLLM browser AI
+- **Vercel HUD** (`strike-tips-hud/`): Vite + React + Three.js frontend with middleware routing, WebLLM browser AI
 
 ---
 
@@ -41,7 +41,7 @@ cd core_agent
 # Install dependencies
 pip install -r requirements.txt
 
-# Run all tests (261 collected — pytest count; also the CI gate)
+# Run all tests (30 total — governor, DSI staking, exotics, selections, pool legs, auto-bet odds)
 pytest
 
 # Run single test file
@@ -93,20 +93,23 @@ npx wrangler secret put BACKEND_API_KEY
 npx wrangler secret put SEARCH_API_KEY   # optional
 ```
 
-### Cloudflare Pages HUD (strike-tips-hud/)
+### Vite Frontend (strike-tips-hud/)
 
 ```bash
-# From the repository root (npm workspace)
-npm run dev            # Vite dev server
+cd strike-tips-hud
 
-# Production build — builds the workspace, copies output to ./dist
+# Development server
+npm run dev
+
+# Production build
 npm run build
-```
 
-Deployment: the Pages project has NO git connection — deploy by hand with wrangler
-from `strike-tips-hud/` (`npm run build` at repo root first, then
-`npx wrangler pages deploy dist --project-name strike-tips-hud`; `functions/`
-is picked up from the cwd). See `docs/DEPLOY.md` for all three layers.
+# Deploy to Vercel (preview)
+vercel
+
+# Deploy to Vercel (production, fresh build)
+vercel deploy --prod -y --force
+```
 
 ---
 
@@ -184,11 +187,8 @@ class Runner:
 - TypeScript + React 19 + Three.js
 - Tailwind CSS v4 for styling
 - Framer Motion for animations
-- `functions/api/**` Pages Functions route API calls — most-specific file first
-  (`chat.ts`, `live.ts`, `transcribe.ts`, `podcast/[[route]].ts`), then the
-  `[[catchall]].ts` reverse proxy (Cloudflare worker vs Modal)
-- `functions/v1/**` serves the OpenAI-compatible surface
-- `public/_headers` sets COOP/COEP; `public/_redirects` provides the SPA fallback
+- Middleware (`middleware.ts`) routes API calls to Cloudflare or Modal
+- `vercel.json` has SPA rewrite only — no API rewrites (middleware handles routing)
 
 ---
 
@@ -256,15 +256,12 @@ cloudflare_mcp_edge/              # Cloudflare Worker (always-free edge)
 ├── package.json                  # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                # D1 + KV bindings
 
-strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
+strike-tips-hud/                  # Vite + React frontend (Vercel)
 ├── src/
 │   ├── app/                      # UI components
 │   └── lib/                      # API utilities
-├── functions/                    # Pages Functions (proxy + AI endpoints)
-│   ├── api/[[catchall]].ts       # Reverse proxy: worker vs Modal
-│   └── v1/[[catchall]].ts        # OpenAI-compatible surface
-├── public/_headers               # COOP/COEP + security headers
-├── public/_redirects             # SPA fallback
+├── middleware.ts                 # Routing: Cloudflare vs Modal
+├── vercel.json                   # SPA rewrite only
 └── package.json
 ```
 
@@ -275,18 +272,15 @@ strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
 ### Layer Routing
 
 ```
-User → strike-tips-hud.pages.dev
+User → strike-tips-hud.vercel.app
          │
-         ▼ functions/ (Cloudflare Pages Functions)
+         ▼ middleware.ts
          │
-         ├── dedicated Function → handled at the edge
-         │    (/api/chat, /api/live, /api/transcribe, /api/podcast/*)
-         │
-         ├── Cloudflare endpoint → striketips-mcp.gmphorg379.workers.dev
+         ├── Cloudflare endpoints → striketips-mcp.gmphorg379.workers.dev
          │    (/api/health, /api/knowledge/*, /api/racing/*, /mcp, etc.)
          │
-         └── everything else → gmpho--strike-tips-racing-serve-api.modal.run
-              (/api/agent, /api/betting, /api/config, /v1/*, etc.)
+         └── Modal endpoints → gmpho--strike-tips-racing-serve-api.modal.run
+              (/api/agent, /api/betting, /v1/*, etc.)
 ```
 
 ### Cloudflare Endpoints (13 REST + 16 MCP)
@@ -533,7 +527,7 @@ pytest core_agent/tests/test_analyzer.py -v
 7. **OKF Compiles at Build Time**: Run `node scripts/build-knowledge.js` before `wrangler deploy` (auto-runs via `predeploy`)
 8. **MCP Stateless Transport**: `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` — fresh transport per request, required for Workers
 9. **Middleware Routes API**: `strike-tips-hud/middleware.ts` decides Cloudflare vs Modal per path — Cloudflare for knowledge/odds/form, Modal for AI/analysis
-10. **Single Deployment Truth**: `docs/DEPLOY.md` holds the deploy steps for all three layers — Pages ships the HUD via manual `wrangler pages deploy` (no git connection), `wrangler deploy` ships the worker, `modal deploy` ships the backend
+10. **Fresh Vercel Builds**: Use `vercel deploy --prod -y --force` to bypass build cache
 
 ---
 

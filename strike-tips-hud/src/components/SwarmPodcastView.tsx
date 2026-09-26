@@ -104,7 +104,63 @@ const SWARM_BADGES: Record<string, { color: string; border: string; bg: string }
   analyst: { color: 'text-amber-400', border: 'border-amber-500/40', bg: 'bg-amber-500/10' },
   stats: { color: 'text-emerald-400', border: 'border-emerald-500/40', bg: 'bg-emerald-500/10' },
   scout: { color: 'text-cyan-400', border: 'border-cyan-500/40', bg: 'bg-cyan-500/10' },
+  gemma: { color: 'text-pink-400', border: 'border-pink-500/40', bg: 'bg-pink-500/10' },
 };
+
+const FALLBACK_PRESETS: Array<{
+  id: string;
+  course: string;
+  raceNumber: string;
+  t: string;
+  distance_m: number;
+  runners: any[];
+  complexity?: 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK';
+  dsi?: number;
+}> = [
+  {
+    id: 'preset-kenilworth-r7',
+    course: 'Kenilworth',
+    raceNumber: '7',
+    t: '15:45',
+    distance_m: 1600,
+    complexity: 'MEDIUM_RISK',
+    dsi: 1.0,
+    runners: [
+      { name: 'Firealley', odds: 4.2, edge: 8.4, form: '1-2-1', draw: 4, jockeyName: 'R. Fourie', trainerName: 'J. Snaith', gear: 'Blinkers' },
+      { name: 'Master Archie', odds: 6.5, edge: 6.1, form: '3-1-4', draw: 1, jockeyName: 'C. Zackey', trainerName: 'P. Peter' },
+      { name: 'Gimme A Prince', odds: 2.8, edge: -1.2, form: '1-1-2', draw: 8, jockeyName: 'K. de Melo', trainerName: 'D. Kannemeyer' },
+      { name: 'Silver Operator', odds: 14.0, edge: 3.5, form: '5-4-3', draw: 11, jockeyName: 'G. van Niekerk', trainerName: 'V. Marshall', gear: 'Pacifiers' },
+    ],
+  },
+  {
+    id: 'preset-greyville-r4',
+    course: 'Greyville',
+    raceNumber: '4',
+    t: '14:10',
+    distance_m: 1200,
+    complexity: 'LOW_RISK',
+    dsi: 0.75,
+    runners: [
+      { name: 'Gladatorian', odds: 3.5, edge: 7.2, form: '2-1-1', draw: 2, jockeyName: 'S. Khumalo', trainerName: 'S. Tarry' },
+      { name: 'Coin Spinner', odds: 5.0, edge: 4.8, form: '1-4-2', draw: 5, jockeyName: 'A. Mgudlwa', trainerName: 'T. Rivalland' },
+      { name: 'Sun Blushed', odds: 8.0, edge: 5.1, form: '3-2-3', draw: 7, jockeyName: 'R. Venniker', trainerName: 'M. Roberts' },
+    ],
+  },
+  {
+    id: 'preset-turffontein-r6',
+    course: 'Turffontein',
+    raceNumber: '6',
+    t: '15:20',
+    distance_m: 1160,
+    complexity: 'HIGH_RISK',
+    dsi: 1.25,
+    runners: [
+      { name: 'Main Defender', odds: 2.1, edge: 9.5, form: '1-1-1', draw: 3, jockeyName: 'C. Maujean', trainerName: 'T. Peter' },
+      { name: 'Thunderstruck', odds: 4.8, edge: 5.0, form: '2-1-3', draw: 6, jockeyName: 'P. Strydom', trainerName: 'S. Tarry' },
+      { name: 'Rulership', odds: 11.0, edge: 3.2, form: '4-3-1', draw: 9, jockeyName: 'K. Matsunyane', trainerName: 'M. de Kock' },
+    ],
+  },
+];
 
 export const SwarmPodcastView: React.FC = () => {
   const state = useHUD();
@@ -114,18 +170,26 @@ export const SwarmPodcastView: React.FC = () => {
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [muted, setMuted] = useState<boolean>(false);
-  const [selectedTrack, setSelectedTrack] = useState<string>('Kenilworth');
+  const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'groq' | 'gemma4'>('gemma4');
   const [errorNote, setErrorNote] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<number, string>>(new Map());
+  const inFlightFetches = useRef<Map<number, Promise<string | null>>>(new Map());
 
-  // Collect available tracks from HUD live races
-  const availableRaces = Object.values(state.events || {});
-  const availableTracks = Array.from(new Set(availableRaces.map(r => r.course).filter(Boolean)));
-  if (!availableTracks.includes('Kenilworth')) availableTracks.unshift('Kenilworth');
-  if (!availableTracks.includes('Greyville')) availableTracks.push('Greyville');
-  if (!availableTracks.includes('Turffontein')) availableTracks.push('Turffontein');
+  // Collect live races from HUD state or fall back to verified presets
+  const rawRaces = Object.values(state.events || {});
+  const displayRaces = rawRaces.length > 0 ? rawRaces : FALLBACK_PRESETS;
+  const [selectedRaceId, setSelectedRaceId] = useState<string>(() => displayRaces[0]?.id || 'preset-kenilworth-r7');
+
+  // Resolve currently active race and its deep metadata
+  const activeRace = displayRaces.find(r => (r.id || `${r.course}-${r.raceNumber}`) === selectedRaceId) || displayRaces[0];
+  const courseName = activeRace?.course || 'Kenilworth';
+  const raceNum = activeRace?.raceNumber ? `Race ${activeRace.raceNumber}` : 'Race 7';
+  const distanceM = activeRace?.distance_m;
+  const raceTime = activeRace?.t;
+  const runnerCount = activeRace?.runners?.length || 0;
+  const topEdgeRunner = (activeRace?.runners || []).slice().sort((a, b) => (Number(b.edge) || 0) - (Number(a.edge) || 0))[0];
 
   const currentDialogue = episode.dialogue[currentLineIndex];
 
@@ -139,22 +203,19 @@ export const SwarmPodcastView: React.FC = () => {
     };
   }, []);
 
-  // Play dialogue line audio
-  const playLineAudio = async (lineIdx: number) => {
-    if (lineIdx < 0 || lineIdx >= episode.dialogue.length) {
-      setIsPlaying(false);
-      return;
+  // Proactive lookahead audio fetcher with in-flight deduplication
+  const fetchLineAudio = (lineIdx: number): Promise<string | null> => {
+    if (lineIdx < 0 || lineIdx >= episode.dialogue.length) return Promise.resolve(null);
+    if (audioCacheRef.current.has(lineIdx)) {
+      return Promise.resolve(audioCacheRef.current.get(lineIdx)!);
+    }
+    if (inFlightFetches.current.has(lineIdx)) {
+      return inFlightFetches.current.get(lineIdx)!;
     }
 
     const line = episode.dialogue[lineIdx];
-    setCurrentLineIndex(lineIdx);
-
-    try {
-      setIsSynthesizing(true);
-      let audioUrl = audioCacheRef.current.get(lineIdx);
-
-      if (!audioUrl) {
-        // Fetch synthesized audio from server
+    const promise = (async () => {
+      try {
         const res = await apiFetch('/api/podcast/synthesize-line', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -169,11 +230,66 @@ export const SwarmPodcastView: React.FC = () => {
         }
 
         const blob = await res.blob();
-        audioUrl = URL.createObjectURL(blob);
+        const audioUrl = URL.createObjectURL(blob);
         audioCacheRef.current.set(lineIdx, audioUrl);
+        return audioUrl;
+      } catch (err) {
+        console.warn(`[Podcast Audio Pre-fetch failed line ${lineIdx}]`, err);
+        return null;
+      } finally {
+        inFlightFetches.current.delete(lineIdx);
+      }
+    })();
+
+    inFlightFetches.current.set(lineIdx, promise);
+    return promise;
+  };
+
+  // Background lookahead: pre-synthesize the next 2 lines while current is speaking
+  const prefetchUpcomingLines = (currentIdx: number) => {
+    if (currentIdx + 1 < episode.dialogue.length) {
+      void fetchLineAudio(currentIdx + 1);
+    }
+    if (currentIdx + 2 < episode.dialogue.length) {
+      void fetchLineAudio(currentIdx + 2);
+    }
+  };
+
+  // Pre-fetch opening lines eagerly on new episode
+  useEffect(() => {
+    if (episode.dialogue.length > 0) {
+      void fetchLineAudio(0);
+      if (episode.dialogue.length > 1) {
+        void fetchLineAudio(1);
+      }
+    }
+  }, [episode]);
+
+  // Play dialogue line audio with 0ms buffering gap
+  const playLineAudio = async (lineIdx: number) => {
+    if (lineIdx < 0 || lineIdx >= episode.dialogue.length) {
+      setIsPlaying(false);
+      return;
+    }
+
+    const line = episode.dialogue[lineIdx];
+    setCurrentLineIndex(lineIdx);
+
+    // Immediately kick off background lookahead for upcoming lines
+    prefetchUpcomingLines(lineIdx);
+
+    try {
+      let audioUrl = audioCacheRef.current.get(lineIdx);
+
+      if (!audioUrl) {
+        setIsSynthesizing(true);
+        audioUrl = (await fetchLineAudio(lineIdx)) || undefined;
+        setIsSynthesizing(false);
       }
 
-      setIsSynthesizing(false);
+      if (!audioUrl) {
+        throw new Error('No audio URL available for line ' + lineIdx);
+      }
 
       if (!audioRef.current) {
         audioRef.current = new Audio();
@@ -184,7 +300,8 @@ export const SwarmPodcastView: React.FC = () => {
 
       audioRef.current.onended = () => {
         if (lineIdx + 1 < episode.dialogue.length) {
-          playLineAudio(lineIdx + 1);
+          // Plays next line immediately from lookahead cache!
+          void playLineAudio(lineIdx + 1);
         } else {
           setIsPlaying(false);
           setCurrentLineIndex(0);
@@ -201,7 +318,7 @@ export const SwarmPodcastView: React.FC = () => {
       const simulatedDurationMs = Math.max(3000, line.text.length * 55);
       const timer = window.setTimeout(() => {
         if (lineIdx + 1 < episode.dialogue.length) {
-          playLineAudio(lineIdx + 1);
+          void playLineAudio(lineIdx + 1);
         } else {
           setIsPlaying(false);
           setCurrentLineIndex(0);
@@ -234,7 +351,7 @@ export const SwarmPodcastView: React.FC = () => {
     playLineAudio(0);
   };
 
-  // Generate new episode on chosen track with live runners
+  // Generate new episode on chosen live race with live runners & full form context
   const handleGenerateEpisode = async () => {
     setIsGenerating(true);
     setErrorNote(null);
@@ -244,21 +361,30 @@ export const SwarmPodcastView: React.FC = () => {
     }
     audioCacheRef.current.clear();
 
-    const targetRace = availableRaces.find(r => r.course.toLowerCase() === selectedTrack.toLowerCase()) || availableRaces[0];
-    const runnersPayload = targetRace?.runners?.map(r => ({
+    const runnersPayload = (activeRace?.runners || []).map(r => ({
       name: r.name,
       odds: r.odds,
-      edge: r.edge,
+      edge: typeof r.edge === 'number' ? r.edge : (r.edge ? parseFloat(String(r.edge)) : undefined),
       form: r.form,
-    })) || [];
+      jockey: r.jockeyName,
+      trainer: r.trainerName,
+      draw: r.draw,
+      gear: r.gear,
+      daysSinceRun: r.daysSinceRun,
+    }));
 
     try {
       const res = await apiFetch('/api/podcast/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          track: selectedTrack,
-          raceNumber: targetRace?.raceNumber ? `Race ${targetRace.raceNumber}` : 'Race 7',
+          track: courseName,
+          raceNumber: raceNum,
+          distanceM: distanceM,
+          raceTime: raceTime,
+          complexity: activeRace?.complexity,
+          dsi: activeRace?.dsi,
+          engine: selectedEngine,
           runners: runnersPayload,
         }),
       });
@@ -294,31 +420,48 @@ export const SwarmPodcastView: React.FC = () => {
                 Autonomous Swarm Podcast
               </span>
               <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase">
-                Racing Exclusive
+                Live Turf Intelligence
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight">
               The Strike Swarm Roundtable
             </h1>
             <p className="text-sm text-theme-secondary leading-relaxed">
-              Real-time thoroughbred podcast featuring 4 autonomous racing specialists: Paddock Anchor,
-              Form Analyst, Bayesian Edge Modeler, and Trackside Scout analyzing live South African turf.
+              Real-time thoroughbred podcast featuring 5 autonomous racing specialists: Paddock Anchor,
+              Form Analyst, Bayesian Edge Modeler, Trackside Scout, and Gemma AI analyzing live South African turf.
             </p>
           </div>
 
           {/* Episode Control Actions */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
             <select
-              value={selectedTrack}
-              onChange={(e) => setSelectedTrack(e.target.value)}
-              className="bg-black/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 min-h-[48px]"
-              aria-label="Select racing course"
+              value={selectedRaceId}
+              onChange={(e) => setSelectedRaceId(e.target.value)}
+              className="bg-black/60 border border-purple-500/30 rounded-2xl px-3 py-3 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 min-h-[48px] max-w-[280px] sm:max-w-xs truncate"
+              aria-label="Select live race for podcast preview"
             >
-              {availableTracks.map((t) => (
-                <option key={t} value={t} className="bg-[#0c0817]">
-                  {t}
-                </option>
-              ))}
+              {displayRaces.map((r) => {
+                const id = r.id || `${r.course}-${r.raceNumber}`;
+                const dist = r.distance_m ? `${r.distance_m}m` : '';
+                const time = r.t ? `@ ${r.t}` : '';
+                const count = r.runners?.length ? `${r.runners.length} runners` : '';
+                return (
+                  <option key={id} value={id} className="bg-[#0c0817] text-white">
+                    🏇 {r.course} · Race {r.raceNumber || '1'} {time} {dist ? `(${dist})` : ''} {count ? `· ${count}` : ''}
+                  </option>
+                );
+              })}
+            </select>
+
+            <select
+              value={selectedEngine}
+              onChange={(e) => setSelectedEngine(e.target.value as any)}
+              className="bg-black/60 border border-purple-500/30 rounded-2xl px-3 py-3 text-sm text-purple-200 font-bold focus:outline-none focus:ring-2 focus:ring-purple-500/50 min-h-[48px]"
+              aria-label="Select podcast scriptwriter engine"
+            >
+              <option value="gemma4" className="bg-[#0c0817]">🧠 Gemma 4 (Google AI Studio · 1.5k Free)</option>
+              <option value="groq" className="bg-[#0c0817]">⚡ Groq LPU (Ultra-Fast ~800ms)</option>
+              <option value="gemini" className="bg-[#0c0817]">✨ Gemini 3.5 Flash (Search Grounded)</option>
             </select>
 
             <button
@@ -339,6 +482,47 @@ export const SwarmPodcastView: React.FC = () => {
               )}
             </button>
           </div>
+        </div>
+
+        {/* Live Race Targeted Status Strip */}
+        <div className="mt-4 pt-4 border-t border-purple-500/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2.5 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 font-black uppercase text-[10px] flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+              LIVE RACE TARGETED
+            </span>
+            <span className="text-white font-black text-sm">
+              {courseName} · {raceNum}
+            </span>
+            {raceTime && (
+              <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-300">
+                Post: <strong className="text-white">{raceTime} CAT</strong>
+              </span>
+            )}
+            {distanceM && (
+              <span className="px-2 py-0.5 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-200">
+                {distanceM}m {distanceM <= 1200 ? 'Sprint' : distanceM <= 1600 ? 'Mile' : 'Route'}
+              </span>
+            )}
+            <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+              {runnerCount} Runners in Field
+            </span>
+            {activeRace?.dsi !== undefined && (
+              <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono">
+                DSI: {activeRace.dsi.toFixed(2)}x
+              </span>
+            )}
+          </div>
+
+          {topEdgeRunner && Number(topEdgeRunner.edge) > 0 && (
+            <div className="flex items-center gap-1.5 text-xs bg-emerald-950/50 border border-emerald-500/40 px-3 py-1 rounded-xl">
+              <span className="text-emerald-400 font-bold">Top Value:</span>
+              <span className="text-white font-black">{topEdgeRunner.name}</span>
+              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-black">
+                +{topEdgeRunner.edge}% Edge
+              </span>
+            </div>
+          )}
         </div>
 
         {errorNote && (

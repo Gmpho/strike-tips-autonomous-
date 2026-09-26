@@ -135,14 +135,6 @@ export const ExoticsView: React.FC = () => {
           <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             Multi-Leg Permutation & Coverage Analysis
           </p>
-          <p className="text-[10px] sm:text-[11px] text-theme-secondary mt-2 max-w-3xl leading-relaxed normal-case tracking-normal font-medium">
-            <span className="text-amber-300 font-bold">#Banker / #Saver</span> ={' '}
-            <span className="text-purple-300 font-bold">your AI ticket</span> — permutations,
-            cost &amp; settlement are built from these alone.{' '}
-            <span className="text-emerald-300 font-bold">TAB official</span> is TAB&apos;s
-            printed pick from the racecard PDF, shown for{' '}
-            <span className="text-theme-primary font-bold">comparison only</span>.
-          </p>
         </div>
 
         {/* Tab Controls */}
@@ -281,7 +273,7 @@ export const ExoticsView: React.FC = () => {
                                 <div className="flex items-center gap-3">
                                 <div className="text-[10px] font-black text-purple-400 w-12 shrink-0">LEG {idx + 1}</div>
                                 <div className="text-[9px] text-slate-500 uppercase shrink-0 font-bold">
-                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ' · —'}
+                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ''}
                                 </div>
                                 <div className="flex flex-wrap gap-1.5 flex-1 items-center">
                                   {/* Banker */}
@@ -303,7 +295,6 @@ export const ExoticsView: React.FC = () => {
                                     <span className="text-[11px] font-black text-emerald-300 tabular">
                                       {official.join(' · ')}
                                     </span>
-                                    <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">reference only — not in ticket</span>
                                   </div>
                                 )}
                               </div>

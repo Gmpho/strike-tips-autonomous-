@@ -53,18 +53,16 @@ export interface RaceEvent {
 }
 
 export interface BankrollState {
-  /** Active betting bank: paperBalance when paperMode, else realBalance.
-   *  null until the governor has seeded state (no fake defaults). */
-  balance: number | null;
+  /** Active betting bank: paperBalance when paperMode, else realBalance. */
+  balance: number;
   dailyLimit: number;
   dailyLoss: number;
   maxStake: number;
   totalExposure: number;
   paperMode?: boolean;
-  /** Paper simulation ledger; null until seeded (JSON null, not fake default). */
-  paperBalance?: number | null;
-  /** Real-funds ledger (untouched while paperMode is on); null until seeded. */
-  realBalance?: number | null;
+  paperBalance?: number;
+  /** Real-funds ledger (untouched while paperMode is on). */
+  realBalance?: number;
 }
 
 export interface LearningState {
@@ -178,12 +176,6 @@ export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
   betHistory: BetRecord[];
-  /** Full ledger size; betHistory may hold a paint-fast window (?limit). */
-  betHistoryTotal: number;
-  /** User expanded past the window — polls must keep fetching full. */
-  betHistoryFull: boolean;
-  /** A history fetch has resolved at least once (vs still loading). */
-  betHistoryReady: boolean;
   betStats: BetStats | null;
   logs: string[];
   alerts: any[];

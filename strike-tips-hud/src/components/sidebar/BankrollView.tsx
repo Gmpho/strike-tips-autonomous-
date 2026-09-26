@@ -2,9 +2,6 @@ import React from 'react';
 import { TrendingUp, DollarSign, Target, RotateCcw, Wallet, Landmark, ChevronDown } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
-import { hudStore } from '../../store/hud-store';
-import { apiFetch } from '../../lib/api-fetch';
-import { BETTING_ENDPOINTS } from '../../lib/api-prefixes';
 import type { BetRecord } from '../../types';
 
 type ExecFilter = 'ALL' | 'WON' | 'LOST' | 'OPEN';
@@ -59,30 +56,7 @@ const FILTERS: { key: ExecFilter; label: string }[] = [
 const PAGE = 30;
 
 export const BankrollView: React.FC = () => {
-  const { bankroll, betStats, betHistory, betHistoryTotal, betHistoryFull, betHistoryReady, systemHealth } = useHUD();
-  const [loadingFull, setLoadingFull] = React.useState(false);
-
-  // "Show more" past the paint-fast window pulls the full ledger once,
-  // then polls keep it full (betHistoryFull) instead of collapsing back.
-  const loadMore = async () => {
-    if (!betHistoryFull && betHistoryTotal > (betHistory || []).length) {
-      setLoadingFull(true);
-      try {
-        const res = await apiFetch(BETTING_ENDPOINTS.history);
-        if (res?.ok) {
-          const full = await res.json();
-          hudStore.updateState({
-            betHistory: full.bets || [],
-            betHistoryTotal: full.count ?? (full.bets || []).length,
-            betHistoryFull: true,
-          });
-        }
-      } finally {
-        setLoadingFull(false);
-      }
-    }
-    setExecShown((n) => n + PAGE);
-  };
+  const { bankroll, betStats, betHistory, systemHealth } = useHUD();
 
   if (systemHealth.status === 'OFFLINE' && !bankroll?.balance) {
     return (
@@ -116,10 +90,6 @@ export const BankrollView: React.FC = () => {
   }, [sortedExecs, execFilter]);
 
   const visible = filteredExecs.slice(0, execShown);
-  // Windowed ledger: offer the full pull once the 120-row paint window
-  // is exhausted but the server holds more.
-  const canPage = visible.length < filteredExecs.length;
-  const needFull = !canPage && !betHistoryFull && betHistoryTotal > sortedExecs.length;
 
   const grouped = React.useMemo(() => {
     const groups: { day: string; bets: BetRecord[] }[] = [];
@@ -143,10 +113,11 @@ export const BankrollView: React.FC = () => {
         <div>
           <h2 className="text-xl sm:text-2xl font-bold bg-linear-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent flex items-center gap-2 sm:gap-3">
             Bankroll & ROI
-            {/* Always reserve the pill slot: it popping in late shifts the header (CLS). */}
-            <span className={`text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full border uppercase tracking-widest ${bankroll?.paperMode ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' : 'invisible border-transparent'}`}>
-              PAPER
-            </span>
+            {bankroll?.paperMode && (
+              <span className="text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
+                PAPER
+              </span>
+            )}
           </h2>
           <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             {bankroll?.paperMode ? `Virtual Balance: R${(bankroll.paperBalance ?? 0).toFixed(2)}` : 'Financial Performance & Exposure'}
@@ -168,40 +139,33 @@ export const BankrollView: React.FC = () => {
         </div>
         <div className="relative z-10">
           <div className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Current Bankroll</div>
-          <div className="flex items-baseline gap-3 min-h-[48px]">
-            <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase tabular min-w-[240px]">
-              {bankroll && bankroll.paperMode !== undefined && bankroll.balance != null
-                ? `R ${bankroll.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : 'R —'}
-            </span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-4xl font-black text-theme-primary tracking-tighter uppercase">R {bankroll?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</span>
           </div>
-          {/* Ledger split: reserved slot (min-h) so its late arrival
-              doesn't shift the hero (CLS). Only render once paperMode is
-              known — a stale cached bankroll (paperMode undefined) would
-              fabricate a "LIVE R1,000" line. */}
-          <div className="mt-3 text-[10px] font-bold text-theme-secondary min-h-[16px]">
-          {bankroll && bankroll.paperMode !== undefined && (bankroll.paperBalance != null || bankroll.realBalance != null) && (
-              bankroll.paperMode ? (
-                <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance ?? 0).toFixed(2)}</span>
-                {bankroll.realBalance != null && (
+          {/* Ledger split: active betting bank vs the untouched other ledger */}
+          {bankroll && (bankroll.paperBalance !== undefined || bankroll.realBalance !== undefined) && (
+            <div className="mt-3 text-[10px] font-bold text-theme-secondary">
+              {bankroll.paperMode ? (
+                <span>Betting bank (paper): <span className="text-cyan-400 font-mono">R{(bankroll.paperBalance ?? bankroll.balance).toFixed(2)}</span>
+                {bankroll.realBalance !== undefined && (
                   <span className="opacity-70"> · Real funds: <span className="font-mono">R{bankroll.realBalance.toFixed(2)}</span> (untouched)</span>
                 )}</span>
               ) : (
-                <span>Betting bank (live): <span className="text-emerald-400 font-mono">R{(bankroll.balance ?? 0).toFixed(2)}</span>
-                {bankroll.paperBalance != null && (
+                <span>Betting bank (live): <span className="text-emerald-400 font-mono">R{bankroll.balance.toFixed(2)}</span>
+                {bankroll.paperBalance !== undefined && (
                   <span className="opacity-70"> · Paper bank: <span className="font-mono">R{bankroll.paperBalance.toFixed(2)}</span> (simulation)</span>
                 )}</span>
-              )
+              )}
+            </div>
           )}
-          </div>
           <div className="mt-4 flex gap-6">
             <div>
               <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Daily Limit</div>
-              <div className="text-sm font-black text-theme-primary tracking-tight">R {(bankroll?.dailyLimit ?? 0).toFixed(2)}</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.dailyLimit.toFixed(2) || '0.00'}</div>
             </div>
             <div>
               <div className="text-[9px] font-bold text-theme-secondary uppercase mb-0.5">Max Stake</div>
-              <div className="text-sm font-black text-theme-primary tracking-tight">R {(bankroll?.maxStake ?? 0).toFixed(2)}</div>
+              <div className="text-sm font-black text-theme-primary tracking-tight">R {bankroll?.maxStake.toFixed(2) || '0.00'}</div>
             </div>
           </div>
         </div>
@@ -248,32 +212,9 @@ export const BankrollView: React.FC = () => {
 
         <div className="divide-y divide-theme overflow-y-auto max-h-[460px] min-h-[100px]">
           {visible.length === 0 ? (
-            !betHistoryReady ? (
-              // Skeleton rows: same row skeleton as real entries (px-6
-              // py-3.5, two-line body) so rows arriving causes zero layout
-              // shift (CLS, Sep-2026).
-              <div aria-hidden="true">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className="px-6 py-3.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-2 h-2 rounded-full bg-white/10 animate-pulse shrink-0" />
-                      <div className="min-w-0">
-                        <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
-                        <div className="h-3 w-24 rounded bg-white/5 animate-pulse mt-1.5" />
-                      </div>
-                    </div>
-                    <div className="shrink-0">
-                      <div className="h-4 w-14 rounded bg-white/10 animate-pulse ml-auto" />
-                      <div className="h-3 w-10 rounded bg-white/5 animate-pulse mt-1.5 ml-auto" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
-                {sortedExecs.length === 0 ? 'Awaiting Market Entry...' : `No ${FILTERS.find((f) => f.key === execFilter)?.label.toLowerCase()} executions.`}
-              </div>
-            )
+            <div className="px-6 py-12 text-center text-theme-secondary font-black uppercase tracking-widest text-xs">
+              {sortedExecs.length === 0 ? 'Awaiting Market Entry...' : `No ${FILTERS.find((f) => f.key === execFilter)?.label.toLowerCase()} executions.`}
+            </div>
           ) : (
             grouped.map((group) => (
               <div key={group.day}>
@@ -285,10 +226,10 @@ export const BankrollView: React.FC = () => {
                   const sty = STATUS_STYLE[st];
                   const pnl = betPnl(bet);
                   return (
-                    // Plain div (no mount animation): 30 animating rows
-                    // delayed LCP and thrashed layout on every paint.
-                    <div
+                    <motion.div
                       key={bet.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
                       className="px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-theme-secondary/50 transition-colors group"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -308,7 +249,7 @@ export const BankrollView: React.FC = () => {
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <div className="text-sm font-black text-theme-primary tabular">R {(bet.stake ?? 0).toFixed(2)}</div>
+                        <div className="text-sm font-black text-theme-primary tabular">R {bet.stake.toFixed(2)}</div>
                         <div className="text-[10px] font-black tabular">
                           {pnl !== null ? (
                             <span className={pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
@@ -319,25 +260,20 @@ export const BankrollView: React.FC = () => {
                           )}
                         </div>
                       </div>
-                      </div>
-                    );
+                    </motion.div>
+                  );
                 })}
               </div>
             ))
           )}
         </div>
-        {(canPage || needFull) && (
+        {visible.length < filteredExecs.length && (
           <button
             type="button"
-            onClick={loadMore}
-            disabled={loadingFull}
-            className="w-full py-3 flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-purple-400 hover:text-purple-300 hover:bg-purple-500/5 transition-all border-t border-theme disabled:opacity-60"
+            onClick={() => setExecShown((n) => n + PAGE)}
+            className="w-full py-3 flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-purple-400 hover:text-purple-300 hover:bg-purple-500/5 transition-all border-t border-theme"
           >
-            {loadingFull
-              ? 'Loading full ledger…'
-              : needFull
-                ? `Load full ledger (${betHistoryTotal - visible.length} older)`
-                : `Show more (${filteredExecs.length - visible.length} older)`} <ChevronDown className="w-3.5 h-3.5" />
+            Show more ({filteredExecs.length - visible.length} older) <ChevronDown className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
