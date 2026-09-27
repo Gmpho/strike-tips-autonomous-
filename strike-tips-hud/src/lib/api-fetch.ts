@@ -12,6 +12,9 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   // Keyless reads go direct to the backend origin (bypasses the Function
   // proxy: no invocations, no origin transfer). Keyed endpoints stay
   // same-origin so the proxy can inject the API secret server-side.
+  // `credentials: 'same-origin'` is explicit on purpose: some contexts
+  // (e.g. Telegram webview) default to `omit`, and without the HttpOnly
+  // session cookie the write path 401s forever.
   const direct = typeof input === 'string' ? directBackendUrl(input) : null
   const target: RequestInfo | URL = direct ?? input
   const url = typeof target === 'string' ? target : target instanceof URL ? target.href : target.url
@@ -32,7 +35,7 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
     // Only retry replayable bodies (streams/FormData can't resend).
     const canRetry = !init?.body || typeof init.body === 'string'
     try {
-      const res = await fetch(target, { ...init, headers, signal })
+      const res = await fetch(target, { ...init, headers, signal, credentials: 'same-origin' })
       if ((res.status === 429 || res.status === 503) && canRetry && attempt < MAX_RETRIES) {
         await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]))
         return execute(attempt + 1)

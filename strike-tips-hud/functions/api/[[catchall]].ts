@@ -7,9 +7,14 @@
 // Only keyed endpoints should reach here — keyless reads go direct to the
 // origins (see src/lib/backend-origin.ts), keeping invocations minimal.
 
+import { verify, SESSION_COOKIE_NAME, scopeAllows } from "../lib/session.ts";
+
 interface Env {
   BACKEND_API_KEY?: string;
   BACKEND_FALLBACK_ORIGIN?: string;
+  /** Turnstile session secret — lets a proven browser write session-scoped
+   *  families (config/healing/dreaming) without ever exposing the master key. */
+  SESSION_SECRET?: string;
 }
 
 const MODAL_ORIGIN = 'https://gmpho--strike-tips-racing-serve-api.modal.run';
@@ -47,11 +52,13 @@ function hitRate(
 
 // State-changing API families: the proxy never spends the master key here
 // on an anonymous caller's behalf (Sep-2026 audit: confused-deputy).
+// `/api/tasks` is the bare family root — normalized `matches()` covers root
+// and children (harden-pages-functions task 1.1).
 const WRITE_PREFIXES = [
   '/api/betting/',
   '/api/config',
   '/api/healing/',
-  '/api/tasks/',
+  '/api/tasks',
   '/api/agent/kill',
   '/api/agent/reset',
 ];
@@ -87,13 +94,29 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     && WRITE_PREFIXES.some((p) => matches(url.pathname, p));
 
   // Sensitive actions + all state-changing calls: caller must present the
-  // key (fail-closed). Reads keep flowing with server-side injection.
+  // master key, OR — for session-scoped families only — a valid Turnstile
+  // session cookie (proof-of-browser, minted by _middleware after the
+  // challenge). scopeAllows() fail-closes: money/sensitive/task families
+  // are master-key-only, a token can never satisfy them.
   const needsCallerKey = isWrite
     || SENSITIVE_PREFIXES.some((p) => matches(url.pathname, p));
   if (needsCallerKey) {
     const caller = request.headers.get('x-api-key') || request.headers.get('X-API-KEY')
       || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
-    if (!env.BACKEND_API_KEY || caller !== env.BACKEND_API_KEY) {
+    let allowed = Boolean(env.BACKEND_API_KEY) && caller === env.BACKEND_API_KEY;
+    if (!allowed && env.SESSION_SECRET) {
+      const cookie = request.headers.get('Cookie') || '';
+      const raw = cookie
+        .split(';')
+        .map((c) => c.trim())
+        .find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`));
+      const token = raw ? decodeURIComponent(raw.slice(SESSION_COOKIE_NAME.length + 1)) : '';
+      if (token && scopeAllows(url.pathname)) {
+        const claims = await verify({ secret: env.SESSION_SECRET, token });
+        if (claims) allowed = true;
+      }
+    }
+    if (!allowed) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
   }
@@ -128,22 +151,39 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // surfacing a bare 500/1101 after ~35s (Sep-2026 outage pattern).
     if (!isCF) {
       return Response.json(
-        { error: 'Backend warming up — retry shortly', retry: true },
+        { error: 'Backend warming up — retry shortly', retry: true, upstream: 'modal' },
         { status: 503, headers: { 'Access-Control-Allow-Origin': url.origin, 'Retry-After': '20' } },
       );
     }
-    const headers2 = new Headers(request.headers);
-    headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');
-    const upstream = await fetch(`${MODAL_ORIGIN}${url.pathname}${url.search}`, {
-      method: request.method,
-      headers: headers2,
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-    } as RequestInit);
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: upstream.headers,
-    });
+    // Fallback leg must be bounded too — an uncaught dead-origin TypeError
+    // here escaped as a bare 500 instead of a retryable envelope, and the
+    // error stopped naming which legs were down (harden-pages-functions 5.2).
+    try {
+      const headers2 = new Headers(request.headers);
+      headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');
+      const fbController = new AbortController();
+      const fbTimer = setTimeout(() => fbController.abort(), 25_000);
+      try {
+        const upstream = await fetch(`${MODAL_ORIGIN}${url.pathname}${url.search}`, {
+          method: request.method,
+          headers: headers2,
+          body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+          signal: fbController.signal,
+        } as RequestInit);
+        return new Response(upstream.body, {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers: upstream.headers,
+        });
+      } finally {
+        clearTimeout(fbTimer);
+      }
+    } catch {
+      return Response.json(
+        { error: 'Backend warming up — retry shortly', retry: true, upstream: 'worker+modal' },
+        { status: 503, headers: { 'Access-Control-Allow-Origin': url.origin, 'Retry-After': '20' } },
+      );
+    }
   } finally {
     clearTimeout(timer);
   }
