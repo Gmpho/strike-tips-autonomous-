@@ -129,7 +129,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (!isCF) {
       return Response.json(
         { error: 'Backend warming up — retry shortly', retry: true },
-        { status: 503, headers: { ...corsHeaders(url.origin), 'Retry-After': '20' } },
+        { status: 503, headers: { 'Access-Control-Allow-Origin': url.origin, 'Retry-After': '20' } },
       );
     }
     const headers2 = new Headers(request.headers);
