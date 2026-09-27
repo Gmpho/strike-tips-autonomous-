@@ -349,20 +349,30 @@ class TaskRouter:
             gemini_target = active_model if active_model in GEMINI_MODELS else LEGACY_GEMINI_ALIASES.get(active_model)
             if groq_target:
                 provider = GroqProvider()
+                produced = False
                 try:
                     async for chunk in provider.stream(messages, None, intent, model_override=groq_target):
+                        produced = produced or bool(chunk)
                         yield chunk
-                    return
+                    if produced:
+                        return
+                    logger.warning("[TASK_ROUTER] Groq override %s returned no content", groq_target)
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Groq override failed: %s", e)
             elif gemini_target:
                 provider = GeminiProvider()
+                produced = False
                 try:
                     # model_override was dropped here, so /model gemini-3.5-flash
                     # silently answered with the provider default (Sep-2026).
                     async for chunk in provider.stream(messages, None, intent, model_override=gemini_target):
+                        produced = produced or bool(chunk)
                         yield chunk
-                    return
+                    if produced:
+                        return
+                    # A blank stream (quota/empty candidates) must not end the
+                    # turn in silence — fall through to the other providers.
+                    logger.warning("[TASK_ROUTER] Gemini override %s returned no content", gemini_target)
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Gemini override failed: %s", e)
             else:
@@ -386,10 +396,16 @@ class TaskRouter:
             )
             logger.info("[TASK_ROUTER] auto → %s (%s)", target, "groq" if is_groq else "gemini")
             provider = GroqProvider() if is_groq else GeminiProvider()
+            produced = False
             try:
                 async for chunk in provider.stream(messages, None, intent, model_override=target):
+                    produced = produced or bool(chunk)
                     yield chunk
-                return
+                if produced:
+                    return
+                # Quota/empty-candidate case: the turn must still get an
+                # answer, so continue to the remaining providers below.
+                logger.warning("[TASK_ROUTER] auto model %s returned no content", target)
             except Exception as e:
                 logger.warning("[TASK_ROUTER] auto model %s failed: %s", target, e)
 

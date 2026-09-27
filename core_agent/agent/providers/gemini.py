@@ -208,9 +208,21 @@ class GeminiProvider:
 
         candidates = data.get("candidates", [])
         if not candidates:
-            return
+            # Never yield a silent empty answer: a blank reply reads as a dead
+            # bot. Raise so the router can fall back to the next provider.
+            raise RuntimeError(
+                f"Gemini {active_model} returned no candidates "
+                f"(feedback={data.get('promptFeedback')})"
+            )
 
         parts = candidates[0].get("content", {}).get("parts", [])
+        if not any(p.get("text") for p in parts) and not any(
+            "functionCall" in p for p in parts
+        ):
+            raise RuntimeError(
+                f"Gemini {active_model} returned no usable parts "
+                f"(finish={candidates[0].get('finishReason')})"
+            )
         function_calls = []
         for p in parts:
             if "text" in p:

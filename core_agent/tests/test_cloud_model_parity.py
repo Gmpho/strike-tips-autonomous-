@@ -120,6 +120,60 @@ def test_router_honours_a_gemini_override():
     assert '("gemini", "gemini-2.5-flash"' not in src
 
 
+@pytest.mark.asyncio
+async def test_blank_provider_answer_falls_through(monkeypatch):
+    """A provider that yields nothing must NOT end the turn in silence.
+
+    Reproduces the Sep-2026 failure: Gemini returned HTTP 429 / empty
+    candidates, the router consumed an empty stream and returned, so Telegram
+    simply never answered. The other provider must get its turn.
+    """
+    calls = []
+
+    class SilentProvider:
+        def __init__(self):
+            self.MODELS = ["silent"]
+
+        async def stream(self, messages, tools, intent, model_override=None):
+            calls.append(("silent", model_override))
+            return
+            yield ""  # pragma: no cover - unreachable, marks it a generator
+
+    class TalkativeProvider:
+        def __init__(self):
+            self.MODELS = ["chatty"]
+
+        async def stream(self, messages, tools, intent, model_override=None):
+            calls.append(("chatty", model_override))
+            yield "Groq answered the fallback."
+
+    r = router.TaskRouter.__new__(router.TaskRouter)
+    r.ollama = None
+    r.cloud_providers = [SilentProvider(), TalkativeProvider()]
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "x")
+    monkeypatch.setattr(router, "GeminiProvider", SilentProvider)
+    monkeypatch.setattr(router, "GroqProvider", SilentProvider)
+    # Chosen auto model is the silent one; the race must still produce text.
+    monkeypatch.setattr(
+        router, "resolve_auto_model", lambda *a, **k: ("silent", True)
+    )
+
+    msgs = [{"role": "user", "content": "who won the durban july?"}]
+    out = [c async for c in r.stream(msgs, None, None, model_override=None)]
+    text = "".join(out).strip()
+
+    assert text, "router must never end a turn with an empty answer"
+    assert "chatty" in {name for name, _ in calls}, "fallback provider was never tried"
+
+
+def test_gemini_provider_raises_on_empty_candidates():
+    """No silent empty: an empty Gemini response must raise, not return."""
+    src = open(gemini.__file__).read()
+    assert "returned no candidates" in src
+    assert "returned no usable parts" in src
+
+
 # ── 2. typing indicator ────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
