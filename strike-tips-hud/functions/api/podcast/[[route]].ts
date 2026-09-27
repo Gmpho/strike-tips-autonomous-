@@ -3,6 +3,8 @@
 // Spend protection: 5 calls/min per IP (each synth burns a TTS call),
 // 1000-char cap per synthesized line, roster is static (no key needed).
 
+import { friendlyUpstreamError } from '../../lib/upstream-errors.ts';
+
 interface Env {
   GEMINI_API_KEY?: string;
 }
@@ -96,7 +98,10 @@ async function synthesizeLine(apiKey: string, text: string, voice: string): Prom
       },
     }),
   });
-  if (!resp.ok) throw new Error(`TTS error: ${await resp.text()}`);
+  if (!resp.ok) {
+    const friendly = friendlyUpstreamError(resp.status, await resp.text(), 'Gemini', 'gemini-2.5-flash-preview-tts');
+    throw new Error(friendly.error);
+  }
   const data: any = await resp.json();
   const b64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   if (!b64) throw new Error('No audio returned from Gemini TTS.');
@@ -158,7 +163,10 @@ Do not wrap in markdown quotes if possible, output raw JSON. Keep dialogue natur
           generationConfig: { temperature: 0.7, maxOutputTokens: 4000, responseMimeType: 'application/json' },
         }),
       });
-      if (!resp.ok) throw new Error(`Script error: ${await resp.text()}`);
+      if (!resp.ok) {
+        const friendly = friendlyUpstreamError(resp.status, await resp.text(), 'Gemini', 'gemini-3.5-flash');
+        throw new Error(friendly.error);
+      }
       const data: any = await resp.json();
       const rawText: string = data.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '{}';
       let parsed: any;

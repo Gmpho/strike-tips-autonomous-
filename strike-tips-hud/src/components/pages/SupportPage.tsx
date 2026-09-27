@@ -126,6 +126,30 @@ export const SupportPage: React.FC = () => {
         })}
       </motion.div>
 
+      <motion.div variants={fadeUp} className="rounded-2xl border border-theme bg-theme-panel p-5 md:p-6 mb-6">
+        <h2 className="text-sm font-black uppercase tracking-tight text-theme-primary mb-1">
+          AI Models & Limits
+        </h2>
+        <p className="text-[11px] text-theme-secondary font-medium leading-relaxed mb-3">
+          Chat, voice and podcast run on rented AI. Some models cost money or cap free use —
+          when one can't answer you'll see a plain-words note (never a raw error dump).
+        </p>
+        <div className="space-y-2 text-[11px] font-semibold text-theme-primary">
+          <div className="flex items-start gap-2">
+            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-px" />
+            <span>Auto Router, GPT-OSS 120B/20B (Groq) and Gemini Flash — free tier, always on.</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-px" />
+            <span>Gemini Pro, voice audio and long podcasts draw from a small free quota — heavy days can pause them until it resets. Limits: ai.dev/rate-limit</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <Minus className="w-3.5 h-3.5 shrink-0 mt-px text-theme-secondary/50" />
+            <span className="text-theme-secondary/70">Llama 70B/8B need Groq Enterprise; Qwen 3.8 is preview-only; Mixtral, Qwen 3.6 and Gemma 2 are retired — they stay listed for choice but answer only on supported plans. Live list: console.groq.com/docs/models</span>
+          </div>
+        </div>
+      </motion.div>
+
       <motion.div variants={fadeUp}>
         <p className="text-[11px] text-theme-secondary font-semibold text-center">
           Once-off · No subscriptions · No paywalls, ever · Processed securely by our payment partner — we never see card details

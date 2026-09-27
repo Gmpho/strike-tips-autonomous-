@@ -397,7 +397,12 @@ export const SwarmPodcastView: React.FC = () => {
       });
 
       if (!res.ok) {
-        throw new Error(`Failed to generate episode: ${res.statusText}`);
+        let detail = res.statusText;
+        try {
+          const body = await res.clone().json();
+          if (body && typeof body.error === 'string' && body.error) detail = body.error;
+        } catch {}
+        throw new Error(detail ? `Failed to generate episode: ${detail}` : 'Failed to generate episode.');
       }
 
       const freshEpisode: PodcastEpisode = await res.json();

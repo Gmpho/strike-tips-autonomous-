@@ -5,6 +5,7 @@
 // by IP rate limiting. Secrets come from Pages env (server-side only).
 
 import { hitRate as boundedHitRate, type RateEntry } from '../lib/rate-limit.ts';
+import { friendlyUpstreamError } from '../lib/upstream-errors.ts';
 
 interface Env {
   GEMINI_API_KEY?: string;
@@ -170,7 +171,8 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
       body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
     });
     if (!resp.ok) {
-      return Response.json({ error: `Gemini error: ${await resp.text()}` }, { status: resp.status, headers: corsHeaders(origin) });
+      const friendly = friendlyUpstreamError(resp.status, await resp.text(), 'Gemini', targetModel);
+      return Response.json(friendly, { status: resp.status === 429 ? 429 : 400, headers: corsHeaders(origin) });
     }
     const data: any = await resp.json();
     const candidate = data.candidates?.[0];
@@ -188,7 +190,8 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
     body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
   });
   if (!upstream.ok || !upstream.body) {
-    return Response.json({ error: `Gemini error: ${await upstream.text()}` }, { status: upstream.status, headers: corsHeaders(origin) });
+    const friendly = friendlyUpstreamError(upstream.status, await upstream.text(), 'Gemini', targetModel);
+    return Response.json(friendly, { status: upstream.status === 429 ? 429 : 400, headers: corsHeaders(origin) });
   }
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
@@ -258,7 +261,8 @@ async function handleGroqChat(env: Env, body: any, modelName: string, systemInst
     body: JSON.stringify({ model: groqModel, messages: groqMessages, stream: isStream, temperature: 0.6, max_tokens: MAX_TOKENS }),
   });
   if (!groqRes.ok) {
-    return Response.json({ error: `Groq error: ${await groqRes.text()}` }, { status: groqRes.status, headers: corsHeaders(origin) });
+    const friendly = friendlyUpstreamError(groqRes.status, await groqRes.text(), 'Groq', groqModel);
+    return Response.json(friendly, { status: groqRes.status === 429 ? 429 : 400, headers: corsHeaders(origin) });
   }
   if (isStream && groqRes.body) {
     const reader = groqRes.body.getReader();

@@ -1,6 +1,7 @@
 import { GoogleGenAI, Modality } from '@google/genai';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { pcmToWavBuffer, stitchWavBuffers } from './tts-service.ts';
+import { friendlyUpstreamError } from '../functions/lib/upstream-errors.js';
 
 export interface SwarmAgentDialogue {
   speaker: 'host' | 'analyst' | 'stats' | 'scout' | 'gemma';
@@ -341,8 +342,9 @@ export async function handlePodcastRequest(req: IncomingMessage, res: ServerResp
         res.end(JSON.stringify(episode));
       } catch (err: any) {
         console.error('[Podcast Generate Error]', err);
+        const friendly = friendlyUpstreamError(500, err.message || '', 'Gemini', 'gemini-3.5-flash');
         res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ error: err.message || 'Failed to generate podcast episode' }));
+        res.end(JSON.stringify(friendly));
       }
     });
     return;
@@ -371,8 +373,9 @@ export async function handlePodcastRequest(req: IncomingMessage, res: ServerResp
         res.end(wavBuffer);
       } catch (err: any) {
         console.error('[Podcast Synth Line Error]', err);
+        const friendly = friendlyUpstreamError(500, err.message || '', 'Gemini', 'gemini-2.5-flash-preview-tts');
         res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ error: err.message || 'Audio synthesis failed' }));
+        res.end(JSON.stringify(friendly));
       }
     });
     return;

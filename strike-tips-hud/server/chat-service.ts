@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { extractDocumentContent, type FormAttachment } from './form-reader-service.js';
+import { friendlyUpstreamError } from '../functions/lib/upstream-errors.js';
 
 export interface GroundingSource {
   title: string;
@@ -135,8 +136,9 @@ export async function handleChatRequest(req: IncomingMessage, res: ServerRespons
     } catch (err: any) {
       console.error('[Chat Service Error]', err);
       if (!res.headersSent) {
+        const friendly = friendlyUpstreamError(500, err.message || '', 'Gemini', 'chat');
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message || 'Chat generation failed' }));
+        res.end(JSON.stringify(friendly));
       }
     }
   });
@@ -260,7 +262,8 @@ async function handleGeminiChat(
       res.end();
     } catch (streamErr: any) {
       console.error('[Gemini Stream Error]', streamErr);
-      res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+      const friendly = friendlyUpstreamError(500, streamErr.message || '', 'Gemini', targetModel);
+      res.write(`data: ${JSON.stringify({ error: friendly.error })}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
     }
@@ -372,22 +375,11 @@ async function handleGroqChat(
 
   if (!groqRes.ok) {
     const errText = await groqRes.text();
-    // Friendly model-availability message: Groq retires/gates IDs
-    // aggressively (llama = Enterprise-only, qwen3.8 = preview, mixtral /
-    // gemma2 / qwen3.6 unlisted). Tell the user plainly instead of a
-    // bare 500 / "Error connecting to brain".
-    const lower = errText.toLowerCase();
-    const modelGone = groqRes.status === 404 || groqRes.status === 400 &&
-      (lower.includes('model') && (lower.includes('not found') || lower.includes('does not exist') ||
-        lower.includes('decommission') || lower.includes('deprecated') || lower.includes('invalid model')));
-    if (modelGone) {
+    // Friendly model-availability message via the shared mapper.
+    const friendly = friendlyUpstreamError(groqRes.status, errText, 'Groq', groqModel);
+    if (friendly.code !== 'UPSTREAM_ERROR') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        error: `⚠️ ${groqModel} isn't available on your Groq plan (retired, preview-ended, or Enterprise-only). Switch to Auto Router or GPT-OSS 120B/20B — live list: https://console.groq.com/docs/models`,
-        supportUrl: 'https://console.groq.com/docs/models',
-        model: groqModel,
-        code: 'MODEL_UNAVAILABLE',
-      }));
+      res.end(JSON.stringify({ ...friendly, supportUrl: friendly.supportUrl }));
       return;
     }
 
