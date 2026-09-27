@@ -209,20 +209,29 @@ class TelegramNotifier:
         await self.broadcast(text)
         return True
 
-    async def broadcast(self, text: str, parse_mode: str = "HTML") -> None:
-        """Send to the admin + every authorized whitelisted user, chunking at 4000 chars."""
+    async def broadcast(self, text: str, parse_mode: str = "HTML") -> bool:
+        """Send to the admin + every authorized whitelisted user, chunking at 4000 chars.
+
+        Returns True only when every chunk reached every target. Digest
+        retry logic depends on this signal (Sep-2026: swallowed failures
+        marked alerts as delivered while nothing arrived).
+        """
         targets: list[str] = [self.chat_id]
         for cid in _get_whitelist_ids():
             sid = str(cid)
             if sid not in targets:
                 targets.append(sid)
         chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        ok = True
         for t in targets:
             for chunk in chunks:
                 try:
-                    await self._send_to_chat(t, chunk, parse_mode)
-                except Exception:
-                    pass
+                    if not await self._send_to_chat(t, chunk, parse_mode):
+                        ok = False
+                except Exception as e:
+                    ok = False
+                    logger.warning("Telegram broadcast to %s failed: %s", t, e)
+        return ok
 
     async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
         """Send a daily summary of all value bets found asynchronously"""

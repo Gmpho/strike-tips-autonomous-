@@ -2072,6 +2072,20 @@ class StrikeTips:
                             if bet:
                                 exotic_bets_placed += 1
 
+                    # Visibility: one telemetry line per scan so Live Ops shows
+                    # WHY nothing was placed (Sep-2026: silent 0-single days).
+                    try:
+                        from core_agent.core.telemetry import emit
+                        emit(
+                            "governor",
+                            f"🎯 Auto-bet: {auto_bets_placed} single(s) + {exotic_bets_placed} exotic(s) "
+                            f"| skipped edge {auto_skipped['edge']}, odds {auto_skipped['odds']}, "
+                            f"governor/dupe {auto_skipped['governor']}, budget {auto_skipped.get('budget', 0)}, "
+                            f"no-horse {auto_skipped['no_horse']}",
+                        )
+                    except Exception:
+                        pass
+
                     if auto_bets_placed or exotic_bets_placed or any(auto_skipped.values()):
                         msg = f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
                         if auto_bets_placed:

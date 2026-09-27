@@ -842,6 +842,14 @@ class AdaptiveOddsMonitor:
             logger.info(f"👻 Single cycle synced {state.get('count')} races.")
             for event in state.get("events", {}).values():
                 await self.alert_engine.evaluate_odds_update(event, cache=self.intel_cache)
+            # Alert digests: cron containers die at cycle end — ship due
+            # entries now or they die with the queue (Sep-2026: odds-drop
+            # digests never left the monitor cron).
+            if self._digester:
+                try:
+                    await self._digester.flush_due()
+                except Exception as exc:
+                    logger.debug("Digest flush skipped: %s", exc)
             return state
         except Exception as e:
             logger.warning(f"⚠️ Single cycle error: {e}")
