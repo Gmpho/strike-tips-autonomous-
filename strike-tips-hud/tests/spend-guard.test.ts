@@ -7,7 +7,10 @@ import assert from "node:assert/strict";
 describe("live frame throttle (2.2)", () => {
   it("allows the burst, then drops until tokens refill", async () => {
     const { makeFrameThrottle } = await import("../functions/api/live.ts");
-    const allow = makeFrameThrottle(80, 10); // small burst for testability
+    // 1 token/s: the burst-drain assertions are wall-clock independent (a
+    // faster rate refills mid-burst on a loaded CI box and flakes), while
+    // the "refills at the configured rate" test below owns refill timing.
+    const allow = makeFrameThrottle(1, 10); // small burst for testability
     for (let i = 0; i < 10; i++) assert.equal(allow(), true, `burst frame ${i} must pass`);
     assert.equal(allow(), false, "frame beyond burst must be dropped");
     assert.equal(allow(), false, "immediate second frame must also be dropped");
