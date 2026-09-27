@@ -11,6 +11,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH, NEWS_PATH
+from core_agent.core.log_setup import close_file_handlers, configure_file_logging
 
 logger = logging.getLogger("snapshot-cache")
 
@@ -205,6 +206,14 @@ async def _reload_data_volume() -> None:
         if since < _VOLUME_RELOAD_MIN_SECS:
             return
         try:
+            # Modal refuses reload while ANY file is open — our own
+            # strike.log handler is the usual holder (Sep-2026: frozen
+            # volume view, 8h-stale telemetry). Close across the call,
+            # reopen after (idempotent, no duplicate handlers).
+            try:
+                close_file_handlers()
+            except Exception:
+                pass
             aio_reload = getattr(vol.reload, "aio", None)
 
             async def _do_reload():
@@ -214,7 +223,13 @@ async def _reload_data_volume() -> None:
                     await asyncio.to_thread(vol.reload)
 
             # wait_for cancels a hung reload instead of freezing the loop.
-            await asyncio.wait_for(_do_reload(), timeout=_VOLUME_RELOAD_TIMEOUT)
+            try:
+                await asyncio.wait_for(_do_reload(), timeout=_VOLUME_RELOAD_TIMEOUT)
+            finally:
+                try:
+                    configure_file_logging()
+                except Exception:
+                    pass
             _volume_last_reload = time.time()
             print(
                 f"[snapshot-cache] volume reloaded ok "
