@@ -5,7 +5,33 @@ import { useHUD } from '../../hooks/useHUD';
 import { apiFetch } from '../../lib/api-fetch';
 
 export const HealingView: React.FC = () => {
-  const { healing } = useHUD();
+  const { healing, events, lastSyncTs } = useHUD();
+
+  // Live card races (same snapshot the 5-min odds monitor writes).
+  const liveRaces = React.useMemo(
+    () =>
+      Object.values(events || {})
+        .map((race) => ({
+          id: race.id,
+          course: race.course || '—',
+          raceNumber: race.raceNumber ?? '',
+          t: race.t || '',
+          runnerCount: race.runners?.length || 0,
+        }))
+        .sort((a, b) => (a.t || '').localeCompare(b.t || '')),
+    [events],
+  );
+  const trackCount = new Set(liveRaces.map((r) => r.course)).size;
+  const runnerTotal = liveRaces.reduce((acc, r) => acc + r.runnerCount, 0);
+  const syncAgeMin = lastSyncTs ? Math.floor((Date.now() - lastSyncTs) / 60000) : null;
+  // The monitor runs every 5 min; >12 min means the card is stale, not live.
+  const syncedFresh = syncAgeMin !== null && syncAgeMin <= 12;
+  const syncLabel =
+    syncAgeMin === null
+      ? 'AWAITING SYNC'
+      : syncAgeMin < 1
+      ? 'SYNCED JUST NOW'
+      : `SYNCED ${syncAgeMin}m AGO`;
   const [pulseState, setPulseState] = useState<'idle' | 'sending' | 'ok' | 'err' | 'verify'>('idle');
 
   const pulse = async () => {
@@ -82,6 +108,57 @@ export const HealingView: React.FC = () => {
                 : '✗ Healing pulse failed — check session/console'}
         </p>
       )}
+
+      {/* Live races synced into the card (the same snapshot the odds monitor
+          writes every 5 min) — so the healing view shows WHAT the agents are
+          actually working on, and how fresh that card is. */}
+      <div className="rounded-2xl bg-theme-panel border border-theme p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Activity className="w-4 h-4 text-emerald-400" />
+          <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest">
+            Live Races Synced
+          </h3>
+          <div className="flex-1 h-px bg-theme" />
+          <span
+            className={`text-[9px] font-black px-2 py-0.5 rounded-full border tabular ${
+              syncedFresh
+                ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+            }`}
+            title="Last successful market-snapshot download by this browser"
+          >
+            {syncLabel}
+          </span>
+        </div>
+
+        {liveRaces.length === 0 ? (
+          <p className="text-[11px] text-theme-secondary/80">
+            No races in the card right now — the odds monitor syncs every 5 minutes and the
+            card prunes races as they run.
+          </p>
+        ) : (
+          <>
+            <p className="text-[10px] text-theme-secondary mb-2 tabular">
+              {liveRaces.length} race{liveRaces.length === 1 ? '' : 's'} across{' '}
+              {trackCount} track{trackCount === 1 ? '' : 's'} · {runnerTotal} runners tracked
+            </p>
+            <div className="flex flex-wrap gap-1.5 max-h-[132px] overflow-y-auto custom-scrollbar scroll-container">
+              {liveRaces.map((race) => (
+                <span
+                  key={race.id}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/5 border border-emerald-500/15 text-[10px] font-mono text-theme-primary"
+                  title={`${race.runnerCount} runners`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
+                  <span className="font-black uppercase tracking-tight">{race.course}</span>
+                  <span className="text-theme-secondary/70">R{race.raceNumber}</span>
+                  {race.t && <span className="text-theme-secondary/60">{race.t}</span>}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Grid: Agent Stats & Selector Health */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

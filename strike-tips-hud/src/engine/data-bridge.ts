@@ -107,6 +107,9 @@ export class DataBridge {
       const patch: Record<string, unknown> = {
         events,
         alerts: data.alerts || [],
+        // Stamped on every real card download so the views can show how fresh
+        // the "live" races are instead of implying liveness.
+        lastSyncTs: Date.now(),
       };
       const unwrap = (v: unknown): unknown => {
         // Bundle files wrap arrays ({movers: [...], timestamp}); SSE used to

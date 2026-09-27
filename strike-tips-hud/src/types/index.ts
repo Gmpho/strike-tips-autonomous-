@@ -209,5 +209,9 @@ export interface HUDState {
   results: ResultRace[];
   news: NewsItem[];
   telemetry: TelemetryEvent[];
+  /** Epoch ms of the last successful market-snapshot download. The odds
+   *  monitor writes the card every 5 min; the HUD shows races as "synced"
+   *  relative to this so a stalled feed is visible, not assumed live. */
+  lastSyncTs: number;
   lastUpdate: number;
 }
