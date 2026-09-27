@@ -41,7 +41,7 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
          "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    startup_timeout=120,
+    startup_timeout=300,
     min_containers=0,
     max_containers=3,
 )
@@ -272,23 +272,32 @@ def serve_api():
                 pass
         return {"ok": True}
 
-    # ── Auto-register webhook on boot ────────────────────────────────
+    # ── Auto-register webhook on boot (background thread — the setWebhook
+    # round-trip must never sit in the container startup path; Sep-2026
+    # crash-loop postmortem: boot exceeded startup_timeout and Modal killed
+    # every fresh container before it served a single request).
     import os
-    import httpx
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    import threading
+
+    def _register_webhook_bg() -> None:
+        import httpx
+
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        try:
+            r = httpx.post(
+                f"https://api.telegram.org/bot{token}/setWebhook",
+                json={"url": webhook_url, "allowed_updates": ["message"]},
+                timeout=10,
+            )
+            if r.json().get("ok"):
+                logger.info("Telegram webhook auto-registered → %s", webhook_url)
+            else:
+                logger.error("Webhook auto-registration failed: %s", r.json())
+        except Exception as exc:
+            logger.error("Webhook auto-registration error: %s", exc)
+
     webhook_url = "https://gmpho--strike-tips-racing-serve-api.modal.run/telegram-webhook"
-    try:
-        r = httpx.post(
-            f"https://api.telegram.org/bot{token}/setWebhook",
-            json={"url": webhook_url, "allowed_updates": ["message"]},
-            timeout=10,
-        )
-        if r.json().get("ok"):
-            logger.info("Telegram webhook auto-registered → %s", webhook_url)
-        else:
-            logger.error("Webhook auto-registration failed: %s", r.json())
-    except Exception as exc:
-        logger.error("Webhook auto-registration error: %s", exc)
+    threading.Thread(target=_register_webhook_bg, daemon=True).start()
 
     return fastapi_app
 
