@@ -90,19 +90,30 @@ class GroqProvider:
 
     async def _post_and_parse(self, messages: list[dict], needs_tools: bool, model: str) -> tuple[str, list[dict]]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        
+
+        # Card-intent gate: rebuild the cloud system prompt with THIS turn's
+        # user text so casual chat does not carry the race card (Sep-2026:
+        # every reply parroted the meeting list). Mirrors GeminiProvider.
+        try:
+            from core_agent.agent.providers.task_router import TaskRouter as _TR
+            _sys = build_system_prompt(
+                for_cloud=True, user_message=_TR._extract_user_query(messages)
+            )
+        except Exception:
+            _sys = build_system_prompt(for_cloud=True)
+
         # Build a clean message list for the API call to avoid system prompt duplication
         api_messages = []
         for i, m in enumerate(messages):
             if i == 0 and m.get("role") == "system":
                 # Override the system prompt with the cloud-clean one
-                api_messages.append({"role": "system", "content": build_system_prompt(for_cloud=True)})
+                api_messages.append({"role": "system", "content": _sys})
             else:
                 api_messages.append(m)
                 
         # If no system prompt was present at all, prepend it
         if not api_messages or api_messages[0].get("role") != "system":
-            api_messages.insert(0, {"role": "system", "content": build_system_prompt(for_cloud=True)})
+            api_messages.insert(0, {"role": "system", "content": _sys})
 
         payload = {
             "model": model,

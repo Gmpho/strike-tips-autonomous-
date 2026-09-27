@@ -14,13 +14,19 @@ MAX_CONTEXT_CHARS = 12000
 # meetings back mid-chat ("You good" → "36 races across 7 tracks"). Now
 # identity/meta/casual turns take the fast path too.
 _TRIVIAL_PATTERNS = re.compile(
-    r"^(hey|hello|hi|howdy|sup|thanks|thank\s*(?:you|s)|ok(?:ay)?|yes|yeah|yep|no|nope|nah|"
+    # Optional greeting prefix so "hey, you good?" / "yo how you doing" land
+    # on the fast path instead of leaking the card (Sep-2026).
+    r"^(?:(?:hey|hi|hello|yo|ok|okay|so|well|morning|sweet|nice)\s*[,!.]?\s+)?"
+    r"(hey|hello|hi|howdy|sup|thanks|thank\s*(?:you|s)|ok(?:ay)?|yes|yeah|yep|no|nope|nah|"
     r"bye|goodbye|lol|lmao|nice|cool|great|awesome|perfect|"
     r"you\s+good|u\s+good|all\s+good|you\s+ok(?:ay)?|you\s+there|"
     r"what'?s\s*up|how'?s\s*it\s*going|how\s+(?:are|r)\s*(?:you|u)|how\s+you|"
+    r"how\s+you\s+doing|how\s+(?:are|r)\s*(?:you|u)\s+doing|"
     r"who\s+are\s+you|what\s+are\s+you|what\s+model(?:\s+are\s+you)?|which\s+model|"
     r"what\s+(?:can|do)\s+you\s+do|what\s+do\s+you\s+offer|"
     r"good\s*(?:morning|afternoon|evening|day))"
+    # Repeated trailing filler: "thanks man", "how's it going today", ...
+    r"(?:\s*[,!.]?\s*(?:thanks?|thank\s*you|please|man|today|tonight|now|again|there|eh|anyway))*"
     r"[\s!?.]*$",
     re.IGNORECASE,
 )
@@ -44,6 +50,11 @@ def wants_live_card(text: str) -> bool:
     """True when the message is about race data (or pastes a card)."""
     t = (text or "").lower().strip()
     if not t:
+        return False
+    # Greetings/filler never want racing context, even when they contain a
+    # card noun — "how you doing today" is small talk, not a card request.
+    # Mirrors the ContextBuilder fast path (same 60-char window).
+    if len(t) < 60 and _TRIVIAL_PATTERNS.match(t):
         return False
     if _PASTED_CARD_RE.search(t):
         return True

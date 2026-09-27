@@ -162,6 +162,19 @@ class TaskRouter:
         """Answer data-retrieval queries directly from local JSON snapshots."""
         last_msg = self._extract_user_query(messages)
 
+        # Explicit scan requests are ACTION asks — answer them before any
+        # snapshot-dependent branch. (This used to live inside `if events:`,
+        # so a stale/empty evening feed downgraded "run a full daily scan"
+        # to the "no live data" refusal instead of scan guidance.)
+        if re.search(
+            r"\b(full |daily )?(daily )?scan\b|analyse (all |those )?(the )?\d+ races|across (all |those )?(the )?\d+ races",
+            last_msg,
+        ):
+            return ("I can run that — say **run the scan** (or `/scan`) "
+                    "and I'll kick off the full daily value scan "
+                    "across every track in the background. I'll "
+                    "report selections when it completes.")
+
         try:
             import json
 
