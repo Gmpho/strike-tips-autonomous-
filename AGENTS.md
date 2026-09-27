@@ -20,6 +20,42 @@ Archived changes (2026-08-31): `add-betfair-form-data` (Betfair SA gear + days-s
 
 ---
 
+## Merge Protection Rules (mandatory for every agent, every change)
+
+Added Sep-2026 after a refactor commit silently deleted two weeks of
+settlement/HUD fixes, 160+ tests, and the entire Pages AI layer, then
+shipped green — and crash-looped prod. These rules exist so it never
+repeats:
+
+1. **Never rewrite history on shared branches.** No force-push, no squash-merging
+   another agent's commits away. One commit per logical change, pushed normally.
+2. **Work from current `origin/master`.** `git pull` before branching. A change
+   rebased onto a stale base that deletes others' files is treated as damage,
+   not a refactor — however clean its message reads.
+3. **No net-negative diffs without sign-off.** If your diff deletes more tested
+   lines than it adds (functions, specs, tests), stop and ask the user first.
+   Deleting a test to make the suite green is forbidden — fix the code.
+4. **Docker-green suite before merge.** `docker exec strike-bot-new python -m
+   pytest core_agent/tests/ -q` must pass fully (host runs lack fastapi and
+   hide failures — local green means nothing). Plus `npm run build` for HUD
+   changes. Paste both results in your final message.
+5. **Protected paths — touch only with explicit user approval:**
+   - `core_agent/skills/result_tracker.py` (settlement math — money moves here)
+   - `core_agent/skills/bankroll_manager/governor.py` (ledger — money rests here)
+   - `core_agent/api_pkg/__init__.py` (web lifespan — a fork-bomb here kills prod)
+   - `core_agent/core/modal_app.py` (crons, volumes, timeouts)
+   - `strike-tips-hud/functions/` (prod API routes — deleting one 404s prod)
+   - `strike-tips-hud/vercel.json` (must never exist — see `docs/DEPLOY.md`)
+   - `*.test.ts` / `core_agent/tests/` (coverage only grows)
+6. **Live model IDs come from the provider docs, not memory.** Groq retires and
+   enterprise-gates IDs aggressively — verify at console.groq.com/docs/models
+   before adding any model string. A 404ing model must fail with the friendly
+   `MODEL_UNAVAILABLE` message, never silently.
+7. **Deploys are the user's call.** Modal / Pages / Worker deploys only on
+   explicit request. Default: commit + push, report verification, stop.
+
+---
+
 ## Project Overview
 
 **South African Horse Racing Intelligence System — 3-Layer Architecture**
