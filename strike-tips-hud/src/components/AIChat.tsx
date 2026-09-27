@@ -59,6 +59,28 @@ export interface AIChatProps {
   initialRunner?: Runner;
 }
 
+/** Short display name for a model id in the active-model badge. */
+function shortModelName(id: string): string {
+  const v = String(id || '').toLowerCase();
+  if (!v || v === 'auto') return 'Auto Router';
+  if (v.includes('gpt-oss-120b')) return 'GPT-OSS 120B';
+  if (v.includes('gpt-oss-20b')) return 'GPT-OSS 20B';
+  if (v.includes('qwen3.8') || v.includes('qwen-3.8')) return 'Qwen 3.8';
+  if (v.includes('qwen3.6') || v.includes('qwen-3.6')) return 'Qwen 3.6';
+  if (v.includes('gemma-2') || v.includes('gemma2')) return 'Gemma 2';
+  if (v.includes('3.3') || v.includes('70b')) return 'Llama 70B';
+  if (v.includes('3.1') || v.includes('8b')) return 'Llama 8B';
+  if (v.includes('mixtral') || v.includes('8x7b')) return 'Mixtral';
+  if (v.includes('gemma-4')) return 'Gemma 4';
+  if (v.includes('3.5')) return 'Gemini 3.5';
+  if (v.includes('3.8')) return 'Gemini 3.8';
+  if (v.includes('3.1-pro')) return 'Gemini 3.1 Pro';
+  if (v.includes('flash-lite') || v.includes('lite')) return 'Flash-Lite';
+  if (v.includes('flash')) return 'Gemini Flash';
+  if (v.includes('pro')) return 'Gemini Pro';
+  return String(id).slice(0, 18);
+}
+
 export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner }) => {
   // 1. Sessions State Management
 
@@ -699,6 +721,17 @@ ${compiledContext || 'No context data available.'}`;
           }
           try {
             const parsed = JSON.parse(payload);
+            if (parsed && typeof parsed.error === 'string' && parsed.error) {
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 && m.role === 'ai'
+                  ? { ...m, content: parsed.error }
+                  : m
+              ));
+              streamBufRef.current = '';
+              clearInterval(actInterval);
+              setCurrentActivity(null);
+              continue;
+            }
             const delta = parsed.choices?.[0]?.delta?.content || '';
             const finish = parsed.choices?.[0]?.finish_reason;
             if (delta) {
@@ -844,9 +877,11 @@ ${compiledContext || 'No context data available.'}`;
 
       {/* 3. Main Chat Panel */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat Header */}
-        <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden shrink-0">
-            <div className="flex items-center gap-2.5 min-w-0">
+        {/* Chat Header — wraps on small screens so the activity pill
+            (emoji status) gets its own full-width row instead of being
+            crushed to nothing between the title and buttons. */}
+        <div className="p-3 sm:p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-2 sm:gap-4 shrink-0 flex-wrap">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
               {/* Menu toggle for mobile history drawer */}
               <button 
                 onClick={() => setIsSidebarOpen(true)}
@@ -858,13 +893,13 @@ ${compiledContext || 'No context data available.'}`;
               </button>
               
               <Bot className="w-5 h-5 text-purple-400 shrink-0" />
-              <span className="text-sm font-black uppercase tracking-widest text-theme-primary truncate">Strike Command</span>
+              <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-theme-primary truncate">Strike Command</span>
             </div>
 
             {currentActivity && (
-                <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center gap-2 animate-pulse min-w-0">
+                <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center justify-center gap-2 animate-pulse min-w-0 basis-full sm:basis-auto order-last sm:order-none">
                     <Loader2 className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
-                    <span className="text-xs font-bold text-purple-300 uppercase truncate">{currentActivity}</span>
+                    <span className="text-[11px] sm:text-xs font-bold text-purple-300 uppercase truncate">{currentActivity}</span>
                 </div>
             )}
             
@@ -881,11 +916,12 @@ ${compiledContext || 'No context data available.'}`;
               <div className="px-2 py-1 bg-purple-900/30 border border-purple-500/50 rounded text-xs font-bold text-purple-300 uppercase">
                 {loading ? 'RUNNING' : 'ACTIVE'}
               </div>
-              {lastModelUsed && (
-                <div className="hidden sm:block px-2 py-1 bg-emerald-900/30 border border-emerald-500/40 rounded text-xs font-bold text-emerald-300 uppercase">
-                  {lastModelUsed}
-                </div>
-              )}
+              <div
+                title={`Active model: ${lastModelUsed || selectedModel}`}
+                className="px-2 py-1 bg-emerald-900/30 border border-emerald-500/40 rounded text-xs font-bold text-emerald-300 uppercase"
+              >
+                {shortModelName(lastModelUsed || selectedModel)}
+              </div>
               {/* Mobile and Desktop Accessible Clean/Clear Chat Button */}
               <button 
                 onClick={clearActiveSession}
@@ -905,7 +941,7 @@ ${compiledContext || 'No context data available.'}`;
             const el = e.currentTarget;
             stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
-          className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10"
+          className="flex-1 p-3 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 font-mono text-[13px] sm:text-sm custom-scrollbar bg-black/10"
         >
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
@@ -922,7 +958,7 @@ ${compiledContext || 'No context data available.'}`;
                 <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
                 <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
                     {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1" />}
-                    <div className={`p-4 rounded-2xl max-w-[85%] break-words leading-relaxed ${
+                    <div className={`p-3 sm:p-4 rounded-2xl max-w-[92%] sm:max-w-[85%] break-words leading-relaxed ${
                       m.role === 'user' 
                         ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto border border-purple-500/30' 
                         : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'
@@ -933,7 +969,7 @@ ${compiledContext || 'No context data available.'}`;
                           <span className="animate-pulse">Thinking...</span>
                         </div>
                       ) : m.role === 'ai' && (m.content.startsWith('Loading:') || m.content.startsWith('Initializing')) && i === messages.length - 1 ? (
-                        <div className="flex flex-col gap-2.5 min-w-[240px] py-1">
+                        <div className="flex flex-col gap-2.5 min-w-0 w-full max-w-[280px] py-1">
                           <div className="flex items-center justify-between text-xs text-purple-400 font-bold">
                             <span className="flex items-center gap-1.5">
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -960,7 +996,7 @@ ${compiledContext || 'No context data available.'}`;
                           </span>
                         </div>
                       ) : m.role === 'ai' ? (
-                        <div className="markdown-body text-sm leading-relaxed">
+                        <div className="markdown-body text-[13px] sm:text-sm leading-relaxed">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -1075,7 +1111,7 @@ ${compiledContext || 'No context data available.'}`;
         </div>
 
         {/* On-device AI toolbar: target language, voice, form-image reader */}
-        <div className="px-4 pt-3 flex items-center gap-2 text-xs shrink-0">
+        <div className="px-3 sm:px-4 pt-3 flex items-center gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
           <select
             value={mt.langId}
             onChange={(e) => mt.setLangId(e.target.value as 'af' | 'zu' | 'st')}
