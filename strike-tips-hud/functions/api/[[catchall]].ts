@@ -123,8 +123,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       headers: upstream.headers,
     });
   } catch (e) {
-    // Last resort: Modal directly (matches Vercel middleware fallback).
-    if (!isCF) throw e;
+    // Upstream hung (usually a Modal cold start) past the 25s budget:
+    // answer 503 + Retry-After so the HUD retries warm instead of
+    // surfacing a bare 500/1101 after ~35s (Sep-2026 outage pattern).
+    if (!isCF) {
+      return Response.json(
+        { error: 'Backend warming up — retry shortly', retry: true },
+        { status: 503, headers: { ...corsHeaders(url.origin), 'Retry-After': '20' } },
+      );
+    }
     const headers2 = new Headers(request.headers);
     headers2.set('X-API-KEY', env.BACKEND_API_KEY || '');
     const upstream = await fetch(`${MODAL_ORIGIN}${url.pathname}${url.search}`, {

@@ -494,6 +494,20 @@ async def run_odds_monitor():
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
+    # Piggyback keep-warm: ping serve_api so its container never goes fully
+    # cold (Sep-2026: 2.5-min cold starts timed out every Pages proxy call
+    # at ~35s). Fire-and-forget — must never fail the monitor cycle. The
+    # standalone keep_warm() below stays for manual triggers (5-cron limit).
+    try:
+        import httpx as _httpx
+
+        _warm = _httpx.get(
+            "https://gmpho--strike-tips-racing-serve-api.modal.run/api/health",
+            timeout=8,
+        )
+        logger.debug("serve_api warm ping: %s", getattr(_warm, "status_code", "?"))
+    except Exception as _warm_err:
+        logger.debug("serve_api warm ping skipped: %s", _warm_err)
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
