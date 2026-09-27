@@ -11,21 +11,31 @@ import uuid
 import fcntl
 import time
 from dataclasses import dataclass, asdict, field
+
+from core_agent.config.settings import BankrollConfig
 from datetime import date, datetime
 from typing import List, Optional, Dict, Generator
 from contextlib import contextmanager
 
 def _load_paper_settings(data_dir: str) -> dict:
-    """Read paper_mode and paper_balance from settings.json"""
+    """Read paper_mode and paper_balance from settings.json.
+
+    Missing keys fall back to ``BankrollConfig.total_bankroll`` (the single
+    sanctioned starting-bank constant) instead of scattered 1000.0 literals.
+    """
+    default_start = float(BankrollConfig.total_bankroll)
     path = os.path.join(data_dir, "settings.json")
     if os.path.exists(path):
         try:
             with open(path) as f:
                 s = json.load(f)
-            return {"paper_mode": s.get("paper_mode", False), "paper_balance": s.get("paper_balance", 1000.0)}
+            return {
+                "paper_mode": bool(s.get("paper_mode", False)),
+                "paper_balance": float(s.get("paper_balance", default_start)),
+            }
         except Exception:
             pass
-    return {"paper_mode": False, "paper_balance": 1000.0}
+    return {"paper_mode": False, "paper_balance": default_start}
 
 
 logger = logging.getLogger("bankroll-governor")
@@ -198,7 +208,11 @@ class BankrollGovernor:
             lock_fd.close()
 
     def _load_state(self, starting_bankroll: float):
-        """Load persisted bankroll state"""
+        """Load persisted bankroll state.
+
+        Missing keys or a corrupt file seed from ``starting_bankroll`` (the
+        sanctioned starting-bank constant) — no scattered hardcoded defaults.
+        """
         if os.path.exists(self._state_file):
             try:
                 with open(self._state_file) as f:
@@ -206,18 +220,18 @@ class BankrollGovernor:
                 self.current_bankroll = state.get("current_bankroll", starting_bankroll)
                 self.peak_bankroll = state.get("peak_bankroll", starting_bankroll)
                 self.total_profit_loss = state.get("total_profit_loss", 0.0)
-                self.paper_balance = state.get("paper_balance", 1000.0)
+                self.paper_balance = state.get("paper_balance", starting_bankroll)
             except Exception as e:
                 logger.warning(f"Could not load bankroll state: {e}")
                 self.current_bankroll = starting_bankroll
                 self.peak_bankroll = starting_bankroll
                 self.total_profit_loss = 0.0
-                self.paper_balance = 1000.0
+                self.paper_balance = starting_bankroll
         else:
             self.current_bankroll = starting_bankroll
             self.peak_bankroll = starting_bankroll
             self.total_profit_loss = 0.0
-            self.paper_balance = 1000.0
+            self.paper_balance = starting_bankroll
 
         if os.path.exists(self._bets_file):
             try:

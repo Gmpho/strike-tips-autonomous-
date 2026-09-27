@@ -116,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onNavigate }) =
               )}
             </div>
             <div className="text-[10px] sm:text-xs md:text-sm font-mono font-black text-theme-primary group-hover:text-purple-400 transition-colors">
-              R {state.bankroll?.balance ? Math.round(state.bankroll.balance).toLocaleString() : '0'}
+              R {state.bankroll && state.bankroll.paperMode !== undefined && state.bankroll.balance ? Math.round(state.bankroll.balance).toLocaleString() : '—'}
             </div>
           </div>
           <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500/50 group-hover:text-purple-500 transition-colors hidden xs:block" />
