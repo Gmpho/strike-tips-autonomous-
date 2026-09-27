@@ -155,7 +155,10 @@ def test_jackpot_lost_when_banker_beaten(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),       # winner: alive, but R4 kills it
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    # Hermetic: stub-ATR-only (live Raceform data would change the legs).
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])):
+        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is not None and rec["won"] is False
     gov.settle_exotic_bet.assert_called_once()
     args = gov.settle_exotic_bet.call_args[0]
@@ -170,7 +173,9 @@ def test_saver_win_still_passes_leg(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_scrape_sa_results_direct",
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(ResultTracker, "_scrape_sa_results_direct",
                       new=AsyncMock(return_value="no dividends")):
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is None
@@ -183,7 +188,9 @@ def test_won_settles_with_scraped_dividend(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_scrape_sa_results_direct",
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(ResultTracker, "_scrape_sa_results_direct",
                       new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is not None and rec["won"] is True
@@ -207,8 +214,10 @@ def test_bipot_second_place_passes_leg(stub_modules, past_off, gov):
                notes=_ticket_notes("BIPOT", [(2, "SECOND BEST", [])]))
     tracker = ResultTracker(bankroll_governor=gov)
     with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_scrape_sa_results_direct",
-                          new=AsyncMock(return_value="")):
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])), \
+              patch.object(ResultTracker, "_scrape_sa_results_direct",
+                           new=AsyncMock(return_value="")):
             rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     # 2nd satisfies Bipot, no dividend -> pending, no settle call
     assert rec is None
@@ -218,7 +227,9 @@ def test_bipot_second_place_passes_leg(stub_modules, past_off, gov):
 def test_unknown_results_stay_pending(stub_modules, past_off, gov):
     bet = _bet(notes=_ticket_notes("JACKPOT", [(9, "GHOST HORSE", [])]))
     tracker = ResultTracker(bankroll_governor=gov)
-    rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])):
+        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is None
     gov.settle_exotic_bet.assert_not_called()
 
@@ -240,7 +251,9 @@ def test_full_loop_settles_exotic_lost(stub_modules, past_off, gov):
     ]))
     gov.get_open_bets.return_value = [bet]
     tracker = ResultTracker(bankroll_governor=gov)
-    settled = asyncio.run(tracker.check_and_settle_open_bets())
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])):
+        settled = asyncio.run(tracker.check_and_settle_open_bets())
     assert len(settled) == 1 and settled[0]["won"] is False
     gov.settle_exotic_bet.assert_called_once()
 
@@ -532,7 +545,9 @@ def test_apostrophe_winner_passes_bipot_leg(stub_modules, past_off, gov):
                    (1, "Captain's Elect", ["One Dawn", "Cold Summer"])]))
     tracker = ResultTracker(bankroll_governor=gov)
     with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_scrape_sa_results_direct",
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])), \
+             patch.object(ResultTracker, "_scrape_sa_results_direct",
                           new=AsyncMock(return_value="")), \
              patch.object(ResultTracker, "_raceform_dividend",
                           new=AsyncMock(return_value=17.40)):

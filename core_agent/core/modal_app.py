@@ -517,6 +517,56 @@ async def run_odds_monitor():
         logger.debug("serve_api warm ping: %s", getattr(_warm, "status_code", "?"))
     except Exception as _warm_err:
         logger.debug("serve_api warm ping skipped: %s", _warm_err)
+    # Piggyback intelligence passes: heartbeat dreams + swarm backfill/news
+    # only run as infinite loops (docker) — on Modal cron they never execute,
+    # so telemetry/news/dreams go silent when docker is off (Sep-2026: 8h
+    # gap). Every 2nd cycle (~10 min), time-boxed so a hung provider call
+    # can never blow the 900s cron budget. Volume-backed counter: cron
+    # containers are stateless.
+    try:
+        _ctr_path = "/app/data/.piggyback_counter"
+        try:
+            with open(_ctr_path) as _f:
+                _ctr = int((_f.read() or "0").strip() or 0)
+        except Exception:
+            _ctr = 0
+        try:
+            with open(_ctr_path, "w") as _f:
+                _f.write(str(_ctr + 1))
+        except Exception:
+            pass
+        if _ctr % 2 == 1:
+            import asyncio as _asyncio
+
+            async def _piggyback() -> None:
+                try:
+                    from core_agent.core.heartbeat import _run_heartbeat_tick
+                    from core_agent.skills.memory.chroma_memory import RacingMemory
+                    await _asyncio.wait_for(
+                        _run_heartbeat_tick(RacingMemory()), timeout=180
+                    )
+                except Exception as _e:
+                    logger.debug("piggyback heartbeat skipped: %s", _e)
+                try:
+                    from core_agent.skills.swarm_researcher import (
+                        backfill_form_insights,
+                        poll_news,
+                    )
+                    from core_agent.core.snapshot_cache import get_snapshot
+
+                    _snap = get_snapshot() or {}
+                    if _snap.get("events"):
+                        await _asyncio.wait_for(
+                            backfill_form_insights(_snap), timeout=240
+                        )
+                    await _asyncio.wait_for(poll_news(), timeout=120)
+                except Exception as _e:
+                    logger.debug("piggyback swarm skipped: %s", _e)
+
+            await _asyncio.wait_for(_piggyback(), timeout=500)
+            logger.info("Odds monitor piggyback intelligence pass complete")
+    except Exception as _piggy_err:
+        logger.debug("piggyback intelligence skipped: %s", _piggy_err)
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
