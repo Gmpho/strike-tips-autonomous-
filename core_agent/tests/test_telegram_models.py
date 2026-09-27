@@ -30,8 +30,15 @@ def test_menu_lists_live_models():
 
 
 def test_every_menu_key_routes():
-    """Each advertised alias must hit a provider branch, not the Ollama fallthrough."""
-    router_src = open(tr.__file__).read()
+    """Each advertised alias must hit a provider branch, not the Ollama fallthrough.
+
+    The whitelists now live in ``agent/model_pool`` (single source of truth
+    shared with the HUD), so that is what every menu value must resolve into.
+    """
+    pool = pytest.importorskip(
+        "core_agent.agent.model_pool", reason="model pool unimportable"
+    )
+    live = set(pool.GEMINI_MODELS) | set(pool.GROQ_MODELS)
     resolved = set()
     for alias, _label in menu_mod.MENU_CHOICES:
         mapped = menu_mod.resolve_choice(alias)
@@ -40,9 +47,9 @@ def test_every_menu_key_routes():
     for mapped in resolved:
         if mapped == "auto":
             continue  # auto = no override; the router heuristic decides
-        assert f'"{mapped}"' in router_src, f"router cannot resolve: {mapped}"
-    # Legacy alias must keep old chats working.
-    assert menu_mod.resolve_choice("groq") == "groq"
+        assert mapped in live, f"router cannot resolve: {mapped}"
+    # Legacy alias still works and lands on a LIVE model, not a dead ID.
+    assert menu_mod.resolve_choice("groq") in live
 
 
 @pytest.mark.asyncio
@@ -78,9 +85,9 @@ async def test_model_command_roundtrip():
     out = await run("/model oss20")
     assert "openai/gpt-oss-20b" in out
 
-    out = await run("/model groq")  # legacy alias still accepted
+    out = await run("/model groq")  # legacy alias resolves onto the live flagship
     assert "switched" in out.lower()
-    assert "groq" in out
+    assert "openai/gpt-oss-120b" in out
 
     out = await run("/model gemini-turbo")  # retired alias — must refuse
     assert "Unknown model" in out

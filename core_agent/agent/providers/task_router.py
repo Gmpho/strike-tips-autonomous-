@@ -13,6 +13,7 @@ Google AI Edge Gallery pattern: TOOL_INFO[].specialist → taskTypes routing.
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import re
 from collections.abc import AsyncIterator
 from typing import Dict, Optional
@@ -20,6 +21,13 @@ from typing import Dict, Optional
 from core_agent.agent.providers.groq import GroqProvider
 from core_agent.agent.providers.gemini import GeminiProvider
 from core_agent.agent.providers.ollama import OllamaProvider
+from core_agent.agent.model_pool import (
+    GEMINI_MODELS,
+    GROQ_MODELS,
+    LEGACY_GEMINI_ALIASES,
+    LEGACY_GROQ_ALIASES,
+    resolve_auto_model,
+)
 from core_agent.tools.maf_tool_registry import TOOL_INFO, TOOL_REGISTRY
 from core_agent.config.paths import (
     MARKET_SNAPSHOT_PATH, ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH,
@@ -333,18 +341,26 @@ class TaskRouter:
         # If a specific model is explicitly requested, route directly to it
         if active_model and active_model != "auto":
             logger.info("[TASK_ROUTER] explicit model override/preference → %s", active_model)
-            if active_model in ("groq", "groq-llama", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+            # Whitelists come from the shared pool (agent/model_pool.py) so
+            # Telegram can reach exactly the models the HUD offers — the old
+            # hardcoded Gemini tuple stopped at 2.5 and made 3.5/3.8
+            # unreachable from /model. Legacy IDs map onto live ones.
+            groq_target = active_model if active_model in GROQ_MODELS else LEGACY_GROQ_ALIASES.get(active_model)
+            gemini_target = active_model if active_model in GEMINI_MODELS else LEGACY_GEMINI_ALIASES.get(active_model)
+            if groq_target:
                 provider = GroqProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent, model_override=active_model):
+                    async for chunk in provider.stream(messages, None, intent, model_override=groq_target):
                         yield chunk
                     return
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Groq override failed: %s", e)
-            elif active_model in ("gemini", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+            elif gemini_target:
                 provider = GeminiProvider()
                 try:
-                    async for chunk in provider.stream(messages, None, intent):
+                    # model_override was dropped here, so /model gemini-3.5-flash
+                    # silently answered with the provider default (Sep-2026).
+                    async for chunk in provider.stream(messages, None, intent, model_override=gemini_target):
                         yield chunk
                     return
                 except Exception as e:
@@ -357,10 +373,28 @@ class TaskRouter:
                 except Exception as e:
                     logger.warning("[TASK_ROUTER] Ollama override %s failed: %s", active_model, e)
 
-        # Auto routing or failed overrides fall through to here:
-        # Try cloud providers concurrently ONLY if local_only is disabled
+        # Auto routing (or a failed override) lands here.
+        # Deterministic first choice: the SAME model the HUD's chat function
+        # would pick for this turn (resolveAutoModel twin in model_pool).
+        # The old blind concurrent race returned whichever provider happened
+        # to answer first, so Telegram and the HUD disagreed turn to turn.
         if not local_only:
-            logger.info("[TASK_ROUTER] trying cloud providers")
+            has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+            has_groq = bool(os.getenv("GROQ_API_KEY"))
+            target, is_groq = resolve_auto_model(
+                self._extract_user_query(messages), has_gemini=has_gemini, has_groq=has_groq
+            )
+            logger.info("[TASK_ROUTER] auto → %s (%s)", target, "groq" if is_groq else "gemini")
+            provider = GroqProvider() if is_groq else GeminiProvider()
+            try:
+                async for chunk in provider.stream(messages, None, intent, model_override=target):
+                    yield chunk
+                return
+            except Exception as e:
+                logger.warning("[TASK_ROUTER] auto model %s failed: %s", target, e)
+
+            # Chosen model is down — race the remaining cloud providers.
+            logger.info("[TASK_ROUTER] trying remaining cloud providers")
             cloud_result = await self._try_cloud_concurrent(messages, intent)
             if cloud_result:
                 yield cloud_result

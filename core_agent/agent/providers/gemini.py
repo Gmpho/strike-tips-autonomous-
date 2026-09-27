@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.agent.providers.retry import retry_on_429
 from core_agent.agent.prompts import build_system_prompt
+from core_agent.agent import model_pool
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 from core_agent.core.http_client import get_async_client
 
@@ -15,11 +16,11 @@ logger = logging.getLogger("gemini-provider")
 
 class GeminiProvider:
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-    # Live-verified against the Gemini models API (Sep-2026):
-    # gemini-2.5-flash (default), gemini-2.5-flash-lite (fast),
-    # gemini-3.5-flash (fallback). Dead refs (llama/qwen/mixtral)
-    # 404'd and must never come back.
-    MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash"]
+    # Live-verified against the Gemini models API (Sep-2026) and shared with
+    # the HUD via agent/model_pool.py. MODELS[0] is the default; the rest are
+    # the fallback chain. Dead refs (llama/qwen/mixtral) 404'd and must never
+    # come back.
+    MODELS = list(model_pool.GEMINI_MODELS)
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY", "") 

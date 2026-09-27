@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from core_agent.agent.providers.base import LLMProvider
 from core_agent.agent.providers.retry import retry_on_429
 from core_agent.agent.prompts import build_system_prompt
+from core_agent.agent import model_pool
 from core_agent.tools.maf_tool_registry import TOOL_REGISTRY
 from core_agent.core.http_client import get_async_client
 from core_agent.core.strike_brain import brain
@@ -16,7 +17,8 @@ logger = logging.getLogger("groq-provider")
 
 class GroqProvider:
     URL = "https://api.groq.com/openai/v1/chat/completions"
-    MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    # Single source of truth (shared with the HUD) — see agent/model_pool.py.
+    MODELS = list(model_pool.GROQ_MODELS)
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GROQ_API_KEY", "")
