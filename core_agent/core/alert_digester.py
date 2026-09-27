@@ -70,6 +70,10 @@ class AlertDigester:
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        # Cooldown counters reported by the AlertEngine; rendered into the
+        # next digest as "⏱ Suppressed: N by per-race/… cooldown" and reset
+        # after each actual send (not after queueing).
+        self._suppressed: dict = {}
 
     # ── durability helpers ────────────────────────────────────────────
 
@@ -125,6 +129,22 @@ class AlertDigester:
         except Exception as e:
             logger.debug("Digest queue persist failed: %s", e)
 
+    def note_suppressed(self, stats: dict) -> None:
+        """Record cooldown counters for the next digest (see ``_send_digest``).
+
+        Accumulated (not replaced): several monitor cycles pass between
+        flushes, and every cycle's suppressions must be visible, not just
+        the last cycle's.
+        """
+        if not stats:
+            return
+        self._suppressed = {
+            "race_cooldown_prevents": int(self._suppressed.get("race_cooldown_prevents", 0) or 0)
+            + int(stats.get("race_cooldown_prevents", 0) or 0),
+            "cooldown_prevents": int(self._suppressed.get("cooldown_prevents", 0) or 0)
+            + int(stats.get("cooldown_prevents", 0) or 0),
+        }
+
     async def push(self, category: str, html: str) -> None:
         """Queue a non-critical alert for the next digest (durable)."""
         await self._ensure_loop()
@@ -153,6 +173,19 @@ class AlertDigester:
                     rec.get("category", ""), "ℹ️"
                 )
                 lines.append(f"{icon} {rec.get('html', '')}")
+
+            # What the cooldowns suppressed since the last *sent* digest —
+            # a thin digest is explainable instead of looking like lost alerts.
+            suppressed: List[str] = []
+            race_cd = int(self._suppressed.get("race_cooldown_prevents", 0) or 0)
+            horse_cd = int(self._suppressed.get("cooldown_prevents", 0) or 0)
+            if race_cd:
+                suppressed.append(f"{race_cd} by per-race cooldown")
+            if horse_cd:
+                suppressed.append(f"{horse_cd} by per-horse cooldown")
+            if suppressed:
+                lines.append(f"\n⏱ Suppressed: {', '.join(suppressed)}")
+
             lines.append("\n⚡ Critical alerts are sent immediately — not batched.")
             try:
                 ok = await self._notifier.broadcast("\n".join(lines))
@@ -162,6 +195,7 @@ class AlertDigester:
             if ok is False:
                 logger.warning("Digest send failed (will retry next flush)")
                 break
+            self._suppressed = {}
             sent.extend(chunk)
         return sent
 

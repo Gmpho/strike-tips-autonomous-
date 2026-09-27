@@ -74,33 +74,119 @@ def _norm_time(t: str) -> str:
 
 
 def _parse_race_off_time(t_str: str, race_date: datetime = None) -> Optional[datetime]:
-    """Parse HH:MM race time into a datetime for off-time comparison."""
+    """Parse HH:MM race time into a datetime for off-time comparison.
+
+    Rolls far-future times back to yesterday: a persisted "23:44" seen at
+    00:14 belongs to yesterday's card, not tonight's — without this, zombie
+    events linger ~24h (the persisted-zombie window after midnight).
+    """
     if not t_str or ":" not in t_str:
         return None
     try:
         parts = t_str.strip().split(":")
         h, m = int(parts[0]), int(parts[1])
         base = race_date or datetime.now()
-        return base.replace(hour=h, minute=m, second=0, microsecond=0)
+        parsed = base.replace(hour=h, minute=m, second=0, microsecond=0)
+        if (parsed - base).total_seconds() > 18 * 3600:
+            parsed -= timedelta(days=1)
+        return parsed
     except (ValueError, IndexError):
+        return None
+
+
+# Races whose off-time cannot be parsed from any source are dropped once they
+# have been observed (first_seen stamp) for longer than this — prevents
+# unfinished/unparseable races from hoarding the dashboard all day.
+UNPARSEABLE_RACE_TTL_SECS = 6 * 60 * 60
+
+# Gap between the previous snapshot's timestamp and the current cycle beyond
+# which a MONITOR_STALL healing event is recorded (cron stalled or missed).
+MONITOR_STALL_SECS = 15 * 60
+
+
+def _sast_to_utc(off_time: Optional[datetime]) -> Optional[datetime]:
+    """Convert a SAST wall-clock datetime to the container's UTC frame (-2h).
+
+    Betfair stamps ``bf_off_time`` as a SAST wall clock; the monitor container
+    runs UTC. SA has no DST, so a flat -2h shift is exact (mirrors the inverse
+    of ``_sast_wall``).
+    """
+    if off_time is None:
+        return None
+    try:
+        return off_time - timedelta(hours=2)
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
-    
-    Catches races where Betway never sets isFinished (common for UK/Ireland tracks).
+
+    Time preference: ``bf_off_time`` (stamped by the Betfair merge, SAST wall)
+    converted to UTC, then Betway display times (``t``/``st``). Catches races
+    where Betway never sets isFinished (common for UK/Ireland tracks) and where
+    Betway display times are placeholders. Races with no parseable time from
+    any source are stamped ``first_seen`` and dropped once older than
+    UNPARSEABLE_RACE_TTL_SECS so they cannot persist indefinitely.
+
+    Betfair-only events (bf_off_time present but no Betway t/st) that are
+    older than 2h are also dropped — these are ghost markets that Betfair
+    keeps open for settlement but Betway never listed.
+
+    Surviving races are stamped ``expires_at`` (epoch secs = off-time + grace)
+    so readers that see a snapshot minutes later (HUD, worker KV, Telegram)
+    can still drop a race that finished in the meantime.
     """
     now = datetime.now()
+    grace_secs = max_minutes_after_off * 60
     filtered = {}
     for eid, e in events.items():
-        t_str = e.get("t") or e.get("st")
-        off_time = _parse_race_off_time(t_str) if t_str else None
-        if off_time and (now - off_time).total_seconds() > max_minutes_after_off * 60:
-            logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {t_str}, now {now.strftime('%H:%M')})")
+        bf_off = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
+        bw_time = e.get("t") or e.get("st")
+        off_time = bf_off or (_parse_race_off_time(bw_time) if bw_time else None)
+        if off_time:
+            if (now - off_time).total_seconds() > grace_secs:
+                logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or bw_time}, now {now.strftime('%H:%M')})")
+                continue
+            e.pop("first_seen", None)
+            e["expires_at"] = off_time.timestamp() + grace_secs
+            filtered[eid] = e
+            continue
+        # No parseable time from any source: stamp first sight, TTL-drop old ones.
+        first_seen = e.get("first_seen")
+        try:
+            age = now.timestamp() - float(first_seen) if first_seen is not None else None
+        except (TypeError, ValueError):
+            age = None
+        if age is None:
+            e["first_seen"] = now.timestamp()
+            filtered[eid] = e
+            continue
+        if age > UNPARSEABLE_RACE_TTL_SECS:
+            logger.info(f"Race dropped by first-seen TTL: {e.get('en','?')} R{e.get('raceNumber','?')} (unparseable off-time, seen {age / 3600:.1f}h)")
             continue
         filtered[eid] = e
-    return filtered
+
+    # Second pass: drop Betfair-only ghost events. These are races that
+    # Betfair keeps open for settlement (often 2h+) but Betway never listed
+    # (no Betway-native t/st field). Without this pass they re-inflate the
+    # dashboard count on every cycle via the last-good fallback cache.
+    _BF_ONLY_GHOST_SECS = 2 * 60 * 60  # 2 hours
+    cleaned = {}
+    for eid, e in filtered.items():
+        if e.get("bf_off_time") and not (e.get("t") or e.get("st")):
+            # Betfair-injected only — check age via bf_off_time
+            bf_off2 = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
+            if bf_off2 and (now - bf_off2).total_seconds() > _BF_ONLY_GHOST_SECS:
+                logger.info(
+                    "Betfair-only ghost dropped: %s R%s (bf_off_time %s, age %.1fh)",
+                    e.get("en", "?"), e.get("raceNumber", "?"),
+                    e.get("bf_off_time", "?"),
+                    (now - bf_off2).total_seconds() / 3600,
+                )
+                continue
+        cleaned[eid] = e
+    return cleaned
 
 
 def _race_num_from_text(text) -> int:
@@ -648,7 +734,12 @@ class AdaptiveOddsMonitor:
         self._bf_last_good_path = os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
 
         self.monitoring_active = True
+        # Per race+horse alert gate (Sep-2026: the old single *_last_alert_ts*
+        # made the first trigger of a sweep suppress every other runner in
+        # all ~40 races, so each digest carried ONE horse). ``_last_alert_ts``
+        # stays for introspection only — the dict below is the live gate.
         self._last_alert_ts: float = 0
+        self._last_alert_by_key: dict = {}
         self._alert_cooldown: float = 120.0
 
     async def _fetch_betfair_form_safely(self) -> dict:
@@ -726,14 +817,20 @@ class AdaptiveOddsMonitor:
         """Callback fired by AlertEngine when a condition triggers."""
         if not self._telegram_notifier or not self._digester:
             return
-        now = datetime.now().timestamp()
-        if now - self._last_alert_ts < self._alert_cooldown:
-            logger.info(f"Alert rate-limited: {msg.get('type')} {msg.get('horse')} @ {msg.get('course')}")
-            return
-        self._last_alert_ts = now
-        tag = msg.get("type", "alert")
         horse = msg.get("horse", "?")
         course = msg.get("course", "?")
+        key = f"{course}::{horse}"
+        now = datetime.now().timestamp()
+        last = self._last_alert_by_key.get(key, 0.0)
+        if now - last < self._alert_cooldown:
+            logger.info(f"Alert rate-limited: {msg.get('type')} {horse} @ {course}")
+            return
+        # Bound the gate dict so a long day can't grow it without limit.
+        if len(self._last_alert_by_key) >= 2000:
+            newest = sorted(self._last_alert_by_key.items(), key=lambda kv: kv[1])[-1000:]
+            self._last_alert_by_key = dict(newest)
+        self._last_alert_by_key[key] = now
+        tag = msg.get("type", "alert")
         odds = msg.get("odds", "?")
         html = (
             f"🐎 {horse} @ {course}\n"
@@ -752,6 +849,23 @@ class AdaptiveOddsMonitor:
         """Execute ONE odds sync cycle — for Modal scheduled cron (no infinite loop)."""
         try:
             today_str = datetime.now().strftime("%Y-%m-%d")
+            # Stall detection: if the previous snapshot is older than
+            # MONITOR_STALL_SECS the cron has been missing cycles — record it
+            # in the healing log (internal only, no Telegram).
+            try:
+                with open(MARKET_SNAPSHOT_PATH) as f:
+                    _prev = json.load(f)
+                _prev_ts = _prev.get("timestamp") if isinstance(_prev, dict) else None
+                if _prev_ts:
+                    _gap = (datetime.now() - datetime.fromisoformat(_prev_ts)).total_seconds()
+                    if _gap > MONITOR_STALL_SECS:
+                        _write_healing_event(
+                            "MONITOR_STALL",
+                            f"Previous snapshot was {_gap / 60:.0f} min old at cycle start",
+                            status="WARN",
+                        )
+            except Exception:
+                pass
             bw_task = asyncio.create_task(self.betway.get_snapshot_format())
             ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
             bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
@@ -847,6 +961,12 @@ class AdaptiveOddsMonitor:
             # digests never left the monitor cron).
             if self._digester:
                 try:
+                    # Surface what the cooldowns suppressed, so a thin digest
+                    # is explainable instead of looking like lost alerts.
+                    try:
+                        self._digester.note_suppressed(self.alert_engine.stats)
+                    except Exception:
+                        pass
                     await self._digester.flush_due()
                 except Exception as exc:
                     logger.debug("Digest flush skipped: %s", exc)
