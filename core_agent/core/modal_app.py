@@ -231,6 +231,21 @@ def serve_api():
 
             # ── AI pipeline (non-command): bus-based chat ─────────
             from core_agent.bus.events import InboundMessage, OutboundMessage
+            from core_agent.agent.telegram_format import (
+                markdown_to_telegram_html,
+                format_race_card_for_telegram,
+                split_for_telegram,
+            )
+
+            async def _send_typing_loop(b, c_id):
+                try:
+                    while True:
+                        await b.send_chat_action(chat_id=c_id, action="typing")
+                        await asyncio.sleep(4.0)
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            typing_task = asyncio.create_task(_send_typing_loop(bot, chat_id))
 
             inbound = InboundMessage(
                 session_key=f"tg:{chat_id}",
@@ -254,15 +269,25 @@ def serve_api():
             except asyncio.TimeoutError:
                 reply = "⏳ I'm still thinking. Please try a simpler question or check back later."
             finally:
+                typing_task.cancel()
                 bus.unsubscribe(sub)
 
             reply = _clean(reply)
-            MAX_LENGTH = 4000
-            if len(reply) > MAX_LENGTH:
-                for i in range(0, len(reply), MAX_LENGTH):
-                    await bot.send_message(chat_id=chat_id, text=reply[i:i+MAX_LENGTH], parse_mode="Markdown")
-            else:
-                await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
+
+            async def _send(raw_text: str) -> None:
+                """Send with Telegram HTML mode, formatting race cards and falling back to plain text."""
+                formatted_text = format_race_card_for_telegram(raw_text)
+                chunks = split_for_telegram(formatted_text, max_length=3800)
+                for chunk in chunks:
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
+                    except Exception as parse_err:
+                        if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
+                            await bot.send_message(chat_id=chat_id, text=raw_text[:4000])
+                        else:
+                            raise
+
+            await _send(reply)
 
         except Exception as exc:
             logger.error("Webhook error: %s", exc, exc_info=True)

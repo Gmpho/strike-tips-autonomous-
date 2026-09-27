@@ -5,6 +5,7 @@ and handles paragraph-boundary chunking to prevent parse entity crashes and trun
 """
 
 import re
+import unicodedata
 from typing import List, Tuple, Optional
 
 
@@ -254,6 +255,53 @@ def format_race_card_for_telegram(text: str) -> str:
     return "\n\n".join(result_parts)
 
 
+def _utf16_units(s: str) -> int:
+    """Length in UTF-16 code units — what Telegram's 4096 limit counts.
+    Astral emoji count 2; plain BMP chars count 1."""
+    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
+
+
+def _no_break_before(prev: Optional[str], ch: str) -> bool:
+    """True when cutting before ``ch`` would split a grapheme cluster
+    (flags, ZWJ families, skin tones, keycaps, combining marks) and render
+    as �� or separated glyphs."""
+    if prev is None:
+        return False
+    o = ord(ch)
+    p = ord(prev)
+    if unicodedata.category(ch) in ("Mn", "Me"):
+        return True
+    if o in (0x200D, 0xFE0E, 0xFE0F) or 0xE0020 <= o <= 0xE007F:
+        return True  # ZWJ, variation selectors, tag chars
+    if o == 0x20E3:
+        return True  # keycap enclosing mark
+    if p == 0x200D:
+        return True  # char joined onto previous by ZWJ
+    if 0x1F1E6 <= p <= 0x1F1FF and 0x1F1E6 <= o <= 0x1F1FF:
+        return True  # regional-indicator pairs (flags)
+    return False
+
+
+def _split_grapheme_safe(s: str, max_units: int) -> List[str]:
+    """Hard-split a long string on grapheme boundaries, measured in UTF-16
+    units. May overrun by one cluster rather than break an emoji."""
+    chunks: List[str] = []
+    cur: List[str] = []
+    cur_units = 0
+    prev: Optional[str] = None
+    for ch in s:
+        u = 2 if ord(ch) > 0xFFFF else 1
+        if cur and cur_units + u > max_units and not _no_break_before(prev, ch):
+            chunks.append("".join(cur))
+            cur, cur_units, prev = [], 0, None
+        cur.append(ch)
+        cur_units += u
+        prev = ch
+    if cur:
+        chunks.append("".join(cur))
+    return chunks
+
+
 def split_for_telegram(text: str, max_length: int = 3800) -> List[str]:
     """
     Split long text at paragraph or line boundaries to fit Telegram's length limits.
@@ -297,9 +345,13 @@ def split_for_telegram(text: str, max_length: int = 3800) -> List[str]:
                             current_chunk = ""
 
                         # If a single line is still > max_length, hard-cut it
-                        if len(line) > max_length:
-                            for i in range(0, len(line), max_length):
-                                chunks.append(line[i : i + max_length])
+                        # on grapheme boundaries (never mid-emoji), measured
+                        # in UTF-16 units like Telegram counts.
+                        if _utf16_units(line) > max_length:
+                            if current_chunk:
+                                chunks.append(current_chunk)
+                                current_chunk = ""
+                            chunks.extend(_split_grapheme_safe(line, max_length))
                         else:
                             current_chunk = line
             else:
