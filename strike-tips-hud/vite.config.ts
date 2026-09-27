@@ -163,6 +163,16 @@ export default defineConfig(({ mode }) => {
   }
   const key = env.STRIKE_TIPS_API_KEY || process.env.STRIKE_TIPS_API_KEY || '';
   const apiKeyHeader = key ? { 'X-API-KEY': key } : {};
+  // Backend selector: local dev must NOT burn prod (Modal GB-s + Groq).
+  // VITE_BACKEND=local (default) → docker strike-bot-new on :8000.
+  // VITE_BACKEND=prod → live Modal backend (explicit opt-in only).
+  const backendMode = (env.VITE_BACKEND || process.env.VITE_BACKEND || 'local').toLowerCase();
+  const modalTarget = backendMode === 'prod'
+    ? 'https://gmpho--strike-tips-racing-serve-api.modal.run'
+    : 'http://localhost:8000';
+  if (backendMode !== 'prod') {
+    console.log(`[vite] backend mode=local → ${modalTarget} (set VITE_BACKEND=prod for live backend)`);
+  }
 
   return {
     envDir: '..',
@@ -261,25 +271,25 @@ export default defineConfig(({ mode }) => {
           headers: apiKeyHeader,
         },
         '/api': {
-          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
+          target: modalTarget,
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/docs': {
-          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
+          target: modalTarget,
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/openapi.json': {
-          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
+          target: modalTarget,
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/v1': {
-          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
+          target: modalTarget,
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
