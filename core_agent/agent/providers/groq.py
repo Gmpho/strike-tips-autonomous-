@@ -134,7 +134,7 @@ class GroqProvider:
 
         return content, tool_calls
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None, intent: str | None, model_override: str | None = None) -> AsyncIterator[str]:
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not set")
 
@@ -142,6 +142,9 @@ class GroqProvider:
         raw_msg = TaskRouter._extract_user_query(messages)
         needs_tools = self._needs_tools(raw_msg, intent)
         model = "openai/gpt-oss-20b" if not needs_tools else "openai/gpt-oss-120b"
+        # Explicit /model choice (oss120 | oss20) wins over the tool heuristic.
+        if model_override in self.MODELS:
+            model = model_override
 
         content, tool_calls = await self._post_and_parse(messages, needs_tools, model)
         if content:

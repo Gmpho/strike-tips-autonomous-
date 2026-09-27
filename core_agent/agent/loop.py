@@ -4,6 +4,7 @@ import logging
 from core_agent.bus.queue import MessageBus
 from core_agent.bus.events import InboundMessage, OutboundMessage, TurnState
 from core_agent.agent.session import SessionManager, Session
+from core_agent.agent.model_menu import render_menu, resolve_choice
 from core_agent.agent.context import ContextBuilder
 from core_agent.agent.runner import AgentRunner
 from core_agent.agent.providers.task_router import TaskRouter
@@ -120,30 +121,22 @@ class AgentLoop:
 
         elif cmd == "/model":
             current_model = session.metadata.get("preferred_model") or "auto"
-            
+
             if not args:
-                response_content = (
-                    "🧠 *Select active model*\n"
-                    "To switch model, reply with `/model <name>`:\n\n"
-                    "• `/model auto` — ⚡ Auto Router (optimal)\n"
-                    "• `/model groq` — ☁️ Groq Llama 70B\n"
-                    "• `/model gemini` — ☁️ Gemini Flash\n\n"
-                    f"Current selection: *{current_model}*"
-                )
+                response_content = render_menu(current_model)
             else:
-                choice = args[0].lower()
-                mapping = {
-                    "auto": "auto",
-                    "groq": "groq",
-                    "gemini": "gemini"
-                }
-                
-                mapped = mapping.get(choice)
+                mapped = resolve_choice(args[0])
                 if mapped:
                     session.metadata["preferred_model"] = mapped
-                    response_content = f"✅ Active model switched to *{mapped}*. Subsequent requests in this session will use this model."
+                    response_content = (
+                        f"✅ Active model switched to *{mapped}*. "
+                        "Subsequent requests in this session will use this model."
+                    )
                 else:
-                    response_content = f"❌ Unknown model: *{choice}*. Type `/model` to see the list of valid models."
+                    response_content = (
+                        f"❌ Unknown model: *{args[0]}*. "
+                        "Type `/model` to see the list of valid models."
+                    )
 
         elif cmd == "/status":
             if not brain.strike:
