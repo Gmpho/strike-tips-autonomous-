@@ -528,6 +528,28 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
           }
         }
 
+        // Live web ground via the keyless same-origin proxy (edge cascade:
+        // Tavily -> Exa; the search key never reaches the browser).
+        let searchSources: Array<{ title: string; url: string }> = [];
+        if (searchGrounding && !summarizeMode) {
+          try {
+            const sRes = await apiFetch(`/api/search?q=${encodeURIComponent(userMsg.slice(0, 200))}`);
+            if (sRes.ok) {
+              const sData = await sRes.json();
+              if (Array.isArray(sData.results) && sData.results.length) {
+                searchSources = sData.results.slice(0, 5).map((r: any) => ({ title: r.title, url: r.url }));
+                compiledContext += `\n\n[LIVE WEB SEARCH RESULTS — provider: ${sData.provider}, fetched ${new Date().toISOString().slice(0, 10)}]\n`
+                  + sData.results.slice(0, 5).map((r: any, i: number) => `${i + 1}. ${r.title} — ${r.url}${r.snippet ? `\n   ${r.snippet}` : ''}`).join('\n')
+                  + `\nUse these when relevant, cite the URLs, and say so if they do not cover the question.`;
+              } else {
+                compiledContext += '\n\n[LIVE WEB SEARCH — UNAVAILABLE] No live results retrieved; say so if the question needs them.';
+              }
+            }
+          } catch (e) {
+            console.warn('[WebLLM Edge Search Fetch Failed]', e);
+          }
+        }
+
         if (controller.signal.aborted) return;
 
         const systemPrompt = summarizeMode
@@ -596,6 +618,13 @@ ${compiledContext || 'No context data available.'}`;
           if (delta) streamBufRef.current += delta;
         }
 
+        if (searchSources.length) {
+          setMessages(prev => prev.map((m, i) =>
+            i === prev.length - 1 && m.role === 'ai'
+              ? { ...m, groundingSources: searchSources }
+              : m
+          ));
+        }
         setLastModelUsed(selectedModel);
 
       } catch (err: any) {
@@ -1026,7 +1055,7 @@ ${compiledContext || 'No context data available.'}`;
                             <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-1.5">
                               <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
                                 <Globe className="w-3.5 h-3.5" />
-                                <span>Google Search Verified Sources:</span>
+                                <span>Web Search Sources (Tavily/Exa):</span>
                               </div>
                               <div className="flex flex-wrap gap-1.5">
                                 {m.groundingSources.map((src, idx) => (
@@ -1251,21 +1280,20 @@ ${compiledContext || 'No context data available.'}`;
                   </optgroup>
                 </select>
 
-                {(selectedModel === 'gemini-3.5-flash' || selectedModel === 'auto') && (
-                  <button
-                    onClick={() => setSearchGrounding(v => !v)}
-                    aria-pressed={searchGrounding}
-                    title={searchGrounding ? 'Google Search Grounding active: live web racing data enabled' : 'Google Search Grounding disabled'}
-                    className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 text-xs font-bold ${
-                      searchGrounding
-                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                        : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
-                    }`}
-                  >
-                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="hidden sm:inline">Search</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => setSearchGrounding(v => !v)}
+                  aria-pressed={searchGrounding}
+                  aria-label="Toggle live web search"
+                  title={searchGrounding ? 'Live web search active (free-tier edge cascade: Tavily/Exa)' : 'Live web search disabled'}
+                  className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 text-xs font-bold ${
+                    searchGrounding
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                      : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="inline">Search</span>
+                </button>
               </div>
               
             <div className="flex gap-2 flex-1 w-full min-w-0 items-start">

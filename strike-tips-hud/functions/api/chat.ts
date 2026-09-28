@@ -6,8 +6,14 @@
 
 import { hitRate as boundedHitRate, type RateEntry } from '../lib/rate-limit.ts';
 import { friendlyUpstreamError } from '../lib/upstream-errors.ts';
+import {
+  buildSearchContext,
+  fetchEdgeSearch,
+  toGroundingSources,
+  type EdgeSearchEnv,
+} from '../lib/edge-search.ts';
 
-interface Env {
+interface Env extends EdgeSearchEnv {
   GEMINI_API_KEY?: string;
   GROQ_API_KEY?: string;
 }
@@ -132,14 +138,24 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   try {
-    if (isGroq) return await handleGroqChat(env, body, chosenModel, systemInstruction, isStream, url.origin);
-    return await handleGeminiChat(env, body, chosenModel, systemInstruction, searchGrounding, isStream, url.origin);
+    // Live web grounding: the metered edge cascade (Tavily -> Exa) is the
+    // only chat search source (Sep-2026: Gemini googleSearch retired here).
+    let searchSources: GroundingSource[] = [];
+    let groundedInstruction = systemInstruction;
+    if (searchGrounding) {
+      const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user')?.content || '';
+      const bundle = await fetchEdgeSearch(String(lastUserMsg), env);
+      groundedInstruction = systemInstruction + buildSearchContext(bundle);
+      searchSources = toGroundingSources(bundle);
+    }
+    if (isGroq) return await handleGroqChat(env, body, chosenModel, groundedInstruction, isStream, url.origin, searchSources);
+    return await handleGeminiChat(env, body, chosenModel, groundedInstruction, isStream, url.origin, searchSources);
   } catch (err: any) {
     return Response.json({ error: err.message || 'Chat generation failed' }, { status: 500, headers: corsHeaders(url.origin) });
   }
 };
 
-async function handleGeminiChat(env: Env, body: any, modelName: string, systemInstruction: string, searchGrounding: boolean, isStream: boolean, origin: string): Promise<Response> {
+async function handleGeminiChat(env: Env, body: any, modelName: string, systemInstruction: string, isStream: boolean, origin: string, searchSources: GroundingSource[]): Promise<Response> {
   const geminiApiKey = env.GEMINI_API_KEY;
   if (!geminiApiKey) {
     return Response.json({ error: 'GEMINI_API_KEY is not configured on the server.' }, { status: 400, headers: corsHeaders(origin) });
@@ -159,27 +175,19 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: String(m.content || '').slice(0, 8000) }],
     }));
-  const config: any = { systemInstruction, maxOutputTokens: MAX_TOKENS };
-  if (targetModel === 'gemini-3.5-flash' && searchGrounding) {
-    config.tools = [{ googleSearch: {} }];
-  }
-
+  // No googleSearch tool: chat search is served by the edge cascade above.
   if (!isStream) {
     const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
+      body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, systemInstruction: { parts: [{ text: systemInstruction }] } }),
     });
     if (!resp.ok) {
       const friendly = friendlyUpstreamError(resp.status, await resp.text(), 'Gemini', targetModel);
       return Response.json(friendly, { status: resp.status === 429 ? 429 : 400, headers: corsHeaders(origin) });
     }
     const data: any = await resp.json();
-    const candidate = data.candidates?.[0];
-    const sources: GroundingSource[] = [];
-    for (const c of candidate?.groundingMetadata?.groundingChunks || []) {
-      if (c.web?.uri && c.web?.title) sources.push({ title: c.web.title, url: c.web.uri });
-    }
+    const sources: GroundingSource[] = searchSources;
     return Response.json({ content: data.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '', model: targetModel, groundingSources: sources }, { headers: corsHeaders(origin) });
   }
 
@@ -187,7 +195,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
   const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:streamGenerateContent?alt=sse&key=${geminiApiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, tools: config.tools, systemInstruction: { parts: [{ text: systemInstruction }] } }),
+    body: JSON.stringify({ contents: formattedContents, generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.6 }, systemInstruction: { parts: [{ text: systemInstruction }] } }),
   });
   if (!upstream.ok || !upstream.body) {
     const friendly = friendlyUpstreamError(upstream.status, await upstream.text(), 'Gemini', targetModel);
@@ -196,7 +204,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalSources: GroundingSource[] = [];
+  const finalSources: GroundingSource[] = searchSources;
   const out = new ReadableStream({
     async pull(controller) {
       const { done, value } = await reader.read();
@@ -218,14 +226,6 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
         try {
           const evt = JSON.parse(payload);
           const text = evt.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || '';
-          const gm = evt.candidates?.[0]?.groundingMetadata;
-          if (gm?.groundingChunks) {
-            const srcs: GroundingSource[] = [];
-            for (const c of gm.groundingChunks) {
-              if (c.web?.uri && c.web?.title) srcs.push({ title: c.web.title, url: c.web.uri });
-            }
-            if (srcs.length) finalSources = srcs;
-          }
           if (text) {
             controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`));
           }
@@ -236,7 +236,7 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
   return new Response(out, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', ...corsHeaders(origin) } });
 }
 
-async function handleGroqChat(env: Env, body: any, modelName: string, systemInstruction: string, isStream: boolean, origin: string): Promise<Response> {
+async function handleGroqChat(env: Env, body: any, modelName: string, systemInstruction: string, isStream: boolean, origin: string, searchSources: GroundingSource[] = []): Promise<Response> {
   const groqApiKey = env.GROQ_API_KEY;
   if (!groqApiKey) {
     return Response.json({ error: 'GROQ_API_KEY is not configured on the server.' }, { status: 400, headers: corsHeaders(origin) });
@@ -271,7 +271,7 @@ async function handleGroqChat(env: Env, body: any, modelName: string, systemInst
         const { done, value } = await reader.read();
         if (done) {
           controller.enqueue(new TextEncoder().encode(
-            `data: ${JSON.stringify({ choices: [{ delta: { content: '' }, finish_reason: 'stop' }], model: groqModel })}\n\ndata: [DONE]\n\n`,
+            `data: ${JSON.stringify({ choices: [{ delta: { content: '' }, finish_reason: 'stop' }], model: groqModel, groundingSources: searchSources })}\n\ndata: [DONE]\n\n`,
           ));
           controller.close();
           return;
@@ -281,5 +281,6 @@ async function handleGroqChat(env: Env, body: any, modelName: string, systemInst
     });
     return new Response(out, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'Connection': 'keep-alive', ...corsHeaders(origin) } });
   }
-  return Response.json(await groqRes.json(), { headers: corsHeaders(origin) });
+  const data: any = await groqRes.json();
+  return Response.json({ ...data, groundingSources: searchSources }, { headers: corsHeaders(origin) });
 }

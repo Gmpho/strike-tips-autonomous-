@@ -15,6 +15,11 @@ carry both, with DDGS + page fetch as the free floor.
   Tavily → Exa → DDGS → SA-site fallback. File-backed monthly meters
   (`data/search_budget.json`), 40/day shared cap, 6h identical-query
   cache — loops cost zero while chat agents keep credits.
+- **HUD chat** (`functions/api/chat.ts` + keyless `functions/api/search.ts`
+  proxy): the Search toggle grounds every model class — Gemini, Groq, and
+  browser-local WebLLM — with cascade results; the Google `googleSearch`
+  grounding tool is retired from chat. Pages secret chain:
+  `MCP_API_KEY` → `STRIKE_TIPS_API_KEY` → `BACKEND_API_KEY`.
 - Any model benefits (tool layer, not model layer): edge chat
   (Gemini/Groq auto-router, Ollama), `search_racing_data` specialist
   tool, settlement/grounding lookups.
