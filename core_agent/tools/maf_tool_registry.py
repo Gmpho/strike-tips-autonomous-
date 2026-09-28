@@ -110,7 +110,7 @@ TOOL_INFO: Dict[str, Dict] = {
         "use_case": "Show me past results at Turffontein over 1600m",
     },
     "search_racing_data": {
-        "description": "Search for racing information via DuckDuckGo web search.",
+        "description": "Search for racing information via free-tier web cascade (Tavily, then Exa, then DDGS).",
         "specialist": "racing_llama",
         "category": "data",
         "speed": "~3-5s",
