@@ -31,6 +31,23 @@ def _post_cap_hit(user_id: str) -> None:
     _post_counts.setdefault(user_id, []).append(time.time())
 
 
+def _next_empty_row(spreadsheet_id: str, tab: str) -> int:
+    """First empty row in column A (1-indexed). Headers live in row 1 —
+    writers must append below them, never overwrite (Sep-2026: a proof
+    write landed on A1 and ate the headers)."""
+    from core_agent.integrations.composio_client import execute as _exec
+
+    try:
+        res = _exec(
+            "GOOGLESHEETS_VALUES_GET",
+            {"spreadsheet_id": spreadsheet_id, "range": f"{tab}!A:A"},
+        )
+        vals = res.get("data", {}).get("values", []) or []
+        return len(vals) + 1
+    except ComposioError:
+        return 2  # conservative: skip the header row
+
+
 def create_analysis_sheet(
     spreadsheet_id: str,
     title: str,
@@ -44,11 +61,12 @@ def create_analysis_sheet(
     """
     _ = account
     try:
+        row = _next_empty_row(spreadsheet_id, title)
         res = execute(
             "GOOGLESHEETS_VALUES_UPDATE",
             {
                 "spreadsheet_id": spreadsheet_id,
-                "range": f"{title}!A1",
+                "range": f"{title}!A{row}",
                 "values": rows,
                 "value_input_option": "RAW",
             },
@@ -75,11 +93,12 @@ def export_pnl_report(
     """
     _ = account
     try:
+        row = _next_empty_row(spreadsheet_id, tab)
         res = execute(
             "GOOGLESHEETS_VALUES_UPDATE",
             {
                 "spreadsheet_id": spreadsheet_id,
-                "range": f"{tab}!A1",
+                "range": f"{tab}!A{row}",
                 "values": rows,
                 "value_input_option": "RAW",
             },
