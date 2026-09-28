@@ -16,6 +16,8 @@ agent blind to vendors, slugs, and credentials.
 - `/connect x|google` + `/post` Telegram command branches (reads + new
   branches only; `modal_app.py` touch needs explicit user approval).
 - No changes to settlement, ledger, digest, podcast, or model code.
+- X auto-post stays parked (`docs/X_POSTS_PARKED.md`): this change ships
+  only the dry-run `publish_tip_post` guard, no live posting.
 
 ## Impact
 - Additive only. No existing behavior changes; no protected-path edits
