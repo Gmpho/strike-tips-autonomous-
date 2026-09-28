@@ -78,6 +78,7 @@ export function buildSearchContext(bundle: SearchBundle | null): string {
     return `\n\n[LIVE WEB SEARCH — UNAVAILABLE (${day})]\nNo live web results could be retrieved (free-tier search budgets exhausted, provider error, or search key not configured). State plainly that live web search was unavailable and do not invent sources.`;
   }
   const lines = bundle.results
+    .slice(0, MAX_SEARCH_RESULTS)
     .map((r, i) => `${i + 1}. ${r.title} — ${r.url}${r.snippet ? `\n   ${r.snippet}` : ''}`)
     .join('\n');
   return `\n\n[LIVE WEB SEARCH RESULTS — provider: ${bundle.provider}, fetched ${day}]\n${lines}\nUse these results when relevant, cite the source URLs, and say so if they do not cover the question. Never invent URLs.`;
