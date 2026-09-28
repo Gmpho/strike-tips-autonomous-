@@ -59,6 +59,13 @@ async def _fetch(url: str, timeout: int = 5) -> str:
 # skipped, never billed. Sep-2026: Brave needed money, so these two
 # free tiers carry agent search.
 _SEARCH_BUDGETS = {"tavily": 1000, "exa": 1400}
+# Daily safety net on top of monthly caps (a sweep/chat loop must never
+# eat the month in a day). Chat agents need credits available all month.
+_DAILY_CAP = 40
+# Query-result cache: identical questions (monitor re-asks, chat repeats)
+# cost zero for 6h.
+_CACHE_TTL_SECS = 6 * 3600
+_cache: Dict[str, tuple] = {}
 
 
 def _budget_path() -> str:
@@ -80,12 +87,36 @@ def _budget_used() -> Dict[str, int]:
     return {}
 
 
+def _daily_used() -> int:
+    try:
+        with open(_budget_path()) as f:
+            data = json.load(f)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if isinstance(data, dict) and data.get("day") == today:
+            return int(data.get("daily", 0))
+    except Exception:
+        pass
+    return 0
+
+
 def _budget_spend(provider: str) -> None:
     try:
         used = _budget_used()
         used[provider] = used.get(provider, 0) + 1
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            with open(_budget_path()) as f:
+                prev = json.load(f)
+            daily = int(prev.get("daily", 0)) if prev.get("day") == today else 0
+        except Exception:
+            daily = 0
         with open(_budget_path(), "w") as f:
-            json.dump({"month": datetime.now(timezone.utc).strftime("%Y-%m"), "used": used}, f)
+            json.dump({
+                "month": datetime.now(timezone.utc).strftime("%Y-%m"),
+                "used": used,
+                "day": today,
+                "daily": daily + 1,
+            }, f)
     except Exception:
         pass  # budget tracking is best-effort; never block search
 
@@ -94,6 +125,9 @@ async def _tavily_search(query: str, limit: int) -> List[Dict]:
     """Direct answers + clean text. Returns [] on any failure/no-budget."""
     key = os.environ.get("TAVILY_API_KEY", "")
     if not key or _budget_used().get("tavily", 0) >= _SEARCH_BUDGETS["tavily"]:
+        return []
+    if _daily_used() >= _DAILY_CAP:
+        logger.debug("[SEARCH] daily cap reached, skipping Tavily")
         return []
     try:
         client = get_async_client(timeout=15)
@@ -121,6 +155,9 @@ async def _exa_search(query: str, limit: int) -> List[Dict]:
     key = os.environ.get("EXA_API_KEY", "")
     if not key or _budget_used().get("exa", 0) >= _SEARCH_BUDGETS["exa"]:
         return []
+    if _daily_used() >= _DAILY_CAP:
+        logger.debug("[SEARCH] daily cap reached, skipping Exa")
+        return []
     try:
         client = get_async_client(timeout=15)
         r = await client.post(
@@ -147,7 +184,16 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     """
     Fast web search for racing info. Betway+Schedule already in system prompt.
     Cascade: Tavily (direct answers) -> Exa (semantic) -> DDGS + page fetch.
+    Identical queries reuse a 6h in-process cache (monitor re-asks, chat
+    repeats) so loops cost zero while credits stay reserved for chat agents.
     """
+    import time as _now
+
+    cache_key = f"{query.strip().lower()}|{limit}"
+    hit = _cache.get(cache_key)
+    if hit and _now.time() - hit[0] < _CACHE_TTL_SECS:
+        logger.debug(f"[SEARCH] cache hit: '{query[:40]}'")
+        return {"results": hit[1], "provider": hit[2]}
     results: List[Dict] = []
     seen: set = set()
     provider = "none"
@@ -161,6 +207,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     if results:
         provider = "tavily"
         logger.info(f"[SEARCH] Tavily: {len(results)} results")
+        _cache[cache_key] = (_now.time(), results, provider)
         return {"results": results, "provider": provider}
 
     # 2. Exa — semantic fallback.
@@ -172,6 +219,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     if results:
         provider = "exa"
         logger.info(f"[SEARCH] Exa: {len(results)} results")
+        _cache[cache_key] = (_now.time(), results, provider)
         return {"results": results, "provider": provider}
     ddgs_items = []
     

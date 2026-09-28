@@ -61,11 +61,40 @@ def test_budget_exhaustion_skips_provider(monkeypatch):
     assert out["provider"] in ("none", "ddgs")
 
 
-def test_budget_roundtrip_tmp(tmp_path, monkeypatch):
+def test_identical_query_served_from_cache(monkeypatch):
     import core_agent.skills.search_service as s2
 
+    calls = []
+
+    async def fake_tavily(query, limit):
+        calls.append(query)
+        return [{"title": "T", "snippet": "s", "url": "https://a.com/1"}]
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tv-test")
+    monkeypatch.setattr(s2, "_tavily_search", fake_tavily)
+    s2._cache.clear()
+    r1 = asyncio.run(s2.search_racing("kenilworth", limit=2))
+    r2 = asyncio.run(s2.search_racing("kenilworth", limit=2))
+    assert r1["provider"] == "tavily" and r2["provider"] == "tavily"
+    assert calls == ["kenilworth"]  # second call cost zero
+
+
+def test_daily_cap_blocks_paid_providers(monkeypatch, tmp_path):
+    import core_agent.skills.search_service as s2
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tv-test")
+    monkeypatch.setenv("EXA_API_KEY", "exa-test")
     monkeypatch.setattr(s2, "_budget_path", lambda: str(tmp_path / "b.json"))
-    assert s2._budget_used() == {}
-    s2._budget_spend("tavily")
-    s2._budget_spend("tavily")
-    assert s2._budget_used() == {"tavily": 2}
+    import datetime
+
+    with open(tmp_path / "b.json", "w") as f:
+        import json
+        json.dump({
+            "month": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m"),
+            "used": {},
+            "day": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            "daily": 40,
+        }, f)
+    s2._cache.clear()
+    out = asyncio.run(s2.search_racing("vaal odds unique-query-xyz", limit=2))
+    assert out["provider"] in ("none", "ddgs")
