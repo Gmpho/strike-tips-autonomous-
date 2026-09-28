@@ -204,7 +204,7 @@ The Worker registers 16 MCP tools accessible at `/mcp` via JSON-RPC 2.0:
 
 | Tool | Description |
 |------|-------------|
-| `web_search_racing` | Web search (requires `SEARCH_API_KEY` secret) |
+| `web_search_racing` | Web search (free-tier cascade: Tavily → Exa → Brave) |
 
 MCP protocol requires:
 - `POST` to `/mcp`
@@ -264,7 +264,9 @@ npm run deploy
 # Set secrets
 npx wrangler secret put BACKEND_API_URL
 npx wrangler secret put BACKEND_API_KEY
-npx wrangler secret put SEARCH_API_KEY   # optional, for web search
+npx wrangler secret put SEARCH_API_KEY   # optional legacy (Brave, paid)
+npx wrangler secret put TAVILY_API_KEY    # free tier 1000/mo — edge search primary
+npx wrangler secret put EXA_API_KEY       # free tier ~1400/mo — semantic fallback
 ```
 
 ### Vercel HUD
@@ -294,7 +296,9 @@ A fresh build requires `--force` flag to skip Vercel's build cache.
 |--------|----------|-------------|
 | `BACKEND_API_URL` | Yes | Modal backend URL |
 | `BACKEND_API_KEY` | Yes | Shared API key for Modal auth |
-| `SEARCH_API_KEY` | No | Brave Search API key for `web_search_racing` |
+| `SEARCH_API_KEY` | No | Brave Search API key for `web_search_racing` (legacy last resort; paid) |
+| `TAVILY_API_KEY` | No | Tavily key — edge search primary (free 1000/mo, KV-metered) |
+| `EXA_API_KEY` | No | Exa key — semantic fallback (free ~1400/mo, KV-metered) |
 
 ### Vercel HUD
 

@@ -9,6 +9,8 @@ export interface Env {
   BACKEND_API_URL: string;
   BACKEND_API_KEY: string;
   SEARCH_API_KEY?: string;
+  TAVILY_API_KEY?: string;
+  EXA_API_KEY?: string;
   DB: D1Database;
   ODDS_KV: KVNamespace;
 }
@@ -207,6 +209,96 @@ async function ingestInsight(db: D1Database, body: InsightBody) {
     body.race_number || null, body.date?.slice(0, 20) || null,
     JSON.stringify(body.metadata || {}).slice(0, 5000),
   ).run();
+}
+
+// ── Free-tier web search cascade ─────────────────────────────────────
+
+const SEARCH_BUDGETS: Record<string, number> = { tavily: 1000, exa: 1400 };
+
+async function searchBudget(env: Env): Promise<Record<string, number>> {
+  const d = new Date();
+  const key = `search:budget:${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  try {
+    return (await env.ODDS_KV.get(key, "json") as Record<string, number>) || {};
+  } catch {
+    return {};
+  }
+}
+
+async function spendBudget(env: Env, provider: string): Promise<void> {
+  const d = new Date();
+  const key = `search:budget:${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  try {
+    const cur = await searchBudget(env);
+    cur[provider] = (cur[provider] || 0) + 1;
+    await env.ODDS_KV.put(key, JSON.stringify(cur), { expirationTtl: 33 * 86400 });
+  } catch {
+    /* budget tracking is best-effort; never block search */
+  }
+}
+
+interface SearchHit { title: string; url: string; snippet: string }
+
+async function webSearchCascade(query: string, env: Env): Promise<object> {
+  const q = `${query} horse racing`;
+  const used = await searchBudget(env);
+
+  // 1. Tavily — direct answers + clean text.
+  if (env.TAVILY_API_KEY && (used.tavily || 0) < SEARCH_BUDGETS.tavily) {
+    try {
+      const resp = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: env.TAVILY_API_KEY, query: q, max_results: 5, include_answer: false }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { results?: Array<{ title: string; url: string; content: string }> };
+        const results: SearchHit[] = (data.results || []).slice(0, 5).map(r => ({ title: r.title, url: r.url, snippet: (r.content || "").slice(0, 300) }));
+        await spendBudget(env, "tavily");
+        return { query, provider: "tavily", count: results.length, results };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 2. Exa — semantic search (patterns, profiles, PDF sheets).
+  if (env.EXA_API_KEY && (used.exa || 0) < SEARCH_BUDGETS.exa) {
+    try {
+      const resp = await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": env.EXA_API_KEY },
+        body: JSON.stringify({ query: q, numResults: 5 }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { results?: Array<{ title: string; url: string; text: string }> };
+        const results: SearchHit[] = (data.results || []).slice(0, 5).map(r => ({ title: r.title, url: r.url, snippet: (r.text || "").slice(0, 300) }));
+        await spendBudget(env, "exa");
+        return { query, provider: "exa", count: results.length, results };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 3. Brave — legacy keyed path, no budget meter (paid key assumed).
+  if (env.SEARCH_API_KEY) {
+    try {
+      const resp = await fetch(
+        `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=5`,
+        { headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": env.SEARCH_API_KEY } },
+      );
+      if (resp.ok) {
+        const data = await resp.json() as { web?: { results?: Array<{ title: string; url: string; description: string }> } };
+        const results: SearchHit[] = data.web?.results?.slice(0, 5).map(r => ({ title: r.title, url: r.url, snippet: r.description })) || [];
+        return { query, provider: "brave", count: results.length, results };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return { query, provider: "none", count: 0, results: [], error: "Web search unavailable (free-tier budgets exhausted and no Brave key). Set TAVILY_API_KEY / EXA_API_KEY secrets to enable." };
 }
 
 // ── ROUTE HANDLERS ──────────────────────────────────────────────────
@@ -528,30 +620,15 @@ async function handleMCP(request: Request, env: Env): Promise<Response> {
   );
 
   // ── Web Search tool ──────────────────────────────────────────────
-  server.tool("web_search_racing", "Search the web for up-to-date racing info (form, news, tips). Requires SEARCH_API_KEY env var.",
+  // Cascade: Tavily (1000 free credits/mo, clean text) → Exa semantic
+  // (~1400/mo) → Brave (legacy SEARCH_API_KEY). Monthly spend tracked in
+  // KV; exhausted providers are skipped, never billed. Sep-2026: Brave
+  // needed money, so Tavily+Exa free tiers carry edge search.
+  server.tool("web_search_racing", "Search the web for up-to-date racing info (form, news, tips). Free-tier cascade: Tavily, then Exa, then Brave.",
     { query: z.string().min(1).max(500) },
     async ({ query }) => {
-      const apiKey = env.SEARCH_API_KEY;
-      if (!apiKey) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: "Web search not configured. Set SEARCH_API_KEY secret to enable.", note: "Get a free API key from Brave Search (api.search.brave.com) or Tavily." }),
-          }],
-        };
-      }
-      try {
-        const resp = await fetch(
-          `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query + " horse racing")}&count=5`,
-          { headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": apiKey } },
-        );
-        if (!resp.ok) return { content: [{ type: "text", text: JSON.stringify({ error: `Search API returned ${resp.status}` }) }] };
-        const data = await resp.json() as { web?: { results?: Array<{ title: string; url: string; description: string }> } };
-        const results = data.web?.results?.slice(0, 5).map(r => ({ title: r.title, url: r.url, snippet: r.description })) || [];
-        return { content: [{ type: "text", text: JSON.stringify({ query, count: results.length, results }) }] };
-      } catch (e) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(e) }) }] };
-      }
+      const out = await webSearchCascade(query, env);
+      return { content: [{ type: "text", text: JSON.stringify(out) }] };
     },
   );
 
