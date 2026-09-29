@@ -221,7 +221,12 @@ class TelegramNotifier:
             sid = str(cid)
             if sid not in targets:
                 targets.append(sid)
-        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        try:
+            from core_agent.agent.telegram_format import _split_grapheme_safe
+
+            chunks = _split_grapheme_safe(text, 4000)
+        except Exception:
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
         ok = True
         for t in targets:
             for chunk in chunks:

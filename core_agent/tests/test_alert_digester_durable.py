@@ -109,3 +109,56 @@ def test_corrupt_queue_lines_are_skipped(tmp_path):
     sent = asyncio.run(d.flush_due())
     assert sent == 1
     assert "good" in notifier.sent[0]
+
+
+def test_same_alert_resent_next_cycle_sends_once(tmp_path):
+    """Sep-2026 spam storm: every 5-min cron re-pushed the same 20 alerts
+    with fresh timestamps and the digest re-sent them forever. Identical
+    content inside the resend window must send exactly once."""
+    import time as _time
+
+    notifier = _StubNotifier()
+    d = _digester(tmp_path, notifier)
+    stale = {"ts": _time.time() - 2000, "category": "odds_drop",
+             "html": "🐎 Rathbran Lady @ Down Royal"}
+    (tmp_path / "q.jsonl").write_text(json.dumps(stale) + "\n")
+    assert asyncio.run(d.flush_due()) == 1
+    assert len(notifier.sent) == 1
+    # Next cycle re-detects the same move with a fresh timestamp...
+    asyncio.run(d.push("odds_drop", "🐎 Rathbran Lady @ Down Royal"))
+    asyncio.run(d.push("odds_drop", "🐎 Rathbran Lady @ Down Royal"))
+    # ...but nothing new is queued and nothing re-sends.
+    assert asyncio.run(d.flush_due()) == 0
+    assert len(notifier.sent) == 1
+
+
+def test_resend_allowed_after_window_expiry(tmp_path):
+    """A genuinely re-occurring alert after the window may send again."""
+    import time as _time
+
+    import core_agent.core.alert_digester as ad
+
+    notifier = _StubNotifier()
+    d = _digester(tmp_path, notifier)
+    old = {"ts": _time.time() - 2000, "category": "odds_drop",
+           "html": "🐎 Old News @ Track"}
+    (tmp_path / "q.jsonl").write_text(json.dumps(old) + "\n")
+    assert asyncio.run(d.flush_due()) == 1
+    # Fake the sent-registry entry as expired.
+    sent_path = tmp_path / "alert_digest_sent.json"
+    data = json.loads(sent_path.read_text())
+    only_key = next(iter(data))
+    data[only_key] = _time.time() - ad.RESENT_WINDOW_SECS - 10
+    sent_path.write_text(json.dumps(data))
+    # A new container (fresh memory, like the next cron cycle) re-detects
+    # the alert and must send it.
+    d2 = _digester(tmp_path, notifier)
+    asyncio.run(d2.push("odds_drop", "🐎 Old News @ Track"))
+    # Age the re-pushed entry past the 30-min gate.
+    lines = (tmp_path / "q.jsonl").read_text().strip().splitlines()
+    rec = json.loads(lines[-1])
+    rec["ts"] = _time.time() - 2000
+    lines[-1] = json.dumps(rec)
+    (tmp_path / "q.jsonl").write_text("\n".join(lines) + "\n")
+    assert asyncio.run(d.flush_due()) == 1
+    assert len(notifier.sent) == 2
