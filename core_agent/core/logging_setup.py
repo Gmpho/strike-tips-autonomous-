@@ -42,3 +42,7 @@ def configure_logging() -> None:
     if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
         root.addHandler(handler)
     root.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+    # httpx logs full request URLs at INFO — including the Telegram bot
+    # token as a path segment (Sep-2026: token visible in Modal logs).
+    # Warnings+ still surface real failures.
+    logging.getLogger("httpx").setLevel(logging.WARNING)

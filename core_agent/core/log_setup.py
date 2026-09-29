@@ -39,6 +39,10 @@ def configure_file_logging():
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
     logging.getLogger().addHandler(handler)
+    # httpx logs full request URLs at INFO — including the Telegram bot
+    # token as a path segment (Sep-2026: token visible in Modal logs).
+    # Warnings+ still surface real failures.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def close_file_handlers() -> None:

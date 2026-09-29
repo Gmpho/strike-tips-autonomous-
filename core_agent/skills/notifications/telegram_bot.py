@@ -16,6 +16,62 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("telegram-notifier")
 
+# Chats that blocked the bot (Telegram 403). Kept on the data volume so one
+# dead recipient can never fail a whole broadcast again (Sep-2026: a single
+# blocked subscriber kept every digest in "retry forever" and the user saw
+# the same 20 alerts every cycle).
+QUARANTINE_FILENAME = "telegram_blocked.json"
+
+
+def _quarantine_path() -> Optional[str]:
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        return str(DATA_DIR / QUARANTINE_FILENAME)
+    except Exception:
+        return None
+
+
+def _quarantined_ids() -> set:
+    path = _quarantine_path()
+    if not path:
+        return set()
+    try:
+        import json
+
+        with open(path) as f:
+            data = json.load(f)
+        return {str(k) for k in data} if isinstance(data, dict) else set()
+    except Exception:
+        return set()
+
+
+def _quarantine_chat(chat_id: str, reason: str) -> None:
+    path = _quarantine_path()
+    if not path:
+        return
+    try:
+        import json
+        import time
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+        data[str(chat_id)] = {"reason": reason, "ts": time.time()}
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+        logger.warning(
+            "Telegram chat %s quarantined (%s) — skipped in future broadcasts", chat_id, reason
+        )
+    except Exception as e:
+        logger.debug("Quarantine persist failed: %s", e)
+
 
 def _get_whitelist_ids() -> set[int]:
     """Load the set of authorized chat_ids from whitelist.json on disk."""
@@ -97,7 +153,11 @@ class TelegramNotifier:
             )
             if response.status_code == 200:
                 return True
-            logger.warning("Telegram send to %s failed: %s", chat_id, response.text)
+            body = response.text or ""
+            if response.status_code == 403 and "blocked" in body.lower():
+                _quarantine_chat(str(chat_id), "blocked by user")
+            else:
+                logger.warning("Telegram send to %s failed: %s", chat_id, body[:200])
             return False
         except Exception as e:
             logger.error("Telegram error for %s: %s", chat_id, e)
@@ -221,6 +281,12 @@ class TelegramNotifier:
             sid = str(cid)
             if sid not in targets:
                 targets.append(sid)
+        quarantined = _quarantined_ids()
+        if quarantined:
+            skipped = [t for t in targets if t in quarantined]
+            if skipped:
+                logger.info("Broadcast skipping quarantined chats: %s", skipped)
+            targets = [t for t in targets if t not in quarantined]
         try:
             from core_agent.agent.telegram_format import _split_grapheme_safe
 
