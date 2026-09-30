@@ -1658,9 +1658,15 @@ class StrikeTips:
 
             print(f"[OK] Bet settled: {bet.horse} - {'Won' if won else 'Lost'}")
 
-            # Notify
+            # Notify (dedupe-shared with the monitor sweep: without the
+            # mark_notified guard every result posts twice, once with and
+            # once without the settle ref — Sep-2026 dupes).
             if self.telegram:
-                _fire_async(self.telegram.send_bet_result(
+                _notify = True
+                if hasattr(self.bankroll, "mark_notified"):
+                    _notify = self.bankroll.mark_notified(bet_id, won)
+                if _notify:
+                    _fire_async(self.telegram.send_bet_result(
                     horse=bet.horse,
                     track=bet.track,
                     race_number=bet.race_number,
