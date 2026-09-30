@@ -131,6 +131,7 @@ class TelegramChannel:
     async def _send_loop(self) -> None:
         from core_agent.agent.telegram_format import (
             format_race_card_for_telegram,
+            markdown_table_to_pre,
             split_for_telegram,
         )
         sub = self.bus.subscribe()
@@ -152,7 +153,9 @@ class TelegramChannel:
                     # Markdown → Telegram-safe HTML, then chunk at paragraph
                     # boundaries: raw sends dropped race-card tables and
                     # >4096-char replies failed outright (Sep-2026 restore).
-                    formatted_content = format_race_card_for_telegram(prefixed_content)
+                    formatted_content = format_race_card_for_telegram(
+                        markdown_table_to_pre(prefixed_content)
+                    )
                     chunks = split_for_telegram(formatted_content, max_length=3800)
                     for chunk in chunks:
                         try:

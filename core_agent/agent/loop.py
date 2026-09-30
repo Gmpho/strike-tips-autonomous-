@@ -42,13 +42,19 @@ class AgentLoop:
                     state = TurnState.BUILD
 
             elif state == TurnState.BUILD:
+                from core_agent.agent.context import table_mode_request as _mode_req
+                _toggle = _mode_req(msg.content)
+                if _toggle:
+                    session.metadata["table_mode"] = _toggle
                 context = await self.context_builder.build(
-                    msg.session_key, msg.content, session.history, None
+                    msg.session_key, msg.content, session.history, None,
+                    table_mode=session.metadata.get("table_mode", "compact"),
                 )
                 messages = [
                     # Pass the user turn so the card-intent gate can withhold
-                    # the race card on casual/identity turns (Sep-2026).
-                    {"role": "system", "content": build_system_prompt(user_message=msg.content)},
+                    # the race card on casual/identity turns (Sep-2026), and
+                    # the channel so Telegram turns get SOUL.md voice.
+                    {"role": "system", "content": build_system_prompt(user_message=msg.content, channel=msg.channel)},
                     *session.history,
                     {"role": "user", "content": context},
                 ]

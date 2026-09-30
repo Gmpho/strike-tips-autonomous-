@@ -41,7 +41,13 @@ function formatRaceCardPrompt(event: RaceEvent, focusRunner?: Runner): string {
       const odds = typeof r.odds === 'number' ? r.odds.toFixed(2) : r.odds || 'SP';
       const jockey = r.jockeyName || 'TBA';
       const trainer = r.trainerName || 'TBA';
-      return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}`;
+      const extras = [
+        r.draw != null ? `Draw: ${r.draw}` : '',
+        r.gear ? `Gear: ${r.gear}` : '',
+        r.daysSinceRun != null ? `${r.daysSinceRun}d since run` : '',
+        r.pedigree ? `Pedigree: ${r.pedigree}` : '',
+      ].filter(Boolean).join(' — ');
+      return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}${extras ? ` — ${extras}` : ''}`;
     })
     .join('\n');
   const focusLine = focusRunner ? `\nFOCUS RUNNER: ${focusRunner.name}${typeof focusRunner.odds === 'number' ? ` @ ${focusRunner.odds.toFixed(2)}` : ''} — analyse this runner's value case in depth (form, draw, jockey/trainer stats, and how it compares to the field below).\n` : '';

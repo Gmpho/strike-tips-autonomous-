@@ -233,6 +233,7 @@ def serve_api():
             from core_agent.bus.events import InboundMessage, OutboundMessage
             from core_agent.agent.telegram_format import (
                 markdown_to_telegram_html,
+                markdown_table_to_pre,
                 format_race_card_for_telegram,
                 split_for_telegram,
             )
@@ -276,7 +277,7 @@ def serve_api():
 
             async def _send(raw_text: str) -> None:
                 """Send with Telegram HTML mode, formatting race cards and falling back to plain text."""
-                formatted_text = format_race_card_for_telegram(raw_text)
+                formatted_text = format_race_card_for_telegram(markdown_table_to_pre(raw_text))
                 chunks = split_for_telegram(formatted_text, max_length=3800)
                 for chunk in chunks:
                     try:

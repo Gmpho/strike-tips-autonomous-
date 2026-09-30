@@ -58,7 +58,30 @@ def _identity_block() -> str:
     )
 
 
-def build_system_prompt(for_cloud: bool = False, user_message: str = "") -> str:
+def _soul_block() -> str:
+    """Trackside-pundit voice for Telegram turns (SOUL.md). HUD keeps its
+    own voice — this loads only when channel == "telegram"."""
+    try:
+        soul_path = os.path.join(os.path.dirname(__file__), "SOUL.md")
+        with open(soul_path, encoding="utf-8") as f:
+            soul = f.read().strip()
+        if soul:
+            return f"Voice (Telegram turns — follow this persona):\n{soul}\n"
+    except Exception as e:
+        logger.debug(f"Could not load SOUL.md: {e}")
+    return ""
+
+
+_TELEGRAM_TABLE_RULE = (
+    "Telegram tables: when showing runners, odds, or edges, ALWAYS use a "
+    "Markdown pipe table inside a ```text code block. Default columns: "
+    "Horse | Odds | Edge (compact — fits phones). Full columns "
+    "(draw, gear, days, pedigree) only when the user says 'full'. "
+    "Never show data as a paragraph list.\n"
+)
+
+
+def build_system_prompt(for_cloud: bool = False, user_message: str = "", channel: str = "") -> str:
     today = datetime.now().strftime("%A, %d %B %Y")
     # Card-intent gate: live race context only rides along when the turn is
     # about racing data. Casual/identity turns keep the prompt small so the
@@ -75,6 +98,9 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "") -> str:
     )
     learned_info = _build_learned_context()
     identity = _identity_block()
+    is_telegram = (channel or "").lower() == "telegram"
+    soul = _soul_block() if is_telegram else ""
+    table_rule = _TELEGRAM_TABLE_RULE if is_telegram else ""
     
     tools_str = (
         "Available tools (call the RIGHT tool for the job):\n"
@@ -105,8 +131,10 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "") -> str:
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
             f"{identity}\n"
+            f"{soul}"
             f"{tools_str}"
             f"{learned_info}"
+            f"{table_rule}"
             "Rules:\n"
             "1. ALWAYS call a tool when you need live data — never guess odds, horses or results.\n"
             "2. Report tool results directly — do not fabricate numbers.\n"
@@ -115,15 +143,20 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "") -> str:
             "5. If live snapshot data is provided above, use it — no tool call needed for that.\n"
             "6. Match the user's mode: casual message → brief casual reply (no card dump). "
             "Pasted race card or racing question → full analysis. Never volunteer race "
-            "meetings or odds the user did not ask about."
+            "meetings or odds the user did not ask about.\n"
+            "7. Web search request ([WEB SEARCH RESULTS] present, no snapshot) → "
+            "answer from the search results via search_racing_data; never fall back "
+            "to snapshot data you don't have."
         )
     else:
         base = (
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
             f"{identity}\n"
+            f"{soul}"
             f"{tools_str}"
             f"{learned_info}"
+            f"{table_rule}"
             "HOW TO USE TOOLS:\n"
             "When you need live data, output EXACTLY this on its own line (nothing else on that line):\n"
             "  TOOL: tool_name({\"arg\": \"value\"})\n"
@@ -137,7 +170,10 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "") -> str:
             "2. Report tool results directly — do not fabricate numbers.\n"
             "3. If a tool returns an error, try a different tool or apologize briefly.\n"
             "4. Never invent statistics, horse names, odds, or betting history.\n"
-            "5. If live snapshot data is provided above, use it — no tool call needed for that."
+            "5. If live snapshot data is provided above, use it — no tool call needed for that.\n"
+            "6. Web search request ([WEB SEARCH RESULTS] present, no snapshot) → "
+            "answer from the search results via search_racing_data; never fall back "
+            "to snapshot data you don't have."
         )
     return base
 

@@ -145,6 +145,68 @@ def _format_line_inline(line: str) -> str:
     return "".join(formatted_parts)
 
 
+_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEP_CELL_RE = re.compile(r"^:?-{2,}:?$")
+
+
+def _parse_table_cells(row: str) -> list[str]:
+    """Split a `| a | b |` row into stripped cells."""
+    clipped = row.strip()
+    if clipped.startswith("|"):
+        clipped = clipped[1:]
+    if clipped.endswith("|"):
+        clipped = clipped[:-1]
+    return [c.strip() for c in clipped.split("|")]
+
+
+def _is_sep_row(cells: list[str]) -> bool:
+    return bool(cells) and all(_TABLE_SEP_CELL_RE.match(c) for c in cells)
+
+
+def markdown_table_to_pre(text: str) -> str:
+    """Convert GitHub pipe tables into ```text fenced ASCII tables.
+
+    The downstream HTML formatter turns fenced blocks into <pre>, so tables
+    survive chunking with alignment intact. Non-table text is untouched.
+    Runs of 2+ consecutive pipe rows form a table; an alignment row
+    (`|---|---|`) is dropped; columns are padded to max width.
+    """
+    if not text or "|" not in text:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    run: list[list[str]] = []
+
+    def _flush_run() -> None:
+        if len(run) < 2:
+            for cells in run:
+                out.append("| " + " | ".join(cells) + " |")
+        else:
+            rows = [r for r in run if not _is_sep_row(r)]
+            if len(rows) < 2:
+                rows = run  # no usable split — keep raw rows
+            width = max(len(r) for r in rows)
+            norm = [r + [""] * (width - len(r)) for r in rows]
+            col_w = [max(len(r[i]) for r in norm) for i in range(width)]
+            table_lines = [
+                "  ".join(cell.ljust(col_w[i]) for i, cell in enumerate(r)).rstrip()
+                for r in norm
+            ]
+            out.append("```text\n" + "\n".join(table_lines) + "\n```")
+        run.clear()
+
+    for line in lines:
+        if _TABLE_ROW_RE.match(line):
+            run.append(_parse_table_cells(line))
+        else:
+            if run:
+                _flush_run()
+            out.append(line)
+    if run:
+        _flush_run()
+    return "\n".join(out)
+
+
 def format_race_card_for_telegram(text: str) -> str:
     """
     Detect if text contains a race card and format runner listings into a clean
