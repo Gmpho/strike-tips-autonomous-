@@ -31,7 +31,9 @@ def convention_pool_starts(total_races: int) -> Dict[str, int]:
     if total_races >= 10:
         return {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
     if total_races == 9:
-        return {"BI1": 2, "PA": 2, "P6": 3, "JP1": 4, "JP2": 6}
+        # TAB standard (Fairview/Durbanville 9-race cards): BI R2-7,
+        # PA R3-9, P6 R4-9, JP R5-8 + R6-9.
+        return {"BI1": 2, "PA": 3, "P6": 4, "JP1": 5, "JP2": 6}
     if total_races == 8:
         return {"BI1": 1, "PA": 2, "P6": 3, "JP1": 4, "JP2": 5}
     if total_races >= 6:

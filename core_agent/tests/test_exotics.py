@@ -102,8 +102,7 @@ def test_convention_pool_starts_per_card_size():
     """Single TAB-standard table (Sep-2026: 8-race Greyville carded Bipot
     R2-7; TAB runs R1-6 on 8-race cards)."""
     assert convention_pool_starts(8) == {"BI1": 1, "PA": 2, "P6": 3, "JP1": 4, "JP2": 5}
-    assert convention_pool_starts(9)["BI1"] == 2
-    assert convention_pool_starts(9)["JP2"] == 6
+    assert convention_pool_starts(9) == {"BI1": 2, "PA": 3, "P6": 4, "JP1": 5, "JP2": 6}
     assert convention_pool_starts(10) == {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
     assert convention_pool_starts(6) == {"BI1": 1, "P6": 1, "JP1": 3}
     assert convention_pool_starts(5) == {"JP1": 1}
