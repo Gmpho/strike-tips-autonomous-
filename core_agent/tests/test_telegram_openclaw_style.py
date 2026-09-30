@@ -132,3 +132,52 @@ async def test_full_toggle_forces_card_with_history():
     hist = [{"role": "user", "content": "races at greyville"}]
     out = await cb.build("s", "full", hist, None)
     assert "[TABLE MODE: full" in out
+
+
+# ── HUD Search toggle ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_search_toggle_off_skips_ambient_search(monkeypatch):
+    """Green Search button OFF = no web search on plain card turns."""
+    import core_agent.agent.context as ctx_mod
+    from core_agent.agent.context import ContextBuilder
+
+    called = []
+
+    async def fake_search(*a, **k):
+        called.append(True)
+        return {"results": []}
+
+    monkeypatch.setattr(ctx_mod, "brain", None)
+    import core_agent.skills.search_service as ss
+    monkeypatch.setattr(ss, "search_racing", fake_search)
+    # ensure the lazy import inside build() picks up the patched module attr
+    import sys
+    monkeypatch.setitem(sys.modules, "core_agent.skills.search_service", ss)
+
+    cb = ContextBuilder()
+    out = await cb.build("s", "races at greyville", [], None, web_search=False)
+    assert called == []
+    assert "[WEB SEARCH RESULTS]" not in out
+
+
+@pytest.mark.asyncio
+async def test_explicit_search_ignores_toggle_off(monkeypatch):
+    """Typing 'search the web ...' searches even with the toggle OFF."""
+    import core_agent.agent.context as ctx_mod
+    from core_agent.agent.context import ContextBuilder
+
+    async def fake_search(*a, **k):
+        return {"results": [{
+            "title": "T", "url": "http://x", "snippet": "S",
+        }]}
+
+    monkeypatch.setattr(ctx_mod, "brain", None)
+    import core_agent.skills.search_service as ss
+    monkeypatch.setattr(ss, "search_racing", fake_search)
+    import sys
+    monkeypatch.setitem(sys.modules, "core_agent.skills.search_service", ss)
+
+    cb = ContextBuilder()
+    out = await cb.build("s", "search the web for Kenilworth results", [], None, web_search=False)
+    assert "[WEB SEARCH RESULTS]" in out

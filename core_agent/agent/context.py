@@ -103,6 +103,7 @@ class ContextBuilder:
         history: list[dict],
         intent: str | None,
         table_mode: str = "compact",
+        web_search: bool = True,
     ) -> str:
         # FAST PATH: trivial/filler messages — skip heavy lookups
         msg = user_message.strip()
@@ -147,7 +148,10 @@ class ContextBuilder:
         except Exception:
             pass
 
-        if card_turn or search_turn:
+        # HUD Search toggle OFF skips ambient web search on card turns, but
+        # an explicit "search the web" request always searches.
+        do_search = search_turn or (card_turn and web_search)
+        if do_search:
             try:
                 from core_agent.skills.search_service import search_racing
                 # Trigger live DuckDuckGo search for real-time information
