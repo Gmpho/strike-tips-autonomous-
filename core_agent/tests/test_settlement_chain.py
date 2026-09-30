@@ -843,14 +843,24 @@ def test_exotic_layout_validation():
     out_of_range = _mk_play("JACKPOT 2", [7, 8, 9, 10])  # R10 on 9-race card
     wrong_count = _mk_play("PICK 6", [4, 5, 6])  # needs 6 legs
     dupe = _mk_play("JACKPOT 1", [4, 5, 6, 7])
-    unknown_family = _mk_play("QUARTET", [1, 2, 3])  # no canonical count: kept
+    unknown_family = _mk_play("QUARTET", [1, 2, 3])  # no canonical count: dropped (fail-closed)
     out = _validate_exotic_layout(
         [good_jp, out_of_range, wrong_count, dupe, unknown_family], 9
     )
     pools = [p["pool"] for p in out]
-    assert pools == ["JACKPOT 1", "QUARTET"]
+    assert pools == ["JACKPOT 1"]
     assert _validate_exotic_layout([], 9) == []
     assert _validate_exotic_layout([good_jp], 0) == [good_jp]  # unknown card: pass through
+
+    # AI/fallback pool CODES resolve through the canonical table —
+    # Sep-2026: 2-leg BI1 + 3-leg JP1 were recorded as tickets.
+    short_bi = _mk_play("BI1", [2, 3])
+    short_jp = _mk_play("JP1", [4, 5, 6])
+    good_bi = _mk_play("BI1", [1, 2, 3, 4, 5, 6])
+    good_p6 = _mk_play("P6", [3, 4, 5, 6, 7, 8])
+    good_pa = _mk_play("PA", [2, 3, 4, 5, 6, 7, 8])
+    out3 = _validate_exotic_layout([short_bi, short_jp, good_bi, good_p6, good_pa], 8)
+    assert [p["pool"] for p in out3] == ["BI1", "P6", "PA"]
 
     # Overlapping ranges across DIFFERENT pools are normal SA structure: kept.
     pa = _mk_play("PLACE ACCUMULATOR", [2, 3, 4, 5, 6, 7, 8])

@@ -592,7 +592,21 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
             continue
         pool_name = str(p.get("pool", "")).upper()
         expected = next((n for code, n in _POOL_LEG_COUNTS if code in pool_name), None)
-        if expected is not None and len(legs) != expected:
+        if expected is None:
+            # AI/fallback pool codes (BI1, JP2, P6, PA) never contain the
+            # full family name — resolve via the canonical code table
+            # (Sep-2026: 2-leg "BI1" and 3-leg "JP1" sailed through and
+            # were recorded as tickets).
+            try:
+                from core_agent.skills.exotics.builder import POOL_LEG_COUNTS as _CODES
+                _prefix = next((c for c in _CODES if pool_name.startswith(c)), None)
+                expected = _CODES.get(_prefix) if _prefix else None
+            except Exception:
+                expected = None
+        if expected is None:
+            print(f"[EXOTIC] Dropped '{p.get('pool')}': unknown pool family")
+            continue
+        if len(legs) != expected:
             print(f"[EXOTIC] Dropped '{p.get('pool')}': {len(legs)} legs, {expected} required")
             continue
         key = (pool_name, tuple(legs))
