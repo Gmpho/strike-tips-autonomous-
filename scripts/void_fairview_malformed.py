@@ -24,7 +24,7 @@ vol = modal.Volume.from_name("strike-tips-data", create_if_missing=False)
 
 BAD_IDS = [
     "20260930031106_BI1",
-    "20260930031107_JAC",
+    "20260930031107_JP1",
     "20260930060817_PLA",
     "20260930060817_PIC",
     "20260930060817_JAC",
@@ -40,6 +40,10 @@ def void_bad() -> dict:
 
     gov = BankrollGovernor(data_dir="/app/data")
     out: dict = {}
+    out["loaded_ids_matching"] = [
+        (x.bet_id, x.status) for x in gov._bets if "31107" in str(x.bet_id) or "JP1" in str(getattr(x, "horse", ""))
+    ]
+    out["total_loaded"] = len(gov._bets)
     for bid in BAD_IDS:
         b = next((x for x in gov._bets if x.bet_id == bid), None)
         if b is None:
@@ -53,4 +57,5 @@ def void_bad() -> dict:
         )
         out[bid] = f"voided={ok} stake={b.stake}"
     out["done"] = True
+    print("VOID_RESULT:" + str(out), flush=True)
     return out
