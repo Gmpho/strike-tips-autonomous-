@@ -29,6 +29,11 @@ SAFE_PATHS = {
     "/api/news",
     "/api/news/images",
     "/api/telemetry",
+    "/api/telegram/bot-name",
+    "/api/telegram/link-code",
+    "/api/telegram/link-status",
+    "/api/telegram/unlink",
+    "/api/telegram/test",
 }
 
 
