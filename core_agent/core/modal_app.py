@@ -27,7 +27,7 @@ app = modal.App("strike-tips-racing")
 
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
 
-secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key"), modal.Secret.from_name("strike-tips-search")]
+secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key"), modal.Secret.from_name("strike-tips-search"), modal.Secret.from_name("supabase-strike-tips")]
 
 
 # ── ASGI: FastAPI + Telegram webhook ──────────────────────────────────
