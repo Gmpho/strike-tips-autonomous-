@@ -50,6 +50,13 @@ def expected_totals(state: dict, bets: list[dict]) -> dict:
 
     real = [b for b in bets if not b.get("is_paper")]
     settled = [b for b in real if map_status(b.get("status", "")) in ("WON", "LOST")]
+    # Status census: production history mixes settled + PENDING opens +
+    # VOID/EXPIRED (HUD TOTAL BETS = len(bet_history.json), i.e. everything
+    # including paper). The gate keys on settled P&L; counts are reported
+    # per status so any skew is visible, not silent.
+    census: dict[str, int] = {}
+    for b in real:
+        census[map_status(b.get("status", ""))] = census.get(map_status(b.get("status", "")), 0) + 1
     pnl = round(sum(float(b.get("profit_loss") or 0) for b in settled), 2)
     balance = float(state.get("current_bankroll", 0))
     if balance < 0 or not math.isfinite(pnl) or not math.isfinite(balance):
@@ -57,6 +64,8 @@ def expected_totals(state: dict, bets: list[dict]) -> dict:
     return {
         "bet_rows": len(real),
         "settled_rows": len(settled),
+        "status_census": census,
+        "paper_skipped": len(bets) - len(real),
         "settled_pnl": pnl,
         "balance": balance,
         "peak": float(state.get("peak_bankroll", balance)),
@@ -71,7 +80,8 @@ def run(user_id: str, data_dir: str, live: bool) -> int:
     state, bets = load_jsons(data_dir)
     exp = expected_totals(state, bets)
     print(f"[dry-run={not live}] source: {exp['bet_rows']} bets "
-          f"({exp['settled_rows']} settled), settled P&L R{exp['settled_pnl']:.2f}, "
+          f"({exp['settled_rows']} settled, census={exp['status_census']}, "
+          f"paper skipped={exp['paper_skipped']}), settled P&L R{exp['settled_pnl']:.2f}, "
           f"balance R{exp['balance']:.2f}, peak R{exp['peak']:.2f}")
     if not live:
         print("dry run complete — nothing written. Re-run with --live to import.")

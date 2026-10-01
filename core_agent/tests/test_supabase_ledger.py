@@ -203,6 +203,8 @@ def test_expected_totals_exclude_paper(tmp_path):
     assert exp["settled_rows"] == 2
     assert exp["settled_pnl"] == 300.00  # 350 - 50 (paper 40 excluded)
     assert exp["balance"] == 3799.56
+    assert exp["status_census"] == {"WON": 1, "LOST": 1}
+    assert exp["paper_skipped"] == 1
 
 
 def test_dry_run_writes_nothing(tmp_path):
