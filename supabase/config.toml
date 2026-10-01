@@ -1,0 +1,14 @@
+# Supabase local/dev config for strike-tips.
+# Declarative schemas live in schemas/; generate migrations with:
+#   supabase db pull <name> --local --yes   (after `supabase start`)
+# Live project: apply via dashboard SQL editor or `supabase db push`,
+# then `supabase db pull <name>` to capture the migration file.
+[db]
+port = 54322
+major_version = 15
+
+[db.pooler]
+enabled = true
+port = 6543
+pool_mode = "transaction"
+default_pool_size = 20

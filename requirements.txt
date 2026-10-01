@@ -57,3 +57,8 @@ modal>=0.63.0
 prometheus_client>=0.20.0
 python-logging-loki>=0.3.0
 polars>=1.39.3
+
+# Supabase ledger + auth (supabase-ledger-auth change, Oct-2026). Pinned
+# per supply-chain rules; PostgREST transport (no prepared statements,
+# pooler-safe in transaction mode).
+supabase==2.31.0
