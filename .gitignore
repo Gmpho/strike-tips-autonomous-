@@ -70,3 +70,6 @@ gha-creds-*.json
 # Wrangler local state
 .wrangler/
 .dev.vars
+
+# Uncompressed image sources (optimized WebP lives in public/assets/)
+strike-tips-hud/assets-src/
