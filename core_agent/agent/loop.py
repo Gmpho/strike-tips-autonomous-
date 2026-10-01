@@ -113,6 +113,37 @@ class AgentLoop:
         response_content = ""
 
         if cmd == "/start" or cmd == "/help":
+            # Passcode link (polling path mirrors the Modal webhook):
+            # /start ST-12345 binds this chat to the minting HUD account.
+            if cmd == "/start" and len(parts) > 1 and parts[1].upper().startswith("ST-"):
+                try:
+                    from core_agent.db.repository import LedgerRepository
+                    from core_agent.db.client import get_service_client
+                    from core_agent.core import access_control as _ac
+                    repo = LedgerRepository(get_service_client())
+                    linked = repo.redeem_link_code(parts[1], int(msg.chat_id), None)
+                    if linked:
+                        try:
+                            _ac.authorize(int(msg.chat_id))
+                        except Exception:
+                            pass
+                        response_content = (
+                            "✅ *Telegram linked!*\n\nThis chat now receives alerts for your account. "
+                            "Open Settings → Telegram Alerts to verify."
+                        )
+                    else:
+                        response_content = (
+                            "⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. "
+                            "Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code."
+                        )
+                except Exception as e:
+                    logger.warning("polling link redeem failed: %r", e)
+                    response_content = "⚠️ *Linking is unavailable right now.* Please try again in a minute."
+                await self.bus.publish_outbound(OutboundMessage(
+                    session_key=msg.session_key, channel=msg.channel, chat_id=msg.chat_id,
+                    content=response_content, done=True,
+                ))
+                return
             response_content = (
                 "🏇 *Strike Tips Agent*\n\n"
                 "I'm your AI Racing Data Analyst. Just chat with me or use commands:\n\n"

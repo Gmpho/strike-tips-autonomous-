@@ -7,6 +7,7 @@ import { checkWebGPUSupport, getStorageEstimate, clearWebLLMStorage, StorageEsti
 import { OFFLINE_MODELS, formatMB, isModelEnabled } from '../../lib/offline-models';
 import { downloadPack, type PackProgress } from '../../lib/offline-pack';
 import { usePWA } from '../../hooks/usePWA';
+import { TelegramLinkCard } from './TelegramLinkCard';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -339,6 +340,7 @@ export const SettingsView: React.FC = () => {
                   <RefreshCw className="w-4 h-4" />
                   Test Telegram Integration
                 </button>
+                <TelegramLinkCard />
               </div>
             )}
           </div>

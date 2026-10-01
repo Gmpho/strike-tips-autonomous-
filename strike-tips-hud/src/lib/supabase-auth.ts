@@ -45,3 +45,17 @@ export async function accessToken(): Promise<string | null> {
   const s = await currentSession();
   return s?.access_token ?? null;
 }
+
+/** Mask an email for display (g***@gmail.com). Raw emails are never rendered. */
+export function maskEmail(email: string | undefined | null): string {
+  if (!email || !email.includes('@')) return 'hidden';
+  const [local, domain] = email.split('@');
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+/** First name from Google metadata; falls back to masked email, never raw. */
+export function displayName(meta: Record<string, unknown> | undefined, email?: string): string {
+  const full = (meta?.full_name as string) || (meta?.name as string) || '';
+  if (full) return full.split(' ')[0];
+  return maskEmail(email ?? null);
+}

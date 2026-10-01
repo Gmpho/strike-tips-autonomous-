@@ -153,6 +153,41 @@ def serve_api():
 
                 if cmd == "/start":
                     from core_agent.config.settings import NOTIFICATIONS
+                    # Passcode link (CryptoPulse-style): /start ST-12345 binds
+                    # this chat to the HUD account that minted the code.
+                    if len(parts) > 1 and parts[1].upper().startswith("ST-"):
+                        try:
+                            from core_agent.db.repository import LedgerRepository
+                            from core_agent.db.client import get_service_client
+                            from core_agent.core import access_control as _ac
+                            repo = LedgerRepository(get_service_client())
+                            username = (msg.get("from", {}) or {}).get("username")
+                            linked = repo.redeem_link_code(parts[1], int(chat_id), username)
+                            if linked:
+                                try:
+                                    _ac.authorize(int(chat_id))
+                                except Exception:
+                                    pass
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=(f"✅ *Telegram linked!*\n\nThis chat now receives alerts for your account"
+                                          f"{f' (@{username})' if username else ''}. Open Settings → Telegram Alerts to verify."),
+                                    parse_mode="Markdown",
+                                )
+                            else:
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text="⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code.",
+                                    parse_mode="Markdown",
+                                )
+                        except Exception as e:
+                            logger.warning("link redeem failed: %r", e)
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text="⚠️ *Linking is unavailable right now.* Please try again in a minute.",
+                                parse_mode="Markdown",
+                            )
+                        return {"ok": True}
                     welcome = (
                         "🏇 *Strike Tips Agent*\n\n"
                         "I'm your AI Racing Data Analyst. Just chat with me or use commands:\n\n"
@@ -160,7 +195,8 @@ def serve_api():
                         "/scan - Daily race scan\n"
                         "/status - Quick balance check\n"
                         "/chart - Performance chart\n"
-                        "/help - Show all commands"
+                        "/help - Show all commands\n\n"
+                        "_Link this chat in HUD Settings → Telegram Alerts for personal alerts._"
                     )
                     kb = [[InlineKeyboardButton("🚀 Open Intelligence HUD", web_app={"url": NOTIFICATIONS.twa_url})]]
                     await bot.send_message(chat_id=chat_id, text=welcome, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")

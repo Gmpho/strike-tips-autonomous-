@@ -5,6 +5,8 @@ import {
   TrendingUp, Flag, Ticket, Newspaper, Radar, Radio
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
+import { useSupabaseSession } from '../../hooks/useSupabaseSession';
+import { displayName, signInWithGoogle } from '../../lib/supabase-auth';
 
 interface SidebarProps {
   activeView: string;
@@ -12,6 +14,57 @@ interface SidebarProps {
   isCollapsed: boolean;
   onToggle: () => void;
 }
+
+/** Identity chip: Google avatar + first name when signed in, neutral guest
+ *  state otherwise. Raw emails are never rendered (see maskEmail). */
+const IdentityChip: React.FC<{ isCollapsed: boolean }> = ({ isCollapsed }) => {
+  const { configured, loading, session } = useSupabaseSession();
+  const meta = session?.user?.user_metadata as Record<string, unknown> | undefined;
+  const email = session?.user?.email;
+  const avatar = (meta?.avatar_url as string) || (meta?.picture as string) || '';
+  const name = session ? displayName(meta, email ?? undefined) : 'Guest';
+
+  if (!configured || loading || !session) {
+    return (
+      <button
+        onClick={() => { if (configured && !loading) signInWithGoogle().catch(() => {}); }}
+        title={configured ? 'Sign in with Google' : 'Guest mode'}
+        className={`flex items-center gap-3 ${isCollapsed ? 'justify-center' : 'px-1'} w-full text-left`}
+      >
+        <div className="w-8 h-8 rounded-full bg-theme-secondary border border-theme flex items-center justify-center text-theme-secondary font-black text-xs shrink-0">
+          ?
+        </div>
+        {!isCollapsed && (
+          <div className="flex flex-col animate-in fade-in slide-in-from-left-2">
+            <span className="text-xs font-bold text-theme-primary truncate w-32">Guest</span>
+            <span className="text-[9px] text-theme-secondary opacity-70 uppercase">
+              {configured ? 'Sign in' : 'Open access'}
+            </span>
+          </div>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`flex items-center gap-3 ${isCollapsed ? 'justify-center' : 'px-1'}`}>
+      {avatar ? (
+        <img src={avatar} alt="" referrerPolicy="no-referrer"
+          className="w-8 h-8 rounded-full object-cover border border-purple-500/40 shrink-0" />
+      ) : (
+        <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-500 font-black text-xs shrink-0">
+          {name.slice(0, 2).toUpperCase()}
+        </div>
+      )}
+      {!isCollapsed && (
+        <div className="flex flex-col animate-in fade-in slide-in-from-left-2">
+          <span className="text-xs font-bold text-theme-primary truncate w-32">{name}</span>
+          <span className="text-[9px] text-theme-secondary opacity-70 uppercase">Punter</span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({ 
   activeView, 
@@ -150,17 +203,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="mt-auto pt-4 border-t border-theme">
-        <div className={`flex items-center gap-3 ${isCollapsed ? 'justify-center' : 'px-1'}`}>
-          <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-500 font-black text-xs shrink-0">
-            GT
-          </div>
-          {!isCollapsed && (
-            <div className="flex flex-col animate-in fade-in slide-in-from-left-2">
-              <span className="text-xs font-bold text-theme-primary truncate w-32">System Admin</span>
-              <span className="text-[9px] text-theme-secondary opacity-70 uppercase">Operational</span>
-            </div>
-          )}
-        </div>
+        <IdentityChip isCollapsed={isCollapsed} />
       </div>
     </nav>
   );

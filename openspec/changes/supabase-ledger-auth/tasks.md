@@ -15,7 +15,7 @@
 ## 3. Auth + linking (needs Google provider enabled)
 
 - [ ] 3.1 HUD Google login button; verify login round-trip on preview deploy
-- [ ] 3.2 Passcode endpoints + `/start CODE` webhook; verify link round-trip on own account
+- [x] 3.2 Passcode endpoints + `/start CODE` webhook (Modal + polling); endpoint tests green, live round-trip pending deploy
 - [ ] 3.3 Settings Telegram Alerts card (NOT LINKED/CONNECTED); verify Turnstile gating on all three link endpoints
 
 ## 4. Cutover (separate approval — touches governor)
