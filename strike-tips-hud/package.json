@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "optimize-hero": "node scripts/optimize-hero.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
     "typescript": "5.9.3",
     "vite": "^8.0.16"

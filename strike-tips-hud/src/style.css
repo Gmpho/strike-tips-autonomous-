@@ -119,6 +119,22 @@ html.light .legal-page .text-purple-300 { color: #7c3aed !important; }
 html.light .legal-page .text-rose-300 { color: #e11d48 !important; }
 html.light .legal-page .text-rose-300\/80 { color: rgba(225,29,72,0.8) !important; }
 
+/* Light mode: landing page overrides (scoped to .landing-root) */
+html.light .landing-root { background-color: #f4f2fa !important; color: #1a1526 !important; }
+html.light .landing-root .text-white { color: #1a1526 !important; }
+html.light .landing-root .text-white\/80 { color: rgba(26,21,38,0.8) !important; }
+html.light .landing-root .text-white\/75 { color: rgba(26,21,38,0.75) !important; }
+html.light .landing-root .text-white\/70 { color: rgba(26,21,38,0.7) !important; }
+html.light .landing-root .text-white\/65 { color: rgba(26,21,38,0.65) !important; }
+html.light .landing-root .text-white\/60 { color: rgba(26,21,38,0.6) !important; }
+html.light .landing-root .text-white\/50 { color: rgba(26,21,38,0.5) !important; }
+html.light .landing-root .text-white\/40 { color: rgba(26,21,38,0.4) !important; }
+html.light .landing-root .hover\:text-white:hover { color: #1a1526 !important; }
+html.light .landing-root .hover\:text-white\/70:hover { color: rgba(26,21,38,0.7) !important; }
+html.light .landing-root .bg-white\/\[0\.04\] { background-color: rgba(26,21,38,0.04) !important; }
+html.light .landing-root .bg-\[#121016\]\/80 { background-color: rgba(244,242,250,0.85) !important; }
+html.light .landing-root .text-purple-300 { color: #7c3aed !important; }
+
 /* ── CSS Variables fallback (browsers without var() support) ── */
 html, body {
   background-color: #000 !important;

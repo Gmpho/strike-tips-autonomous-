@@ -5,6 +5,7 @@ import { useTelegram } from './hooks/useTelegram';
 import { usePWA } from './hooks/usePWA';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { LandingPage } from './components/landing/LandingPage';
+import { GuestBanner } from './components/landing/GuestBanner';
 import { UpdateToast } from './components/UpdateToast';
 import { apiFetch } from './lib/api-fetch';
 import type { RaceEvent, Runner } from './types';
@@ -52,6 +53,9 @@ const ViewFallback = () => (
 );
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
+// Logged-out visitors may read support + legal pages (with a sign-in
+// banner); every other view gates to the landing page.
+const PUBLIC_VIEWS = [...LEGAL_VIEWS];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
@@ -143,9 +147,10 @@ export const App: React.FC = () => {
     setIsMobileMenuOpen(false);
   };
 
-  if (authOn && !authLoading && !session) {
+  if (authOn && !authLoading && !session && !PUBLIC_VIEWS.includes(activeView)) {
     return <LandingPage />;
   }
+  const isGuest = authOn && !authLoading && !session;
 
   const renderView = () => {
     const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);
@@ -340,6 +345,7 @@ export const App: React.FC = () => {
           {/* Main Content Area: Responsive padding with safe bottom space for mobile navigation dock */}
           <div className="px-3 sm:px-6 md:px-8 lg:px-12 py-4 sm:py-6 md:py-8 pb-24 md:pb-8 flex-1 flex flex-col min-h-0 w-full max-w-full">
             <div className="w-full flex-1 flex flex-col min-h-0 max-w-7xl mx-auto">
+              {isGuest && <GuestBanner />}
               <AnimatePresence>
                 <motion.div
                   key={activeView}
