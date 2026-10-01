@@ -2,8 +2,8 @@
 
 Status mapping (governor JSON -> Postgres):
   PENDING -> OPEN, WON -> WON, LOST -> LOST, VOID/EXPIRED -> VOID.
-Paper bets (is_paper=True) are skipped on import — paper has its own
-balance and must never pollute the real ledger.
+Paper bets import WITH is_paper=True: the paper bank is a parallel ledger
+and migrates alongside real funds, never mixed in queries.
 
 Passcodes: only sha256(code) is persisted. Generation returns the clear
 code once; verification hashes the presented code and compares.
@@ -44,9 +44,11 @@ def map_status(governor_status: str) -> str:
 
 
 def bet_to_row(bet: dict, user_id: str) -> Optional[dict]:
-    """Map a governor BetRecord dict to a bets-table row. None = skip."""
-    if bet.get("is_paper"):
-        return None
+    """Map a governor BetRecord dict to a bets-table row.
+
+    Paper bets are imported WITH is_paper=True (never skipped): the paper
+    bank is a parallel ledger, not second-class data.
+    """
     settled = map_status(bet.get("status", "")) in ("WON", "LOST")
     return {
         "user_id": user_id,
@@ -62,6 +64,7 @@ def bet_to_row(bet: dict, user_id: str) -> Optional[dict]:
         "placed_at": bet.get("timestamp"),
         "settled_at": bet.get("timestamp") if settled else None,
         "returned": float(bet["actual_return"]) if bet.get("actual_return") is not None else None,
+        "is_paper": bool(bet.get("is_paper", False)),
     }
 
 
@@ -74,7 +77,7 @@ class LedgerRepository:
 
     # ── bets ──────────────────────────────────────────────────────────
     def upsert_bet(self, row: dict) -> dict:
-        res = self._c.table("bets").upsert(row, on_conflict="user_id,ref").execute()
+        res = self._c.table("bets").upsert(row, on_conflict="user_id,ref,is_paper").execute()
         return (res.data or [{}])[0]
 
     def open_bets(self, user_id: str) -> list[dict]:
@@ -94,23 +97,29 @@ class LedgerRepository:
         }).execute()
         return (res.data or [{}])[0]
 
-    def settled_pnl(self, user_id: str) -> float:
-        """SUM(profit) over the user's settlements — reconciliation anchor."""
+    def settled_pnl(self, user_id: str, paper: bool = False) -> float:
+        """SUM(profit) over the user's settlements — reconciliation anchor.
+        Real and paper ledgers reconciled separately (paper=True)."""
         res = (
             self._c.table("settlements")
-            .select("profit, bets!inner(user_id)")
+            .select("profit, bets!inner(user_id,is_paper)")
             .eq("bets.user_id", user_id)
+            .eq("bets.is_paper", paper)
             .execute()
         )
         return round(sum(float(r.get("profit") or 0) for r in (res.data or [])), 2)
 
     # ── snapshots / epochs ────────────────────────────────────────────
     def record_snapshot(self, user_id: str, balance: float, peak: float,
-                        total_pnl: float, drawdown_pct: float) -> dict:
-        res = self._c.table("bankroll_snapshots").insert({
+                        total_pnl: float, drawdown_pct: float,
+                        paper_balance: float | None = None) -> dict:
+        row: dict = {
             "user_id": user_id, "balance": balance, "peak": peak,
             "total_pnl": total_pnl, "drawdown_pct": drawdown_pct,
-        }).execute()
+        }
+        if paper_balance is not None:
+            row["paper_balance"] = paper_balance
+        res = self._c.table("bankroll_snapshots").insert(row).execute()
         return (res.data or [{}])[0]
 
     def start_epoch(self, user_id: str, opening_balance: float, note: str = "") -> dict:

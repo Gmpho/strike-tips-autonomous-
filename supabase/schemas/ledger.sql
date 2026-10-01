@@ -28,6 +28,7 @@ create table if not exists public.bankroll_snapshots (
   peak numeric(12, 2) not null,
   total_pnl numeric(12, 2) not null,
   drawdown_pct numeric(6, 3) not null,
+  paper_balance numeric(12, 2),
   recorded_at timestamptz not null default now()
 );
 
@@ -47,7 +48,9 @@ create table if not exists public.bets (
   placed_at timestamptz not null default now(),
   settled_at timestamptz,
   returned numeric(10, 2),
-  unique (user_id, ref)
+  -- paper and real share the ref namespace; uniqueness covers the flag.
+  is_paper boolean not null default false,
+  unique (user_id, ref, is_paper)
 );
 
 create table if not exists public.settlements (

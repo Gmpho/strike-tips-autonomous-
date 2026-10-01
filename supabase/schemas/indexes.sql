@@ -11,6 +11,9 @@ create index if not exists bets_user_idx on public.bets (user_id);
 create index if not exists bets_open_idx on public.bets (user_id)
   where status = 'OPEN';
 
+create index if not exists bets_paper_idx on public.bets (user_id)
+  where is_paper = true;
+
 create index if not exists settlements_bet_idx on public.settlements (bet_id);
 
 create index if not exists exotics_user_idx on public.exotics (user_id);

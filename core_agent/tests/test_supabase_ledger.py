@@ -120,8 +120,20 @@ def test_status_map(gov, pg):
     assert map_status(gov) == pg
 
 
-def test_bet_to_row_skips_paper():
-    assert bet_to_row({"is_paper": True, "bet_id": "x"}, "u") is None
+def test_bet_to_row_keeps_paper_flagged():
+    row = bet_to_row({"bet_id": "P1", "track": "vaal", "race_number": 3,
+                      "horse": "HP", "odds": 5.0, "stake": 10.0,
+                      "status": "PENDING", "is_paper": True,
+                      "timestamp": "2026-10-01T10:00:00"}, "u-1")
+    assert row["is_paper"] is True
+    assert row["status"] == "OPEN"
+
+
+def test_bet_to_row_real_defaults_not_paper():
+    row = bet_to_row({"bet_id": "A1", "track": "vaal", "race_number": 1,
+                      "horse": "H1", "odds": 4.5, "stake": 100.0,
+                      "status": "WON", "timestamp": "2026-10-01T09:00:00"}, "u-1")
+    assert row["is_paper"] is False
 
 
 def test_bet_to_row_settled_gets_settled_at():
@@ -199,12 +211,13 @@ def test_expected_totals_exclude_paper(tmp_path):
     d = _write_source(tmp_path)
     state, bets = import_ledger.load_jsons(d)
     exp = import_ledger.expected_totals(state, bets)
-    assert exp["bet_rows"] == 2          # paper excluded
+    assert exp["bet_rows"] == 2          # real only
+    assert exp["paper_rows"] == 1
     assert exp["settled_rows"] == 2
-    assert exp["settled_pnl"] == 300.00  # 350 - 50 (paper 40 excluded)
+    assert exp["settled_pnl"] == 300.00  # 350 - 50, real only
+    assert exp["settled_paper_pnl"] == 40.00
     assert exp["balance"] == 3799.56
     assert exp["status_census"] == {"WON": 1, "LOST": 1}
-    assert exp["paper_skipped"] == 1
 
 
 def test_dry_run_writes_nothing(tmp_path):

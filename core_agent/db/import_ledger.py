@@ -15,8 +15,9 @@ Safety:
   must match the JSON source. Mismatch -> non-zero exit and a loud log line
   (re-run is safe; investigate before proceeding to dual-write).
 
-Paper bets (is_paper=True) are skipped: paper has its own balance and must
-never pollute the real ledger.
+Paper bets import alongside real ones (is_paper=True): the paper bank
+(R13k+ virtual) is a parallel ledger and migrates too — queries separate
+them, the import never mixes them.
 """
 from __future__ import annotations
 
@@ -49,7 +50,9 @@ def expected_totals(state: dict, bets: list[dict]) -> dict:
     from core_agent.db.repository import map_status
 
     real = [b for b in bets if not b.get("is_paper")]
+    paper = [b for b in bets if b.get("is_paper")]
     settled = [b for b in real if map_status(b.get("status", "")) in ("WON", "LOST")]
+    settled_paper = [b for b in paper if map_status(b.get("status", "")) in ("WON", "LOST")]
     # Status census: production history mixes settled + PENDING opens +
     # VOID/EXPIRED (HUD TOTAL BETS = len(bet_history.json), i.e. everything
     # including paper). The gate keys on settled P&L; counts are reported
@@ -63,13 +66,15 @@ def expected_totals(state: dict, bets: list[dict]) -> dict:
         raise SystemExit(f"insane source totals: balance={balance} pnl={pnl}")
     return {
         "bet_rows": len(real),
+        "paper_rows": len(paper),
         "settled_rows": len(settled),
-        "status_census": census,
-        "paper_skipped": len(bets) - len(real),
         "settled_pnl": pnl,
+        "settled_paper_pnl": round(sum(float(b.get("profit_loss") or 0) for b in settled_paper), 2),
+        "status_census": census,
         "balance": balance,
         "peak": float(state.get("peak_bankroll", balance)),
         "total_pnl": float(state.get("total_profit_loss", 0)),
+        "paper_balance": float(state.get("paper_balance", 0)),
     }
 
 
@@ -79,10 +84,12 @@ def run(user_id: str, data_dir: str, live: bool) -> int:
 
     state, bets = load_jsons(data_dir)
     exp = expected_totals(state, bets)
-    print(f"[dry-run={not live}] source: {exp['bet_rows']} bets "
-          f"({exp['settled_rows']} settled, census={exp['status_census']}, "
-          f"paper skipped={exp['paper_skipped']}), settled P&L R{exp['settled_pnl']:.2f}, "
-          f"balance R{exp['balance']:.2f}, peak R{exp['peak']:.2f}")
+    print(f"[dry-run={not live}] source: {exp['bet_rows']} real bets "
+          f"({exp['settled_rows']} settled, census={exp['status_census']}) + "
+          f"{exp['paper_rows']} paper (P&L R{exp['settled_paper_pnl']:.2f}), "
+          f"settled P&L R{exp['settled_pnl']:.2f}, "
+          f"balance R{exp['balance']:.2f}, peak R{exp['peak']:.2f}, "
+          f"paper bank R{exp['paper_balance']:.2f}")
     if not live:
         print("dry run complete — nothing written. Re-run with --live to import.")
         return 0
@@ -98,8 +105,7 @@ def run(user_id: str, data_dir: str, live: bool) -> int:
     # Settlements for settled bets (idempotent enough: re-runs keyed off
     # bet rows; duplicates avoided by checking existing count first).
     settled_src = [b for b in bets
-                   if not b.get("is_paper")
-                   and map_status(b.get("status", "")) in ("WON", "LOST")]
+                   if map_status(b.get("status", "")) in ("WON", "LOST")]
     for b in settled_src:
         bid = id_by_ref.get(str(b.get("bet_id", "")))
         if not bid:
@@ -107,16 +113,20 @@ def run(user_id: str, data_dir: str, live: bool) -> int:
         result = "WON" if str(b.get("status", "")).upper() == "WON" else "LOST"
         repo.record_settlement(bid, result, round(float(b.get("profit_loss") or 0), 2), source="import")
 
-    repo.record_snapshot(user_id, exp["balance"], exp["peak"], exp["total_pnl"], 0.0)
+    repo.record_snapshot(user_id, exp["balance"], exp["peak"], exp["total_pnl"], 0.0,
+                         paper_balance=exp["paper_balance"])
 
-    # ── reconciliation gate ──
+    # ── reconciliation gate (real + paper ledgers separately) ──
     db_pnl = repo.settled_pnl(user_id)
+    db_paper = repo.settled_pnl(user_id, paper=True)
     ok = abs(db_pnl - exp["settled_pnl"]) < 0.01
-    print(f"reconcile: source P&L R{exp['settled_pnl']:.2f} vs DB R{db_pnl:.2f} -> {'MATCH' if ok else 'MISMATCH'}")
-    if not ok:
+    ok_paper = abs(db_paper - exp["settled_paper_pnl"]) < 0.01
+    print(f"reconcile real: source R{exp['settled_pnl']:.2f} vs DB R{db_pnl:.2f} -> {'MATCH' if ok else 'MISMATCH'}")
+    print(f"reconcile paper: source R{exp['settled_paper_pnl']:.2f} vs DB R{db_paper:.2f} -> {'MATCH' if ok_paper else 'MISMATCH'}")
+    if not (ok and ok_paper):
         logger.error("RECONCILIATION FAILED — investigate before dual-write. Re-runs are idempotent.")
         return 2
-    print(f"import complete: {len(rows)} bet rows + snapshot. Reconciliation MATCH.")
+    print(f"import complete: {len(rows)} bet rows + snapshot. Reconciliation MATCH (real + paper).")
     return 0
 
 
