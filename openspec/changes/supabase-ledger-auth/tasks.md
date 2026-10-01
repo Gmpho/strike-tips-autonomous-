@@ -3,8 +3,8 @@
 ## 1. Spec + schema
 
 - [x] 1.1 Scaffold `openspec/changes/supabase-ledger-auth/` (proposal/design/spec/tasks) and verify `openspec validate supabase-ledger-auth` passes
-- [ ] 1.2 Write declarative schema `supabase/schemas/*.sql` + `supabase/config.toml` (WRITTEN, awaiting live lint); verify `supabase db lint` (or advisors) passes on live project once keys land
-- [ ] 1.3 Generate migration via `supabase db pull` after live apply; verify `supabase migration list` shows it
+- [x] 1.2 Schema applied live (3 migrations: create_ledger_tables, enable_ledger_rls, add_ledger_indexes); advisors run — 0 issues on our objects
+- [x] 1.3 Migration history captured via MCP (versions 20261001193638/53/51 visible in list)
 
 ## 2. Repository layer (new files only)
 
