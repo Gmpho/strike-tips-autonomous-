@@ -3,6 +3,8 @@ import { useEffect, useState, Suspense } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
 import { usePWA } from './hooks/usePWA';
+import { useSupabaseSession } from './hooks/useSupabaseSession';
+import { LandingPage } from './components/landing/LandingPage';
 import { UpdateToast } from './components/UpdateToast';
 import { apiFetch } from './lib/api-fetch';
 import type { RaceEvent, Runner } from './types';
@@ -105,6 +107,9 @@ export const App: React.FC = () => {
   const state = useHUD();
   useTelegram();
   const { hasUpdate, updateSW } = usePWA();
+  // Google-auth gate (Oct-2026): logged-out users see the landing page.
+  // Inactive when Supabase keys are absent, so existing deploys keep working.
+  const { configured: authOn, loading: authLoading, session } = useSupabaseSession();
 
   // Load backend configuration at startup to sync sound prompts state to localStorage
   useEffect(() => {
@@ -137,6 +142,10 @@ export const App: React.FC = () => {
     navigate(view);
     setIsMobileMenuOpen(false);
   };
+
+  if (authOn && !authLoading && !session) {
+    return <LandingPage />;
+  }
 
   const renderView = () => {
     const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);

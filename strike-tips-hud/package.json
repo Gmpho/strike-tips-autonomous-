@@ -13,6 +13,7 @@
     "@mlc-ai/web-llm": "^0.2.84",
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
+    "@supabase/supabase-js": "^2.117.2",
     "apexcharts": "^7.3.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.0.0",
