@@ -223,3 +223,33 @@ def test_expected_totals_exclude_paper(tmp_path):
 def test_dry_run_writes_nothing(tmp_path):
     d = _write_source(tmp_path)
     assert import_ledger.run("u-1", d, live=False) == 0
+
+
+# ── racing-hours quiet gate (Oct-2026 cost work) ────────────────────────
+
+@pytest.mark.parametrize("hour,quiet", [
+    (0, True), (4, True), (5, False), (12, False),
+    (21, False), (22, False), (23, True),
+])
+def test_quiet_hours(hour, quiet):
+    from core_agent.core.racing_hours import in_quiet_hours
+    assert in_quiet_hours(hour) is quiet
+
+
+def test_open_bets_projects_columns():
+    """Egress diet: list reads must not SELECT *."""
+    seen = {}
+
+    class ColTable(FakeTable):
+        def select(self, *a, **k):
+            seen["cols"] = a[0] if a else ""
+            return super().select(*a, **k)
+
+    class ColClient(FakeClient):
+        def table(self, name):
+            return ColTable(self.store, name)
+
+    repo = LedgerRepository(ColClient())
+    repo.open_bets("u-1")
+    assert seen["cols"] != "*"
+    assert "is_paper" in seen["cols"]

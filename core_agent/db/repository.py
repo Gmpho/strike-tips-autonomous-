@@ -76,6 +76,11 @@ class LedgerRepository:
         self._c = client
 
     # ── bets ──────────────────────────────────────────────────────────
+    # Egress diet: list reads project only the columns settlement/display
+    # need. Full rows are fetched per-bet when required, never in bulk.
+    OPEN_BET_COLS = ("id,ref,track,race_number,horse,odds,stake,edge,"
+                     "confidence,status,placed_at,is_paper")
+
     def upsert_bet(self, row: dict) -> dict:
         res = self._c.table("bets").upsert(row, on_conflict="user_id,ref,is_paper").execute()
         return (res.data or [{}])[0]
@@ -83,7 +88,7 @@ class LedgerRepository:
     def open_bets(self, user_id: str) -> list[dict]:
         res = (
             self._c.table("bets")
-            .select("*")
+            .select(self.OPEN_BET_COLS)
             .eq("user_id", user_id)
             .eq("status", "OPEN")
             .order("placed_at")

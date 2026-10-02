@@ -559,6 +559,16 @@ async def run_scan(chat_id: Optional[int] = None):
 )
 async def run_odds_monitor():
     """Scheduled odds sync — one cycle every 5 min (05:00-23:00 SAST effective)."""
+    # Cost guard (Oct-2026): no SA racing runs 23:00-05:00 SAST, so night
+    # cycles are pure credit burn (container start + full init for zero
+    # meetings). Early exit before touching the monitor. Saves ~96 runs/day.
+    try:
+        from core_agent.core.racing_hours import in_quiet_hours, sast_hour
+        if in_quiet_hours(sast_hour()):
+            logger.info("Odds monitor quiet-hours skip")
+            return
+    except Exception as _e:
+        logger.debug("quiet-hours check skipped: %r", _e)
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
