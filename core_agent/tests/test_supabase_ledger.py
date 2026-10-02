@@ -236,6 +236,18 @@ def test_quiet_hours(hour, quiet):
     assert in_quiet_hours(hour) is quiet
 
 
+@pytest.mark.parametrize("snap,expected", [
+    (None, False),
+    ({}, False),
+    ({"events": {}}, False),
+    ({"events": {"a": {}}}, True),
+    ("garbage", False),
+])
+def test_has_meetings_today(snap, expected):
+    from core_agent.core.racing_hours import has_meetings_today
+    assert has_meetings_today(snap) is expected
+
+
 def test_open_bets_projects_columns():
     """Egress diet: list reads must not SELECT *."""
     seen = {}

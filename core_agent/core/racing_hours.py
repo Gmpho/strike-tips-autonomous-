@@ -18,3 +18,15 @@ def sast_hour() -> int:
     from datetime import datetime
     from zoneinfo import ZoneInfo
     return datetime.now(ZoneInfo("Africa/Johannesburg")).hour
+
+
+def has_meetings_today(snapshot: dict | None) -> bool:
+    """True when the snapshot carries at least one meeting.
+
+    Pure function over the snapshot dict so the dark-day skip is testable
+    without touching the volume. None/empty/missing events = dark day.
+    """
+    if not isinstance(snapshot, dict):
+        return False
+    events = snapshot.get("events")
+    return bool(events)

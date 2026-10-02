@@ -569,6 +569,18 @@ async def run_odds_monitor():
             return
     except Exception as _e:
         logger.debug("quiet-hours check skipped: %r", _e)
+    # Meeting-aware skip (Oct-2026 cost work): dark days have no SA card,
+    # so a full monitor cycle is pure burn. One cheap volume read decides.
+    # Fail-OPEN: any hiccup reading the snapshot runs the cycle anyway —
+    # a missed meeting costs more than a wasted run.
+    try:
+        from core_agent.core.snapshot_cache import get_snapshot as _get_snap
+        from core_agent.core.racing_hours import has_meetings_today as _has_meet
+        if not _has_meet(_get_snap()):
+            logger.info("Odds monitor dark-day skip (no meetings in snapshot)")
+            return
+    except Exception as _e:
+        logger.debug("meeting check failed, running anyway: %r", _e)
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
