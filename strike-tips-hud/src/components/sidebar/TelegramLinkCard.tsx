@@ -40,12 +40,16 @@ export const TelegramLinkCard: React.FC = () => {
     if (!s) { setState({ phase: 'signin' }); return; }
     try {
       const res = await authed('/api/telegram/link-status');
+      if (res.status === 401 || res.status === 503) throw new Error(`HTTP ${res.status}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
       setState(body.linked
         ? { phase: 'linked', username: body.username }
         : { phase: 'unlinked', code: null });
     } catch {
+      // Signed in but backend unreachable/misconfigured — say so plainly
+      // instead of offering a passcode that can't work.
+      setMsg('Signed in, but the link service is unreachable. Try again in a minute.');
       setState({ phase: 'unlinked', code: null });
     }
   }, []);
