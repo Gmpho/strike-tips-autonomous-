@@ -133,7 +133,10 @@ html.light .landing-root .hover\:text-white:hover { color: #1a1526 !important; }
 html.light .landing-root .hover\:text-white\/70:hover { color: rgba(26,21,38,0.7) !important; }
 html.light .landing-root .bg-white\/\[0\.04\] { background-color: rgba(26,21,38,0.04) !important; }
 html.light .landing-root .bg-\[#121016\]\/80 { background-color: rgba(244,242,250,0.85) !important; }
-html.light .landing-root .text-purple-300 { color: #7c3aed !important; }
+/* Landing nav glow — reads on dark and light, hover only (no neon flood) */
+.landing-root .nav-glow { transition: text-shadow .25s ease, color .25s ease; }
+.landing-root .nav-glow:hover { color: #c4b5fd !important; text-shadow: 0 0 14px rgba(168,85,247,.65); }
+html.light .landing-root .nav-glow:hover { color: #6d28d9 !important; text-shadow: 0 0 12px rgba(109,40,217,.45); }
 
 /* ── CSS Variables fallback (browsers without var() support) ── */
 html, body {

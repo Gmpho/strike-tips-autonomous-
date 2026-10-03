@@ -42,18 +42,18 @@ export const LandingPage: React.FC = () => {
           <span className="text-2xl">🏇</span> STRIKE&nbsp;TIPS
         </a>
         <nav className="hidden md:flex items-center gap-7 text-sm text-white/80">
-          <a href="/" className="hover:text-white transition-colors">Home</a>
+          <a href="/" className="nav-glow hover:text-white transition-colors">Home</a>
           {NAV.slice(1).map((n) => (
-            <a key={n.label} href={n.href} onClick={(e) => scrollTo(e, n.href)} className="hover:text-white transition-colors">
+            <a key={n.label} href={n.href} onClick={(e) => scrollTo(e, n.href)} className="nav-glow hover:text-white transition-colors">
               {n.label}
             </a>
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-3">
-          <a href="#about" onClick={(e) => scrollTo(e, '#about')} className="hidden md:inline text-sm text-white/80 hover:text-white transition-colors">
+          <a href="#about" onClick={(e) => scrollTo(e, '#about')} className="nav-glow hidden md:inline text-sm text-white/80 hover:text-white transition-colors">
             About
           </a>
-          <a href="/support" className="hidden md:inline text-sm text-white/80 hover:text-white transition-colors">
+          <a href="/support" className="nav-glow hidden md:inline text-sm text-white/80 hover:text-white transition-colors">
             Support
           </a>
           <ThemeToggle />
