@@ -105,6 +105,14 @@ async def settle_bet(request: BetSettleRequest):
     except Exception as e:
         logger.error(f"Failed to settle bet: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to settle bet: {e}")
+    # Oct-2026: the governor returns success=False when the bet isn't found
+    # or isn't PENDING. Report it honestly — a silent success:true with
+    # settled:false once left a dead jackpot ticket open for a day.
+    if isinstance(result, dict) and result.get("settled") is False:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Bet {request.bet_id} not settled: not found or not PENDING",
+        )
     return {"success": True, "result": result}
 
 
