@@ -198,6 +198,17 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     seen: set = set()
     provider = "none"
 
+    def _emit(provider_name: str, count: int) -> None:
+        # Live Ops visibility (Oct-2026): provider + hit count ONLY.
+        # Query text is NEVER emitted — chats stay private, telemetry
+        # shows activity, not content.
+        try:
+            from core_agent.core.telemetry import emit
+            emit("search", f"🌐 {provider_name}: {count} results",
+                 badge="WEB SEARCH")
+        except Exception:
+            pass
+
     # 1. Tavily — best quality, no scraping needed.
     tavily_items = await _tavily_search(query, limit)
     for item in tavily_items:
@@ -208,6 +219,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
         provider = "tavily"
         logger.info(f"[SEARCH] Tavily: {len(results)} results")
         _cache[cache_key] = (_now.time(), results, provider)
+        _emit("Tavily", len(results))
         return {"results": results, "provider": provider}
 
     # 2. Exa — semantic fallback.
@@ -220,6 +232,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
         provider = "exa"
         logger.info(f"[SEARCH] Exa: {len(results)} results")
         _cache[cache_key] = (_now.time(), results, provider)
+        _emit("Exa", len(results))
         return {"results": results, "provider": provider}
     ddgs_items = []
     
@@ -309,6 +322,8 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
 
     if not results:
         logger.info(f"[SEARCH] Empty for '{query[:60]}' (no results published yet)")
+
+    _emit(provider if provider != "none" else "DDGS/SA-fallback", len(results))
 
     return {
         "query": query,
