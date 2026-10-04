@@ -140,11 +140,8 @@ npm run dev
 # Production build
 npm run build
 
-# Deploy to Vercel (preview)
-vercel
-
-# Deploy to Vercel (production, fresh build)
-vercel deploy --prod -y --force
+# Deploy to Pages (production)
+npx wrangler pages deploy dist --project-name strike-tips-hud
 ```
 
 ---
@@ -292,7 +289,7 @@ cloudflare_mcp_edge/              # Cloudflare Worker (always-free edge)
 ├── package.json                  # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                # D1 + KV bindings
 
-strike-tips-hud/                  # Vite + React frontend (Vercel)
+strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
 ├── src/
 │   ├── app/                      # UI components
 │   └── lib/                      # API utilities
@@ -329,10 +326,10 @@ Cloudflare handles all compute-light operations at zero cost:
 
 ### OKF Knowledge Bundle
 
-12 curated markdown files about SA horse racing, compiled to TypeScript at build time:
-- 7 tracks with real data (Kenilworth 1881, Durbanville 1922, etc.)
+15 curated markdown files about SA horse racing, compiled to TypeScript at build time:
+- 7 tracks with real data + punter rules (Kenilworth 1881, Durbanville 1922, etc.)
 - Going/conditions guide
-- Value betting + Kelly Criterion strategies
+- Value betting + Kelly Criterion strategies + exotics textbook (pools, construction, Friday-night case study)
 - Search ranks by keyword match (10× title/tags, 5× body, + per-occurrence)
 
 ---
@@ -563,7 +560,7 @@ pytest core_agent/tests/test_analyzer.py -v
 7. **OKF Compiles at Build Time**: Run `node scripts/build-knowledge.js` before `wrangler deploy` (auto-runs via `predeploy`)
 8. **MCP Stateless Transport**: `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` — fresh transport per request, required for Workers
 9. **Middleware Routes API**: `strike-tips-hud/middleware.ts` decides Cloudflare vs Modal per path — Cloudflare for knowledge/odds/form, Modal for AI/analysis
-10. **Fresh Vercel Builds**: Use `vercel deploy --prod -y --force` to bypass build cache
+10. **Fresh Pages Deploys**: Local `npm run build` reads `strike-tips-hud/.env`, then `npx wrangler pages deploy dist --project-name strike-tips-hud` — Vercel URL kept paused as fallback only
 
 ---
 

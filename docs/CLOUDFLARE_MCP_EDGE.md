@@ -6,14 +6,14 @@
 
 ## Overview
 
-The Cloudflare MCP Edge layer sits between the Vercel HUD frontend and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
+The Cloudflare MCP Edge layer sits between the Pages HUD frontend and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
 
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Vercel HUD (Vite + React)                     │
-│                  https://strike-tips-hud.vercel.app                   │
+│                        Pages HUD (Vite + React)                      │
+│                  https://strike-tips-hud.pages.dev                    │
 │                          middleware.ts                                │
 │              Routes /api/* /v1/* /mcp based on path                   │
 └─────────────────┬───────────────────────────────────┬────────────────┘
@@ -276,22 +276,19 @@ npx wrangler secret put TAVILY_API_KEY    # free tier 1000/mo — edge search pr
 npx wrangler secret put EXA_API_KEY       # free tier ~1400/mo — semantic fallback
 ```
 
-### Vercel HUD
+### Pages HUD
 
 ```bash
 cd strike-tips-hud
 
-# Preview deploy
-vercel
+# Production build
+npm run build
 
-# Production deploy
-vercel --prod
-
-# Force fresh build (no cache)
-vercel deploy --prod -y --force
+# Deploy to Pages (production)
+npx wrangler pages deploy dist --project-name strike-tips-hud
 ```
 
-A fresh build requires `--force` flag to skip Vercel's build cache.
+Local builds read `strike-tips-hud/.env` (`VITE_*` baked at build time).
 
 ---
 
