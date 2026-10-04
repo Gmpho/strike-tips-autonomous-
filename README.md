@@ -24,6 +24,8 @@ A modular, AI-powered betting assistant that identifies value bets in South Afri
 ![TWA](https://img.shields.io/badge/TWA-3DDC84?logo=android&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=white)
+![OKF](https://img.shields.io/badge/OKF-15_entries-8B5CF6)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-FF4B4B)
 ![Honcho](https://img.shields.io/badge/Honcho-Memory-8B5CF6)
 ![Playwright](https://img.shields.io/badge/Playwright-2EAD33?logo=playwright&logoColor=white)
