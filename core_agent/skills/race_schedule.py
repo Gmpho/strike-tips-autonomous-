@@ -136,6 +136,9 @@ class RaceScheduleService:
     so discovery never depends on a single upstream.
     """
 
+    # DEAD (Oct-2026): this endpoint returns an HTML SPA shell (200, not JSON),
+    # so the old fetch always threw and _fetch_international_schedule silently
+    # returned {}. Kept as documentation — do NOT revive without verifying JSON.
     TAB_SCHEDULE_URL = "https://www.tab.co.za/api/racing/schedule?date={date}"
 
     def __init__(self):
@@ -236,35 +239,55 @@ class RaceScheduleService:
         return discovered
 
     async def _fetch_international_schedule(self, date_str: str) -> Dict[str, Dict]:
-        """Fetch live international racing schedule from TAB API"""
+        """International meetings from Betway GetDaily (one cheap call, no
+        event-detail fan-out). These are BETTABLE tracks by construction —
+        Betway only lists priced meetings. Logs loudly on failure (the old
+        TAB-URL path failed silently for months)."""
         try:
             from core_agent.core.http_client import get_async_client
 
-            client = get_async_client(timeout=10)
-            url = self.TAB_SCHEDULE_URL.format(date=date_str.replace("-", ""))
-            response = await client.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                return self._parse_schedule_response(data)
+            client = get_async_client(
+                timeout=15.0, resolve_hosts={"www.betway.co.za"})
+            url = (
+                "https://www.betway.co.za/api/TrackRacing/GetDaily"
+                "?sportId=horse-racing&period=Today&isVirtual=false"
+                "&countryCode=ZA&timeZoneOffset=2"
+            )
+            headers = {
+                "Referer": "https://www.betway.co.za/sport/horse-racing",
+                "Origin": "https://www.betway.co.za",
+            }
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                logger.warning(
+                    "[SCHEDULE] Betway GetDaily HTTP %s — international list empty",
+                    response.status_code)
+                return {}
+            data = response.json()
+            if not isinstance(data, dict) or "regions" not in data:
+                logger.warning("[SCHEDULE] Betway GetDaily shape changed — international list empty")
+                return {}
+            tracks: Dict[str, Dict] = {}
+            for reg in data.get("regions", []):
+                region = reg.get("name", "")
+                if "South Africa" in region:
+                    continue
+                for e in reg.get("sportEvents", []):
+                    league = (e.get("league") or "").strip()
+                    if not league or e.get("isFinished", True):
+                        continue
+                    key = league.lower().replace(" ", "_")
+                    tracks.setdefault(key, {
+                        "region": region,
+                        "code": league[:3].upper(),
+                        "location": region,
+                    })
+            if tracks:
+                logger.info("[SCHEDULE] Betway international: %d meetings", len(tracks))
+            return tracks
         except Exception as e:
-            logger.debug(f"International schedule fetch failed: {e}")
-
-        # Fallback: return empty (SA tracks still included)
-        return {}
-
-    def _parse_schedule_response(self, data: dict) -> Dict[str, Dict]:
-        """Parse TAB API schedule response into track dict"""
-        tracks = {}
-        for meeting in data.get("meetings", []):
-            venue = meeting.get("venue", "").lower().replace(" ", "_")
-            country = meeting.get("country", "International")
-            if venue and country != "South Africa":
-                tracks[venue] = {
-                    "region": country,
-                    "code": meeting.get("code", venue[:3].upper()),
-                    "location": meeting.get("location", country),
-                }
-        return tracks
+            logger.warning("[SCHEDULE] international fetch failed LOUDLY: %r", e)
+            return {}
 
     def get_sa_tracks(self) -> List[str]:
         """Return list of SA track names"""

@@ -87,6 +87,72 @@ def _text(el) -> str:
     return el.get_all_text(strip=True) if el else ""
 
 
+# ATR course shorthand → canonical track + region. ATR groups its pages by
+# meeting but the course lives in group headers, not row cells — parsers that
+# read cells alone produce "Unknown Venue" (Oct-2026: 439/574 movers). SA
+# codes follow Computaform (G/N Greyville turf/poly, E/F Fairview poly/turf…);
+# UK/IRL use ATR 3-letter codes. FP maps to defunct (Kimberley closed Jul-2020).
+ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
+    # SA — KwaZulu-Natal
+    "G": {"track": "Greyville", "region": "SA"},
+    "GREYVILLE": {"track": "Greyville", "region": "SA"},
+    "N": {"track": "Greyville Poly", "region": "SA"},
+    "S": {"track": "Scottsville", "region": "SA"},
+    "SCOTTSVILLE": {"track": "Scottsville", "region": "SA"},
+    "P": {"track": "Scottsville Inside", "region": "SA"},
+    # SA — Gauteng
+    "T": {"track": "Turffontein", "region": "SA"},
+    "TURFFONTEIN": {"track": "Turffontein", "region": "SA"},
+    "J": {"track": "Turffontein Inside", "region": "SA"},
+    "B": {"track": "Vaal Classic", "region": "SA"},
+    "V": {"track": "Vaal Turf", "region": "SA"},
+    "VAAL": {"track": "Vaal", "region": "SA"},
+    # SA — Western Cape
+    "K": {"track": "Kenilworth", "region": "SA"},
+    "KENILWORTH": {"track": "Kenilworth", "region": "SA"},
+    "W": {"track": "Kenilworth Winter", "region": "SA"},
+    "D": {"track": "Durbanville", "region": "SA"},
+    "DURBANVILLE": {"track": "Durbanville", "region": "SA"},
+    # SA — Eastern Cape
+    "E": {"track": "Fairview Poly", "region": "SA"},
+    "F": {"track": "Fairview Turf", "region": "SA"},
+    "FAIRVIEW": {"track": "Fairview", "region": "SA"},
+    # Defunct — never resolve to a live track
+    "Y": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    "FLAMINGO": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    "KIMBERLEY": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    # UK — ATR feed regulars
+    "NCS": {"track": "Newcastle", "region": "UK"},
+    "NEWCASTLE": {"track": "Newcastle", "region": "UK"},
+    "SAL": {"track": "Salisbury", "region": "UK"},
+    "SALISBURY": {"track": "Salisbury", "region": "UK"},
+    "STH": {"track": "Southwell", "region": "UK"},
+    "SOUTHWELL": {"track": "Southwell", "region": "UK"},
+    "NTT": {"track": "Nottingham", "region": "UK"},
+    "NOTTINGHAM": {"track": "Nottingham", "region": "UK"},
+    "CLO": {"track": "Clonmel", "region": "Ireland"},
+    "CLONMEL": {"track": "Clonmel", "region": "Ireland"},
+    "BEL": {"track": "Bellewstown", "region": "Ireland"},
+    "BELLEWSTOWN": {"track": "Bellewstown", "region": "Ireland"},
+    "ASC": {"track": "Ascot", "region": "UK"},
+    "CHL": {"track": "Cheltenham", "region": "UK"},
+    "NMK": {"track": "Newmarket", "region": "UK"},
+}
+
+
+def normalize_course(raw: str) -> Dict[str, str]:
+    """ATR header/cell text → {track, region}. Unknown → raw text passthrough
+    (never 'Unknown Venue' — the HUD cross-ref gets last word instead)."""
+    key = (raw or "").strip().upper()
+    if not key:
+        return {"track": "", "region": ""}
+    # Headers look like "Newcastle Results" / "Greyville" / "Ntt 13:23".
+    for token in (key, key.split()[0] if key.split() else ""):
+        if token in ATR_COURSE_MAP:
+            return dict(ATR_COURSE_MAP[token])
+    return {"track": (raw or "").strip(), "region": ""}
+
+
 class AtTheRacesAPI:
     BASE_URL = "https://www.attheraces.com"
 
@@ -454,7 +520,12 @@ class AtTheRacesAPI:
         return None
 
     async def get_market_movers(self) -> List[Dict]:
-        """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov."""
+        """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov.
+
+        Meeting-group aware (Oct-2026): ATR groups tables under meeting headers,
+        so each table inherits its meeting's course; the cell race-string is
+        only a fallback. Previously 439/574 movers parsed empty course.
+        """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/market-movers"), timeout=150)
         except asyncio.TimeoutError:
@@ -466,7 +537,8 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         movers = []
 
-        for table in sel.css("table", adaptive=True):
+        for meeting_title, table in self._iter_meeting_tables(sel):
+            header_course = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:
                 continue
@@ -480,16 +552,25 @@ class AtTheRacesAPI:
                 first_show = _text(cells[3]) if len(cells) > 3 else ""
                 movement = _text(cells[4]) if len(cells) > 4 else ""
 
-                course = time = ""
+                course = time = region = ""
+                if header_course.get("track"):
+                    course, region = header_course["track"], header_course["region"]
                 if race_str:
                     parts = race_str.strip().split()
                     if len(parts) >= 2:
-                        course = parts[0]
+                        if not course:
+                            cell = normalize_course(parts[0])
+                            course, region = cell["track"], cell["region"]
                         time = parts[1]
+                    elif len(parts) == 1 and not time:
+                        maybe_time = re.match(r"^(\d{1,2}:\d{2})$", parts[0])
+                        if maybe_time:
+                            time = maybe_time.group(1)
 
                 movers.append({
                     "horse": horse,
                     "course": course,
+                    "region": region,
                     "time": time,
                     "current_odds": last_price,
                     "first_show": first_show,
@@ -498,8 +579,47 @@ class AtTheRacesAPI:
 
         return movers
 
+    def _iter_meeting_tables(self, sel) -> List[Tuple[str, Any]]:
+        """Yield (meeting_title, table) in document order.
+
+        ATR groups content under meeting containers (same `.push--x-small` /
+        `a.panel-header h2` pattern as results). Falls back to bare tables with
+        an empty title so legacy layouts keep working.
+        """
+        out: List[Tuple[str, Any]] = []
+        try:
+            meetings = sel.css(".push--x-small") or []
+        except Exception:
+            meetings = []
+        seen_tables = set()
+        for meeting in meetings:
+            try:
+                headers = meeting.css("a.panel-header h2", adaptive=True) or []
+            except Exception:
+                headers = []
+            title = _text(headers[0]).replace("Results", "").strip() if headers else ""
+            try:
+                tables = meeting.css("table", adaptive=True) or []
+            except Exception:
+                tables = []
+            for table in tables:
+                seen_tables.add(id(table))
+                out.append((title, table))
+        try:
+            bare = sel.css("table", adaptive=True) or []
+        except Exception:
+            bare = []
+        for table in bare:
+            if id(table) not in seen_tables:
+                out.append(("", table))
+        return out
+
     async def get_predictor(self) -> List[Dict]:
-        """Scrape /predictor for AI predictions (table-based)."""
+        """Scrape /predictor for AI predictions (table-based, meeting-aware).
+
+        Oct-2026: previously scraped zero meeting context — every prediction
+        was courseless. Tables now inherit their meeting header's course/time.
+        """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/predictor"), timeout=150)
         except asyncio.TimeoutError:
@@ -511,7 +631,8 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         predictions = []
 
-        for table in sel.css("table", adaptive=True):
+        for meeting_title, table in self._iter_meeting_tables(sel):
+            header = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:
                 continue
@@ -532,6 +653,8 @@ class AtTheRacesAPI:
                     "horse": horse_name,
                     "raw": horse_raw,
                     "prediction": prediction,
+                    "course": header.get("track", ""),
+                    "region": header.get("region", ""),
                 })
 
         return predictions

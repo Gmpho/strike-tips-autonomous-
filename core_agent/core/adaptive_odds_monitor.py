@@ -1074,6 +1074,12 @@ class AdaptiveOddsMonitor:
                     try:
                         atr_movers = await self.at_races.get_market_movers()
                         if atr_movers:
+                            try:
+                                from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
+                                atr_movers = attach_snapshot_context(
+                                    atr_movers, state.get("events", {}))
+                            except Exception:
+                                pass
                             _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
                     except Exception:
                         pass
@@ -1083,6 +1089,12 @@ class AdaptiveOddsMonitor:
                     try:
                         atr_predictions = await self.at_races.get_predictor()
                         if atr_predictions:
+                            try:
+                                from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
+                                atr_predictions = attach_snapshot_context(
+                                    atr_predictions, state.get("events", {}))
+                            except Exception:
+                                pass
                             _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
                     except Exception:
                         pass
@@ -1231,6 +1243,12 @@ class AdaptiveOddsMonitor:
                         try:
                             atr_movers = await self.at_races.get_market_movers()
                             if atr_movers:
+                                try:
+                                    from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
+                                    atr_movers = attach_snapshot_context(
+                                        atr_movers, state.get("events", {}))
+                                except Exception:
+                                    pass
                                 _atomic_write_json(ATR_MOVERS_PATH, {"movers": atr_movers, "timestamp": datetime.now().isoformat()})
                         except Exception as e:
                             logger.debug("ATR movers fetch skipped: %s", e)
@@ -1241,6 +1259,12 @@ class AdaptiveOddsMonitor:
                         try:
                             atr_predictions = await self.at_races.get_predictor()
                             if atr_predictions:
+                                try:
+                                    from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
+                                    atr_predictions = attach_snapshot_context(
+                                        atr_predictions, state.get("events", {}))
+                                except Exception:
+                                    pass
                                 _atomic_write_json(ATR_PREDICTOR_PATH, {"predictions": atr_predictions, "timestamp": datetime.now().isoformat()})
                         except Exception as e:
                             logger.debug("ATR predictor fetch skipped: %s", e)

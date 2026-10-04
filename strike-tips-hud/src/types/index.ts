@@ -132,12 +132,18 @@ export interface MarketMover {
   current_odds: string;
   first_show: string;
   movement: string;
+  /** ATR meeting region (Oct-2026 scraper repair). Absent on old snapshots. */
+  region?: string;
 }
 
 export interface Predictor {
   horse: string;
   raw: string;
   prediction: string;
+  /** ATR meeting context (Oct-2026 scraper repair). Absent on old snapshots. */
+  course?: string;
+  region?: string;
+  time?: string;
 }
 
 export interface NewsItem {
