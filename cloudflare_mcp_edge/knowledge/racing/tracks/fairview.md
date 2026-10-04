@@ -37,7 +37,19 @@ timestamp: 2026-06-28T00:00:00Z
 - Low numbers and/or early speed may count as advantage, especially over 1000m
 - Near bend leading into home straight has a slight camber to assist horses
 
-## History
+## Draw Bias (Poly)
+
+- Low numbers preferred up to 1600m (Computaform course data).
+- All races clockwise round turn; 400m run-in rewards handy/forward horses.
+
+## Punter rules
+
+- Turf sprints: forgive high-drawn runners nothing — the downhill straight is
+  the strongest high-draw bias in SA. Flip the logic on poly (low draws).
+- Turf drains slowly: after rain, treat Soft/Heavy form as king and distrust
+  firm-ground speed figures.
+- Twilight Friday cards run year-round — short fields, favourite-heavy;
+  exotics pay less, play straight value instead.
 
 - Racing in PE dates to 1857 (Port Elizabeth Turf Club formed)
 - Jockey Club of South Africa founded in PE in 1882

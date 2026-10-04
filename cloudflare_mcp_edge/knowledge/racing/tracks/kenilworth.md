@@ -42,3 +42,15 @@ Cape Town's winter (Jun-Aug) brings rain — going frequently Soft to Heavy. Sum
 - **Majorca Stakes** (Grade 1, 1600m, Jan)
 
 Most Grade 1 action at Kenilworth takes place in December and January (Summer Season).
+
+## Punter rules
+
+- Straight: inside preference (both summer and winter courses) — but wind
+  changes everything: strong wind blows the field outside and causes
+  dangerous scrimmaging. Check race-day wind before trusting low draws.
+- Round the bend: inside edge in sprints, roughly fair at 1400m+.
+- Winter rain (Jun–Aug): Soft/Heavy specialists only; summer Good-to-firm
+  form lines often don't transfer. Keep separate winter/summer ratings.
+- Summer season (Dec–Jan) hosts the Sun Met, King's Plate, Guineas — deepest
+  fields, sharpest money, thinnest edges. Winter midweek cards are the
+  value ground.

@@ -46,7 +46,20 @@ This makes Greyville a very testing ride.
 - **Polytrack:** Low draws preferred; ability to race handy appears even more important than on turf
 - Strong south-westerly tailwind helps front-runners
 
-## History
+## Punter rules
+
+- No straight course — every race has a bend, so inside draws keep their
+  edge further than at straight-course tracks. But the July record is blunt:
+  5 of the last 10 Durban July winners came from stall 11+, and low-draw
+  bunching causes scrimmaging — wide draws with a committed front-running or
+  clean-closing plan are systematically underbet.
+- Poly kickback: on hot dry days, closers must switch off the rail to avoid
+  kickback; front-runners hold on. Read the first two races for the day's
+  pattern before committing exotics.
+- Uphill finish (430m turf / 440m poly run-in) tests stamina — stayers and
+  strong finishers over 1400m+; sprinters-only types fade late.
+
+## Feature Races (Champions Season)
 
 - First horse racing meeting in KZN was July 1844, close to the site of the present course
 - **Vodacom Durban July** first run in 1897 (7 runners, won by Campanajo)
