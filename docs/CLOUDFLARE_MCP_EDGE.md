@@ -73,7 +73,7 @@ Modal handles all heavyweight compute: AI analysis, Telegram bot logic, dream en
 
 ### What It Is
 
-The **OKF (On-Device Knowledge Framework)** bundle is a set of 12 curated markdown files covering South African horse racing knowledge. Each file has YAML frontmatter (title, description, tags, timestamp) and markdown body content.
+The **OKF (On-Device Knowledge Framework)** bundle is a set of 15 curated markdown files covering South African horse racing knowledge (Oct-2026: +3 exotics textbook files, +punter-rules on all tracks). Each file has YAML frontmatter (title, description, tags, timestamp) and markdown body content.
 
 ### File Structure
 
@@ -84,8 +84,11 @@ knowledge/racing/
 │   └── going.md                          # Going & track conditions explained
 ├── strategies/
 │   ├── kelly-criterion.md                # Optimal bet sizing math
-│   └── value-betting.md                  # Value betting & merit ratings
-└── tracks/
+│   ├── value-betting.md                  # Value betting & merit ratings
+│   ├── exotics-pools.md                  # Full tote shelf: JP/P6/PA/BI/Pick3/Double + Exacta/Trifecta/Quartet
+│   ├── exotics-construction.md           # Ticket doctrine: banker/saver, widen-the-murk
+│   └── exotics-case-friday-night.md      # Case study: Phutulicious (coverage vs insight)
+├── tracks/
     ├── index.md                          # Track overview index
     ├── durbanville.md                    # Durbanville (1922, Cape Town)
     ├── fairview.md                       # Fairview (1977, Gqeberha)
@@ -95,6 +98,10 @@ knowledge/racing/
     ├── turffontein.md                    # Turffontein (1887, Johannesburg)
     └── vaal.md                           # Vaal (1946, Gauteng)
 ```
+
+> Flamingo Park (Kimberley sand) is deliberately EXCLUDED — closed July 2020.
+> Query it via MCP: `search_racing_knowledge` (ranked), `get_racing_knowledge`
+> (full entry by path), `list_racing_knowledge` (browse).
 
 ### Build Process
 
