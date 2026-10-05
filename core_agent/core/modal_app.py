@@ -506,8 +506,10 @@ def value_scan():
 
 
 # ── Europe scan (12:30 SAST, Oct-2026 international work) ──────────────
-# 4th cron (limit is 5). Manifest-only UK/IRE meetings, digest-only report —
-# no auto-bets. UK midday cards can jump 13:30 SAST; 12:30 buys an hour.
+# SCHEDULE DISABLED 2026-10-06: free-tier scheduled-function quota counts
+# stopped apps (2 stale June deployments), so 4 crons in-app exceeds it.
+# Manual trigger until quota is freed; then restore:
+#     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
 @app.function(
     image=image,
     secrets=secrets,
@@ -515,7 +517,6 @@ def value_scan():
     memory=1024,
     timeout=1800,
     max_containers=1,
-    schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
 )
 def europe_scan():
     """Europe wave — runs at 12:30 SAST for UK/IRE afternoon cards."""
