@@ -122,8 +122,11 @@ def serve_api():
                         chat_id=chat_id,
                         text=(
                             "🔒 *Restricted Access*\n\n"
-                            "This bot requires authorization. "
-                            f"Send `/auth <PIN>` to gain access."
+                            "This bot is linked to Strike Tips accounts.\n\n"
+                            "1️⃣ Open the HUD and sign in with Google\n"
+                            "2️⃣ Go to Settings → Telegram Alerts\n"
+                            "3️⃣ Generate a passcode and send `/start ST-XXXXX` here\n\n"
+                            f"Or send `/auth <PIN>` if you have one."
                         ),
                         parse_mode="Markdown",
                     )
