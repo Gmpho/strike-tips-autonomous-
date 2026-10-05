@@ -505,6 +505,34 @@ def value_scan():
     return {"status": "complete"}
 
 
+# ── Europe scan (12:30 SAST, Oct-2026 international work) ──────────────
+# 4th cron (limit is 5). Manifest-only UK/IRE meetings, digest-only report —
+# no auto-bets. UK midday cards can jump 13:30 SAST; 12:30 buys an hour.
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=1024,
+    timeout=1800,
+    max_containers=1,
+    schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
+)
+def europe_scan():
+    """Europe wave — runs at 12:30 SAST for UK/IRE afternoon cards."""
+    import subprocess
+
+    logger.info("Scheduled Europe scan starting...")
+    result = subprocess.run(
+        ["python3", "core_agent/core/strike_tips.py", "scan", "--region", "UK,IRE"],
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(f"Errors: {result.stderr}")
+    return {"status": "complete"}
+
+
 # ── Daily spend report (budget guard at 06:00 SAST) ─────────────────────
 @app.function(
     image=image,

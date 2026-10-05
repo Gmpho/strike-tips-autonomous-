@@ -2178,6 +2178,60 @@ class StrikeTips:
             "results": all_results,
         }
 
+    async def run_region_scan(
+        self,
+        regions: List[str],
+        progress_callback: Optional[callable] = None,
+    ) -> Dict:
+        """Region scan (Oct-2026 international work): today's TAB-manifest
+        meetings for the given regions (e.g. ["UK", "IRE"]) — never a
+        brute-force sweep. Digest-only v1: Telegram Europe report, NO
+        auto-bets, NO individual alerts, NO memory writes (SA RAG stays clean).
+        """
+        from core_agent.skills.parsers.tab_content import (
+            fetch_manifest,
+            meetings_for_regions,
+        )
+
+        print("\n" + "=" * 60)
+        print("STRIKE TIPS - Regional Scan: " + ",".join(regions))
+        print("=" * 60)
+        manifest = await fetch_manifest()
+        meetings = meetings_for_regions(manifest, regions)
+        print(f"[REGION] {len(meetings)} manifest meetings for {regions}")
+        all_results: Dict[str, List[Dict]] = {}
+        for i, m in enumerate(meetings):
+            name = m["meeting"]
+            try:
+                races = await self.scrape_and_analyze_track(name)
+                if races:
+                    all_results[name] = races
+                if progress_callback:
+                    await progress_callback(name, i + 1, len(meetings))
+            except Exception as e:
+                print(f"[ERR] Region scan {name}: {e}")
+                all_results[name] = []
+        total_value_bets = sum(
+            len(r.get("value_bets", []))
+            for races in all_results.values()
+            for r in races if isinstance(r, dict)
+        )
+        print(f"\n[OK] Region scan complete! {total_value_bets} value bets, "
+              f"{len(all_results)} meetings")
+        if self.telegram:
+            try:
+                await self.telegram.send_daily_tips(
+                    all_results, title="Europe Intelligence Report")
+            except Exception as e:
+                print(f"[ERR] Europe report send failed: {e}")
+        return {
+            "date": date.today().isoformat(),
+            "regions": regions,
+            "meetings_scanned": len(all_results),
+            "total_value_bets": total_value_bets,
+            "results": all_results,
+        }
+
     def generate_report(self, report_date: Optional[str] = None) -> str:
         """Generate daily report for a date (default: today).
 
@@ -2292,6 +2346,7 @@ async def main_async():
         help="Command to run",
     )
     parser.add_argument("--track", "-t", help="Track name (for track command)")
+    parser.add_argument("--region", help="Region filter for scan (e.g. UK,IRE) — manifest-only meetings")
     parser.add_argument("--date", "-d", help="Date (YYYY-MM-DD)")
     parser.add_argument("--horse", help="Horse name (for bet command)")
     parser.add_argument("--race", "-r", type=int, help="Race number")
@@ -2311,7 +2366,11 @@ async def main_async():
 
     try:
         if args.command == "scan":
-            result = await strike.run_daily_scan()
+            if getattr(args, "region", None):
+                regions = [r.strip().upper() for r in args.region.split(",") if r.strip()]
+                result = await strike.run_region_scan(regions)
+            else:
+                result = await strike.run_daily_scan()
             print(json.dumps(result, indent=2, default=str))
 
         elif args.command == "track":

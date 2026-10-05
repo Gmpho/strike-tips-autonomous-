@@ -376,7 +376,7 @@ class TelegramNotifier:
                     logger.warning("Telegram broadcast to %s failed: %s", t, e)
         return ok
 
-    async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
+    async def send_daily_tips(self, scan_results: Dict[str, List[Dict]], title: str = "Daily Intelligence Report") -> bool:
         """Send a daily summary of all value bets found asynchronously"""
         total_value_bets = sum(
             len(r.get("value_bets", []))
@@ -384,7 +384,7 @@ class TelegramNotifier:
             for r in races
         )
 
-        lines = [f"🏇 <b>STRIKE TIPS - Daily Intelligence Report</b>\n"]
+        lines = [f"🏇 <b>STRIKE TIPS - {title}</b>\n"]
         lines.append(f"📊 Found <b>{total_value_bets}</b> value bet(s)\n")
 
         for track, races in scan_results.items():
