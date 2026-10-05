@@ -72,6 +72,15 @@ def serve_api():
         brain.initialize()
         bot = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
 
+        # Proof-of-life (Oct-2026): any inbound message proves the chat
+        # receives, so release it from broadcast quarantine immediately.
+        # A genuinely blocked chat re-quarantines on the next failed send.
+        try:
+            from core_agent.skills.notifications.telegram_bot import clear_quarantine
+            clear_quarantine(chat_id)
+        except Exception:
+            pass
+
         # ── Access control ───────────────────────────────────────────
         from core_agent.config.settings import NOTIFICATIONS
         from core_agent.core.access_control import is_authorized, authorize
@@ -166,6 +175,11 @@ def serve_api():
                             if linked:
                                 try:
                                     _ac.authorize(int(chat_id))
+                                except Exception:
+                                    pass
+                                try:
+                                    from core_agent.skills.notifications.telegram_bot import clear_quarantine as _cq
+                                    _cq(chat_id)
                                 except Exception:
                                     pass
                                 await bot.send_message(

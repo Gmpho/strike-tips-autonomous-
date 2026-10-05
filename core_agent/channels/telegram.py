@@ -105,6 +105,13 @@ class TelegramChannel:
                     if update.message and update.message.text:
                         chat_id = str(update.message.chat.id)
                         text = update.message.text
+                        # Proof-of-life: inbound traffic releases broadcast
+                        # quarantine (Oct-2026) — talking chats get alerts.
+                        try:
+                            from core_agent.skills.notifications.telegram_bot import clear_quarantine
+                            clear_quarantine(chat_id)
+                        except Exception:
+                            pass
                         # Typing must keep re-arming for the whole model
                         # call — one action dies after ~5s (telegram-hud-ux).
                         self._start_typing(chat_id)

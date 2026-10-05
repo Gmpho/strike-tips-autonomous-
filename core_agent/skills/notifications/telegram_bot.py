@@ -21,6 +21,10 @@ logger = logging.getLogger("telegram-notifier")
 # blocked subscriber kept every digest in "retry forever" and the user saw
 # the same 20 alerts every cycle).
 QUARANTINE_FILENAME = "telegram_blocked.json"
+# Backstop TTL (Oct-2026): a quarantine is a spam guard, not a life sentence.
+# Proof-of-life (any inbound message / successful link) clears immediately;
+# anything older than this expires on read.
+QUARANTINE_TTL_SECS = 7 * 24 * 3600
 
 
 def _quarantine_path() -> Optional[str]:
@@ -38,10 +42,32 @@ def _quarantined_ids() -> set:
         return set()
     try:
         import json
+        import time
 
         with open(path) as f:
             data = json.load(f)
-        return {str(k) for k in data} if isinstance(data, dict) else set()
+        if not isinstance(data, dict):
+            return set()
+        now = time.time()
+        live = set()
+        expired = []
+        for k, v in data.items():
+            ts = float((v or {}).get("ts", 0)) if isinstance(v, dict) else 0
+            if ts and now - ts > QUARANTINE_TTL_SECS:
+                expired.append(k)
+            else:
+                live.add(str(k))
+        if expired:
+            try:
+                for k in expired:
+                    data.pop(k, None)
+                with open(f"{path}.tmp", "w") as f:
+                    json.dump(data, f)
+                os.replace(f"{path}.tmp", path)
+            except Exception:
+                pass
+            logger.info("Telegram quarantine TTL-expired chats released: %s", expired)
+        return live
     except Exception:
         return set()
 
@@ -69,8 +95,54 @@ def _quarantine_chat(chat_id: str, reason: str) -> None:
         logger.warning(
             "Telegram chat %s quarantined (%s) — skipped in future broadcasts", chat_id, reason
         )
+        try:
+            from core_agent.core.telemetry import emit
+            emit("system", f"🔇 Telegram chat quarantined ({reason}) — broadcasts paused for it")
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("Quarantine persist failed: %s", e)
+
+
+def clear_quarantine(chat_id: str | int) -> bool:
+    """Remove a chat from quarantine. Returns True if it was listed.
+
+    Call on proof-of-life: any inbound message or successful passcode link
+    proves the chat receives, so broadcasts must resume. Also emits
+    telemetry so the release is visible, not silent.
+    """
+    path = _quarantine_path()
+    if not path:
+        return False
+    try:
+        import json
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return False
+        except Exception:
+            return False
+        key = str(chat_id)
+        if key not in data:
+            return False
+        reason = (data.get(key) or {}).get("reason", "?") if isinstance(data.get(key), dict) else "?"
+        data.pop(key, None)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+        logger.warning("Telegram chat %s released from quarantine (was: %s)", key, reason)
+        try:
+            from core_agent.core.telemetry import emit
+            emit("system", f"🔓 Telegram chat released from quarantine (was: {reason})")
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.debug("Quarantine release failed: %s", e)
+        return False
 
 
 def _get_whitelist_ids() -> set[int]:

@@ -127,6 +127,11 @@ class AgentLoop:
                             _ac.authorize(int(msg.chat_id))
                         except Exception:
                             pass
+                        try:
+                            from core_agent.skills.notifications.telegram_bot import clear_quarantine as _cq
+                            _cq(msg.chat_id)
+                        except Exception:
+                            pass
                         response_content = (
                             "✅ *Telegram linked!*\n\nThis chat now receives alerts for your account. "
                             "Open Settings → Telegram Alerts to verify."
