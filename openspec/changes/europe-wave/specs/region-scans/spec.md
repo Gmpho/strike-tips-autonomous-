@@ -16,11 +16,12 @@ the requested regions.
 - **WHEN** the manifest lists Kempton (UK) and Vaal (no region tag match)
 - **THEN** the scan covers Kempton only, in digest-only mode
 
-### Requirement: Digest-only Europe wave
+### Requirement: Alerts without staking
 
-The Europe scan SHALL send the Europe Intelligence Report with no auto-bets,
-no individual alerts, and no memory writes.
+The Europe scan SHALL send individual value alerts in SA format (gated by
+the same settings) with stake 0.00 paper — never placed, never recorded.
 
 #### Scenario: Value found in Europe
 - **WHEN** a European meeting yields value flags
-- **THEN** they appear in the digest; bankroll and memory are untouched
+- **THEN** they appear in the digest AND as individual alerts with stake 0.0;
+  bankroll, ledger, and memory are untouched

@@ -60,6 +60,7 @@ async def test_run_region_scan_uses_manifest_only(monkeypatch):
 
     strike = StrikeTips.__new__(StrikeTips)
     strike.telegram = FakeTelegram()
+    strike.data_dir = "/tmp"
 
     async def fake_scrape(track, date_str=None):
         seen.append(track)
@@ -71,3 +72,46 @@ async def test_run_region_scan_uses_manifest_only(monkeypatch):
     assert sent["title"] == "Europe Intelligence Report"
     assert out["meetings_scanned"] == 1
     assert out["total_value_bets"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_region_scan_alerts_no_stake(tmp_path, monkeypatch):
+    """Stage 2: individual Europe alerts fire with stake 0.00, gates honored."""
+    from core_agent.core.strike_tips import StrikeTips
+    import core_agent.skills.parsers.tab_content as tc
+
+    async def fake_manifest(day=None):
+        return {"cards": [
+            {"meeting": "kempton", "region": "UK", "date": "2026.10.05", "path": "p"},
+        ]}
+
+    monkeypatch.setattr(tc, "fetch_manifest", fake_manifest)
+
+    alerts = []
+
+    class FakeTelegram:
+        async def send_daily_tips(self, results, title="Daily Intelligence Report"):
+            return True
+
+        async def send_value_bet(self, **kw):
+            alerts.append(kw)
+            return True
+
+    strike = StrikeTips.__new__(StrikeTips)
+    strike.telegram = FakeTelegram()
+    strike.data_dir = str(tmp_path)  # no settings.json -> defaults: enabled, no priority filter
+
+    async def fake_scrape(track, date_str=None):
+        return [{"track": track, "race_number": 3, "race_time": "15:20",
+                 "value_bets": [
+                     {"horse": "H1", "edge_percent": 16.0, "odds_decimal": 4.0},
+                     {"horse": "", "edge_percent": 20.0, "odds_decimal": 5.0},
+                 ]}]
+
+    strike.scrape_and_analyze_track = fake_scrape
+    out = await strike.run_region_scan(["UK"])
+    assert out["total_value_bets"] == 2
+    assert len(alerts) == 1  # nameless entry skipped
+    assert alerts[0]["stake"] == 0.0
+    assert alerts[0]["confidence"] == "STRONG_VALUE"
+    assert alerts[0]["ref"].startswith("EUR-")

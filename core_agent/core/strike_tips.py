@@ -2185,8 +2185,9 @@ class StrikeTips:
     ) -> Dict:
         """Region scan (Oct-2026 international work): today's TAB-manifest
         meetings for the given regions (e.g. ["UK", "IRE"]) — never a
-        brute-force sweep. Digest-only v1: Telegram Europe report, NO
-        auto-bets, NO individual alerts, NO memory writes (SA RAG stays clean).
+        brute-force sweep. Stage 2: Europe digest + individual value alerts
+        (same Telegram format/gates as SA, stake shown 0.00 paper). NO
+        auto-bets, NO placement, NO memory writes (SA RAG stays clean).
         """
         from core_agent.skills.parsers.tab_content import (
             fetch_manifest,
@@ -2224,6 +2225,44 @@ class StrikeTips:
                     all_results, title="Europe Intelligence Report")
             except Exception as e:
                 print(f"[ERR] Europe report send failed: {e}")
+            # Stage 2 (Oct-2026): individual value alerts, NO staking.
+            # Same gates as SA (telegramEnabled, priority_only edge>=15),
+            # stake shown as 0.00 paper — never placed, never recorded.
+            try:
+                _sp = os.path.join(self.data_dir, "settings.json")
+                _te, _po = True, False
+                if os.path.exists(_sp):
+                    with open(_sp) as _f:
+                        _s = json.load(_f)
+                    _te = _s.get("telegramEnabled", True)
+                    _po = _s.get("valueBetAlerts", False)
+                if _te:
+                    for _track, _races in all_results.items():
+                        for _race in _races:
+                            if not isinstance(_race, dict):
+                                continue
+                            for _vb in _race.get("value_bets", []) or []:
+                                _horse = _vb.get("horse") or ""
+                                if not _horse:
+                                    continue
+                                _edge = float(_vb.get("edge_percent") or _vb.get("edge") or 0)
+                                if 0 < _edge < 1:
+                                    _edge *= 100
+                                if _po and _edge < 15.0:
+                                    continue
+                                _odds = float(_vb.get("odds_decimal") or _vb.get("odds") or 2.0)
+                                _conf = "STRONG_VALUE" if _edge >= 15.0 else "VALUE" if _edge >= 8.0 else "MARGINAL"
+                                await self.telegram.send_value_bet(
+                                    horse=_horse, track=_track,
+                                    race_number=_race.get("race_number", 0),
+                                    race_time=_race.get("race_time", "TBD"),
+                                    odds=_odds, edge_percent=_edge, stake=0.0,
+                                    confidence=_conf,
+                                    reasoning=(_vb.get("reasoning") or "Europe value flag (analysis only — not staked)."),
+                                    ref=f"EUR-{_track[:3].upper()}",
+                                )
+            except Exception as e:
+                print(f"[ERR] Europe individual alerts failed: {e}")
         return {
             "date": date.today().isoformat(),
             "regions": regions,
