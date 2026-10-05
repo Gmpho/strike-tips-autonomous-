@@ -131,6 +131,7 @@ def get_news() -> List[Any]:
 
 
 _last_disk_mtime: float = 0.0
+_last_logged_count: int = -1
 _volume_obj: Optional[Any] = None
 _volume_retry_at: float = 0.0
 _volume_lock: Optional[Any] = None
@@ -274,10 +275,23 @@ async def disk_refresh_loop(interval: int = 15) -> None:
             if isinstance(data, dict) and data.get("events") is not None:
                 set_snapshot(data, source="disk-poll", written_at=mtime)
                 _last_disk_mtime = mtime
-                logger.info(
-                    "Snapshot reloaded from disk (%d events after pruning)",
-                    len(_snapshot.get("events", {})),
-                )
+                # Oct-2026: routine reloads shouted INFO every cycle (docker
+                # monitor rewrites the file ~30s). Log INFO only when the
+                # event count actually changes; routine refreshes stay debug.
+                _n = len(_snapshot.get("events", {}))
+                global _last_logged_count
+                _changed = (_n != _last_logged_count)
+                _last_logged_count = _n
+                if _changed:
+                    logger.info(
+                        "Snapshot reloaded from disk (%d events after pruning)",
+                        _n,
+                    )
+                else:
+                    logger.debug(
+                        "Snapshot reloaded from disk (%d events, unchanged)",
+                        _n,
+                    )
         except asyncio.CancelledError:
             break
         except Exception as e:
