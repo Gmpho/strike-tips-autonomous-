@@ -137,6 +137,29 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
     "ASC": {"track": "Ascot", "region": "UK"},
     "CHL": {"track": "Cheltenham", "region": "UK"},
     "NMK": {"track": "Newmarket", "region": "UK"},
+    # ATR 3-letter meeting codes as seen live (Oct-2026 movers feed)
+    "KMP": {"track": "Kempton", "region": "UK"},
+    "KEMPTON": {"track": "Kempton", "region": "UK"},
+    "STR": {"track": "Stratford", "region": "UK"},
+    "STRATFORD": {"track": "Stratford", "region": "UK"},
+    "PFR": {"track": "Pontefract", "region": "UK"},
+    "PONTEFRACT": {"track": "Pontefract", "region": "UK"},
+    "WOL": {"track": "Wolverhampton", "region": "UK"},
+    "WOLVERHAMPTON": {"track": "Wolverhampton", "region": "UK"},
+    "YAR": {"track": "Yarmouth", "region": "UK"},
+    "YARMOUTH": {"track": "Yarmouth", "region": "UK"},
+    "FAI": {"track": "Fairyhouse", "region": "Ireland"},
+    "FAIRYHOUSE": {"track": "Fairyhouse", "region": "Ireland"},
+    "KIL": {"track": "Killarney", "region": "Ireland"},
+    "KILLARNEY": {"track": "Killarney", "region": "Ireland"},
+    "GAL": {"track": "Galway", "region": "Ireland"},
+    "GALWAY": {"track": "Galway", "region": "Ireland"},
+    "LEI": {"track": "Leicester", "region": "UK"},
+    "LEICESTER": {"track": "Leicester", "region": "UK"},
+    "HUN": {"track": "Huntingdon", "region": "UK"},
+    "HUNTINGDON": {"track": "Huntingdon", "region": "UK"},
+    "BHA": {"track": "Brighton", "region": "UK"},
+    "BRIGHTON": {"track": "Brighton", "region": "UK"},
 }
 
 
@@ -587,14 +610,42 @@ class AtTheRacesAPI:
         an empty title so legacy layouts keep working.
         """
         out: List[Tuple[str, Any]] = []
+        seen: set = set()
+
+        def _sig(table) -> str:
+            # Adaptive selectors return fresh objects per query, so id()
+            # dedupe fails and grouped tables double-count. Signature on
+            # row count + first rows' text instead.
+            try:
+                rows = table.css("tr", adaptive=True) or []
+                head = "|".join(_text(r)[:60] for r in rows[:3])
+                return f"{len(rows)}:{head}"
+            except Exception:
+                return f"id:{id(table)}"
+
         try:
             meetings = sel.css(".push--x-small") or []
         except Exception:
             meetings = []
-        seen_tables = set()
+        if not meetings:
+            # Movers/predictor pages group differently — try generic
+            # meeting sections before falling back to bare tables.
+            for container_sel in ("section.meeting", "div.meeting",
+                                  "section.panel", "div.panel",
+                                  "main section", "main div"):
+                try:
+                    meetings = sel.css(container_sel) or []
+                except Exception:
+                    meetings = []
+                if meetings:
+                    break
         for meeting in meetings:
             try:
-                headers = meeting.css("a.panel-header h2", adaptive=True) or []
+                headers = (meeting.css("a.panel-header h2", adaptive=True)
+                           or meeting.css("h2", adaptive=True)
+                           or meeting.css("h3", adaptive=True)
+                           or meeting.css("caption", adaptive=True)
+                           or [])
             except Exception:
                 headers = []
             title = _text(headers[0]).replace("Results", "").strip() if headers else ""
@@ -603,14 +654,19 @@ class AtTheRacesAPI:
             except Exception:
                 tables = []
             for table in tables:
-                seen_tables.add(id(table))
+                sig = _sig(table)
+                if sig in seen:
+                    continue
+                seen.add(sig)
                 out.append((title, table))
         try:
             bare = sel.css("table", adaptive=True) or []
         except Exception:
             bare = []
         for table in bare:
-            if id(table) not in seen_tables:
+            sig = _sig(table)
+            if sig not in seen:
+                seen.add(sig)
                 out.append(("", table))
         return out
 
