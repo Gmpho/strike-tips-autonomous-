@@ -90,6 +90,49 @@ def serve_api():
 
         if not is_authorized(chat_id, owner_id):
             try:
+                # Passcode-first (Oct-2026): /start ST-XXXXX redeems INSIDE the
+                # gate — strangers are unauthorized by definition, so a redeem
+                # placed after the gate is unreachable (the original bug:
+                # passcode only worked post-PIN). PIN stays as fallback below.
+                _parts = text.split()
+                if _parts and _parts[0].lower() == "/start" and len(_parts) > 1 \
+                        and _parts[1].upper().startswith("ST-"):
+                    from core_agent.core.telegram_gate import (
+                        parse_start_code,
+                        redeem_and_authorize,
+                    )
+                    _code = parse_start_code(text)
+                    _username = (msg.get("from", {}) or {}).get("username")
+                    _linked = redeem_and_authorize(_code, int(chat_id), _username) \
+                        if _code else False
+                    if _linked:
+                        try:
+                            _ac.authorize(int(chat_id))
+                        except Exception:
+                            pass
+                        try:
+                            _cq(chat_id)
+                        except Exception:
+                            pass
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(f"✅ *Telegram linked!*\n\nWelcome — this chat now receives alerts for your account"
+                                  f"{f' (@{_username})' if _username else ''}.\nAsk me anything, or try `/help`."),
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                "⚠️ *That code didn't work.*\n\n"
+                                "Codes are single-use and expire after 15 minutes.\n\n"
+                                "1️⃣ Open the HUD and sign in with Google\n"
+                                "2️⃣ Settings → Telegram Alerts → Refresh Code\n"
+                                "3️⃣ Send the fresh `/start ST-XXXXX` here"
+                            ),
+                            parse_mode="Markdown",
+                        )
+                    return {"ok": True}
                 if text.startswith("/auth"):
                     from core_agent.core.access_control import pin_locked, record_pin_attempt
 

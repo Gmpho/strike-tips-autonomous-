@@ -116,34 +116,22 @@ class AgentLoop:
             # Passcode link (polling path mirrors the Modal webhook):
             # /start ST-12345 binds this chat to the minting HUD account.
             if cmd == "/start" and len(parts) > 1 and parts[1].upper().startswith("ST-"):
-                try:
-                    from core_agent.db.repository import LedgerRepository
-                    from core_agent.db.client import get_service_client
-                    from core_agent.core import access_control as _ac
-                    repo = LedgerRepository(get_service_client())
-                    linked = repo.redeem_link_code(parts[1], int(msg.chat_id), None)
-                    if linked:
-                        try:
-                            _ac.authorize(int(msg.chat_id))
-                        except Exception:
-                            pass
-                        try:
-                            from core_agent.skills.notifications.telegram_bot import clear_quarantine as _cq
-                            _cq(msg.chat_id)
-                        except Exception:
-                            pass
-                        response_content = (
-                            "✅ *Telegram linked!*\n\nThis chat now receives alerts for your account. "
-                            "Open Settings → Telegram Alerts to verify."
-                        )
-                    else:
-                        response_content = (
-                            "⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. "
-                            "Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code."
-                        )
-                except Exception as e:
-                    logger.warning("polling link redeem failed: %r", e)
-                    response_content = "⚠️ *Linking is unavailable right now.* Please try again in a minute."
+                from core_agent.core.telegram_gate import (
+                    parse_start_code,
+                    redeem_and_authorize,
+                )
+                _code = parse_start_code(msg.content)
+                _linked = redeem_and_authorize(_code, msg.chat_id, None) if _code else False
+                if _linked:
+                    response_content = (
+                        "✅ *Telegram linked!*\n\nThis chat now receives alerts for your account. "
+                        "Open Settings → Telegram Alerts to verify."
+                    )
+                else:
+                    response_content = (
+                        "⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. "
+                        "Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code."
+                    )
                 await self.bus.publish_outbound(OutboundMessage(
                     session_key=msg.session_key, channel=msg.channel, chat_id=msg.chat_id,
                     content=response_content, done=True,
