@@ -37,6 +37,11 @@ class FakeTable:
         self._p = p
         return self
 
+    def upsert(self, p, on_conflict=None):
+        self._op = "upsert"
+        self._p = p
+        return self
+
     def update(self, p):
         self._op = "update"
         self._p = p
@@ -80,6 +85,14 @@ class FakeTable:
         if self._op == "insert":
             rows.append(dict(self._p))
             return R([rows[-1]])
+        if self._op == "upsert":
+            for i, r in enumerate(rows):
+                if all(r.get(k) == v for k, v in self._p.items()
+                       if k in ("id", "user_id", "ref", "code_hash")):
+                    rows[i] = {**r, **self._p}
+                    return R([rows[i]])
+            rows.append(dict(self._p))
+            return R([rows[-1]])
         if self._op == "update":
             out = []
             for r in rows:
@@ -118,6 +131,13 @@ async def test_link_code_mints_st_code(fake_service):
     out = await tl.link_code(authorization="Bearer good-jwt")
     assert re.match(r"^ST-\d{5}$", out["code"])
     assert out["expires_in_minutes"] == 15
+
+
+def test_ensure_profile_idempotent():
+    from core_agent.db.repository import LedgerRepository
+    repo = LedgerRepository(FakeClient())
+    repo.ensure_profile("user-1")
+    repo.ensure_profile("user-1")  # second call: no duplicate, no error
 
 
 @pytest.mark.asyncio

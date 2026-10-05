@@ -134,6 +134,20 @@ class LedgerRepository:
         }).execute()
         return (res.data or [{}])[0]
 
+    # ── profiles ────────────────────────────────────────────────────
+    def ensure_profile(self, user_id: str, display_name: str | None = None) -> dict:
+        """Auto-provision the profiles row on first authenticated use.
+
+        Without this, every user-owned insert dies on the FK constraint
+        (Oct-2026: link-code mint 500'd for a valid login with no profile).
+        Idempotent upsert — safe to call on every authenticated request.
+        """
+        row: dict = {"id": user_id}
+        if display_name:
+            row["display_name"] = display_name
+        res = self._c.table("profiles").upsert(row, on_conflict="id").execute()
+        return (res.data or [{}])[0]
+
     # ── telegram passcode links ───────────────────────────────────────
     def create_link_code(self, user_id: str) -> str:
         """Generate a single-use code. Returns the CLEAR code once."""

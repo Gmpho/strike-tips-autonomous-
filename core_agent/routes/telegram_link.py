@@ -24,7 +24,8 @@ logger = logging.getLogger("telegram-link")
 router = APIRouter(prefix="/api/telegram", tags=["telegram-link"])
 
 
-def _user_id_from_token(authorization: str | None) -> str:
+def _user_from_token(authorization: str | None) -> tuple[str, str | None]:
+    """Verify the Supabase JWT, return (user_id, email)."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Missing Authorization Bearer token")
     token = authorization.split(None, 1)[1].strip()
@@ -41,7 +42,11 @@ def _user_id_from_token(authorization: str | None) -> str:
     user = getattr(user_res, "user", None)
     if not user or not getattr(user, "id", None):
         raise HTTPException(401, "Invalid session — sign in again")
-    return str(user.id)
+    return str(user.id), getattr(user, "email", None)
+
+
+def _user_id_from_token(authorization: str | None) -> str:
+    return _user_from_token(authorization)[0]
 
 
 def _repo():
@@ -75,8 +80,14 @@ async def bot_name():
 async def link_code(authorization: str | None = Header(default=None)):
     """Mint a single-use ST-XXXXX code bound to the caller's account."""
     try:
-        user_id = _user_id_from_token(authorization)
+        user_id, email = _user_from_token(authorization)
         repo = _repo()
+        # Profile must exist before any user-owned row (FK). Auto-provision
+        # on first authenticated use — logins don't create profiles by itself.
+        try:
+            repo.ensure_profile(user_id)
+        except Exception as e:
+            logger.debug("ensure_profile skipped: %r", e)
         # One live code at a time: revoke stale PENDING rows first.
         try:
             repo._c.table("telegram_links").update({"status": "REVOKED"}) \
