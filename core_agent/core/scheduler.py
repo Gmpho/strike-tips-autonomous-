@@ -603,7 +603,8 @@ class StrikeTipsScheduler:
             print(f"[ERR] Reconcile failed: {e}")
 
     def update_learning_job(self):
-        """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""        try:
+        """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""
+        try:
             from core_agent.core.strike_brain import brain
             if not brain or not brain.strike or not brain.strike.learning:
                 return
