@@ -980,16 +980,22 @@ class ResultTracker:
 
         for candidate in candidates:
             cl = candidate.lower()
-            patterns = [
+            # Patterns 1-4 are anchored (position token BEFORE the name) and
+            # sentence-bounded — high confidence. Pattern 5 is name-first, so
+            # it gets the same sentence bound plus reduced confidence: a name
+            # pages away from any result token must never score 1.0
+            # (Oct-2026 hardening: unanchored .*? matched across races).
+            anchored = [
                 rf'(?:^|\s)1st\s+[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)1\.\s*[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)winner:?\s*[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)won\s+by\s+[^.?!]*?\b{re.escape(cl)}\b',
-                rf'\b{re.escape(cl)}\b.*?\b1st\b',
             ]
-            for pat in patterns:
+            for pat in anchored:
                 if re.search(pat, text_lower):
                     return candidate, 1.0
+            if re.search(rf'\b{re.escape(cl)}\b[^.?!]*?\b1st\b', text_lower):
+                return candidate, 0.6
 
         return None, 0.0
 

@@ -151,7 +151,7 @@ export function matches(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix.endsWith("/") ? prefix : prefix + "/");
 }
 
-export const SESSION_WRITE_PREFIXES = ["/api/config", "/api/healing/", "/api/dreaming/"];
+export const SESSION_WRITE_PREFIXES = ["/api/config", "/api/healing/", "/api/dreaming/", "/v1/"];
 export const MASTER_ONLY_PREFIXES = ["/api/agent/kill", "/api/agent/reset"];
 
 /** True when a session token (proof-of-browser) may satisfy this path.

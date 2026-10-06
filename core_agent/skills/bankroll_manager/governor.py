@@ -165,6 +165,11 @@ class BankrollGovernor:
     MIN_EDGE_PERCENT: float = 5.0
     KELLY_FRACTION: float = 0.5
     MAX_EXOTIC_COST: float = 200.0  # Max R200 per exotic pool ticket
+    # DSI evidence discipline (Oct-2026 hardening): Beta(2,8) smoothing prior
+    # + minimum dream count before the stress index may scale stakes.
+    DSI_PRIOR_NEG: float = 2.0
+    DSI_PRIOR_POS: float = 8.0
+    MIN_DSI_DREAMS: int = 6
 
     def __init__(self, data_dir: str = "./data", starting_bankroll: float = 1000.0):
         self.data_dir = os.path.abspath(data_dir)
@@ -176,6 +181,10 @@ class BankrollGovernor:
 
         self._bets: List[BetRecord] = []
         self._starting_bankroll = starting_bankroll
+        # Fail-closed ledger flag (Oct-2026 hardening): a malformed file must
+        # never be overwritten by its empty in-memory interpretation. Set by
+        # _load_state, honored by _save_state. Repair = restore from backup.
+        self._state_corrupt = False
         self._load_state(starting_bankroll)
 
     # ─── Persistence ────────────────────────────────────────────────────────
@@ -212,7 +221,13 @@ class BankrollGovernor:
 
         Missing keys or a corrupt file seed from ``starting_bankroll`` (the
         sanctioned starting-bank constant) — no scattered hardcoded defaults.
+        A corrupt file ALSO sets _state_corrupt so _save_state refuses to
+        persist the empty interpretation over good data (Oct-2026: one bad
+        byte + one rejected bet rewrote history as []).
+        The flag reflects the LAST load: a successful reload clears it, so
+        repairing the file + any new operation recovers without a restart.
         """
+        self._state_corrupt = False
         if os.path.exists(self._state_file):
             try:
                 with open(self._state_file) as f:
@@ -222,11 +237,12 @@ class BankrollGovernor:
                 self.total_profit_loss = state.get("total_profit_loss", 0.0)
                 self.paper_balance = state.get("paper_balance", starting_bankroll)
             except Exception as e:
-                logger.warning(f"Could not load bankroll state: {e}")
+                logger.error(f"REFUSING corrupt bankroll state file (repair from backup): {e}")
                 self.current_bankroll = starting_bankroll
                 self.peak_bankroll = starting_bankroll
                 self.total_profit_loss = 0.0
                 self.paper_balance = starting_bankroll
+                self._state_corrupt = True
         else:
             self.current_bankroll = starting_bankroll
             self.peak_bankroll = starting_bankroll
@@ -239,11 +255,17 @@ class BankrollGovernor:
                     raw_bets = json.load(f)
                 self._bets = [BetRecord(**b) for b in raw_bets]
             except Exception as e:
-                logger.warning(f"Could not load bet history: {e}")
+                logger.error(f"REFUSING corrupt bet history file (repair from backup): {e}")
                 self._bets = []
+                self._state_corrupt = True
 
     def _save_state(self):
         """Persist bankroll state and bet history atomically"""
+        if getattr(self, "_state_corrupt", False):
+            # Fail-closed: a malformed read must never be written back over
+            # good data. Repair = restore the JSON from backup, then restart.
+            logger.error("REFUSING to save: ledger files flagged corrupt — restore from backup")
+            return
         try:
             # 1. Save bankroll_state.json atomically
             state_data = {
@@ -464,12 +486,23 @@ class BankrollGovernor:
                     if results:
                         total_dreams = len(results)
                         neg_dreams = sum(
-                            1 for r in results 
+                            1 for r in results
                             if r.get("metadata", {}).get("probability_shift", 0.0) < 0.0
                         )
-                        dsi = neg_dreams / total_dreams if total_dreams > 0 else 0.0
-                        
-                        if dsi < 0.20:
+                        # Bayesian smoothing (Oct-2026 hardening): raw neg/total
+                        # with n=3 swings on a single dream. Beta(2,8) prior
+                        # centers low evidence near 20% (the no-action zone);
+                        # below MIN_DSI_DREAMS the read is labeled heuristic and
+                        # never scales stakes, whatever it says.
+                        dsi = ((neg_dreams + self.DSI_PRIOR_NEG)
+                               / (total_dreams + self.DSI_PRIOR_NEG + self.DSI_PRIOR_POS))
+                        if total_dreams < self.MIN_DSI_DREAMS:
+                            logger.info(
+                                f"[GOVERNOR] DSI heuristic ({total_dreams} dreams < "
+                                f"min {self.MIN_DSI_DREAMS}) — no scaling"
+                            )
+                            _cache_dsi(track, race_number, dsi, 1.0)
+                        elif dsi < 0.20:
                             dsi_scale = 1.0
                             _cache_dsi(track, race_number, dsi, dsi_scale)
                         elif dsi <= 0.50:

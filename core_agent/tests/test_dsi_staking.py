@@ -62,13 +62,26 @@ def test_dsi_stake_scaling(tmp_path):
     )
     
     gov = BankrollGovernor(data_dir=temp_dir, starting_bankroll=1000.0)
-    
+
     # Base unstressed stake (no track/race provided)
     base_stake = gov.calculate_max_stake(edge_percent=8.0)
     assert base_stake == 40.0
-    
-    # Stressed stake (under 75% DSI)
+
+    # Oct-2026 hardening: 4 dreams is below MIN_DSI_DREAMS (6) — the read is
+    # heuristic and must NOT scale stakes, whatever it says (old code swung
+    # to 0.50x on this exact input).
+    heuristic_stake = gov.calculate_max_stake(edge_percent=8.0, track=track, race_number=race_number)
+    assert heuristic_stake == 40.0
+
+    # Add 4 more negative dreams (8 total: 7 neg) — smoothed
+    # (7+2)/(8+10) = 50% → 0.75x band with enough evidence.
+    for i in range(5, 9):
+        brain.memory.add_form_insight(
+            horse=f"dream_{track}_r{race_number}_{i}",
+            insight=f"Scenario: Bad {i}. Shift: -0.05",
+            metadata={"type": "dream", "track": track, "race": str(race_number), "probability_shift": -0.05},
+        )
     stressed_stake = gov.calculate_max_stake(edge_percent=8.0, track=track, race_number=race_number)
-    
-    # Sizing should scale by exactly 0.50x
-    assert stressed_stake == 20.0
+
+    # Sizing should scale by exactly 0.75x
+    assert stressed_stake == 30.0

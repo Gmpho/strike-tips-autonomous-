@@ -265,3 +265,66 @@ def test_open_bets_projects_columns():
     repo.open_bets("u-1")
     assert seen["cols"] != "*"
     assert "is_paper" in seen["cols"]
+
+
+# ── continuous reconciliation (fix 5) ─────────────────────────────────
+
+def _source_tree(tmp_path, pnl=300.00):
+    import json as _json
+    state = {"current_bankroll": 3799.56, "peak_bankroll": 3799.56,
+             "total_profit_loss": 2799.56, "paper_balance": 1000.0}
+    bets = [
+        {"bet_id": "A1", "track": "vaal", "race_number": 1, "horse": "H1",
+         "odds": 4.5, "stake": 100.0, "status": "WON",
+         "timestamp": "2026-10-01T09:00:00", "actual_return": 450.0,
+         "profit_loss": 350.0},
+        {"bet_id": "A2", "track": "vaal", "race_number": 2, "horse": "H2",
+         "odds": 2.0, "stake": 50.0, "status": "LOST",
+         "timestamp": "2026-10-01T09:30:00", "actual_return": 0.0,
+         "profit_loss": -50.0},
+    ]
+    (tmp_path / "bankroll_state.json").write_text(_json.dumps(state))
+    (tmp_path / "bet_history.json").write_text(_json.dumps(bets))
+    return str(tmp_path)
+
+
+def test_compare_match(tmp_path):
+    from core_agent.db.compare import compare_ledger
+
+    class FakeRepo:
+        def settled_pnl(self, uid, paper=False):
+            return 0.0 if paper else 300.00
+
+        def open_bets(self, uid):
+            return []
+
+    import core_agent.db.repository as repo_mod
+    orig_repo = repo_mod.LedgerRepository
+    repo_mod.LedgerRepository = lambda client: FakeRepo()
+    try:
+        out = compare_ledger("u-1", _source_tree(tmp_path), client=object())
+    finally:
+        repo_mod.LedgerRepository = orig_repo
+    assert out["match"] is True
+    assert out["notes"] == []
+
+
+def test_compare_drift_flagged(tmp_path):
+    from core_agent.db.compare import compare_ledger
+
+    class FakeRepo:
+        def settled_pnl(self, uid, paper=False):
+            return 0.0 if paper else 250.00  # R50 short of source
+
+        def open_bets(self, uid):
+            return []
+
+    import core_agent.db.repository as repo_mod
+    orig_repo = repo_mod.LedgerRepository
+    repo_mod.LedgerRepository = lambda client: FakeRepo()
+    try:
+        out = compare_ledger("u-1", _source_tree(tmp_path), client=object())
+    finally:
+        repo_mod.LedgerRepository = orig_repo
+    assert out["match"] is False
+    assert any("drift" in n for n in out["notes"])

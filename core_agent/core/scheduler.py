@@ -135,6 +135,14 @@ class StrikeTipsScheduler:
             id="daily_grounding",
             replace_existing=True,
         )
+        # Ledger reconciliation (Oct-2026 hardening, fix 5): JSON vs Postgres
+        # drift check 06:30 daily. Telegram alert on drift; silence on match.
+        self.scheduler.add_job(
+            self.reconcile_ledger_job,
+            CronTrigger(hour=6, minute=30, timezone="Africa/Johannesburg"),
+            id="reconcile_ledger",
+            replace_existing=True,
+        )
         self.scheduler.add_job(
             self.pre_warm_tomorrow_job,
             CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
@@ -555,9 +563,47 @@ class StrikeTipsScheduler:
                 print(f"[ERR] Continuous scan rescan failed for {track}: {e}")
         print("[SCAN] Continuous scan job complete.")
 
-    def update_learning_job(self):
-        """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""
+    def reconcile_ledger_job(self):
+        """Daily JSON-vs-Postgres drift check (Oct-2026 hardening, fix 5).
+
+        Skips quietly without RECONCILE_USER_ID or Supabase env. Telegram
+        alert only on drift; matches stay in logs.
+        """
+        import os as _os
+        user_id = _os.getenv("RECONCILE_USER_ID", "")
+        if not user_id:
+            print("[RECONCILE] skipped (RECONCILE_USER_ID not set)")
+            return
         try:
+            from core_agent.db.compare import compare_ledger
+            from core_agent.config.paths import DATA_DIR
+            result = compare_ledger(user_id, str(DATA_DIR))
+            if result["match"]:
+                print("[OK] Ledger reconcile MATCH")
+                return
+            print(f"[WARN] Ledger drift: {result['notes']}")
+            try:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.strike and brain.strike.telegram:
+                    import asyncio as _aio
+                    _msg = ("⚠️ <b>Ledger drift detected</b>\n" +
+                            "\n".join(f"• {n}" for n in result["notes"]))
+                    try:
+                        _loop = _aio.get_running_loop()
+                    except RuntimeError:
+                        _loop = None
+                    if _loop:
+                        _loop.create_task(
+                            brain.strike.telegram.broadcast(_msg))
+                    else:
+                        _aio.run(brain.strike.telegram.broadcast(_msg))
+            except Exception as e:
+                print(f"[ERR] Drift alert failed: {e}")
+        except Exception as e:
+            print(f"[ERR] Reconcile failed: {e}")
+
+    def update_learning_job(self):
+        """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""        try:
             from core_agent.core.strike_brain import brain
             if not brain or not brain.strike or not brain.strike.learning:
                 return

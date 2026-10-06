@@ -511,6 +511,35 @@ def value_scan():
 # europe_scan stays manual-trigger on Modal. Restore the line below if the
 # quota ever frees (support request or plan bump):
 #     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
+# ── Ledger reconcile (manual trigger, Oct-2026 hardening fix 5) ───────
+# No schedule (free-tier quota): run via
+#   modal run core_agent/core/modal_app.py::reconcile_ledger
+# RECONCILE_USER_ID must be set (Modal secret env or function env).
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=512,
+    timeout=300,
+    max_containers=1,
+)
+def reconcile_ledger():
+    """Compare JSON vs Postgres ledger; Telegram alert on drift."""
+    import os as _os
+
+    user_id = _os.getenv("RECONCILE_USER_ID", "")
+    if not user_id:
+        print("[RECONCILE] RECONCILE_USER_ID not set — nothing to compare")
+        return {"status": "skipped", "reason": "no RECONCILE_USER_ID"}
+    from core_agent.db.compare import compare_ledger
+
+    result = compare_ledger(user_id, "/app/data")
+    print(f"[RECONCILE] match={result['match']} notes={result['notes']}")
+    return {"status": "complete", **result}
+# still blocked after June apps aged out). Docker scheduler owns 12:30;
+# europe_scan stays manual-trigger on Modal. Restore the line below if the
+# quota ever frees (support request or plan bump):
+#     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
 @app.function(
     image=image,
     secrets=secrets,
