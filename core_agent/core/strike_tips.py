@@ -2182,12 +2182,18 @@ class StrikeTips:
         self,
         regions: List[str],
         progress_callback: Optional[callable] = None,
+        min_edge: float = 5.0,
+        max_per_race: int = 2,
     ) -> Dict:
         """Region scan (Oct-2026 international work): today's TAB-manifest
         meetings for the given regions (e.g. ["UK", "IRE"]) — never a
         brute-force sweep. Stage 2: Europe digest + individual value alerts
         (same Telegram format/gates as SA, stake shown 0.00 paper). NO
         auto-bets, NO placement, NO memory writes (SA RAG stays clean).
+
+        Quality gates: value flags below min_edge are dropped and each race
+        keeps only its top max_per_race flags — uncalibrated international
+        edges over-flag otherwise (Oct-2026: 135 flags on 5 meetings).
         """
         from core_agent.skills.parsers.tab_content import (
             fetch_manifest,
@@ -2205,6 +2211,25 @@ class StrikeTips:
             name = m["meeting"]
             try:
                 races = await self.scrape_and_analyze_track(name)
+                # Quality gate: floor + top-N per race (uncalibrated edges).
+                for race in races or []:
+                    if not isinstance(race, dict):
+                        continue
+                    vbs = race.get("value_bets", []) or []
+                    kept = []
+                    for vb in vbs:
+                        try:
+                            _e = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                        except (ValueError, TypeError):
+                            continue
+                        if 0 < _e < 1:
+                            _e *= 100
+                        if _e >= min_edge:
+                            kept.append(vb)
+                    kept.sort(key=lambda vb: float(
+                        vb.get("edge_percent") or vb.get("edge") or 0),
+                        reverse=True)
+                    race["value_bets"] = kept[:max_per_race]
                 if races:
                     all_results[name] = races
                 if progress_callback:

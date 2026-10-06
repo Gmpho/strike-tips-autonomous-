@@ -298,15 +298,20 @@ class TelegramNotifier:
             "VALUE": "✅",
             "MARGINAL": "💛",
         }.get(confidence, "📊")
+        # Paper/analysis-only alerts (Europe stage 2: stake 0.00) must never
+        # wear Kelly sizing language — it implies money is moving.
+        paper = stake == 0.0
 
         text = (
             f"{confidence_emoji} <b>STRIKE TIPS - {confidence.replace('_', ' ')}</b>\n\n"
             f"📍 <b>{track.title()} - Race {race_number}</b> ({race_time})\n"
             f"🐎 <b>{horse}</b>\n"
             f"💰 Odds: {odds} | Edge: +{edge_percent:.1f}%\n"
-            f"💵 Advised Stake: R{stake:.2f}\n\n"
-            f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
-            f"⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
+            + (f"💵 Advised Stake: R{stake:.2f}\n\n"
+               if not paper else "📊 <i>Analysis only — not staked.</i>\n\n")
+            + f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
+            + ("⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
+               if not paper else "⚠️ Bet responsibly. Paper flag — no money moved.")
             + (f"\n<code>{ref}</code>" if ref else "")
         )
         await self.broadcast(text)
@@ -393,6 +398,16 @@ class TelegramNotifier:
                 lines.append(f"\n📍 <b>{track.title()}</b> — {vb_count} selections")
                 for race in races:
                     insight = race.get("ai_insight", "")
+                    # LLM sometimes returns a JSON blob instead of prose —
+                    # extract the summary so raw JSON never reaches Telegram.
+                    if isinstance(insight, str) and insight.strip().startswith("{"):
+                        try:
+                            import json as _json
+                            _parsed = _json.loads(insight)
+                            if isinstance(_parsed, dict):
+                                insight = _parsed.get("summary", "") or ""
+                        except Exception:
+                            pass
                     if insight:
                         lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
                     for vb in race.get("value_bets", [])[:2]:
