@@ -164,8 +164,14 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
 
 
 def normalize_course(raw: str) -> Dict[str, str]:
-    """ATR header/cell text → {track, region}. Unknown → raw text passthrough
-    (never 'Unknown Venue' — the HUD cross-ref gets last word instead)."""
+    """ATR header/cell text → {track, region}.
+
+    Validate-or-blank (Oct-2026 fix): returns a course ONLY on a map hit.
+    Unknown text (page titles like "MARKET MOVERS SUMMARY…", featured-race
+    headers containing horse names) yields "" — a missing venue falls back
+    to snapshot cross-ref or an honest unverified state. A wrong venue is
+    infinitely worse than a missing one.
+    """
     key = (raw or "").strip().upper()
     if not key:
         return {"track": "", "region": ""}
@@ -173,7 +179,7 @@ def normalize_course(raw: str) -> Dict[str, str]:
     for token in (key, key.split()[0] if key.split() else ""):
         if token in ATR_COURSE_MAP:
             return dict(ATR_COURSE_MAP[token])
-    return {"track": (raw or "").strip(), "region": ""}
+    return {"track": "", "region": ""}
 
 
 class AtTheRacesAPI:
@@ -605,9 +611,12 @@ class AtTheRacesAPI:
     def _iter_meeting_tables(self, sel) -> List[Tuple[str, Any]]:
         """Yield (meeting_title, table) in document order.
 
-        ATR groups content under meeting containers (same `.push--x-small` /
-        `a.panel-header h2` pattern as results). Falls back to bare tables with
-        an empty title so legacy layouts keep working.
+        Meeting titles come ONLY from `a.panel-header h2` (the proven
+        results-page pattern) or a `caption` inside the table itself.
+        Page-level h2/h3 are deliberately ignored (Oct-2026: they caught
+        "MARKET MOVERS SUMMARY…" and poisoned every row's course).
+        Falls back to bare tables with an empty title so legacy layouts
+        keep working. Logs distinct titles seen (DOM diagnostic).
         """
         out: List[Tuple[str, Any]] = []
         seen: set = set()
@@ -642,9 +651,7 @@ class AtTheRacesAPI:
         for meeting in meetings:
             try:
                 headers = (meeting.css("a.panel-header h2", adaptive=True)
-                           or meeting.css("h2", adaptive=True)
-                           or meeting.css("h3", adaptive=True)
-                           or meeting.css("caption", adaptive=True)
+                           or meeting.css("table caption", adaptive=True)
                            or [])
             except Exception:
                 headers = []
@@ -668,6 +675,12 @@ class AtTheRacesAPI:
             if sig not in seen:
                 seen.add(sig)
                 out.append(("", table))
+        try:
+            titles = sorted({t for t, _ in out if t})
+            logger.info("ATR meeting titles seen: %s",
+                        titles if titles else ["<none — bare tables only>"])
+        except Exception:
+            pass
         return out
 
     async def get_predictor(self) -> List[Dict]:

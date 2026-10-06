@@ -19,7 +19,10 @@ from core_agent.skills.parsers.atr_enrich import (
     ("N", "Greyville Poly", "SA"),
     ("Y", "Flamingo Park (closed 2020)", "defunct"),
     ("Kimberley", "Flamingo Park (closed 2020)", "defunct"),
-    ("SomeUnknownTrack", "SomeUnknownTrack", ""),
+    # Validate-or-blank: page titles and horse headers must NEVER become venues
+    ("SomeUnknownTrack", "", ""),
+    ("MARKET MOVERS SUMMARY - UK & IRELAND | TUESDAY 6TH OCTOBER 2026", "", ""),
+    ("(10) SHARK TWO ONE", "", ""),
     ("", "", ""),
 ])
 def test_normalize_course(raw, track, region):
@@ -57,6 +60,34 @@ def test_backfill_no_snapshot_noop():
     entries = [{"horse": "X", "course": "", "time": ""}]
     assert attach_snapshot_context(entries, {}) == entries
     assert attach_snapshot_context([], {"e": {}}) == []
+
+
+POISONED_PAGE = b"""
+<html><body>
+<h2>MARKET MOVERS SUMMARY - UK &amp; IRELAND | TUESDAY 6TH OCTOBER 2026</h2>
+<div class="push--x-small">
+<a class="panel-header"><h2>Kempton Results</h2></a>
+<table><tr><th>Horse</th><th>Race</th><th>Last</th></tr>
+<tr><td>Speedy</td><td>Kmp 14:20</td><td>5/2</td><td>7/2</td><td>30%</td></tr></table>
+</div>
+<h3>(10) SHARK TWO ONE 19:00</h3>
+<table><tr><th>Horse</th><th>Race</th><th>Last</th></tr>
+<tr><td>Affettuoso</td><td></td><td>5/2</td></tr></table>
+</body></html>
+"""
+
+
+def test_meeting_tables_ignore_page_headings():
+    """Regression: page title and horse headers must not become courses."""
+    pytest.importorskip("scrapling")
+    from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI, Selector
+    api = AtTheRacesAPI()
+    sel = Selector(POISONED_PAGE, auto_save=True, adaptive=True)
+    groups = api._iter_meeting_tables(sel)
+    titles = [t for t, _ in groups]
+    assert "Kempton" in titles
+    assert not any("MARKET MOVERS" in t for t in titles)
+    assert not any("SHARK TWO ONE" in t for t in titles)
 
 
 @pytest.mark.asyncio
