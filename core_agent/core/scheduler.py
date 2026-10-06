@@ -120,6 +120,15 @@ class StrikeTipsScheduler:
             id="daily_scan",
             replace_existing=True,
         )
+        # Europe wave (Oct-2026, docker method): UK/IRE manifest scan at
+        # 12:30 SAST — mirrors the Modal piggyback so docker covers it when
+        # Modal is quiet. Digest-only + paper alerts, same as Modal path.
+        self.scheduler.add_job(
+            self.europe_scan_job,
+            CronTrigger(hour=12, minute=30, timezone="Africa/Johannesburg"),
+            id="europe_scan",
+            replace_existing=True,
+        )
         self.scheduler.add_job(
             self.run_daily_grounding_job,
             CronTrigger(hour=6, minute=0, timezone="Africa/Johannesburg"),
@@ -215,6 +224,25 @@ class StrikeTipsScheduler:
         self.strike = StrikeTips(data_dir=self.data_dir)
         try:
             return await self.strike.run_daily_scan()
+        finally:
+            await self.strike.close()
+
+    def europe_scan_job(self):
+        print(
+            f"\n{'=' * 60}\n[TIME] Europe scan starting at {datetime.now().strftime('%H:%M')}\n{'='*60}"
+        )
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(self._europe_scan_async())
+            print(f"[OK] Europe scan done: {result.get('total_value_bets', 0)} flags")
+        except Exception as e:
+            print(f"[ERR] Europe scan failed: {e}")
+
+    async def _europe_scan_async(self):
+        self.strike = StrikeTips(data_dir=self.data_dir)
+        try:
+            return await self.strike.run_region_scan(["UK", "IRE"])
         finally:
             await self.strike.close()
 
