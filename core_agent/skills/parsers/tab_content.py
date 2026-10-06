@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date
 from typing import Dict, List
 
 logger = logging.getLogger("tab-content")
@@ -45,14 +44,20 @@ def parse_name(filename: str, folder: str = "") -> Dict:
 
 
 async def fetch_manifest(day: str | None = None) -> Dict[str, List[Dict]]:
-    """Manifest per tag group for a day (YYYY-MM-DD, default today).
+    """Manifest per tag group for a day (YYYY-MM-DD, default TODAY SAST).
 
-    Returns {group: [{meeting, region, date, path}]}. Empty on any failure —
-    LOUDLY logged (never silent {} like the old schedule URL).
+    SAST, not container UTC: at 00:00–02:00 SAST the UTC date is still
+    yesterday (Oct-2026: pulled 10-05 cards at 2am on the 6th). Racing days
+    are SAST days, always.
     """
     import httpx
 
-    day_iso = day or date.today().isoformat()
+    if day:
+        day_iso = day
+    else:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        day_iso = datetime.now(ZoneInfo("Africa/Johannesburg")).date().isoformat()
     out: Dict[str, List[Dict]] = {}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
