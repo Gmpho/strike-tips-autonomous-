@@ -505,9 +505,12 @@ def value_scan():
     return {"status": "complete"}
 
 
-# ── Europe scan (12:30 SAST, Oct-2026 international work) ──────────────
-# Manifest-only UK/IRE meetings, digest-only report — no auto-bets.
-# (Quota probe Oct-2026: re-adding the schedule after stale apps aged out.)
+# ── Europe scan (Oct-2026 international work) ──────────────────────────
+# SCHEDULE OFF: free-tier quota counts stopped apps too (verified Oct-2026:
+# still blocked after June apps aged out). Docker scheduler owns 12:30;
+# europe_scan stays manual-trigger on Modal. Restore the line below if the
+# quota ever frees (support request or plan bump):
+#     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
 @app.function(
     image=image,
     secrets=secrets,
@@ -515,7 +518,6 @@ def value_scan():
     memory=1024,
     timeout=1800,
     max_containers=1,
-    schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
 )
 def europe_scan():
     """Europe wave — runs at 12:30 SAST for UK/IRE afternoon cards."""
