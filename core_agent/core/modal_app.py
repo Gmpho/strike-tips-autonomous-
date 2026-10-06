@@ -670,6 +670,27 @@ async def run_odds_monitor():
             return
     except Exception as _e:
         logger.debug("meeting check failed, running anyway: %r", _e)
+    # Europe wave piggyback (Oct-2026): no free cron slot for a 12:30 schedule
+    # (quota counts stopped apps), so the 5-min monitor fires it once per day
+    # inside the 12:30–12:40 SAST window via spawn (runs in its own container,
+    # monitor cycle unaffected). Volume flag prevents double-fire.
+    try:
+        from datetime import datetime as _dt2
+        from zoneinfo import ZoneInfo as _ZI2
+        _now = _dt2.now(_ZI2("Africa/Johannesburg"))
+        if _now.hour == 12 and _now.minute < 10:
+            _flag = f"/app/data/.europe_scan_{_now.date().isoformat()}"
+            import os as _os
+            if not _os.path.exists(_flag):
+                try:
+                    with open(_flag, "w") as _f:
+                        _f.write("spawned")
+                except Exception:
+                    pass
+                europe_scan.spawn()
+                logger.info("Europe wave piggyback-spawned for %s", _now.date().isoformat())
+    except Exception as _e:
+        logger.debug("europe piggyback skipped: %r", _e)
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
