@@ -166,12 +166,16 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
 def normalize_course(raw: str) -> Dict[str, str]:
     """ATR header/cell text → {track, region}.
 
-    Validate-or-blank (Oct-2026 fix): returns a course ONLY on a map hit.
-    Unknown text (page titles like "MARKET MOVERS SUMMARY…", featured-race
-    headers containing horse names) yields "" — a missing venue falls back
-    to snapshot cross-ref or an honest unverified state. A wrong venue is
-    infinitely worse than a missing one.
+    Priority: map hit (codes + known names) → short-token passthrough (keeps
+    the old display behaviour: unmapped codes like "Ntt" still show instead
+    of blanking) → blank. Poison shapes (page titles, horse strings with
+    cloth numbers, menu words) ALWAYS blank — a wrong venue is infinitely
+    worse than a missing one (Oct-2026: "SHARK TWO ONE" as a venue).
     """
+    _POISON_WORDS = ("summary", "results", "predictor", "movers", "login",
+                     "join", "menu", "account", "watch", "tips", "news",
+                     "replay", "calendar")
+    _TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,23}$")
     key = (raw or "").strip().upper()
     if not key:
         return {"track": "", "region": ""}
@@ -179,7 +183,42 @@ def normalize_course(raw: str) -> Dict[str, str]:
     for token in (key, key.split()[0] if key.split() else ""):
         if token in ATR_COURSE_MAP:
             return dict(ATR_COURSE_MAP[token])
+    text = (raw or "").strip()
+    lowered = text.lower()
+    if (not any(w in lowered for w in _POISON_WORDS)
+            and not any(ch.isdigit() for ch in text)
+            and _TOKEN_RE.match(text)):
+        return {"track": text, "region": ""}
     return {"track": "", "region": ""}
+
+
+def _segment_by_headings(html: bytes) -> List[Tuple[str, str]]:
+    """Split raw HTML into (heading_text, table_html) pairs.
+
+    Every <table> inherits the nearest preceding <h1>–<h4>/caption text.
+    Titles are returned RAW — callers must pass them through
+    normalize_course (validate-or-blank), never display them directly.
+    """
+    try:
+        text = html.decode("utf-8", errors="ignore") if isinstance(html, bytes) else str(html)
+    except Exception:
+        return []
+    heads = [(m.start(), re.sub(r"<[^>]+>", " ", m.group(1)).strip())
+             for m in re.finditer(r"<h[1-4][^>]*>(.*?)</h[1-4]>", text,
+                                  re.IGNORECASE | re.DOTALL)]
+    tables = [(m.start(), m.group(0))
+              for m in re.finditer(r"<table.*?</table>", text,
+                                   re.IGNORECASE | re.DOTALL)]
+    out: List[Tuple[str, str]] = []
+    for tpos, thtml in tables:
+        title = ""
+        for hpos, htext in heads:
+            if hpos < tpos:
+                title = htext
+            else:
+                break
+        out.append((re.sub(r"\s+", " ", title).strip(), thtml))
+    return out
 
 
 class AtTheRacesAPI:
@@ -566,7 +605,7 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         movers = []
 
-        for meeting_title, table in self._iter_meeting_tables(sel):
+        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
             header_course = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:
@@ -608,13 +647,16 @@ class AtTheRacesAPI:
 
         return movers
 
-    def _iter_meeting_tables(self, sel) -> List[Tuple[str, Any]]:
+    def _iter_meeting_tables(self, sel, html: bytes | None = None) -> List[Tuple[str, Any]]:
         """Yield (meeting_title, table) in document order.
 
         Meeting titles come ONLY from `a.panel-header h2` (the proven
         results-page pattern) or a `caption` inside the table itself.
         Page-level h2/h3 are deliberately ignored (Oct-2026: they caught
         "MARKET MOVERS SUMMARY…" and poisoned every row's course).
+        When raw html is supplied, title-less tables inherit the nearest
+        preceding heading via _segment_by_headings (titles still pass
+        through normalize_course downstream — never displayed raw).
         Falls back to bare tables with an empty title so legacy layouts
         keep working. Logs distinct titles seen (DOM diagnostic).
         """
@@ -675,6 +717,16 @@ class AtTheRacesAPI:
             if sig not in seen:
                 seen.add(sig)
                 out.append(("", table))
+        # Regex backfill: when the DOM walk found no titles at all, pair
+        # tables positionally with nearest-preceding headings from raw html.
+        # DOM titles always win when present; segment titles only fill blanks.
+        if html and not any(t for t, _ in out):
+            try:
+                seg = _segment_by_headings(html)
+            except Exception:
+                seg = []
+            if seg and len(seg) == len(out):
+                out = [(st, tbl) for (st, _), (_, tbl) in zip(seg, out)]
         try:
             titles = sorted({t for t, _ in out if t})
             logger.info("ATR meeting titles seen: %s",
@@ -700,7 +752,7 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         predictions = []
 
-        for meeting_title, table in self._iter_meeting_tables(sel):
+        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
             header = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:

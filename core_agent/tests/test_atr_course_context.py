@@ -20,9 +20,11 @@ from core_agent.skills.parsers.atr_enrich import (
     ("Y", "Flamingo Park (closed 2020)", "defunct"),
     ("Kimberley", "Flamingo Park (closed 2020)", "defunct"),
     # Validate-or-blank: page titles and horse headers must NEVER become venues
-    ("SomeUnknownTrack", "", ""),
     ("MARKET MOVERS SUMMARY - UK & IRELAND | TUESDAY 6TH OCTOBER 2026", "", ""),
     ("(10) SHARK TWO ONE", "", ""),
+    # ...but short tokens keep the OLD display behaviour (raw, not blank)
+    ("SomeUnknownTrack", "SomeUnknownTrack", ""),
+    ("Abc", "Abc", ""),
     ("", "", ""),
 ])
 def test_normalize_course(raw, track, region):
@@ -129,3 +131,16 @@ async def test_international_schedule_from_betway_shape():
     assert tracks["newcastle"]["region"] == "UK and Ireland"
     assert "happy_valley" not in tracks
     assert "vaal" not in tracks
+
+
+def test_segment_by_headings_pairs_tables():
+    """Regex fallback: tables inherit nearest preceding heading (raw)."""
+    from core_agent.skills.parsers.attheraces_api import _segment_by_headings
+    html = (b"<h2>Market Movers Summary - UK</h2>"
+            b"<h3>Kempton</h3><table><tr><td>A</td></tr></table>"
+            b"<h3>Southwell</h3><table><tr><td>B</td></tr></table>")
+    seg = _segment_by_headings(html)
+    assert len(seg) == 2
+    assert seg[0][0] == "Kempton"
+    assert seg[1][0] == "Southwell"
+    assert "<table>" in seg[0][1]
