@@ -292,8 +292,9 @@ class FTS5Search:
                 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
                 chroma_dir = os.getenv("CHROMA_DIR", "data/chroma")
                 client = chromadb.PersistentClient(path=chroma_dir)
+                from core_agent.skills.memory.chroma_memory import collection_names
                 collection = client.get_collection(
-                    "form_insights", embedding_function=DefaultEmbeddingFunction()
+                    collection_names()["form"], embedding_function=DefaultEmbeddingFunction()
                 )
             except Exception as e:
                 return {"error": f"ChromaDB not available: {e}"}
@@ -416,8 +417,9 @@ class FTS5Search:
                 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
                 chroma_dir = os.getenv("CHROMA_DIR", "data/chroma")
                 client = chromadb.PersistentClient(path=chroma_dir)
+                from core_agent.skills.memory.chroma_memory import collection_names
                 collection = client.get_collection(
-                    "form_insights", embedding_function=DefaultEmbeddingFunction()
+                    collection_names()["form"], embedding_function=DefaultEmbeddingFunction()
                 )
             except Exception as e:
                 logger.debug(f"Direct ChromaDB client failed: {e}")

@@ -328,3 +328,48 @@ def test_compare_drift_flagged(tmp_path):
         repo_mod.LedgerRepository = orig_repo
     assert out["match"] is False
     assert any("drift" in n for n in out["notes"])
+
+
+# ── embedding space versioning (gemma2 prep) ────────────────────────────
+
+def test_collection_names_versioned(monkeypatch):
+    from core_agent.skills.memory import chroma_memory as cm
+    monkeypatch.delenv("MODEL_EMBEDDER", raising=False)
+    monkeypatch.setattr(cm, "resolve_embedder_model", lambda: cm.LEGACY_MODEL)
+    assert cm.collection_names() == {"form": "form_insights", "chat": "chat_history"}
+    assert cm.collection_names("embeddinggemma-2:270m") == {
+        "form": "form_insights_v2", "chat": "chat_history_v2"}
+
+
+def test_resolve_prefers_gemma2_when_pulled(monkeypatch):
+    from core_agent.skills.memory import chroma_memory as cm
+    monkeypatch.delenv("MODEL_EMBEDDER", raising=False)
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"models": [{"name": "embeddinggemma-2:270m"}, {"name": "llama3"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url):
+            return FakeResp()
+
+    import httpx
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    assert cm.resolve_embedder_model() == "embeddinggemma-2:270m"
+
+
+def test_resolve_env_wins(monkeypatch):
+    from core_agent.skills.memory import chroma_memory as cm
+    monkeypatch.setenv("MODEL_EMBEDDER", "custom-model:1m")
+    assert cm.resolve_embedder_model() == "custom-model:1m"
