@@ -191,6 +191,27 @@ async function handleGeminiChat(env: Env, body: any, modelName: string, systemIn
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: String(m.content || '').slice(0, 8000) }],
     }));
+  // Image attachments (Oct-2026 fix): the bytes previously died after the
+  // body-cap check and no model ever saw them. Append as Gemini inline_data
+  // on the last user turn so vision models actually receive the picture.
+  {
+    const att = body.attachment;
+    const imgData = typeof att?.data === 'string' ? att.data : '';
+    const imgMime = typeof att?.mimeType === 'string' ? att.mimeType : '';
+    if (imgData && imgMime.startsWith('image/')) {
+      for (let i = formattedContents.length - 1; i >= 0; i--) {
+        if (formattedContents[i].role === 'user') {
+          formattedContents[i].parts.push({
+            inline_data: { mime_type: imgMime, data: imgData },
+          });
+          const tip = ' [Attached photo: analyse the racing content in the image — racecard grids, odds, horses, jockeys — and ground your answer in what you see.]';
+          const first = formattedContents[i].parts[0];
+          if (first && typeof first.text === 'string') first.text += tip;
+          break;
+        }
+      }
+    }
+  }
   // No googleSearch tool: chat search is served by the edge cascade above.
   if (!isStream) {
     const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${geminiApiKey}`, {
@@ -271,6 +292,23 @@ async function handleGroqChat(env: Env, body: any, modelName: string, systemInst
     { role: 'system', content: systemInstruction },
     ...body.messages.map((m: any) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 8000) })),
   ];
+  // Groq models served here are text-only: don't send bytes they can't read.
+  // Instead, tell the model a photo was attached so it asks for a Gemini
+  // vision pass instead of hallucinating an analysis (Oct-2026).
+  {
+    const att = body.attachment;
+    if (att && typeof att.data === 'string' && att.data &&
+        String(att.mimeType || '').startsWith('image/')) {
+      for (let i = groqMessages.length - 1; i >= 0; i--) {
+        if (groqMessages[i].role === 'user') {
+          groqMessages[i].content +=
+            '\n\n[Note: the user attached a photo, but this text-only model cannot see images. ' +
+            'Briefly say what analysis you could do, and suggest switching to a Gemini model to read the image.]';
+          break;
+        }
+      }
+    }
+  }
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${groqApiKey}`, 'Content-Type': 'application/json' },
