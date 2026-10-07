@@ -39,3 +39,10 @@ pinned, not weakened.
 
 - **WHEN** any chat request is forwarded upstream
 - **THEN** it carries the existing per-call caps (max tokens 1500, 32 KB body limit) unchanged
+
+#### Scenario: Image attachments bypass the text cap (Oct-2026)
+
+- **WHEN** a chat request carries base64 image data (client-downscaled first)
+- **THEN** a separate 2 MB body cap applies instead of 32 KB — text-only
+  requests keep the pinned cap, so the spend guard is unchanged where it
+  matters while photos stop dying with 413s

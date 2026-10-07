@@ -196,14 +196,32 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     try {
       const reader = new FileReader();
       reader.onload = async () => {
-        const base64Str = (reader.result as string).split(',')[1] || '';
+        let base64Str = (reader.result as string).split(',')[1] || '';
+        let mimeType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
+        let noted = false;
+        if (isImage) {
+          // Downscale phone photos before upload (Oct-2026: multi-MB originals
+          // died with "request too large" before any model saw pixels).
+          try {
+            const { downscaleImage } = await import('../lib/image-downscale');
+            const out = await downscaleImage(file);
+            base64Str = out.data;
+            mimeType = out.mimeType;
+            if (out.downscaled) {
+              flashNote(`Attached ${file.name} (compressed for analysis)`);
+              noted = true;
+            }
+          } catch {
+            /* fall through with the original bytes */
+          }
+        }
         setAttachedDoc({
           name: file.name,
-          mimeType: isPdf ? 'application/pdf' : (file.type || 'image/jpeg'),
+          mimeType,
           data: base64Str,
           previewUrl: isImage ? URL.createObjectURL(file) : undefined,
         });
-        flashNote(`Attached ${file.name} (${isPdf ? 'PDF Racecard' : 'Image'})`);
+        if (!noted) flashNote(`Attached ${file.name} (${isPdf ? 'PDF Racecard' : 'Image'})`);
 
         // If in on-device WebLLM mode with an image, also extract on-device text as fallback
         if (selectedModel.startsWith('webllm-') && isImage) {

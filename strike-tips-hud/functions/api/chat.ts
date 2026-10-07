@@ -28,6 +28,10 @@ const RATE_MAX = 20; // LLM calls/min per IP
 const GLOBAL_RATE_MAX = 150; // isolate-wide ceiling: 20/IP no longer scales to many IPs
 // Exported for the ai-spend-guard pin tests (values must not silently drift).
 export const MAX_BODY_BYTES = 32_768; // per-call input cap (pinned; see ai-spend-guard spec)
+// Attachments carry base64 images: a separate, still-bounded cap so photos
+// survive (Oct-2026: every image died here with 413 "Request too large").
+// Client downscales to ~200KB first; this cap is the backstop, not the path.
+export const MAX_BODY_WITH_ATTACHMENT = 2_000_000;
 export const MAX_TOKENS = 1500; // per-call output cap (pinned; see ai-spend-guard spec)
 // Bounded stores (shared limiter): evict-on-rollover + hard key cap.
 const rateStore = new Map<string, RateEntry>();
@@ -107,10 +111,22 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   let body: any;
   try {
     const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) {
-      return Response.json({ error: 'Request too large' }, { status: 413, headers: corsHeaders(url.origin) });
+    // Peek for an attachment BEFORE enforcing the text cap: base64 images
+    // legitimately exceed 32KB. Cap applies by content, not blindly.
+    let hasAttachment = false;
+    try {
+      const peek = JSON.parse(text || '{}');
+      hasAttachment = Boolean(peek?.attachment?.data);
+      body = peek;
+    } catch {
+      return Response.json({ error: 'Invalid JSON' }, { status: 400, headers: corsHeaders(url.origin) });
     }
-    body = JSON.parse(text || '{}');
+    const cap = hasAttachment ? MAX_BODY_WITH_ATTACHMENT : MAX_BODY_BYTES;
+    if (text.length > cap) {
+      return Response.json({ error: hasAttachment
+        ? 'Image too large — try a smaller photo or screenshot.'
+        : 'Request too large' }, { status: 413, headers: corsHeaders(url.origin) });
+    }
   } catch {
     return Response.json({ error: 'Invalid JSON' }, { status: 400, headers: corsHeaders(url.origin) });
   }
