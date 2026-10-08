@@ -172,3 +172,55 @@ def test_validate_single_race_pools():
     ]
     out = _validate_exotic_layout(plays, 8)
     assert sorted(p["pool"] for p in out) == ["EXACTA", "PICK 3", "QUARTET", "TRIFECTA"]
+
+
+@pytest.mark.asyncio
+async def test_single_race_topup_parses():
+    """Focused single-race call returns validated Quartet/Trifecta plays."""
+    from core_agent.core.strike_tips import StrikeTips
+    import json as _json
+
+    payload = {"exotic_plays": [
+        {"pool": "QUARTET", "legs": [7],
+         "combinations": [{"race": 7, "banker": "A", "savers": ["B", "C", "D"]}],
+         "estimated_dividend": 900.0, "reasoning": "box chaos"},
+        {"pool": "TRIFECTA", "legs": [6],
+         "combinations": [{"race": 6, "banker": "M", "savers": ["N", "O"]}],
+         "estimated_dividend": 400.0, "reasoning": "banker multi"},
+    ]}
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": _json.dumps(payload)}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    import httpx
+    import pytest as _pt
+    monkeypatch = _pt.MonkeyPatch()
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    try:
+        s = StrikeTips.__new__(StrikeTips)
+        races = [
+            {"race_number": 7, "runners": [{"name": n} for n in
+             ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]]},
+            {"race_number": 6, "runners": [{"name": n} for n in
+             ["M", "N", "O", "P", "Q", "R", "S", "T"]]},
+        ]
+        out = await s._analyze_single_race_pools("key", races, "vaal")
+    finally:
+        monkeypatch.undo()
+    assert sorted(p["pool"] for p in out) == ["QUARTET", "TRIFECTA"]

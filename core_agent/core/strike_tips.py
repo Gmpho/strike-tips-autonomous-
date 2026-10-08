@@ -1356,7 +1356,10 @@ class StrikeTips:
             raw = None
 
             if groq_key:
-                async with httpx.AsyncClient(timeout=15.0) as client:
+                # 120s: an 8-race card in + up to 2500 tokens out cannot fit
+                # in 15s (Oct-2026: every exotic call timed out, silently
+                # falling back to PDF-only boards all day).
+                async with httpx.AsyncClient(timeout=120.0) as client:
                     resp = await client.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
@@ -1411,6 +1414,18 @@ class StrikeTips:
                 if valid_plays:
                     print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s): "
                           f"{[p.get('pool') for p in valid_plays]}")
+                    # Single-race top-up (Oct-2026): the main call demonstrably
+                    # ignores single-race instructions (model compliance). A
+                    # second FOCUSED call per qualifying race gets them built.
+                    try:
+                        from core_agent.skills.exotics.builder import race_suitability
+                        _single = await self._analyze_single_race_pools(
+                            groq_key, track_races, track_name)
+                        for _sp in _single:
+                            _sp["_track"] = track_name
+                        valid_plays.extend(_single)
+                    except Exception as _se:
+                        print(f"[EXOTIC] Single-race top-up skipped: {_se}")
                     return valid_plays
         except Exception as e:
             print(f"[EXOTIC] AI exotic analysis skipped/failed: {e}")
@@ -1507,6 +1522,77 @@ class StrikeTips:
             return _validate_exotic_layout(fallback_plays, total_races)
         except Exception as e:
             print(f"[EXOTIC] Fallback exotic generation error: {e}")
+            return []
+
+    async def _analyze_single_race_pools(
+        self, groq_key: str, track_races: List[Dict], track_name: str
+    ) -> List[Dict]:
+        """Focused single-race exotic call (Oct-2026): Quartet/Trifecta/
+        Exacta/Pick-3 per qualifying race. The main call demonstrably ignores
+        single-race instructions, so they get their own compact prompt."""
+        from core_agent.skills.exotics.builder import race_suitability
+
+        def _names(runners):
+            out = []
+            for r in runners or []:
+                n = (r if isinstance(r, str) else getattr(r, "horse_name", None)
+                     or ((r.get("horse_name") or r.get("name")) if isinstance(r, dict) else str(r)))
+                if n and "NR -" not in str(n):
+                    out.append(str(n))
+            return out
+
+        quals = []
+        for race in track_races or []:
+            if not isinstance(race, dict):
+                continue
+            names = _names(race.get("runners", []))
+            if len(names) < 4:
+                continue
+            suit = race_suitability({"runners": [{"name": n} for n in names]})
+            if suit:
+                quals.append((race.get("race_number", "?"), names, sorted(suit.keys())))
+        if not quals:
+            return []
+        lines = [f"Race {rn} ({len(names)} runners): {', '.join(names[:16])} | pools: {', '.join(pools)}"
+                 for rn, names, pools in quals]
+        prompt = (
+            "Build SINGLE-RACE exotic tickets for these races. "
+            "Quartet = 1st-4th exact (box/float in big fields); "
+            "Trifecta = 1st-3rd exact (banker 1st + others for 2nd/3rd); "
+            "Exacta = 1st-2nd exact (duels); "
+            "Pick 3 = winners of 3 consecutive listed races. "
+            "One banker + savers per ticket, NRs excluded (none listed). "
+            "Return ONLY valid JSON: {\"exotic_plays\": [{\"pool\": \"TRIFECTA\", "
+            "\"legs\": [7], \"combinations\": [{\"race\": 7, \"banker\": \"Horse\", "
+            "\"savers\": [\"H2\", \"H3\"]}], \"estimated_dividend\": 500.0, "
+            "\"reasoning\": \"...\"}]}\n\n"
+            + "\n".join(lines)
+        )
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                    json={"model": "openai/gpt-oss-120b",
+                          "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.2, "max_tokens": 1500,
+                          "response_format": {"type": "json_object"}},
+                )
+                if resp.status_code != 200:
+                    print(f"[EXOTIC] Single-race call HTTP {resp.status_code}")
+                    return []
+                raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                clean = raw.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean[clean.find("{"):clean.rfind("}") + 1])
+                plays = data.get("exotic_plays", []) or []
+                total = max([int(r) for q in quals for r in [q[0]] if str(r).isdigit()] + [0])
+                valid = _validate_exotic_layout(plays, max(total, 1))
+                print(f"[EXOTIC] Single-race top-up: {len(valid)} plays "
+                      f"({[p.get('pool') for p in valid]})")
+                return valid
+        except Exception as e:
+            print(f"[EXOTIC] Single-race top-up failed: {e}")
             return []
 
     def _convert_race_data(self, scraped_race: ScrapedRace) -> tuple:
