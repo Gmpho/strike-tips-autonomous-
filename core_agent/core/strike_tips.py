@@ -1109,9 +1109,11 @@ class StrikeTips:
             self._processing_tracks.remove(track_key)
             # We keep track_data_cache for the duration of the track session
 
-    def _validate_value_bets(self, value_bets: List[Dict], valid_horses: List[str]) -> List[Dict]:
+    def _validate_value_bets(self, value_bets: List[Dict], valid_horses: List[str], max_per_race: int = 3) -> List[Dict]:
         """Cross-reference AI-generated value bets against actual scraped runners.
-        Filters out hallucinated horse names using fuzzy matching."""
+        Filters out hallucinated horse names using fuzzy matching.
+        Caps at max_per_race top-edge selections (Oct-2026: uncapped lists put
+        8 singles on one race — the whole field. At most 3 per race)."""
         validated = []
         for vb in value_bets:
             horse = vb.get("horse") or vb.get("name") or vb.get("horse_name") or ""
@@ -1127,6 +1129,17 @@ class StrikeTips:
                 validated.append(vb)
             else:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
+        def _edge(vb):
+            try:
+                e = float(vb.get("edge_percent") or vb.get("edge") or 0)
+            except (ValueError, TypeError):
+                e = 0.0
+            return e * 100 if 0 < e < 1 else e
+        validated.sort(key=_edge, reverse=True)
+        if len(validated) > max_per_race:
+            print(f"[CAP] Race capped at {max_per_race} selections "
+                  f"({len(validated) - max_per_race} lowest-edge dropped)")
+            validated = validated[:max_per_race]
         return validated
 
     async def _enrich_runners_from_pdf(

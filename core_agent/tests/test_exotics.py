@@ -144,3 +144,16 @@ def test_empty_form_empty_return():
     """Edge case: empty form should not crash."""
     prob = compute_win_probability("", 58.0, "", "", 10)
     assert 0.01 <= prob <= 0.75
+
+
+def test_validate_value_bets_caps_per_race():
+    """Oct-2026: uncapped lists put 8 singles on one race. Top-3 by edge."""
+    from core_agent.core.strike_tips import StrikeTips
+    s = StrikeTips.__new__(StrikeTips)
+    vbs = [{"horse": f"H{i}", "edge_percent": float(50 - i * 5)} for i in range(8)]
+    horses = [f"H{i}" for i in range(8)]
+    out = s._validate_value_bets(vbs, horses)
+    assert [v["horse"] for v in out] == ["H0", "H1", "H2"]
+    # hallucinations still rejected
+    out2 = s._validate_value_bets([{"horse": "Ghost", "edge_percent": 99.0}], horses)
+    assert out2 == []

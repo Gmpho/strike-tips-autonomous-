@@ -421,8 +421,11 @@ class TelegramNotifier:
                             edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
                         except (ValueError, TypeError):
                             edge = 0.0
+                        if 0 < edge < 1:
+                            edge *= 100
+                        badge = "🔥" if edge >= 15.0 else "✅" if edge >= 8.0 else "💛"
                         lines.append(
-                            f"  R{race['race_number']}: {horse_name} @ {vb.get('odds_decimal', '?')} "
+                            f"  R{race['race_number']}: {badge} {horse_name} @ {vb.get('odds_decimal', '?')} "
                             f"(+{edge:.1f}%)"
                         )
 
