@@ -4,6 +4,9 @@ import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
 import { usePWA } from './hooks/usePWA';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
+import { usePromoActions } from './hooks/usePromoActions';
+import { eligibleCampaigns } from './lib/campaigns';
+import { PromoCarousel } from './components/promos/PromoCarousel';
 import { LandingPage } from './components/landing/LandingPage';
 import { GuestBanner } from './components/landing/GuestBanner';
 import { UpdateToast } from './components/UpdateToast';
@@ -152,6 +155,9 @@ export const App: React.FC = () => {
   }
   const isGuest = authOn && !authLoading && !session;
 
+  const promoAction = usePromoActions(navigate);
+  const { isInstallable, isInstalled } = usePWA();
+
   const renderView = () => {
     const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);
 
@@ -182,6 +188,15 @@ export const App: React.FC = () => {
       case 'dashboard':
         return (
           <div className="flex flex-col gap-4 w-full">
+            <PromoCarousel
+              campaigns={eligibleCampaigns({
+                loggedIn: !!session,
+                telegramLinked: (() => { try { const v = localStorage.getItem('strike_telegram_linked'); return v === '1' ? true : v === '0' ? false : null; } catch { return null; } })(),
+                pwa: isInstalled ? 'installed' : isInstallable ? 'installable' : 'browser',
+                view: 'dashboard',
+              })}
+              onAction={promoAction}
+            />
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-4 md:gap-6 w-full">
               {visibleEvents.map((event, idx) => (
                 <RaceCard

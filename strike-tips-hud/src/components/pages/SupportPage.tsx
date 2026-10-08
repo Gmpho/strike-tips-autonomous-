@@ -151,6 +151,14 @@ export const SupportPage: React.FC = () => {
       </motion.div>
 
       <motion.div variants={fadeUp}>
+        <a
+          href="https://chat.whatsapp.com/C6T9FuBiExK5jeNLooc7bW"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 mb-6 text-sm font-black uppercase tracking-widest text-theme-primary hover:bg-emerald-500/20 transition-all"
+        >
+          <span>💬</span> Join the WhatsApp group — free, no tiers needed
+        </a>
         <p className="text-[11px] text-theme-secondary font-semibold text-center">
           Once-off · No subscriptions · No paywalls, ever · Processed securely by our payment partner — we never see card details
         </p>

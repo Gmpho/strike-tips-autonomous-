@@ -43,9 +43,11 @@ export const TelegramLinkCard: React.FC = () => {
       if (res.status === 401 || res.status === 503) throw new Error(`HTTP ${res.status}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
+      const LINKED_KEY = 'strike_telegram_linked';
       setState(body.linked
         ? { phase: 'linked', username: body.username }
         : { phase: 'unlinked', code: null });
+      try { localStorage.setItem(LINKED_KEY, body.linked ? '1' : '0'); } catch { /* private */ }
     } catch {
       // Signed in but backend unreachable/misconfigured — say so plainly
       // instead of offering a passcode that can't work.
@@ -111,7 +113,7 @@ export const TelegramLinkCard: React.FC = () => {
   };
 
   return (
-    <div className="mt-4 rounded-2xl border border-theme bg-theme-secondary/30 p-5">
+    <div id="telegram-link-card" className="mt-4 rounded-2xl border border-theme bg-theme-secondary/30 p-5">
       <div className="flex items-center gap-2 mb-1">
         <Send className="w-4 h-4 text-sky-400" />
         <span className="text-sm font-black text-theme-primary uppercase tracking-widest">Telegram Alerts</span>

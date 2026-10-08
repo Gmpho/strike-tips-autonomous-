@@ -8,6 +8,7 @@ import { OFFLINE_MODELS, formatMB, isModelEnabled } from '../../lib/offline-mode
 import { downloadPack, type PackProgress } from '../../lib/offline-pack';
 import { usePWA } from '../../hooks/usePWA';
 import { TelegramLinkCard } from './TelegramLinkCard';
+import { SettingsNudge } from '../promos/SettingsNudge';
 
 interface Settings {
   bankroll: { startingBalance: number; maxBetPercent: number; dailyLossLimit: number; minEdgeThreshold: number };
@@ -340,6 +341,7 @@ export const SettingsView: React.FC = () => {
                   <RefreshCw className="w-4 h-4" />
                   Test Telegram Integration
                 </button>
+                <SettingsNudge />
                 <TelegramLinkCard />
               </div>
             )}

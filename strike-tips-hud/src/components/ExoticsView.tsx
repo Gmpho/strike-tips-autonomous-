@@ -3,6 +3,8 @@ import { Ticket, Coins, Trophy, Calendar, Activity, Loader2, Star } from 'lucide
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../hooks/useHUD';
 import { apiFetch } from '../lib/api-fetch';
+import { CAMPAIGNS, markSeen } from '../lib/campaigns';
+import { PromoCard } from './promos/PromoCard';
 
 interface CombinationSelection {
   race: number;
@@ -112,6 +114,21 @@ export const ExoticsView: React.FC = () => {
   // Filter historical exotic bets from global ledger
   const exoticHistory = betHistory.filter(b => b.confidence === 'EXOTIC');
 
+  // First-visit intro: shown until pools render, then marked seen forever.
+  const [showIntro, setShowIntro] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('strike_promo_seen')?.includes('pools-viewed');
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (activePlays.length > 0 && showIntro) {
+      markSeen('pools-viewed');
+      setShowIntro(false);
+    }
+  }, [activePlays.length, showIntro]);
+
   // Calculate Exotic stats
   const totalStaked = exoticHistory.reduce((sum, b) => sum + b.stake, 0);
   const totalPayout = exoticHistory.reduce((sum, b) => sum + (b.payout || 0), 0);
@@ -144,6 +161,12 @@ export const ExoticsView: React.FC = () => {
             <span className="text-theme-primary font-bold">comparison only</span>.
           </p>
         </div>
+
+      {/* First-visit intro: dismisses itself once pools render. */}
+      {showIntro && (() => {
+        const c = CAMPAIGNS.find((x) => x.id === 'exotics-intro');
+        return c ? <PromoCard campaign={c} compact onAction={() => { markSeen('pools-viewed'); setShowIntro(false); }} /> : null;
+      })()}
 
         {/* Tab Controls */}
         <div className="flex border border-theme p-1 rounded-2xl bg-theme-panel shrink-0">
