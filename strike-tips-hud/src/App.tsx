@@ -117,6 +117,10 @@ export const App: React.FC = () => {
   // Google-auth gate (Oct-2026): logged-out users see the landing page.
   // Inactive when Supabase keys are absent, so existing deploys keep working.
   const { configured: authOn, loading: authLoading, session } = useSupabaseSession();
+  // NOTE: every hook must stay above the logged-out early return below —
+  // hooks after a conditional return crash React (#300) for logged-out users.
+  const promoAction = usePromoActions(navigate);
+  const { isInstallable, isInstalled } = usePWA();
 
   // Load backend configuration at startup to sync sound prompts state to localStorage
   useEffect(() => {
@@ -154,9 +158,6 @@ export const App: React.FC = () => {
     return <LandingPage />;
   }
   const isGuest = authOn && !authLoading && !session;
-
-  const promoAction = usePromoActions(navigate);
-  const { isInstallable, isInstalled } = usePWA();
 
   const renderView = () => {
     const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);
