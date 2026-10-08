@@ -1326,6 +1326,18 @@ class StrikeTips:
             + "non-runners — never select them in any leg. Short legs (clear standout) take fewer "
             + "selections, open handicaps take more — like a strategist sizing "
             + "a real permutation ticket, never the full field. "
+            + "DOCTRINE (hard rules): "
+            + "(1) A ticket dies in its thinnest leg — give the MURKIEST leg "
+            + "(biggest competitive field, weakest read) one extra saver before "
+            + "widening any other leg. "
+            + "(2) Any horse flagged as value in the analysis MUST appear on "
+            + "the ticket, displacing the weakest saver if needed. "
+            + "SINGLE-RACE POOLS (Oct-2026 textbook): also construct where the "
+            + "field qualifies — 12+ runners: QUARTET (box the chaos or float "
+            + "1-2 bankers); 8-13 runners with a confident winner: TRIFECTA "
+            + "Multi (banker 1st + 3-4 for 2nd/3rd); two-horse duels: EXACTA. "
+            + "One PICK 3 on the most readable consecutive triple. Skip "
+            + "single-race pools on small/uncompetitive fields. "
             + "Return ONLY valid JSON with this exact structure: "
             + '{"exotic_plays": [{"pool": "PICK 6", "legs": [4,5,6,7,8,9], '
             + '"combinations": [{"race": 4, "banker": "Horse 1", "savers": ["Horse 2", "Horse 3"]}], '
