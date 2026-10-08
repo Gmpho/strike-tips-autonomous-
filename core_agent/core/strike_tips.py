@@ -1359,24 +1359,43 @@ class StrikeTips:
                 # 120s: an 8-race card in + up to 2500 tokens out cannot fit
                 # in 15s (Oct-2026: every exotic call timed out, silently
                 # falling back to PDF-only boards all day).
+                _payload = {
+                    "model": "openai/gpt-oss-120b",
+                    "messages": [{"role": "user", "content": card_context}],
+                    "temperature": 0.2,
+                    # 2500: the doctrine + single-race pools roughly
+                    # doubled output size (Oct-2026: 1200 truncated the
+                    # JSON, silently dropping every new pool type).
+                    "max_tokens": 2500,
+                    "response_format": {"type": "json_object"},
+                }
+                _headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+                resp = None
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": "openai/gpt-oss-120b",
-                            "messages": [{"role": "user", "content": card_context}],
-                            "temperature": 0.2,
-                            # 2500: the doctrine + single-race pools roughly
-                            # doubled output size (Oct-2026: 1200 truncated the
-                            # JSON, silently dropping every new pool type).
-                            "max_tokens": 2500,
-                            "response_format": {"type": "json_object"},
-                        },
-                    )
-                    if resp.status_code == 200:
+                    for _attempt in (1, 2):
+                        try:
+                            resp = await client.post(
+                                "https://api.groq.com/openai/v1/chat/completions",
+                                headers=_headers, json=_payload,
+                            )
+                        except Exception as _e:
+                            print(f"[EXOTIC] Groq attempt {_attempt} transport failed: {_e}")
+                            await asyncio.sleep(5 * _attempt)
+                            continue
+                        if resp.status_code == 200:
+                            break
+                        print(f"[EXOTIC] Groq attempt {_attempt} HTTP {resp.status_code}")
+                        await asyncio.sleep(5 * _attempt)
+                    else:
+                        resp = None
+                    if resp is not None and resp.status_code == 200:
                         data_json = resp.json()
                         raw = data_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    elif resp is not None:
+                        print(f"[EXOTIC] Groq gave up (HTTP {resp.status_code}) — trying Gemini fallback")
+
+            if not raw:
+                raw = await self._gemini_exotic_fallback(card_context)
 
             if raw:
                 clean = raw.replace("```json", "").replace("```", "").strip()
@@ -1594,6 +1613,40 @@ class StrikeTips:
         except Exception as e:
             print(f"[EXOTIC] Single-race top-up failed: {e}")
             return []
+
+    async def _gemini_exotic_fallback(self, card_context: str) -> Optional[str]:
+        """Gemini fallback when Groq gives up (Oct-2026: scan-rush 429s).
+        Same prompt, gemini-2.5-flash (existing chain ID), JSON MIME mode.
+        Returns raw content or None."""
+        import httpx
+
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    "gemini-2.5-flash:generateContent?key=" + gemini_key,
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": card_context}]}],
+                          "generationConfig": {"temperature": 0.2,
+                                               "maxOutputTokens": 2500,
+                                               "responseMimeType": "application/json"}},
+                )
+                if resp.status_code != 200:
+                    print(f"[EXOTIC] Gemini fallback HTTP {resp.status_code}")
+                    return None
+                data = resp.json()
+                parts = (data.get("candidates", [{}])[0].get("content", {})
+                         .get("parts", []))
+                text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                if text:
+                    print("[EXOTIC] Gemini fallback produced content")
+                return text or None
+        except Exception as e:
+            print(f"[EXOTIC] Gemini fallback failed: {e}")
+            return None
 
     def _convert_race_data(self, scraped_race: ScrapedRace) -> tuple:
         """
