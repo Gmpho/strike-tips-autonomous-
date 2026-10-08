@@ -1360,7 +1360,10 @@ class StrikeTips:
                             "model": "openai/gpt-oss-120b",
                             "messages": [{"role": "user", "content": card_context}],
                             "temperature": 0.2,
-                            "max_tokens": 1200,
+                            # 2500: the doctrine + single-race pools roughly
+                            # doubled output size (Oct-2026: 1200 truncated the
+                            # JSON, silently dropping every new pool type).
+                            "max_tokens": 2500,
                             "response_format": {"type": "json_object"},
                         },
                     )
@@ -1402,7 +1405,8 @@ class StrikeTips:
                 if valid_plays:
                     valid_plays = _validate_exotic_layout(valid_plays, total_races)
                 if valid_plays:
-                    print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s)")
+                    print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s): "
+                          f"{[p.get('pool') for p in valid_plays]}")
                     return valid_plays
         except Exception as e:
             print(f"[EXOTIC] AI exotic analysis skipped/failed: {e}")
