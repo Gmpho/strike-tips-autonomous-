@@ -565,6 +565,10 @@ def _play_has_no_nrs(play: Dict, nr_names: Dict[tuple, set]) -> bool:
 # Canonical SA pool sizes: Bipot 6, Jackpot 4, Pick 6 six, Place Accumulator 7.
 _POOL_LEG_COUNTS = (
     ("BIPOT", 6), ("JACKPOT", 4), ("PICK 6", 6), ("PLACE ACCUMULATOR", 7),
+    # Single-race pools (Oct-2026 textbook): legs == [race], one entry.
+    ("TRIFECTA", 1), ("QUARTET", 1), ("EXACTA", 1),
+    # Pick 3: three consecutive races.
+    ("PICK 3", 3),
 )
 
 

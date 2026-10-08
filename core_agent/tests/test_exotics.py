@@ -157,3 +157,18 @@ def test_validate_value_bets_caps_per_race():
     # hallucinations still rejected
     out2 = s._validate_value_bets([{"horse": "Ghost", "edge_percent": 99.0}], horses)
     assert out2 == []
+
+
+def test_validate_single_race_pools():
+    """Oct-2026: TRIFECTA/QUARTET/EXACTA (1 leg) and PICK 3 (3 legs) survive layout validation."""
+    from core_agent.core.strike_tips import _validate_exotic_layout
+    plays = [
+        {"pool": "TRIFECTA", "legs": [7]},
+        {"pool": "QUARTET", "legs": [6]},
+        {"pool": "EXACTA", "legs": [4]},
+        {"pool": "PICK 3", "legs": [5, 6, 7]},
+        {"pool": "QUARTET", "legs": [6, 7]},  # wrong count -> dropped
+        {"pool": "MYSTERY", "legs": [1]},  # unknown family -> dropped
+    ]
+    out = _validate_exotic_layout(plays, 8)
+    assert sorted(p["pool"] for p in out) == ["EXACTA", "PICK 3", "QUARTET", "TRIFECTA"]
