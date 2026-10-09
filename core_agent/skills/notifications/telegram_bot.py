@@ -456,7 +456,7 @@ class TelegramNotifier:
                 f"  🏆 <b>{pool}</b> — {len(legs)} legs, {len(combos)} combo(s)"
             )
             if legs:
-                lines.append(f"    Legs: {', '.join(legs[:3])}")
+                lines.append(f"    Legs: R{', R'.join(str(r) for r in legs)}")
             if est_div:
                 lines.append(f"    Est. Dividend: R{est_div}")
         await self.broadcast("\n".join(lines))

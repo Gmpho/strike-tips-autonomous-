@@ -562,6 +562,97 @@ def _play_has_no_nrs(play: Dict, nr_names: Dict[tuple, set]) -> bool:
     return True
 
 
+def _order_names_by_live_odds(names: List[str], track_name: str,
+                              snap_odds: Optional[Dict] = None) -> List[str]:
+    """Favourite-first ordering using the live snapshot (odds monitor).
+
+    The deterministic fallback otherwise anchors legs on card order, which
+    can disagree with the market — and the balance guard then (correctly)
+    kills long tickets as all-outsider (Oct-2026: Greyville PA + P6 died
+    this way). Unknown-odds names keep relative order at the back and
+    never count against the play.
+    """
+    if not snap_odds:
+        return list(names)
+    track = _norm_text(track_name or "")
+    pool: Dict[str, float] = {}
+    for k, v in snap_odds.items():
+        if isinstance(v, dict) and track and (track in k or k in track):
+            pool.update(v)
+
+    def _odd(n: str) -> float:
+        o = pool.get(_norm_text(n or ""))
+        return o if isinstance(o, (int, float)) and o > 0 else float("inf")
+
+    if all(_odd(n) == float("inf") for n in names):
+        return list(names)
+    return sorted(names, key=_odd)  # stable: unknowns keep card order
+
+
+def _deterministic_single_race_plays(quals: List[tuple], track_name: str,
+                                    snap_odds: Optional[Dict] = None,
+                                    total_races: int = 0) -> List[Dict]:
+    """No-LLM single-race tickets (Oct-2026: Groq 429s left the board with
+    zero EXA/TRI/QUA). Banker = live favourite, savers = next shortest —
+    honest anchors the balance guard accepts."""
+    _DIVS = {"QUARTET": 600.0, "TRIFECTA": 350.0, "EXACTA": 150.0}
+    plays: List[Dict] = []
+    for rn, names, pools in quals:
+        ordered = _order_names_by_live_odds(names, track_name, snap_odds)
+        if len(ordered) < 4:
+            continue
+        pick = None
+        if "Quartet" in pools and len(ordered) >= 12:
+            pick = ("QUARTET", ordered[1:4])
+        elif "Trifecta" in pools:
+            pick = ("TRIFECTA", ordered[1:4])
+        elif "Exacta" in pools:
+            pick = ("EXACTA", ordered[1:3])
+        if not pick:
+            continue
+        pool, savers = pick
+        plays.append({
+            "pool": pool,
+            "legs": [rn],
+            "combinations": [{"race": rn, "banker": ordered[0], "savers": savers}],
+            "estimated_combinations": 1 + len(savers),
+            "estimated_dividend": _DIVS[pool],
+            "reasoning": "Deterministic favourite-anchored ticket (LLM top-up unavailable).",
+            "_track": track_name,
+            "source": "deterministic",
+        })
+    # One PICK 3 on the biggest-field consecutive triple.
+    _nums = sorted({q[0] for q in quals if isinstance(q[0], int)})
+    _by_num = {q[0]: q for q in quals if isinstance(q[0], int)}
+    best = None
+    for i in range(len(_nums) - 2):
+        triple = _nums[i:i + 3]
+        if triple[1] == triple[0] + 1 and triple[2] == triple[0] + 2:
+            size = sum(len(_by_num[r][1]) for r in triple)
+            if best is None or size > best[0]:
+                best = (size, triple)
+    if best:
+        _, triple = best
+        combos = []
+        for r in triple:
+            ordered = _order_names_by_live_odds(_by_num[r][1], track_name, snap_odds)
+            combos.append({"race": r, "banker": ordered[0], "savers": ordered[1:3]})
+        plays.append({
+            "pool": "PICK 3",
+            "legs": list(triple),
+            "combinations": combos,
+            "estimated_combinations": 3 * 3 * 3,
+            "estimated_dividend": 800.0,
+            "reasoning": "Deterministic readable-triple ticket (LLM top-up unavailable).",
+            "_track": track_name,
+            "source": "deterministic",
+        })
+    if plays:
+        print(f"[EXOTIC] Deterministic single-race fallback: {len(plays)} plays "
+              f"({[p.get('pool') for p in plays]})")
+    return _validate_exotic_layout(plays, total_races) if total_races else plays
+
+
 # Canonical SA pool sizes: Bipot 6, Jackpot 4, Pick 6 six, Place Accumulator 7.
 _POOL_LEG_COUNTS = (
     ("BIPOT", 6), ("JACKPOT", 4), ("PICK 6", 6), ("PLACE ACCUMULATOR", 7),
@@ -1280,7 +1371,7 @@ class StrikeTips:
             logger.warning("[PDF] Runner enrichment failed: %s", e)
             return 0
 
-    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "", nr_names: Optional[Dict[tuple, set]] = None) -> List[Dict]:
+    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "", nr_names: Optional[Dict[tuple, set]] = None, snap_odds: Optional[Dict] = None) -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
         import re
         nr_names = nr_names or {}
@@ -1369,6 +1460,9 @@ class StrikeTips:
             + "Build EVERY declared pool in POOL LAYOUT above — Bipot, PA "
             + "(Place Accumulator), Pick 6, and ALL Jackpots. Omitting a "
             + "declared pool is a failure; a missing PA is the classic miss. "
+            + "EXACT LEG COUNTS (any other count is invalid and discarded): "
+            + "BIPOT 6 legs, PA 7 legs, PICK 6 six legs, JACKPOT 4 legs, "
+            + "PICK 3 three consecutive races, single-race pools 1 leg. "
             + "For each leg, pick 2 to 4 selections, strongest first: one banker "
             + "plus up to 3 savers, chosen on horse quality, form, and "
             + "trainer/jockey strength. Build like a professional strategist, "
@@ -1488,7 +1582,7 @@ class StrikeTips:
                     try:
                         from core_agent.skills.exotics.builder import race_suitability
                         _single = await self._analyze_single_race_pools(
-                            groq_key, track_races, track_name)
+                            groq_key, track_races, track_name, snap_odds)
                         for _sp in _single:
                             _sp["_track"] = track_name
                         valid_plays.extend(_single)
@@ -1539,6 +1633,10 @@ class StrikeTips:
                     _ordered = [_get_name(_i) for _i in range(len(r_runners))]
                     _ordered = [_nm for _nm in _ordered
                                 if _nm and _norm_text(_nm) not in _leg_nrs]
+                    # Favourite-first: live snapshot odds beat card order so
+                    # the balance guard sees honestly-anchored tickets.
+                    _ordered = _order_names_by_live_odds(
+                        _ordered, track_name, snap_odds)
 
                     def _get_name(idx):
                         return _ordered[idx] if idx < len(_ordered) else None
@@ -1593,11 +1691,14 @@ class StrikeTips:
             return []
 
     async def _analyze_single_race_pools(
-        self, groq_key: str, track_races: List[Dict], track_name: str
+        self, groq_key: str, track_races: List[Dict], track_name: str,
+        snap_odds: Optional[Dict] = None,
     ) -> List[Dict]:
         """Focused single-race exotic call (Oct-2026): Quartet/Trifecta/
         Exacta/Pick-3 per qualifying race. The main call demonstrably ignores
-        single-race instructions, so they get their own compact prompt."""
+        single-race instructions, so they get their own compact prompt.
+        When the LLM call fails (scan-rush 429s), deterministic
+        favourite-anchored tickets are built instead of returning nothing."""
         from core_agent.skills.exotics.builder import race_suitability
 
         def _names(runners):
@@ -1621,6 +1722,7 @@ class StrikeTips:
                 quals.append((race.get("race_number", "?"), names, sorted(suit.keys())))
         if not quals:
             return []
+        total = max([int(r) for q in quals for r in [q[0]] if str(r).isdigit()] + [0])
         lines = [f"Race {rn} ({len(names)} runners): {', '.join(names[:16])} | pools: {', '.join(pools)}"
                  for rn, names, pools in quals]
         prompt = (
@@ -1649,19 +1751,20 @@ class StrikeTips:
                 )
                 if resp.status_code != 200:
                     print(f"[EXOTIC] Single-race call HTTP {resp.status_code}")
-                    return []
+                    return _deterministic_single_race_plays(
+                        quals, track_name, snap_odds, max(total, 1))
                 raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
                 clean = raw.replace("```json", "").replace("```", "").strip()
                 data = json.loads(clean[clean.find("{"):clean.rfind("}") + 1])
                 plays = data.get("exotic_plays", []) or []
-                total = max([int(r) for q in quals for r in [q[0]] if str(r).isdigit()] + [0])
                 valid = _validate_exotic_layout(plays, max(total, 1))
                 print(f"[EXOTIC] Single-race top-up: {len(valid)} plays "
                       f"({[p.get('pool') for p in valid]})")
                 return valid
         except Exception as e:
             print(f"[EXOTIC] Single-race top-up failed: {e}")
-            return []
+            return _deterministic_single_race_plays(
+                quals, track_name, snap_odds, max(total, 1))
 
     async def _gemini_exotic_fallback(self, card_context: str) -> Optional[str]:
         """Gemini fallback when Groq gives up (Oct-2026: scan-rush 429s).
@@ -2078,6 +2181,7 @@ class StrikeTips:
                         {_tname: _traces}, pdf_races,
                         tips_text=_tips_text,
                         nr_names=_nr_names,
+                        snap_odds=_snap_odds,
                     )
                 except Exception as e:
                     print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
