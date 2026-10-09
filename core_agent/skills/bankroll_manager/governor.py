@@ -669,15 +669,50 @@ class BankrollGovernor:
                     logger.warning(f"Exotic bet blocked by governor: {reason}")
                     return None
 
-            # Idempotency: same pool/legs/date already pending → skip.
+            # Idempotency: same pool/legs/selections already pending → skip.
+            # Oct-2026: the key used to ignore selections, so a rescan with
+            # strictly better bankers (Greyville Gallic King Bipot) was
+            # skipped as a "duplicate" of a stale losing ticket — a winning
+            # ticket went on the board with no money behind it. Selections
+            # are now part of the key: same pool+legs with different
+            # bankers always places; identical reselections still skip.
+            # Pool labels are canonicalized first ("P6" vs "PICK 6" placed
+            # the same ticket twice).
+            def _fam(p: str) -> str:
+                u = str(p or "").upper()
+                if u.startswith("JP") or "JACKPOT" in u:
+                    return "JACKPOT"
+                if u.startswith("BI") or "BIPOT" in u:
+                    return "BIPOT"
+                if u in ("P6",) or "PICK 6" in u:
+                    return "PICK 6"
+                if u in ("PA",) or "PLACE" in u:
+                    return "PA"
+                if u in ("P3",) or "PICK 3" in u:
+                    return "PICK 3"
+                return u
             today_iso = date.today().isoformat()
             leg_key = "-".join(str(r) for r in pool_legs)
+            bank_names = [
+                str(
+                    (c.get("banker") or {}).get("name")
+                    if isinstance(c.get("banker"), dict)
+                    else c.get("banker", "")
+                )
+                if isinstance(c, dict) else ""
+                for c in (combinations or [])
+            ]
+            bank_names = [n for n in bank_names if n]
             for existing in self._bets:
                 if (
                     existing.status == "PENDING"
                     and existing.date == today_iso
                     and str(existing.track).lower() == str(track).lower()
-                    and str(existing.horse) == f"{pool_type}:{leg_key}"
+                    and _fam(str(existing.horse).split(":")[0])
+                    == _fam(pool_type)
+                    and str(existing.horse).endswith(f":{leg_key}")
+                    and bank_names
+                    and all(n in str(existing.notes or "") for n in bank_names)
                 ):
                     logger.info(
                         f"Duplicate exotic skipped: {pool_type} {leg_key} @ {track} "

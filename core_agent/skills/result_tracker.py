@@ -1148,6 +1148,16 @@ class ResultTracker:
             runners = _race_runners_by_number(races, entry["race"])
             if not runners:
                 return "unknown"
+            # Finality guard (Oct-2026: Greyville PA sat 7/7 Friday night and
+            # was buried LOST because R4-R8 legs evaluated against pre-race
+            # field listings with no positions — matched names, no confirmed
+            # winner anywhere. A leg whose race shows NO confirmed winner in
+            # the data is not final: unknown, never fail. LOST verdicts can
+            # only rest on finished races.)
+            if not any(
+                str(r.get("position", "")).strip() == "1st" for r in runners
+            ):
+                return "unknown"
             best: Optional[str] = None
             matched_any = False
             for cand in entry["candidates"]:
@@ -1319,7 +1329,12 @@ class ResultTracker:
         _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
         for bet in open_bets:
             age = _bet_age_days(getattr(bet, "date", None))
-            if age is not None and age > max_age_days:
+            # Exotics go stale fast: ATR live covers today/yesterday and old
+            # pool tickets evidently can't always be verified (Oct-2026:
+            # week-old Jackpots clogged OPEN forever while tonight's card
+            # needed the book clean). Cap exotics at 3 days pending.
+            cap = 3 if _is_exotic_bet(bet) else max_age_days
+            if age is not None and age > cap:
                 # Over-age bets can never be verified (ATR serves today /
                 # yesterday only) — expire them out of the open book instead
                 # of letting PENDINGs pile up forever. No money moves.
@@ -1330,16 +1345,59 @@ class ResultTracker:
                     logger.debug(f"Expire failed for {bet.bet_id}: {exp_err}")
                 deferred.append(f"{bet.bet_id} ({bet.horse} @ {bet.track} R{bet.race_number}, {age}d old)")
                 continue
+            # Pre-race guard (Oct-2026: Taking A Risk settled LOST hours before
+            # Vaal R7 ran — stale snippets scored a future race). If the bet is
+            # dated today and its off-time is still ahead, NO evidence can be
+            # real; skip and leave PENDING. Unknown off-time fails open.
+            try:
+                _today_iso = date.today().isoformat()
+                _bet_day = str(getattr(bet, "date", "") or "")[:10]
+                if _bet_day and _bet_day >= _today_iso:
+                    _base = getattr(gov, "data_dir", None)
+                    _off = _find_race_time(
+                        _base, getattr(bet, "track", ""),
+                        getattr(bet, "race_number", 0),
+                        getattr(bet, "date", None)) if _base else None
+                    if _off and ":" in str(_off):
+                        from datetime import datetime as _dt
+                        try:
+                            from zoneinfo import ZoneInfo as _ZI
+                            _now = _dt.now(_ZI("Africa/Johannesburg")).strftime("%H:%M")
+                        except Exception:
+                            _now = _dt.now().strftime("%H:%M")
+                        if f"{int(_hh):02d}:{int(_mm):02d}" > _now:
+                            logger.info(
+                                f"{_tag()} Pre-race skip: {bet.horse} @ {bet.track} "
+                                f"R{bet.race_number} off {_off} (now {_now})")
+                            continue
+            except Exception as _pre_err:
+                logger.debug(f"Pre-race check skipped for {bet.bet_id}: {_pre_err}")
             if _is_exotic_bet(bet):
                 # Duplicate recordings (same track/date/ticket, e.g. from
                 # overlapping monitor runs) — keep the earliest, cancel the
-                # rest with stake refund. The recorder treats this key as one
-                # ticket, so extras are never legitimate.
+                # rest with stake refund. Same ticket means same bankers:
+                # a rescan with different selections is a NEW ticket even on
+                # identical pool+legs (Oct-2026: selections-blind cancel
+                # would eat improved tickets).
+                def _bankers(of) -> tuple:
+                    try:
+                        import json as _j
+                        data = _j.loads(getattr(of, "notes", "") or "{}")
+                        out = []
+                        for c in (data.get("combinations") or []):
+                            b = (c or {}).get("banker")
+                            out.append(
+                                b.get("name") if isinstance(b, dict) else str(b or "")
+                            )
+                        return tuple(out)
+                    except Exception:
+                        return ()
                 try:
                     my_key = (
                         str(getattr(bet, "track", "") or "").lower(),
                         str(getattr(bet, "date", "") or ""),
                         str(getattr(bet, "horse", "") or ""),
+                        _bankers(bet),
                     )
                     older = [
                         o for o in open_bets
@@ -1348,6 +1406,7 @@ class ResultTracker:
                             str(getattr(o, "track", "") or "").lower(),
                             str(getattr(o, "date", "") or ""),
                             str(getattr(o, "horse", "") or ""),
+                            _bankers(o),
                         ) == my_key
                         and str(getattr(o, "bet_id", "")) < str(getattr(bet, "bet_id", ""))
                     ]
