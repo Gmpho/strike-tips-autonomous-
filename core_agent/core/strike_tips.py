@@ -660,10 +660,41 @@ def _read_exotic_history(data_dir: str) -> List[Dict]:
     return flat
 
 
+def _exotic_pool_key(pool: Dict) -> tuple:
+    """Canonical merge key for one exotic play: (family, legs).
+
+    Families collapse AI label variants ("JP1", "Jackpot 1", "JACKPOT")
+    so a rescan replaces the same pool instead of duplicating it —
+    while pools the new scan lacks (e.g. 05:00 exactas missing from a
+    09:30 rescan) survive on the board instead of being wiped.
+    """
+    name = str(pool.get("pool", "")).upper()
+    if name.startswith("JP") or "JACKPOT" in name:
+        fam = "JACKPOT"
+    elif name.startswith("BI") or "BIPOT" in name:
+        fam = "BIPOT"
+    elif name in ("P6",) or "PICK 6" in name:
+        fam = "PICK 6"
+    elif name in ("PA",) or "PLACE" in name or "ACCUMULATOR" in name:
+        fam = "PA"
+    elif name in ("P3",) or "PICK 3" in name:
+        fam = "PICK 3"
+    else:
+        fam = name
+    try:
+        legs = tuple(pool.get("legs") or [])
+    except TypeError:
+        legs = ()
+    return (fam, legs)
+
+
 def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> List[Dict]:
     """Merge one scan's plays into the multi-day history and return the flat board.
 
-    - Entries keyed by (event_date, track): a rescan REPLACES that day/track.
+    - Entries keyed by (event_date, track, pool family, legs): a rescan
+      REPLACES the same pools but KEEPS pools the new scan lacks (Oct-2026:
+      a 09:30 rescan without exactas wiped the 05:00 scan's EXA/TRI off the
+      board while the ledger bets stayed open).
     - Past-dated entries pruned (events over).
     - An empty scan never reaches here (caller serves history instead), so a
       dry scan can no longer wipe Saturday's future board.
@@ -690,18 +721,27 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
             continue
         by_track.setdefault(str(p.get("_track", "unknown")), []).append(p)
     for track, pools in by_track.items():
-        history = [
-            e for e in history
-            if not (
+        old_pools: List[Dict] = []
+        kept_history = []
+        for e in history:
+            if (
                 isinstance(e, dict)
                 and str(e.get("event_date", "")) == str(event_date)
                 and str(e.get("track", "")) == track
-            )
-        ]
+            ):
+                old_pools.extend(
+                    p for p in (e.get("pools") or []) if isinstance(p, dict)
+                )
+            else:
+                kept_history.append(e)
+        history = kept_history
+        merged_by_key = {_exotic_pool_key(p): p for p in old_pools}
+        for p in pools:
+            merged_by_key[_exotic_pool_key(p)] = p
         history.append({
             "event_date": str(event_date),
             "track": track,
-            "pools": pools,
+            "pools": list(merged_by_key.values()),
             "created_at": now_iso,
         })
     history = [
@@ -1281,11 +1321,17 @@ class StrikeTips:
         total_races = len(track_races)
         from_pdf = bool(pool_starts)
 
-        if not pool_starts:
-            from core_agent.skills.exotics.builder import convention_pool_starts
-            # Single shared TAB-standard table (PDF/TAB-sheet ranges win
-            # when present) — kept in builder so both exotic paths agree.
-            pool_starts = convention_pool_starts(total_races)
+        from core_agent.skills.exotics.builder import convention_pool_starts
+        # Single shared TAB-standard table (PDF/TAB-sheet ranges win
+        # when present) — kept in builder so both exotic paths agree.
+        # Gap-fill (Oct-2026): Computaform leg_info routinely omits PA, so
+        # an all-or-nothing fallback meant no PA ticket all day. Missing
+        # families are backfilled from convention; declared starts are
+        # never overridden.
+        for _code, _start in convention_pool_starts(total_races).items():
+            if _code not in pool_starts:
+                pool_starts[_code] = _start
+                print(f"[EXOTIC] Gap-filled missing pool {_code} starts R{_start} (convention)")
 
         # 2. Build full-card context from Betway data
         card_sections = []
@@ -1320,6 +1366,9 @@ class StrikeTips:
             + "\n".join(card_sections)
             + f"\n\nPOOL LAYOUT: {pool_summary}\n\n"
             + "YOUR TASK: Generate exotic pool combinations for each declared pool. "
+            + "Build EVERY declared pool in POOL LAYOUT above — Bipot, PA "
+            + "(Place Accumulator), Pick 6, and ALL Jackpots. Omitting a "
+            + "declared pool is a failure; a missing PA is the classic miss. "
             + "For each leg, pick 2 to 4 selections, strongest first: one banker "
             + "plus up to 3 savers, chosen on horse quality, form, and "
             + "trainer/jockey strength. Build like a professional strategist, "

@@ -400,14 +400,25 @@ class TelegramNotifier:
                     insight = race.get("ai_insight", "")
                     # LLM sometimes returns a JSON blob instead of prose —
                     # extract the summary so raw JSON never reaches Telegram.
-                    if isinstance(insight, str) and insight.strip().startswith("{"):
-                        try:
-                            import json as _json
-                            _parsed = _json.loads(insight)
-                            if isinstance(_parsed, dict):
-                                insight = _parsed.get("summary", "") or ""
-                        except Exception:
-                            pass
+                    # Oct-2026: also arrives code-fenced (```json ... ```) or
+                    # as an already-parsed dict (Greyville R8 went out raw).
+                    if isinstance(insight, dict):
+                        insight = insight.get("summary", "") or ""
+                    if isinstance(insight, str):
+                        _s = insight.strip()
+                        if _s.startswith("```"):
+                            import re as _re
+                            _s = _re.sub(r"^```(?:json)?\s*", "", _s)
+                            _s = _re.sub(r"\s*```$", "", _s).strip()
+                        if _s.startswith("{"):
+                            try:
+                                import json as _json
+                                _parsed = _json.loads(_s)
+                                if isinstance(_parsed, dict):
+                                    _s = _parsed.get("summary", "") or ""
+                            except Exception:
+                                pass
+                        insight = _s
                     if insight:
                         lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
                     for vb in race.get("value_bets", [])[:2]:
