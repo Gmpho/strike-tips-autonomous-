@@ -25,14 +25,18 @@ export interface BetLike {
 }
 
 /** Single-universe scope: keep only bets from the active ledger.
- *  paperMode undefined (failed fetch) returns everything — a filter must
- *  never blank the page. */
+ *  Degrade-safe (Oct-2026 outage lesson): if the backend does not stamp
+ *  is_paper yet (backend deploy pending), filtering would nuke the whole
+ *  page to 0% — so an unstamped history passes through unfiltered instead
+ *  of rendering an empty universe. */
 export function scopedBets(
   history: BetLike[] | undefined | null,
   paperMode: boolean | undefined,
 ): BetLike[] {
   if (!Array.isArray(history)) return [];
   if (paperMode === undefined) return history;
+  const stamped = history.some((b) => b && b.is_paper !== undefined);
+  if (!stamped) return history;
   return history.filter((b) => Boolean(b && b.is_paper) === paperMode);
 }
 
