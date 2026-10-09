@@ -1946,10 +1946,12 @@ class StrikeTips:
             actual_stake = getattr(bet, "stake", stake)
             print(f"[OK] Bet recorded: {horse} @ {odds} for R{actual_stake:.2f}")
 
-            # Notify
+            # Notify (paper bets are labelled — Oct-2026: unlabeled PAPER
+            # tickets celebrated as real money on alive night).
             if self.telegram:
+                _paper_tag = " 📝PAPER" if getattr(bet, "is_paper", False) else ""
                 _fire_async(self.telegram.send_message(
-                    f"[NOTE] <b>Bet Placed</b>\n\n"
+                    f"[NOTE] <b>Bet Placed{_paper_tag}</b>\n\n"
                     f"🐎 {horse}\n"
                     f"[LOC] {track} R{race_number}\n"
                     f"💰 Odds: {odds} | Stake: R{actual_stake:.2f}\n"
