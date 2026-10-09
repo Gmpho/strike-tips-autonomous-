@@ -2,6 +2,13 @@ import React, { Suspense } from 'react';
 import { TrendingUp, Activity, Target, BarChart2, DollarSign, Layers } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
+import {
+  settledBets,
+  scopedBets,
+  singlesOnly,
+  trackRoi,
+  type BetLike,
+} from '../../lib/analytics';
 
 // ApexCharts suite ships in its own on-demand chunk (treeshaken core +
 // 7 types) so the dashboard first paint never pays for it. Loaded inside
@@ -17,43 +24,40 @@ function ChartSkeleton() {
 }
 
 export const AnalyticsView: React.FC = () => {
-  const { learning, betStats, bankroll, bankrollHistory, betHistory } = useHUD();
+  const { learning, bankroll, bankrollHistory, betHistory } = useHUD();
 
-  // Win rate + avg stake over SETTLED bets only — totalBets includes the
-  // open backlog, which once collapsed the rate to single digits.
-  const settledCount = (betStats?.wins ?? 0) + (betStats?.losses ?? 0);
+  // Single universe (Oct-2026): every number on this page derives from the
+  // SAME scoped settled set. Previously KPIs mixed paper+real, the equity
+  // curve was paper-only, and odds cells were detonated by exotic dividends.
+  const paperMode = (bankroll as unknown as { paperMode?: boolean })?.paperMode;
+  const scoped = React.useMemo(
+    () => scopedBets((betHistory || []) as BetLike[], paperMode),
+    [betHistory, paperMode],
+  );
+  const settled = React.useMemo(() => settledBets(scoped), [scoped]);
+  const singles = React.useMemo(() => settledBets(singlesOnly(scoped)), [scoped]);
 
-  const winRate = settledCount > 0
-    ? ((betStats?.wins ?? 0) / settledCount * 100).toFixed(1)
-    : '0.0';
+  const wins = settled.filter((b) => b.won).length;
+  const losses = settled.length - wins;
+  const stakeTotal = settled.reduce((s, b) => s + b.stake, 0);
+  const payoutTotal = settled.reduce((s, b) => s + b.payout, 0);
 
-  const roi = betStats?.roi ?? learning?.totalRoi ?? 0;
+  const winRate = settled.length > 0 ? ((wins / settled.length) * 100).toFixed(1) : '0.0';
+  const roi = stakeTotal > 0 ? (((payoutTotal - stakeTotal) / stakeTotal) * 100) : 0;
 
   // Real efficiency: payout / staked (return efficiency %)
-  const efficiency = betStats && betStats.stakeTotal > 0
-    ? ((betStats.payoutTotal / betStats.stakeTotal) * 100).toFixed(1)
-    : '0.0';
+  const efficiency = stakeTotal > 0 ? ((payoutTotal / stakeTotal) * 100).toFixed(1) : '0.0';
 
-  const avgStake = settledCount > 0 && betStats
-    ? (betStats.stakeTotal / settledCount).toFixed(2)
-    : '0.00';
-
-  const totalPL = betStats
-    ? (betStats.payoutTotal - betStats.stakeTotal).toFixed(2)
-    : '0.00';
+  const avgStake = settled.length > 0 ? (stakeTotal / settled.length).toFixed(2) : '0.00';
+  const totalPL = (payoutTotal - stakeTotal).toFixed(2);
 
   const openBetsValue = bankroll?.totalExposure?.toFixed(2) ?? '0.00';
 
-  const allTracks = Object.entries(learning?.roiByTrack || {}).map(([name, r]) => ({
-    name: name.charAt(0).toUpperCase() + name.slice(1),
-    roi: Number(r) || 0
-  }));
+  const tracks = React.useMemo(() => trackRoi(settled), [settled]);
 
-  const nonZeroTracks = allTracks.filter(t => t.roi !== 0);
-  const tracks = (nonZeroTracks.length > 0 ? nonZeroTracks : allTracks.slice(0, 7)).sort((a, b) => b.roi - a.roi);
-
-  const bestTrack = tracks.length > 0 && tracks[0].roi > 0 ? tracks[0] : null;
-  const worstTrack = tracks.length > 0 && tracks[tracks.length - 1].roi < 0 ? tracks[tracks.length - 1] : null;
+  const bestTrack = tracks.length > 0 && tracks[tracks.length - 1].roi > 0
+    ? tracks[tracks.length - 1] : null;
+  const worstTrack = tracks.length > 0 && tracks[0].roi < 0 ? tracks[0] : null;
 
   const kpis = [
     { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
@@ -95,9 +99,11 @@ export const AnalyticsView: React.FC = () => {
       <Suspense fallback={<><ChartSkeleton /><ChartSkeleton /></>}>
         <ApexSuite
           bankrollHistory={bankrollHistory}
-          betHistory={betHistory}
-          betStats={betStats}
-          roiByTrack={learning?.roiByTrack}
+          bets={scoped}
+          singles={singles}
+          wins={wins}
+          losses={losses}
+          trackRows={tracks}
         />
       </Suspense>
 
@@ -146,10 +152,12 @@ export const AnalyticsView: React.FC = () => {
 // mount only after the KPI paint.
 const ApexSuite: React.FC<{
   bankrollHistory: { t: string; balance: number }[];
-  betHistory: never[] | unknown[];
-  betStats: { wins: number; losses: number } | undefined | null;
-  roiByTrack: Record<string, number> | undefined;
-}> = ({ bankrollHistory, betHistory, betStats, roiByTrack }) => {
+  bets: BetLike[];
+  singles: BetLike[];
+  wins: number;
+  losses: number;
+  trackRows: { name: string; roi: number }[];
+}> = ({ bankrollHistory, bets, singles, wins, losses, trackRows }) => {
   const [Charts, setCharts] = React.useState<typeof import('../analytics/AnalyticsCharts') | null>(null);
 
   React.useEffect(() => {
@@ -164,20 +172,19 @@ const ApexSuite: React.FC<{
 
   // Touch-free dynamic chunk: bundlers split on import().
   if (!Charts) return <><ChartSkeleton /><ChartSkeleton /></>;
-  const bets = (betHistory || []) as never[];
   return (
     <div className="space-y-5 sm:space-y-8">
       <Charts.EquityChart history={bankrollHistory} />
       <Charts.DailyPnlChart bets={bets} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 sm:gap-8">
-        <Charts.TrackRoiChart roiByTrack={roiByTrack} />
-        <Charts.WinLossDonut wins={betStats?.wins ?? 0} losses={betStats?.losses ?? 0} />
+        <Charts.TrackRoiChart rows={trackRows} />
+        <Charts.WinLossDonut wins={wins} losses={losses} />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 sm:gap-8">
-        <Charts.BracketChart bets={bets} />
+        <Charts.BracketChart bets={singles} />
         <Charts.PnlHistogram bets={bets} />
       </div>
-      <Charts.RoiHeatmap bets={bets} />
+      <Charts.RoiHeatmap bets={singles} />
     </div>
   );
 };

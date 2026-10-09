@@ -122,11 +122,16 @@ export const DailyPnlChart: React.FC<{ bets: BetLike[] }> = React.memo(({ bets }
   const { series, options, empty } = React.useMemo(() => {
     const days = dailyPnl(settledBets(bets));
     if (days.length === 0) return { series: [], options: {}, empty: true as const };
+    // Dual axes (Oct-2026): the cumulative line (~R10k scale) used to crush
+    // the daily bars (~R100s) into invisibility on one shared axis.
     const options: ApexOptions = {
       ...apexBase,
       stroke: { width: [0, 3], curve: 'smooth' },
       colors: [APEX_ACCENT, APEX_UP],
-      yaxis: randAxis(),
+      yaxis: [
+        randAxis(),
+        { opposite: true, labels: { formatter: (v: number) => `R${(v / 1000).toFixed(0)}k` }, title: { text: 'total' } },
+      ],
       xaxis: { type: 'datetime', labels: { datetimeUTC: false }, tooltip: { enabled: false } },
       tooltip: {
         ...apexBase.tooltip,
@@ -166,13 +171,10 @@ export const DailyPnlChart: React.FC<{ bets: BetLike[] }> = React.memo(({ bets }
 });
 DailyPnlChart.displayName = 'DailyPnlChart';
 
-// ── 3. ROI by track (diverging horizontal bars) ──────────────────
-export const TrackRoiChart: React.FC<{ roiByTrack: Record<string, number> | undefined }> = React.memo(
-  ({ roiByTrack }) => {
+// ── 3. ROI by track (diverging horizontal bars, same universe as KPIs)
+export const TrackRoiChart: React.FC<{ rows: { name: string; roi: number }[] }> = React.memo(
+  ({ rows }) => {
     const { series, options, empty } = React.useMemo(() => {
-      const rows = Object.entries(roiByTrack || {})
-        .map(([name, roi]) => ({ name: name.charAt(0).toUpperCase() + name.slice(1), roi: Number(roi) || 0 }))
-        .sort((a, b) => a.roi - b.roi);
       if (rows.length === 0) return { series: [], options: {}, empty: true as const };
       const options: ApexOptions = {
         ...apexBase,
@@ -190,7 +192,7 @@ export const TrackRoiChart: React.FC<{ roiByTrack: Record<string, number> | unde
         options,
         series: [{ name: 'ROI', data: rows.map((r) => ({ x: r.name, y: Math.round(r.roi * 10) / 10 })) }],
       };
-    }, [roiByTrack]);
+    }, [rows]);
 
     if (empty) return null;
     return (
@@ -241,7 +243,7 @@ export const BracketChart: React.FC<{ bets: BetLike[] }> = React.memo(({ bets })
 
   if (empty) return null;
   return (
-    <Card title="ROI by Odds Bracket">
+    <Card title="ROI by Odds Bracket · singles">
       <ApexChart type="bar" series={series} options={options} height={270} />
     </Card>
   );
@@ -384,7 +386,7 @@ export const RoiHeatmap: React.FC<{ bets: BetLike[] }> = React.memo(({ bets }) =
 
   if (empty) return null;
   return (
-    <Card title="ROI Heatmap · Track × Odds" right={<span className="text-[10px] font-black text-theme-secondary">% ROI per cell</span>}>
+    <Card title="ROI Heatmap · Track × Odds" right={<span className="text-[10px] font-black text-theme-secondary">top 6 by volume · singles · % ROI per cell</span>}>
       <ApexChart type="heatmap" series={series} options={options} height={260} />
     </Card>
   );

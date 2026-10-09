@@ -181,6 +181,7 @@ async def get_bets(limit: Optional[int] = Query(default=None, ge=1)):
                 payout=b.get("actual_return", 0.0) if won else None,
                 status=b.get("status", "PENDING"),
                 notes=b.get("notes", ""),
+                is_paper=bool(b.get("is_paper", False)),
             ).model_dump(by_alias=True, exclude_none=True)
         )
     return {"bets": bets, "count": total}
