@@ -24,12 +24,17 @@ function ChartSkeleton() {
 }
 
 export const AnalyticsView: React.FC = () => {
-  const { learning, bankroll, bankrollHistory, betHistory } = useHUD();
+  const { learning, bankroll, bankrollHistory, betHistory, betHistoryReady } = useHUD();
 
-  // Single universe (Oct-2026): every number on this page derives from the
-  // SAME scoped settled set. Previously KPIs mixed paper+real, the equity
-  // curve was paper-only, and odds cells were detonated by exotic dividends.
-  const paperMode = (bankroll as unknown as { paperMode?: boolean })?.paperMode;
+  // Sticky ledger mode (Oct-2026): partial bankroll polls arrive with
+  // paperMode undefined, and every such poll flipped the WHOLE page between
+  // the full ledger and the paper ledger (100 wins → 52 wins live on
+  // screen). First resolved value wins and sticks for the session.
+  const modeRef = React.useRef<boolean | undefined>(undefined);
+  const liveMode = (bankroll as unknown as { paperMode?: boolean })?.paperMode;
+  if (liveMode !== undefined) modeRef.current = liveMode;
+  const paperMode = modeRef.current ?? true;
+  const ready = betHistoryReady && modeRef.current !== undefined;
   const scoped = React.useMemo(
     () => scopedBets((betHistory || []) as BetLike[], paperMode),
     [betHistory, paperMode],
@@ -58,6 +63,27 @@ export const AnalyticsView: React.FC = () => {
   const bestTrack = tracks.length > 0 && tracks[tracks.length - 1].roi > 0
     ? tracks[tracks.length - 1] : null;
   const worstTrack = tracks.length > 0 && tracks[0].roi < 0 ? tracks[0] : null;
+
+  // Loading gate (Oct-2026): never paint metrics from a half-loaded store.
+  // First paint waits for the full ledger + a resolved ledger mode, so the
+  // page opens once, with one consistent universe — no flicker.
+  if (!ready) {
+    return (
+      <div className="p-3.5 sm:p-6 space-y-5 sm:space-y-8 w-full">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme animate-pulse">
+              <div className="h-4 w-4 rounded bg-white/10 mb-3" />
+              <div className="h-6 w-20 rounded bg-white/10 mb-1" />
+              <div className="h-3 w-16 rounded bg-white/5" />
+            </div>
+          ))}
+        </div>
+        <ChartSkeleton />
+        <ChartSkeleton />
+      </div>
+    );
+  }
 
   const kpis = [
     { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },

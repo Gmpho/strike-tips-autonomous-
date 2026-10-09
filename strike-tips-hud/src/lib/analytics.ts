@@ -47,6 +47,9 @@ export function trackRoi(bets: SettledBet[]): { name: string; roi: number }[] {
   const byTrack = new Map<string, { staked: number; net: number }>();
   for (const b of bets) {
     const t = b.track.toLowerCase();
+    // Defensive (Oct-2026): single-letter/unknown track codes leaked into
+    // the ROI bars as "F"/"A"/"V"/"W" rows. Junk never gets a bar.
+    if (t.length < 2 || t === 'unknown') continue;
     const cell = byTrack.get(t) || { staked: 0, net: 0 };
     cell.staked += b.stake;
     cell.net += betNet(b);
@@ -175,6 +178,7 @@ export function roiHeatmap(
   const byTrack = new Map<string, SettledBet[]>();
   for (const b of bets) {
     const t = b.track.toLowerCase();
+    if (t.length < 2 || t === 'unknown') continue;
     if (!byTrack.has(t)) byTrack.set(t, []);
     byTrack.get(t)!.push(b);
   }
