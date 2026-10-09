@@ -4,8 +4,6 @@ import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import {
   settledBets,
-  scopedBets,
-  singlesOnly,
   trackRoi,
   type BetLike,
 } from '../../lib/analytics';
@@ -26,21 +24,15 @@ function ChartSkeleton() {
 export const AnalyticsView: React.FC = () => {
   const { learning, bankroll, bankrollHistory, betHistory, betHistoryReady } = useHUD();
 
-  // Sticky ledger mode (Oct-2026): partial bankroll polls arrive with
-  // paperMode undefined, and every such poll flipped the WHOLE page between
-  // the full ledger and the paper ledger (100 wins → 52 wins live on
-  // screen). First resolved value wins and sticks for the session.
-  const modeRef = React.useRef<boolean | undefined>(undefined);
-  const liveMode = (bankroll as unknown as { paperMode?: boolean })?.paperMode;
-  if (liveMode !== undefined) modeRef.current = liveMode;
-  const paperMode = modeRef.current ?? true;
-  const ready = betHistoryReady && modeRef.current !== undefined;
+  // Full ledger (Oct-2026): analytics shows EXACTLY what bankroll shows —
+  // same 1596 bets, same wins, same ROI. No paper/real split, no singles
+  // subsets: one ledger, one truth on both views.
+  const ready = betHistoryReady;
   const scoped = React.useMemo(
-    () => scopedBets((betHistory || []) as BetLike[], paperMode),
-    [betHistory, paperMode],
+    () => (betHistory || []) as BetLike[],
+    [betHistory],
   );
   const settled = React.useMemo(() => settledBets(scoped), [scoped]);
-  const singles = React.useMemo(() => settledBets(singlesOnly(scoped)), [scoped]);
 
   const wins = settled.filter((b) => b.won).length;
   const losses = settled.length - wins;
@@ -126,7 +118,6 @@ export const AnalyticsView: React.FC = () => {
         <ApexSuite
           bankrollHistory={bankrollHistory}
           bets={scoped}
-          singles={singles}
           wins={wins}
           losses={losses}
           trackRows={tracks}
@@ -179,11 +170,10 @@ export const AnalyticsView: React.FC = () => {
 const ApexSuite: React.FC<{
   bankrollHistory: { t: string; balance: number }[];
   bets: BetLike[];
-  singles: BetLike[];
   wins: number;
   losses: number;
   trackRows: { name: string; roi: number }[];
-}> = ({ bankrollHistory, bets, singles, wins, losses, trackRows }) => {
+}> = ({ bankrollHistory, bets, wins, losses, trackRows }) => {
   const [Charts, setCharts] = React.useState<typeof import('../analytics/AnalyticsCharts') | null>(null);
 
   React.useEffect(() => {
@@ -207,10 +197,10 @@ const ApexSuite: React.FC<{
         <Charts.WinLossDonut wins={wins} losses={losses} />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 sm:gap-8">
-        <Charts.BracketChart bets={singles} />
+        <Charts.BracketChart bets={bets} />
         <Charts.PnlHistogram bets={bets} />
       </div>
-      <Charts.RoiHeatmap bets={singles} />
+      <Charts.RoiHeatmap bets={bets} />
     </div>
   );
 };

@@ -243,7 +243,7 @@ export const BracketChart: React.FC<{ bets: BetLike[] }> = React.memo(({ bets })
 
   if (empty) return null;
   return (
-    <Card title="ROI by Odds Bracket · singles">
+    <Card title="ROI by Odds Bracket">
       <ApexChart type="bar" series={series} options={options} height={270} />
     </Card>
   );
@@ -386,7 +386,7 @@ export const RoiHeatmap: React.FC<{ bets: BetLike[] }> = React.memo(({ bets }) =
 
   if (empty) return null;
   return (
-    <Card title="ROI Heatmap · Track × Odds" right={<span className="text-[10px] font-black text-theme-secondary">top 6 by volume · singles · % ROI per cell</span>}>
+    <Card title="ROI Heatmap · Track × Odds" right={<span className="text-[10px] font-black text-theme-secondary">top 6 by volume · % ROI per cell</span>}>
       <ApexChart type="heatmap" series={series} options={options} height={260} />
     </Card>
   );
