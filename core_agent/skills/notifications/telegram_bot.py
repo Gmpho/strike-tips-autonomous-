@@ -410,10 +410,11 @@ class TelegramNotifier:
                             import re as _re
                             _s = _re.sub(r"^```(?:json)?\s*", "", _s)
                             _s = _re.sub(r"\s*```$", "", _s).strip()
-                        if _s.startswith("{"):
+                        if "{" in _s:
                             try:
                                 import json as _json
-                                _parsed = _json.loads(_s)
+                                _sub = _s[_s.find("{"): _s.rfind("}") + 1]
+                                _parsed = _json.loads(_sub)
                                 if isinstance(_parsed, dict):
                                     _s = _parsed.get("summary", "") or ""
                             except Exception:
