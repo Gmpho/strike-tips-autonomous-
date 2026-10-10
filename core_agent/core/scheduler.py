@@ -90,13 +90,31 @@ def setup_emoji_filter():
 
 
 class StrikeTipsScheduler:
-    def __init__(self, scan_time: str = "11:00", data_dir: str = "./data"):
-        self.scan_time = scan_time
+    def __init__(self, scan_time: str = None, data_dir: str = "./data"):
+        # SCAN_TIME env staggers the heavy daily AI scan per side (Oct-2026:
+        # docker and Modal both fired it at 11:00 — twin Groq stampedes and
+        # twin digests. Modal keeps the 11:00 default; docker sets 10:30).
+        self.scan_time = scan_time or os.getenv("SCAN_TIME", "11:00")
         self.data_dir = data_dir
         self.strike = None
         self.running = False
         self._shutdown = Event()
         self.scheduler = None
+        # Single-owner map (Oct-2026): local + cloud both run this file, so
+        # every job would fire twice. SCHEDULER_DISABLE (comma job ids)
+        # opts a side out; unset = today's behavior (Modal side untouched).
+        # Intentionally dual-homed (idempotent, guarded): check_results.
+        self._disabled = {
+            j.strip()
+            for j in os.getenv("SCHEDULER_DISABLE", "").split(",")
+            if j.strip()
+        }
+
+    def _add(self, job, trigger, job_id):
+        if job_id in self._disabled:
+            print(f"[SKIP] Job '{job_id}' disabled by SCHEDULER_DISABLE")
+            return
+        self.scheduler.add_job(job, trigger, id=job_id, replace_existing=True)
 
         # Parse scan_time (format "HH:MM" in SAST)
         hour, minute = map(int, scan_time.split(":"))
@@ -114,70 +132,60 @@ class StrikeTipsScheduler:
         )
 
         # Schedule jobs in SAST
-        self.scheduler.add_job(
+        self._add(
             self.daily_scan_job,
             CronTrigger(hour=hour, minute=minute, timezone="Africa/Johannesburg"),
-            id="daily_scan",
-            replace_existing=True,
+            "daily_scan",
         )
         # Europe wave (Oct-2026, docker method): UK/IRE manifest scan at
         # 12:30 SAST — mirrors the Modal piggyback so docker covers it when
         # Modal is quiet. Digest-only + paper alerts, same as Modal path.
-        self.scheduler.add_job(
+        self._add(
             self.europe_scan_job,
             CronTrigger(hour=12, minute=30, timezone="Africa/Johannesburg"),
-            id="europe_scan",
-            replace_existing=True,
+            "europe_scan",
         )
-        self.scheduler.add_job(
+        self._add(
             self.run_daily_grounding_job,
             CronTrigger(hour=6, minute=0, timezone="Africa/Johannesburg"),
-            id="daily_grounding",
-            replace_existing=True,
+            "daily_grounding",
         )
         # Ledger reconciliation (Oct-2026 hardening, fix 5): JSON vs Postgres
         # drift check 06:30 daily. Telegram alert on drift; silence on match.
-        self.scheduler.add_job(
+        self._add(
             self.reconcile_ledger_job,
             CronTrigger(hour=6, minute=30, timezone="Africa/Johannesburg"),
-            id="reconcile_ledger",
-            replace_existing=True,
+            "reconcile_ledger",
         )
-        self.scheduler.add_job(
+        self._add(
             self.pre_warm_tomorrow_job,
             CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
-            id="pre_warm_tomorrow",
-            replace_existing=True,
+            "pre_warm_tomorrow",
         )
-        self.scheduler.add_job(
+        self._add(
             self.continuous_scan_job,
             IntervalTrigger(minutes=15, timezone="Africa/Johannesburg"),
-            id="continuous_scan",
-            replace_existing=True,
+            "continuous_scan",
         )
-        self.scheduler.add_job(
+        self._add(
             self.check_race_results_job,
             IntervalTrigger(minutes=5, timezone="Africa/Johannesburg"),
-            id="check_results",
-            replace_existing=True,
+            "check_results",
         )
-        self.scheduler.add_job(
+        self._add(
             self._end_of_day_report,
             CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
-            id="end_of_day_report",
-            replace_existing=True,
+            "end_of_day_report",
         )
-        self.scheduler.add_job(
+        self._add(
             self._morning_report,
             CronTrigger(hour=7, minute=0, timezone="Africa/Johannesburg"),
-            id="morning_report",
-            replace_existing=True,
+            "morning_report",
         )
-        self.scheduler.add_job(
+        self._add(
             self.update_learning_job,
             CronTrigger(hour=21, minute=0, timezone="Africa/Johannesburg"),
-            id="update_learning",
-            replace_existing=True,
+            "update_learning",
         )
 
     def run_daily_grounding_job(self):
