@@ -18,54 +18,6 @@ export interface BetLike {
   won?: boolean;
   settled?: boolean;
   placedAt?: string;
-  /** Ledger identity — analytics must scope to ONE universe (Oct-2026:
-   *  KPIs mixed paper+real while the equity curve was paper-only). */
-  is_paper?: boolean;
-  confidence?: string;
-}
-
-/** Single-universe scope: keep only bets from the active ledger.
- *  Degrade-safe (Oct-2026 outage lesson): if the backend does not stamp
- *  is_paper yet (backend deploy pending), filtering would nuke the whole
- *  page to 0% — so an unstamped history passes through unfiltered instead
- *  of rendering an empty universe. */
-export function scopedBets(
-  history: BetLike[] | undefined | null,
-  paperMode: boolean | undefined,
-): BetLike[] {
-  if (!Array.isArray(history)) return [];
-  if (paperMode === undefined) return history;
-  const stamped = history.some((b) => b && b.is_paper !== undefined);
-  if (!stamped) return history;
-  return history.filter((b) => Boolean(b && b.is_paper) === paperMode);
-}
-
-/** Singles only: exotic tickets carry tote-dividend fiction as "odds" and
- *  would detonate every odds-dimension cell. */
-export function singlesOnly(bets: BetLike[]): BetLike[] {
-  return bets.filter((b) => String(b.confidence || '').toUpperCase() !== 'EXOTIC');
-}
-
-/** ROI% per track over settled scoped bets (same universe as the KPIs). */
-export function trackRoi(bets: SettledBet[]): { name: string; roi: number }[] {
-  const byTrack = new Map<string, { staked: number; net: number }>();
-  for (const b of bets) {
-    const t = b.track.toLowerCase();
-    // Defensive (Oct-2026): single-letter/unknown track codes leaked into
-    // the ROI bars as "F"/"A"/"V"/"W" rows. Junk never gets a bar.
-    if (t.length < 2 || t === 'unknown') continue;
-    const cell = byTrack.get(t) || { staked: 0, net: 0 };
-    cell.staked += b.stake;
-    cell.net += betNet(b);
-    byTrack.set(t, cell);
-  }
-  return [...byTrack.entries()]
-    .filter(([, v]) => v.staked > 0)
-    .map(([t, v]) => ({
-      name: t.charAt(0).toUpperCase() + t.slice(1),
-      roi: Math.round(((v.net / v.staked) * 100) * 10) / 10,
-    }))
-    .sort((a, b) => a.roi - b.roi);
 }
 
 export function settledBets(history: BetLike[] | undefined | null): SettledBet[] {
@@ -182,7 +134,6 @@ export function roiHeatmap(
   const byTrack = new Map<string, SettledBet[]>();
   for (const b of bets) {
     const t = b.track.toLowerCase();
-    if (t.length < 2 || t === 'unknown') continue;
     if (!byTrack.has(t)) byTrack.set(t, []);
     byTrack.get(t)!.push(b);
   }

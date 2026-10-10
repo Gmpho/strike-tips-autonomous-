@@ -246,10 +246,7 @@ export class DataBridge {
       totalExposure: bankroll.totalExposure ?? bankroll.total_exposure ?? openBets?.bets?.reduce((acc: any, b: any) => acc + (b.stake || 0), 0) ?? 0,
       // Preserve ledger identity on every poll — dropping these flips the
       // UI to LIVE and hides the paper/real split (Sep-2026 bug).
-      // Oct-2026: a partial payload must never clobber a known mode with
-      // undefined — every such clobber flipped the analytics universe and
-      // made every number on the page dance.
-      paperMode: bankroll.paperMode ?? hudStore.getState().bankroll?.paperMode,
+      paperMode: bankroll.paperMode,
       paperBalance: bankroll.paperBalance,
       realBalance: bankroll.realBalance,
     };
@@ -388,37 +385,8 @@ export class DataBridge {
 
       const currentState = hudStore.getState();
 
-      // Oct-2026: an ok-but-EMPTY history (volume churn mid-deploy) must
-      // never clobber a full ledger — that blanked the analytics to 0%.
-      // Accept only non-empty payloads or honestly-empty ledgers (count 0).
-      let history = { bets: currentState.betHistory };
-      let historyAccepted = false;
-      if (historyRes && historyRes.ok) {
-        try {
-          const fresh = await historyRes.json();
-          const rows = fresh?.bets;
-          if (Array.isArray(rows) && (rows.length > 0 || (fresh?.count ?? 0) === 0)) {
-            history = fresh;
-            historyAccepted = true;
-          }
-        } catch {
-          /* keep current on unparsable */
-        }
-      }
-      // Same rule for stats: a partial payload (settled+pending !== total)
-      // is a torn read, not data — keep the last good numbers.
-      let stats = currentState.betStats;
-      if (statsRes && statsRes.ok) {
-        try {
-          const fresh = await statsRes.json();
-          const tot = (fresh?.settledBets ?? -1) + (fresh?.pendingBets ?? -1);
-          if (fresh && (tot === (fresh?.totalBets ?? -2) || fresh?.totalBets === 0)) {
-            stats = fresh;
-          }
-        } catch {
-          /* keep current on unparsable */
-        }
-      }
+      const history = (historyRes && historyRes.ok) ? await historyRes.json() : { bets: currentState.betHistory };
+      const stats = (statsRes && statsRes.ok) ? await statsRes.json() : currentState.betStats;
       const roiRaw = (roiRes && roiRes.ok) ? await roiRes.json() : { roiByTrack: currentState.learning?.roiByTrack, accuracy: currentState.learning?.accuracy };
       const roiByTrack = roiRaw.roiByTrack ?? roiRaw;
       const roiAccuracy = roiRaw.accuracy ?? 0;
@@ -432,10 +400,9 @@ export class DataBridge {
 
       hudStore.updateState({
         betHistory: history.bets || [],
-        betHistoryTotal: (history as { count?: number }).count ?? (history.bets || []).length,
-        // Ledger skeletons retire only on an ACCEPTED fetch (CLS, Sep-2026;
-        // Oct-2026: ok-but-torn reads also keep them up).
-        ...(historyAccepted ? { betHistoryReady: true } : {}),
+        betHistoryTotal: history.count ?? (history.bets || []).length,
+        // Ledger skeletons retire only on a resolved fetch (CLS, Sep-2026).
+        ...(historyRes && historyRes.ok ? { betHistoryReady: true } : {}),
         betStats: stats,
         logs: logs.logs || [],
         learning: {

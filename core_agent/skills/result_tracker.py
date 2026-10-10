@@ -400,7 +400,15 @@ def _parse_exotic_ticket(bet) -> Optional[Dict]:
     try:
         notes = getattr(bet, "notes", "") or ""
         if notes.strip().startswith("{"):
-            data = _json.loads(notes)
+            try:
+                data = _json.loads(notes)
+            except Exception:
+                # Void/retry tags ("... | VOID (...)") are appended as plain
+                # text after the JSON by cancel/void paths (Oct-2026: this
+                # silently un-settleable — every voided exotic stayed
+                # PENDING forever because its notes no longer parsed).
+                # Recover the leading JSON object.
+                data = _json.loads(notes[: notes.rfind("}") + 1])
             pool_type = data.get("pool_type")
             pool_legs = [int(r) for r in (data.get("pool_legs") or [])]
             for c in (data.get("combinations") or []):
