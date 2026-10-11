@@ -286,3 +286,66 @@ def test_tagged_notes_keep_ticket_json_through_settle(tmp_path):
     assert data.get("pool_type") == "BI1", data.keys()
     assert len(data.get("combinations", [])) == 2
     assert data.get("settlement_notes") == "test settle"
+
+
+def test_single_race_trifecta_needs_banker_first():
+    """Oct-2026 (Greyville R4/R8): saver won but banker ran 4th — the
+    ticket LOST its trifecta. Any-first would have paid it in full."""
+    async def go():
+        tracker = rt.ResultTracker()
+        bet = _ticket_bet("TRIFECTA", [4], ["Champagne Mac"])
+        bet.notes = json.dumps({
+            "pool_type": "TRIFECTA", "pool_legs": [4],
+            "combinations": [{"race": 4, "banker": "Champagne Mac",
+                              "savers": ["Scandalize", "French War Lord"]}],
+            "ticket_cost": 1.2})
+
+        async def fake_races(*a, **k):
+            return _races_with({
+                4: [("French War Lord", "1st"), ("Lunch Money", "2nd"),
+                    ("Scandalize", "3rd"), ("Champagne Mac", "4th")],
+            })
+
+        tracker._exotic_leg_races = fake_races
+        tracker._race_off_datetime = lambda *a, **k: None
+        calls = []
+        gov = SimpleNamespace(
+            settle_exotic_bet=lambda *a, **k: calls.append((a, k)) or True)
+        rec = await tracker._settle_exotic_ticket(bet, gov, None)
+        assert rec is not None
+        assert calls and calls[0][0][1] == 0.0
+
+    asyncio.run(go())
+
+
+def test_single_race_exacta_banker_first_saver_second_wins():
+    async def go():
+        tracker = rt.ResultTracker()
+        bet = _ticket_bet("EXACTA", [4], ["Champagne Mac"])
+        bet.notes = json.dumps({
+            "pool_type": "EXACTA", "pool_legs": [4],
+            "combinations": [{"race": 4, "banker": "Champagne Mac",
+                              "savers": ["Scandalize"]}],
+            "ticket_cost": 1.2})
+
+        async def fake_races(*a, **k):
+            return _races_with({
+                4: [("Champagne Mac", "1st"), ("Scandalize", "2nd")],
+            })
+
+        tracker._exotic_leg_races = fake_races
+        tracker._race_off_datetime = lambda *a, **k: None
+
+        async def fake_div(*a, **k):
+            return 30.20
+
+        tracker._scrape_sa_results_direct = fake_scrape_none
+        tracker._raceform_dividend = fake_div
+        calls = []
+        gov = SimpleNamespace(
+            settle_exotic_bet=lambda *a, **k: calls.append((a, k)) or True)
+        rec = await tracker._settle_exotic_ticket(bet, gov, None)
+        assert rec is not None
+        assert calls and calls[0][0][1] == round(30.20 * 7.20, 2)
+
+    asyncio.run(go())

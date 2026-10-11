@@ -1209,11 +1209,54 @@ class ResultTracker:
 
         flagged_sub: List[str] = []
 
+        def single_race_status(entry: Dict, runners: List[Dict],
+                               pool_name: str) -> str:
+            """Order-aware verdict for single-race EXACTA/TRIFECTA/QUARTET
+            (Oct-2026): banker must be 1st and savers must cover the minor
+            placings — a ticket whose banker ran 4th is a LOSS even when a
+            saver won. The old any-first rule paid full tote dividends on
+            such tickets. Missing place data (e.g. no 4th listed) stays
+            unknown, never guessed."""
+            cands = entry["candidates"]
+            needed = {"2nd"}
+            if "TRIFECTA" in pool_name:
+                needed = {"2nd", "3rd"}
+            elif "QUARTET" in pool_name:
+                needed = {"2nd", "3rd", "4th"}
+
+            def _pos(name: str) -> Optional[str]:
+                best_p: Optional[str] = None
+                for r in runners:
+                    if self._fuzzy_match(str(r.get("name", "")), str(name)) >= 0.55:
+                        p = str(r.get("position", "")).strip()
+                        if p:
+                            return p
+                        best_p = best_p or ""
+                return best_p
+
+            banker_pos = _pos(cands[0]) if cands else None
+            if banker_pos is None:
+                return "unknown"  # banker scratched/absent: single pools
+                                  # refund via VOID path, never auto-verdict
+            if banker_pos != "1st":
+                return "fail"
+            for place in needed:
+                if not any(r.get("position", "") == place for r in runners
+                           if isinstance(r, dict)):
+                    return "unknown"  # feed lacks this placing: can't verify
+            saver_places = set()
+            for s in cands[1:]:
+                p = _pos(s)
+                if p:
+                    saver_places.add(p)
+            if needed <= saver_places:
+                return "pass"
+            return "fail"
+
         def leg_status(entry: Dict) -> str:
             runners = _race_runners_by_number(races, entry["race"])
             if not runners:
-                return "unknown"
-            # Finality guard (Oct-2026: Greyville PA sat 7/7 Friday night and
+                return "unknown"            # Finality guard (Oct-2026: Greyville PA sat 7/7 Friday night and
             # was buried LOST because R4-R8 legs evaluated against pre-race
             # field listings with no positions — matched names, no confirmed
             # winner anywhere. A leg whose race shows NO confirmed winner in
@@ -1223,6 +1266,13 @@ class ResultTracker:
                 str(r.get("position", "")).strip() == "1st" for r in runners
             ):
                 return "unknown"
+            # Single-race pools are order-sensitive (banker-1st + placed
+            # savers); multi-leg pools use pool-requirement semantics below.
+            _pname = str(ticket.get("pool_type", "")).upper()
+            if len(ticket.get("pool_legs") or []) == 1 and any(
+                k in _pname for k in ("EXACTA", "TRIFECTA", "QUARTET")
+            ):
+                return single_race_status(entry, runners, _pname)
             # TAB substitution (Oct-2026 rulebook: Bipot/PA/P6/Jackpot/P3
             # scratched horses are replaced with the tote favourite — no
             # refunds, ticket lives). A candidate ABSENT from the result
