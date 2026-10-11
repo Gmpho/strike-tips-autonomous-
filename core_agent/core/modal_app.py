@@ -774,6 +774,35 @@ async def run_odds_monitor():
             logger.info("Odds monitor piggyback intelligence pass complete")
     except Exception as _piggy_err:
         logger.debug("piggyback intelligence skipped: %s", _piggy_err)
+    # Settlement piggyback (Oct-2026): the in-app 5-min settler dies with
+    # container churn (fresh scheduler every few minutes, zero executions),
+    # so settlement rides this cron heartbeat instead. Fully guarded and
+    # time-boxed — never fails the monitor cycle; partial progress persists
+    # per-bet, the rest drains next cycle.
+    try:
+        import asyncio as _asyncio3
+
+        async def _settle_tick() -> None:
+            try:
+                from core_agent.skills.result_tracker import ResultTracker
+                from core_agent.skills.bankroll_manager.governor import (
+                    BankrollGovernor,
+                )
+                _gov = BankrollGovernor(data_dir="/app/data")
+                _rt = ResultTracker(bankroll_governor=_gov)
+                _settled = await _asyncio3.wait_for(
+                    _rt.check_and_settle_open_bets(), timeout=180
+                )
+                logger.info(
+                    "Odds monitor piggyback settle pass: %d settled",
+                    len(_settled or []),
+                )
+            except Exception as _e:
+                logger.debug("piggyback settle skipped: %s", _e)
+
+        await _asyncio3.wait_for(_settle_tick(), timeout=240)
+    except Exception as _e:
+        logger.debug("piggyback settle wrapper skipped: %s", _e)
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
