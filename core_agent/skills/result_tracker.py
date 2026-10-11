@@ -352,6 +352,13 @@ def _parse_raceform_dividend(
             m.group(0),
         )
         nlegs = (sel.group(1).count("/") + 1) if sel else 0
+        if legs_wanted is not None and len(legs_wanted) == 1 and end in legs_wanted:
+            # Single-race pools (Exacta/Trifecta/Quartet, Oct-2026): the
+            # selections count is HORSES, not legs — the range check below
+            # can never match a singleton, so every single-race dividend
+            # miss-attributed and no single-race winner ever settled (all
+            # hung PENDING). Match the end race directly.
+            return val
         if nlegs and set(range(end - nlegs + 1, end + 1)) == legs_wanted:
             return val
     if legs_wanted is not None:
