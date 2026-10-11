@@ -12,6 +12,7 @@ from core_agent.core.strike_tips import (
     _order_names_by_live_odds,
     _deterministic_single_race_plays,
 )
+from datetime import date as _date
 from core_agent.skills.exotics.builder import convention_pool_starts
 
 
@@ -44,7 +45,7 @@ def test_pool_key_collapses_label_variants():
 
 
 def test_rescan_replaces_same_pool_but_keeps_missing_ones(tmp_path):
-    day = "2026-10-09"
+    day = _date.today().isoformat()
     d = str(tmp_path)
     morning = [
         _play("EXACTA", [1]),
@@ -68,7 +69,7 @@ def test_rescan_replaces_same_pool_but_keeps_missing_ones(tmp_path):
 def test_same_pool_legs_different_bankers_both_kept(tmp_path):
     """Oct-2026 (Greyville Sunday): 05:00 AI Bipot and 09:30 fallback Bipot
     share family+legs but not bankers — the board must show BOTH."""
-    day = "2026-10-11"
+    day = _date.today().isoformat()
     d = str(tmp_path)
     legs = [2, 3, 4, 5, 6, 7]
     ai_bankers = ["Jys", "Into", "Prof", "Show", "Had", "Moh"]
@@ -81,7 +82,7 @@ def test_same_pool_legs_different_bankers_both_kept(tmp_path):
 
 
 def test_same_bankers_rescan_refreshes_in_place(tmp_path):
-    day = "2026-10-11"
+    day = _date.today().isoformat()
     d = str(tmp_path)
     legs = [2, 3, 4, 5, 6, 7]
     bankers = ["Jys", "Into", "Prof", "Show", "Had", "Moh"]

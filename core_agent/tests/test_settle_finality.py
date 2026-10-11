@@ -6,6 +6,7 @@ because the dupe key ignored selections."""
 
 import asyncio
 import json
+from datetime import date as _date
 from types import SimpleNamespace
 
 from core_agent.skills.bankroll_manager.governor import BankrollGovernor
@@ -19,7 +20,8 @@ def _combos(bankers):
     ]
 
 
-def _ticket_bet(pool_type, legs, bankers, date="2026-10-09", track="greyville"):
+def _ticket_bet(pool_type, legs, bankers, date=None, track="greyville"):
+    date = date or _date.today().isoformat()
     return SimpleNamespace(
         bet_id="TEST1",
         date=date,
