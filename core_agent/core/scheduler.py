@@ -110,14 +110,8 @@ class StrikeTipsScheduler:
             if j.strip()
         }
 
-    def _add(self, job, trigger, job_id):
-        if job_id in self._disabled:
-            print(f"[SKIP] Job '{job_id}' disabled by SCHEDULER_DISABLE")
-            return
-        self.scheduler.add_job(job, trigger, id=job_id, replace_existing=True)
-
         # Parse scan_time (format "HH:MM" in SAST)
-        hour, minute = map(int, scan_time.split(":"))
+        hour, minute = map(int, self.scan_time.split(":"))
 
         # APScheduler with SAST timezone
         jobstores = {"default": MemoryJobStore()}
@@ -187,6 +181,13 @@ class StrikeTipsScheduler:
             CronTrigger(hour=21, minute=0, timezone="Africa/Johannesburg"),
             "update_learning",
         )
+
+    def _add(self, job, trigger, job_id):
+        """Register a job unless opted out via SCHEDULER_DISABLE."""
+        if job_id in self._disabled:
+            print(f"[SKIP] Job '{job_id}' disabled by SCHEDULER_DISABLE")
+            return
+        self.scheduler.add_job(job, trigger, id=job_id, replace_existing=True)
 
     def run_daily_grounding_job(self):
         """Syncs all track PDFs into memory via strike_tips.py."""
