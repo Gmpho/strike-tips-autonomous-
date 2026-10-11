@@ -7,6 +7,7 @@ import pytest
 
 from core_agent.core.strike_tips import (
     _exotic_pool_key,
+    _exotic_card_key,
     _merge_exotic_history,
     _order_names_by_live_odds,
     _deterministic_single_race_plays,
@@ -16,6 +17,18 @@ from core_agent.skills.exotics.builder import convention_pool_starts
 
 def _play(pool, legs, track="fairview"):
     return {"pool": pool, "legs": legs, "_track": track}
+
+
+def _play_with(pool, legs, bankers, track="greyville"):
+    return {
+        "pool": pool,
+        "legs": legs,
+        "_track": track,
+        "combinations": [
+            {"race": r, "banker": b, "savers": ["S1"]}
+            for r, b in zip(legs, bankers)
+        ],
+    }
 
 
 def test_pool_key_collapses_label_variants():
@@ -50,6 +63,33 @@ def test_rescan_replaces_same_pool_but_keeps_missing_ones(tmp_path):
     families = sorted(_exotic_pool_key(p)[0] for p in board)
     # exactas survive, bipot replaced (not duplicated), jackpot added
     assert families == ["BIPOT", "EXACTA", "JACKPOT", "TRIFECTA"]
+
+
+def test_same_pool_legs_different_bankers_both_kept(tmp_path):
+    """Oct-2026 (Greyville Sunday): 05:00 AI Bipot and 09:30 fallback Bipot
+    share family+legs but not bankers — the board must show BOTH."""
+    day = "2026-10-11"
+    d = str(tmp_path)
+    legs = [2, 3, 4, 5, 6, 7]
+    ai_bankers = ["Jys", "Into", "Prof", "Show", "Had", "Moh"]
+    fb_bankers = ["Abbey", "Sweet", "Lupin", "Girl", "Wall", "Prince"]
+    _merge_exotic_history(d, day, [_play_with("BI1", legs, ai_bankers)])
+    board = _merge_exotic_history(
+        d, day, [_play_with("BIPOT", legs, fb_bankers)])
+    bipots = [p for p in board if _exotic_pool_key(p)[0] == "BIPOT"]
+    assert len(bipots) == 2
+
+
+def test_same_bankers_rescan_refreshes_in_place(tmp_path):
+    day = "2026-10-11"
+    d = str(tmp_path)
+    legs = [2, 3, 4, 5, 6, 7]
+    bankers = ["Jys", "Into", "Prof", "Show", "Had", "Moh"]
+    _merge_exotic_history(d, day, [_play_with("BI1", legs, bankers)])
+    board = _merge_exotic_history(d, day, [_play_with("BIPOT", legs, bankers)])
+    bipots = [p for p in board if _exotic_pool_key(p)[0] == "BIPOT"]
+    assert len(bipots) == 1
+    assert bipots[0]["pool"] == "BIPOT"
 
 
 def test_convention_covers_full_sa_slate_for_double_meeting_cards():

@@ -670,7 +670,9 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
       the whole pool: a ticket with phantom legs is worse than no ticket.
     - Wrong leg counts for the pool family are dropped (BI 6 / JP 4 /
       P6 6 / PA 7).
-    - Identical (pool, legs) duplicates keep the first occurrence only.
+    - Identical (pool, legs, bankers) duplicates keep the first occurrence
+      only — same pool+legs with different bankers are different tickets
+      and both stay on the board (Oct-2026: two live Bipots).
     Overlapping ranges across DIFFERENT pools (PA containing P6 legs) are
     normal SA structure and are kept.
     """
@@ -704,7 +706,7 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
         if len(legs) != expected:
             print(f"[EXOTIC] Dropped '{p.get('pool')}': {len(legs)} legs, {expected} required")
             continue
-        key = (pool_name, tuple(legs))
+        key = _exotic_card_key(p)
         if key in seen:
             print(f"[EXOTIC] Dropped duplicate '{p.get('pool')}' legs {legs}")
             continue
@@ -779,6 +781,26 @@ def _exotic_pool_key(pool: Dict) -> tuple:
     return (fam, legs)
 
 
+def _exotic_card_key(pool: Dict) -> tuple:
+    """Board card key: (family, legs, bankers).
+
+    Same pool+legs with DIFFERENT bankers are different cards — Oct-2026:
+    the 05:00 AI Bipot (R12k estimate) was overwritten on the board by the
+    09:30 fallback Bipot (R2.7k) while BOTH bets stayed open, hiding a live
+    ticket from users. Same bankers still merge (rescan refresh).
+    """
+    fam, legs = _exotic_pool_key(pool)
+    bankers = []
+    for c in (pool.get("combinations") or []):
+        if not isinstance(c, dict):
+            continue
+        b = c.get("banker")
+        bankers.append(
+            str(b.get("name") if isinstance(b, dict) else (b or ""))
+        )
+    return (fam, legs, tuple(bankers))
+
+
 def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> List[Dict]:
     """Merge one scan's plays into the multi-day history and return the flat board.
 
@@ -826,9 +848,9 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
             else:
                 kept_history.append(e)
         history = kept_history
-        merged_by_key = {_exotic_pool_key(p): p for p in old_pools}
+        merged_by_key = {_exotic_card_key(p): p for p in old_pools}
         for p in pools:
-            merged_by_key[_exotic_pool_key(p)] = p
+            merged_by_key[_exotic_card_key(p)] = p
         history.append({
             "event_date": str(event_date),
             "track": track,
