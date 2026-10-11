@@ -66,6 +66,16 @@ RACES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def no_snapshot_favourite():
+    """Isolate legacy verdict tests from the live snapshot file: TAB
+    favourite-substitution only fires with snapshot data, so these tests
+    pin it to None (pre-substitution behavior)."""
+    with patch("core_agent.skills.result_tracker._snapshot_favourite",
+               return_value=None):
+        yield
+
+
 @pytest.fixture()
 def stub_modules():
     """Stub strike_brain + ATR parser (host CI lacks heavy deps)."""

@@ -436,6 +436,54 @@ def _parse_exotic_ticket(bet) -> Optional[Dict]:
     return {"pool_type": pool_type, "pool_legs": pool_legs, "combos": combos}
 
 
+def _snapshot_favourite(track: str, race_number: int) -> Optional[str]:
+    """Tote-favourite proxy: shortest live odds in the monitor snapshot —
+    the same source the HUD MARKET LEADER cards read. Used for TAB
+    favourite-substitution of scratched exotic candidates. None when the
+    snapshot lacks the race (finished races are sanitized out) — callers
+    must then flag PENDING, never guess. Never raises."""
+
+    def _norm(value) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip().lower()
+
+    try:
+        from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+        with open(str(MARKET_SNAPSHOT_PATH)) as f:
+            blob = json.load(f)
+    except Exception:
+        return None
+    try:
+        events = (blob.get("events") or {}).values()
+    except AttributeError:
+        return None
+    want_track = _norm(track)
+    best: Optional[str] = None
+    best_odds = float("inf")
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        course = _norm(ev.get("course", ""))
+        if not (want_track and (want_track in course or course in want_track)):
+            continue
+        try:
+            rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
+        except (ValueError, TypeError):
+            continue
+        if rn != race_number:
+            continue
+        for r in (ev.get("runners") or []):
+            if not isinstance(r, dict):
+                continue
+            try:
+                o = float(r.get("odds"))
+            except (TypeError, ValueError):
+                continue
+            if o > 0 and o < best_odds:
+                best_odds = o
+                best = str(r.get("name") or r.get("outcomeName") or "")
+    return best or None
+
+
 def _race_runners_by_number(races: List[Dict], race_number: int) -> Optional[List[Dict]]:
     """Find ATR result runners for a race number (title holds 'N HH:MM')."""
     for race in races or []:
@@ -1152,6 +1200,8 @@ class ResultTracker:
             if datetime.now(_SAST) < last_off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
                 return None
 
+        flagged_sub: List[str] = []
+
         def leg_status(entry: Dict) -> str:
             runners = _race_runners_by_number(races, entry["race"])
             if not runners:
@@ -1166,9 +1216,50 @@ class ResultTracker:
                 str(r.get("position", "")).strip() == "1st" for r in runners
             ):
                 return "unknown"
+            # TAB substitution (Oct-2026 rulebook: Bipot/PA/P6/Jackpot/P3
+            # scratched horses are replaced with the tote favourite — no
+            # refunds, ticket lives). A candidate ABSENT from the result
+            # field never ran (scratched): the ticket is deemed to hold the
+            # favourite there, read from the same live snapshot the HUD
+            # dashboard's MARKET LEADER cards use. Strictly additive: the
+            # substitute can only PASS a leg (fave placed = sub placed),
+            # never fail one — every other verdict follows the listed
+            # candidates exactly as before.
+            field_names = [str(r.get("name", "")) for r in runners]
+            ran_cands = []
+            missing_cands = []
+            for cand in entry["candidates"]:
+                if any(
+                    self._fuzzy_match(rn, str(cand)) >= 0.55
+                    for rn in field_names if rn
+                ):
+                    ran_cands.append(cand)
+                else:
+                    missing_cands.append(cand)
+            effective_cands = list(ran_cands)
+            if missing_cands:
+                fav = _snapshot_favourite(
+                    getattr(bet, "track", ""), entry["race"])
+                if fav and not any(
+                    self._fuzzy_match(fav, str(c)) >= 0.55
+                    for c in ran_cands
+                ):
+                    logger.info(
+                        "Exotic %s R%s: scratched %s → TAB substitute (tote "
+                        "favourite) %s",
+                        getattr(bet, "bet_id", "?"), entry["race"],
+                        ", ".join(str(c) for c in missing_cands), fav,
+                    )
+                    effective_cands.append(fav)
+                else:
+                    flagged_sub.append(
+                        f"R{entry['race']}: "
+                        f"{', '.join(str(c) for c in missing_cands)} "
+                        f"scratched? (absent from results)"
+                    )
             best: Optional[str] = None
             matched_any = False
-            for cand in entry["candidates"]:
+            for cand in effective_cands:
                 for r in runners:
                     if self._fuzzy_match(str(r.get("name", "")), cand) >= 0.55:
                         matched_any = True
@@ -1176,8 +1267,28 @@ class ResultTracker:
                         if pos in requirement:
                             return "pass"
                         best = pos or best
-            if matched_any:
-                return "fail"  # all candidates placed outside requirement
+            if matched_any and not missing_cands:
+                return "fail"  # all listed candidates ran and missed
+            if missing_cands and not matched_any:
+                # Nothing listed ran — outcome hinges on the TAB
+                # favourite-substitution. Never guess.
+                return "unknown"
+            if missing_cands:
+                # Listed runners missed, but a scratched candidate's TAB
+                # sub is unverified: hold fresh races for recheck (results
+                # and dividends still landing), judge only mature data.
+                try:
+                    _off = self._race_off_datetime(
+                        getattr(bet, "track", ""), entry["race"],
+                        getattr(bet, "date", None))
+                    _now = datetime.now(_SAST)
+                    _off_a = _off if (_off is not None and _off.tzinfo) \
+                        else (_off.replace(tzinfo=_SAST) if _off is not None else None)
+                    if _off_a is not None and _off_a <= _now and \
+                            (_now - _off_a) < timedelta(hours=3):
+                        return "unknown"
+                except Exception:
+                    pass
             # No candidate found in results. For win pools a confirmed
             # different winner still kills the leg; for place pools the
             # candidate could have placed unlisted, so stay unknown.
@@ -1192,6 +1303,17 @@ class ResultTracker:
         # Each stored entry is one leg (banker + savers); the ticket is one
         # logical combination across all legs.
         legs_state = [leg_status(e) for e in ticket["combos"]]
+        if flagged_sub:
+            # Loud flag: a scratched candidate leaves this ticket hinging on
+            # the TAB favourite-substitution — needs human eyes on the
+            # official result, never a silent verdict.
+            _healing_event(
+                "EXOTIC_SCRATCH_SUB",
+                f"Exotic {bet.bet_id} @{getattr(bet, 'track', '?')}: "
+                + "; ".join(flagged_sub),
+                agent="ResultTracker",
+                status="WARN",
+            )
         if any(s == "unknown" for s in legs_state):
             return None
         if all(s == "pass" for s in legs_state):

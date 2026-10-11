@@ -169,3 +169,94 @@ def test_label_variants_detected_as_same_ticket(tmp_path):
     a = gov.record_exotic_bet("greyville", "P6", [3, 4], combos, 1.2, 100.0)
     b = gov.record_exotic_bet("greyville", "PICK 6", [3, 4], combos, 1.2, 100.0)
     assert a is not None and b is None
+
+
+# ── TAB favourite-substitution ──────────────────────────────────────
+
+def test_scratched_banker_substitutes_snapshot_favourite():
+    """Oct-2026 (Mohave Prince R7): scratched banker absent from results →
+    snapshot favourite joins the leg; favourite placed → pass → WON."""
+    async def go():
+        tracker = rt.ResultTracker()
+        bet = _ticket_bet("BIPOT", [7], ["Mohave Prince"])
+        bet.notes = json.dumps({
+            "pool_type": "BIPOT",
+            "pool_legs": [7],
+            "combinations": [{"race": 7, "banker": "Mohave Prince",
+                              "savers": ["Pinot Grigio"]}],
+            "ticket_cost": 1.2,
+        })
+
+        async def fake_races(*a, **k):
+            return _races_with({
+                7: [("Curious Girl", "2nd"), ("Pinot Grigio", "4th"),
+                    ("Other One", "1st")],
+            })
+
+        tracker._exotic_leg_races = fake_races
+        tracker._race_off_datetime = lambda *a, **k: None
+        import core_agent.skills.result_tracker as _rtmod
+        _orig_fav = _rtmod._snapshot_favourite
+        rt._snapshot_favourite = lambda *a, **k: "Curious Girl"
+
+        async def fake_div(*a, **k):
+            return 100.0
+
+        tracker._scrape_sa_results_direct = fake_scrape_none
+        tracker._raceform_dividend = fake_div
+        calls = []
+        gov = SimpleNamespace(
+            settle_exotic_bet=lambda *a, **k: calls.append((a, k)) or True,
+        )
+        try:
+            rec = await tracker._settle_exotic_ticket(bet, gov, None)
+            assert rec is not None
+            assert calls and calls[0][0][1] == round(100.0 * 7.20, 2)
+        finally:
+            _rtmod._snapshot_favourite = _orig_fav
+
+    asyncio.run(go())
+
+
+async def fake_scrape_none(*a, **k):
+    return None
+
+
+def test_scratched_leg_without_favourite_stays_open():
+    """Pinot ran 4th (missed 1st/2nd) but Mohave never ran and the
+    favourite is unfoundable: the sub may still have placed, so the leg
+    (and ticket) stays PENDING with a loud flag — never failed on
+    listed names alone."""
+    async def go():
+        tracker = rt.ResultTracker()
+        bet = _ticket_bet("BIPOT", [7], ["Mohave Prince"])
+        bet.notes = json.dumps({
+            "pool_type": "BIPOT",
+            "pool_legs": [7],
+            "combinations": [{"race": 7, "banker": "Mohave Prince",
+                              "savers": ["Pinot Grigio"]}],
+            "ticket_cost": 1.2,
+        })
+
+        async def fake_races(*a, **k):
+            return _races_with({
+                7: [("Pinot Grigio", "4th"), ("Other One", "1st")],
+            })
+
+        tracker._exotic_leg_races = fake_races
+        tracker._race_off_datetime = lambda *a, **k: None
+        import core_agent.skills.result_tracker as _rtmod2
+        _orig_fav2 = _rtmod2._snapshot_favourite
+        rt._snapshot_favourite = lambda *a, **k: None
+        calls = []
+        gov = SimpleNamespace(
+            settle_exotic_bet=lambda *a, **k: calls.append((a, k)) or True,
+        )
+        try:
+            rec = await tracker._settle_exotic_ticket(bet, gov, None)
+            assert rec is None
+            assert calls == []
+        finally:
+            _rtmod2._snapshot_favourite = _orig_fav2
+
+    asyncio.run(go())
