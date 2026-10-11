@@ -788,6 +788,18 @@ class BankrollGovernor:
                     existing = json.loads(bet.notes) if bet.notes else {}
                 except (ValueError, TypeError):
                     existing = {}
+                if not isinstance(existing, dict) or "pool_type" not in existing:
+                    # Tagged notes ("{ticket json} | VOID (...)") fail a
+                    # whole-string parse — recover the leading ticket object
+                    # instead of replacing it with a settlement-only stub
+                    # (Oct-2026: that orphaned combos and left voided
+                    # tickets permanently unsettleable).
+                    try:
+                        _raw = str(bet.notes or "")
+                        existing = json.loads(_raw[: _raw.rfind("}") + 1]) \
+                            if "{" in _raw else {}
+                    except (ValueError, TypeError):
+                        existing = {}
                 if not isinstance(existing, dict):
                     # Void/retry tags ("... | VOID (...)") are appended as
                     # plain text; nest them so notes stay valid JSON.

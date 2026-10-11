@@ -260,3 +260,29 @@ def test_scratched_leg_without_favourite_stays_open():
             _rtmod2._snapshot_favourite = _orig_fav2
 
     asyncio.run(go())
+
+
+def test_tagged_notes_keep_ticket_json_through_settle(tmp_path):
+    """Oct-2026 (Greyville AI Bipot): settling over void-tagged notes
+    replaced the whole ticket object with a settlement-only stub, orphaning
+    combos and leaving the ticket permanently unsettleable. Tagged notes
+    must merge, never replace."""
+    import json as _j
+    gov = _gov(tmp_path)
+    combos = _combos(["Gallic King", "Prophet"])
+    placed = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0)
+    assert placed is not None
+    # NOTE: record returns a detached copy — mutate the STORED record, as
+    # the void path does in production.
+    bet = next(b for b in gov._bets if b.bet_id == placed.bet_id)
+    bet.notes = f"{bet.notes} | VOID (test tag)"
+    assert gov.settle_exotic_bet(bet.bet_id, 0.0, "test settle") is True
+    # Re-fetch: the atomic transaction reloads state from disk, so the
+    # returned/stale handle does not observe the write.
+    live = next(b for b in gov._bets if b.bet_id == placed.bet_id)
+    assert live.status == "LOST"
+    raw = str(live.notes)
+    data = _j.loads(raw[: raw.rfind("}") + 1])
+    assert data.get("pool_type") == "BI1", data.keys()
+    assert len(data.get("combinations", [])) == 2
+    assert data.get("settlement_notes") == "test settle"
