@@ -268,6 +268,7 @@ def serve_api():
                         "🧠 *Available Commands*\n\n"
                         "/auth <PIN> - Unlock bot access\n"
                         "/scan - Start today's full racing scan\n"
+                        "/scan europe - Scan the Europe wave (UK/IRE)\n"
                         "/status - Get current bankroll & ROI stats\n"
                         "/chart - Show 15-day performance chart\n"
                         "/clear - Reset conversation history\n\n"
@@ -315,6 +316,17 @@ def serve_api():
                 if cmd == "/scan":
                     if not brain.strike:
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
+                        return {"ok": True}
+                    # `/scan europe` runs the Europe wave; plain `/scan`
+                    # runs the SA daily scan (Oct-2026: europe arg was
+                    # silently ignored and always scanned SA).
+                    _argtext = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
+                    if _argtext and any(
+                        w in _argtext for w in ("europe", "europe", "uk", "ire", "eu")
+                    ):
+                        await bot.send_message(chat_id=chat_id, text="🔄 *Starting Europe (UK/IRE) Scan on Modal...*\n_You will receive the digest when it completes._", parse_mode="Markdown")
+                        # Spawn on a dedicated Modal container (survives webhook return)
+                        europe_scan.spawn()
                         return {"ok": True}
                     await bot.send_message(chat_id=chat_id, text="🔄 *Starting Daily Scan on Modal...*\n_You will receive progress updates as each track completes._", parse_mode="Markdown")
                     # Spawn on a dedicated Modal container (survives webhook return)
