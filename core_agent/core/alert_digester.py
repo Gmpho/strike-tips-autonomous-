@@ -262,20 +262,29 @@ class AlertDigester:
             line2 = (f"💰 {o} ({cls._hhmm(j.get('open_at'))}) → "
                      f"{l} ({cls._hhmm(j.get('latest_at'))}){when}")
             enrich = meta.get("enrich") or {}
+            # Labeled chips (Oct-2026): bare fragments ("· 0 · 411614")
+            # confused users — every value carries its name now.
             bits = []
-            for src, dst in (("trainer_name", None), ("trainer", "T"),
-                             ("jockey_claim", None), ("form", None),
-                             ("days_since_last_run", None), ("days", None),
-                             ("official_rating", None), ("rating", None)):
+            for src, label in (("form", "Form"),
+                               ("days_since_last_run", "Days"),
+                               ("days", "Days"),
+                               ("jockey_claim", "Jockey"),
+                               ("jockey", "Jockey"),
+                               ("trainer_name", "Trainer"),
+                               ("trainer", "Trainer"),
+                               ("official_rating", "OR"),
+                               ("rating", "OR")):
                 v = enrich.get(src)
-                # Junk filter (Oct-2026): present-but-meaningless values like
-                # form "0" or bare rating dumps rendered as noise ("· 0 · 0").
+                # Junk filter: present-but-meaningless values like form "0"
+                # or bare "--" never render.
                 if v is None or v == "":
                     continue
                 sv = str(v).strip()
                 if sv in ("0", "0.0", "-", "--", "N/A", "n/a"):
                     continue
-                bits.append(f"{dst}: {sv}" if dst else sv)
+                if any(b.startswith(label + ":") for b in bits):
+                    continue
+                bits.append(f"{label}: {sv}")
                 if len(bits) >= 4:
                     break
             edge = None
