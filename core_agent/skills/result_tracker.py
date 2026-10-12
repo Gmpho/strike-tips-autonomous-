@@ -1514,6 +1514,21 @@ class ResultTracker:
         settled = []
         deferred: List[str] = []
         _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
+        # Cheap expiry sweep FIRST (Oct-2026): the evaluation loop below is
+        # newest-first with a time budget, so ancients at the tail were
+        # never reached and never expired. This pass needs no network and
+        # always runs to completion.
+        try:
+            for _b in list(open_bets):
+                _age = _bet_age_days(getattr(_b, "date", None))
+                _cap = 3 if _is_exotic_bet(_b) else max_age_days
+                if _age is not None and _age > _cap:
+                    if gov and hasattr(gov, "expire_stale_bet"):
+                        gov.expire_stale_bet(_b.bet_id)
+                        deferred.append(f"{_b.bet_id} (expired, {_age}d old)")
+            open_bets = [b for b in gov.get_open_bets()] if gov and hasattr(gov, "get_open_bets") else open_bets
+        except Exception as _exp_err:
+            logger.debug(f"Expiry sweep failed: {_exp_err}")
         # Newest-first (Oct-2026): the loop used to chew oldest-first and a
         # few slow ancients burned the whole cycle budget, starving fresh
         # tickets forever. Plus a hard budget so one cycle can never wedge.
