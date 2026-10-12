@@ -25,7 +25,7 @@ def _monitor_with_fakes():
     pushed = []
 
     class FakeDigester:
-        async def push(self, category, html):
+        async def push(self, category, html, meta=None):
             pushed.append((category, html))
 
         async def push_critical(self, category, html):

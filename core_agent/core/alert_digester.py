@@ -188,15 +188,23 @@ class AlertDigester:
         except Exception as e:
             logger.debug("Digest sent-registry persist failed: %s", e)
 
-    async def push(self, category: str, html: str) -> None:
+    async def push(self, category: str, html: str,
+                 meta: Optional[dict] = None) -> None:
         """Queue a non-critical alert for the next digest (durable).
 
         Skips content already delivered inside the resend window — each
         monitor cycle re-detects the same odds drops with fresh timestamps,
         and without this the same digest re-sends forever (Sep-2026).
+        ``meta`` (Alert Digest v2) carries structured journey/context for
+        rich rendering; the HTML remains the fallback.
         """
         await self._ensure_loop()
         rec = {"ts": time.time(), "category": category, "html": html}
+        if isinstance(meta, dict) and meta:
+            try:
+                rec["meta"] = json.loads(json.dumps(meta, default=str))
+            except Exception:
+                pass
         key = self._key(rec)
         try:
             if repr(key) in self._load_sent():
@@ -214,16 +222,115 @@ class AlertDigester:
         text = f"🚨 <b>{category.replace('_', ' ').title()}</b>\n\n{html}"
         await self._notifier.broadcast(text)
 
+    @staticmethod
+    def _hhmm(iso: object) -> str:
+        try:
+            return str(iso)[11:16]
+        except Exception:
+            return "?"
+
+    @classmethod
+    def _move_pct(cls, meta: dict) -> Optional[float]:
+        try:
+            o = float(meta["journey"]["open"])
+            l = float(meta["journey"]["latest"])
+            if o > 0:
+                return round((o - l) / o * 100, 1)
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def _render_row(cls, meta: dict, category: str) -> Optional[str]:
+        """One compact mover row (2 lines max). None when unrenderable —
+        caller falls back to raw HTML."""
+        try:
+            horse = str(meta.get("horse", "?"))
+            course = str(meta.get("course", "?"))
+            race = str(meta.get("race", "") or "").strip()
+            where = f"{course} R{race}" if race and race != "?" else course
+            j = meta.get("journey") or {}
+            o, l = j.get("open"), j.get("latest")
+            if o is None or l is None:
+                return None
+            move = cls._move_pct(meta) or 0.0
+            tag = "📉 STEAMER" if move > 0 else ("📈 DRIFTER" if move < 0 else "➖ STEADY")
+            line1 = f"{tag} 🐎 {horse} @ {where}"
+            off = str(meta.get("off", "") or "").strip()
+            mto = meta.get("mins_to_off")
+            when = f" (off {off}, {int(mto)}m)" if off and mto is not None else ""
+            line2 = (f"💰 {o} ({cls._hhmm(j.get('open_at'))}) → "
+                     f"{l} ({cls._hhmm(j.get('latest_at'))}){when}")
+            enrich = meta.get("enrich") or {}
+            bits = []
+            for src, dst in (("trainer_name", None), ("trainer", "T"),
+                             ("jockey_claim", None), ("form", None),
+                             ("days_since_last_run", None), ("days", None),
+                             ("official_rating", None), ("rating", None)):
+                v = enrich.get(src)
+                if v is None or v == "":
+                    continue
+                bits.append(f"{dst}: {v}" if dst else str(v))
+                if len(bits) >= 4:
+                    break
+            edge = None
+            try:
+                edge = float(enrich.get("edge"))
+            except (TypeError, ValueError):
+                edge = None
+            if edge:
+                bits.append(f"★ Edge +{edge}%")
+            else:
+                bits.append("watch only")
+            if bits:
+                line2 += f"\n   {' · '.join(bits)}"
+            return f"{line1}\n{line2}"
+        except Exception:
+            return None
+
     async def _send_digest(self, items: List[dict]) -> List[dict]:
         """Send items in chunks; return only the records that were delivered."""
         sent: List[dict] = []
         for i in range(0, len(items), MAX_DIGEST_ITEMS):
             chunk = items[i : i + MAX_DIGEST_ITEMS]
             lines = [
-                f"📋 <b>Alert Digest</b> — {datetime.now().strftime('%H:%M')}",
-                f"({len(chunk)} alert(s) in the last {self._interval // 60} min)\n",
+                f"📋 <b>Market Movers</b> — {datetime.now().strftime('%H:%M')}",
+                f"({len(chunk)} alert(s) in the last {self._interval // 60} min) · prices that moved, not tips\n",
             ]
+            # Collapse repeats per horse: one trail line, latest record wins.
+            seen: Dict[tuple, dict] = {}
+            order: List[tuple] = []
+            raw_fallback: List[dict] = []
             for rec in chunk:
+                meta = rec.get("meta") if isinstance(rec, dict) else None
+                if isinstance(meta, dict) and meta.get("horse"):
+                    key = (rec.get("category"), str(meta.get("course", "")),
+                           str(meta.get("race", "")), str(meta.get("horse")))
+                    if key not in seen:
+                        order.append(key)
+                    seen[key] = rec
+                else:
+                    raw_fallback.append(rec)
+            featured_key = None
+            featured_move = 0.0
+            for key in order:
+                meta = seen[key].get("meta", {})
+                mv = abs(self._move_pct(meta) or 0.0)
+                if mv > abs(featured_move):
+                    featured_move = mv
+                    featured_key = key
+            for key in order:
+                rec = seen[key]
+                icon = {"odds_drop": "📉", "value_bet": "💰"}.get(
+                    rec.get("category", ""), "ℹ️"
+                )
+                row = self._render_row(rec.get("meta", {}), rec.get("category", ""))
+                if row is None:
+                    row = f"{icon} {rec.get('html', '')}"
+                elif key == featured_key and len(order) > 1:
+                    row += "\n   🔥 biggest mover this digest"
+                lines.append(row)
+            for rec in raw_fallback:
                 icon = {"odds_drop": "📉", "value_bet": "💰"}.get(
                     rec.get("category", ""), "ℹ️"
                 )
@@ -242,6 +349,7 @@ class AlertDigester:
                 lines.append(f"\n⏱ Suppressed: {', '.join(suppressed)}")
 
             lines.append("\n⚡ Critical alerts are sent immediately — not batched.")
+            lines.append("🎯 For selections, see the day's Tips scan — movers ≠ tips.")
             try:
                 ok = await self._notifier.broadcast("\n".join(lines))
             except Exception as e:

@@ -37,6 +37,12 @@ class AlertEngine:
         self.data_dir = data_dir or str(DATA_DIR)
         self.alerts_file = os.path.join(self.data_dir, "alert_conditions.json")
         self.history_file = os.path.join(self.data_dir, "alert_history.json")
+        # Odds-journey store (Alert Digest v2): first-seen odds per
+        # (day, course, race, horse) so digests show open → latest trails.
+        # Day-scoped (pruned on load); persisted on every alert push so
+        # container churn never loses the morning's opens.
+        self.journey_file = os.path.join(self.data_dir, "odds_journey.json")
+        self._journey: Dict[str, dict] = {}
 
         self.alerts_cache: Dict[str, AlertCondition] = {}
         self.last_trigger_times: Dict[str, datetime] = {}
@@ -58,9 +64,118 @@ class AlertEngine:
         os.makedirs(self.data_dir, exist_ok=True)
         await self._load_alerts()
         await self.clear_history()
+        self._load_journey()
         logger.info(
             f"🚀 Alert Engine Active: Loaded {len(self.alerts_cache)} conditions."
         )
+
+    def _journey_key(self, course: str, race: str, horse: str) -> str:
+        return f"{datetime.now().date().isoformat()}|{course}|{race}|{horse}"
+
+    def _load_journey(self) -> None:
+        """Load today's journey entries; drop any other day (self-cleans)."""
+        try:
+            with open(self.journey_file) as f:
+                data = json.load(f)
+            today = datetime.now().date().isoformat()
+            if isinstance(data, dict):
+                self._journey = {
+                    k: v for k, v in data.items()
+                    if isinstance(k, str) and k.startswith(today + "|")
+                }
+        except Exception:
+            self._journey = {}
+
+    def _save_journey(self) -> None:
+        try:
+            with open(self.journey_file, "w") as f:
+                json.dump(self._journey, f)
+        except Exception as e:
+            logger.debug("Journey persist failed: %s", e)
+
+    def _record_sighting(self, course: str, race: str, horse: str,
+                         odds: Optional[float]) -> dict:
+        """Record one observation; return the journey entry (creates the
+        open on first sighting of the day). Never raises."""
+        try:
+            key = self._journey_key(course, race, horse)
+            now = datetime.now().isoformat(timespec="minutes")
+            entry = self._journey.get(key)
+            if entry is None:
+                entry = {"open": odds, "open_at": now, "min": odds,
+                         "max": odds, "latest": odds, "latest_at": now}
+                self._journey[key] = entry
+            elif odds is not None:
+                entry["latest"] = odds
+                entry["latest_at"] = now
+                try:
+                    if entry.get("min") is None or odds < entry["min"]:
+                        entry["min"] = odds
+                    if entry.get("max") is None or odds > entry["max"]:
+                        entry["max"] = odds
+                except TypeError:
+                    pass
+            return entry
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _race_context(race_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Race number + off-time + minutes-to-off from monitor event shape.
+        Best-effort: anything unparseable is omitted, never fatal."""
+        out: Dict[str, Any] = {}
+        try:
+            rn = race_data.get("raceNumber", race_data.get("race_number"))
+            if rn is not None:
+                out["race"] = str(rn)
+        except Exception:
+            pass
+        off_raw = None
+        for k in ("bf_off_time", "off_time", "offTime", "time", "start_time"):
+            try:
+                v = race_data.get(k)
+            except Exception:
+                v = None
+            if v:
+                off_raw = str(v)
+                break
+        if off_raw:
+            out["off"] = off_raw
+            try:
+                import re as _re
+                m = _re.search(r"(\d{1,2}):(\d{2})", off_raw)
+                if m:
+                    now = datetime.now()
+                    off = now.replace(hour=int(m.group(1)),
+                                      minute=int(m.group(2)),
+                                      second=0, microsecond=0)
+                    mins = int((off - now).total_seconds() // 60)
+                    if -120 <= mins <= 600:
+                        out["mins_to_off"] = mins
+            except Exception:
+                pass
+        return out
+
+    # Allowlisted enrichment fields (Betfair snapshot shape → digest rows).
+    # Anything absent is skipped at render, never crashes.
+    ENRICH_KEYS = (
+        "trainer_name", "trainer", "jockey_claim", "jockey",
+        "form", "days_since_last_run", "days", "official_rating",
+        "rating", "edge",
+    )
+
+    @classmethod
+    def _enrichment(cls, horse: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        try:
+            for k in cls.ENRICH_KEYS:
+                v = horse.get(k)
+                if v is None or v == "":
+                    continue
+                out[k] = v
+        except Exception:
+            pass
+        return out
 
     async def clear_history(self):
         """Wipe triggered alert history (call at startup to flush stale entries)."""
@@ -131,6 +246,17 @@ class AlertEngine:
 
                 if alert.horse_name and alert.horse_name.lower() != name.lower():
                     continue
+
+                # Journey sighting (Alert Digest v2): record every observed
+                # price so opens exist before any alert fires. Read-only w.r.t.
+                # alert behavior — failures are swallowed inside.
+                try:
+                    _ctx0 = self._race_context(race_data)
+                    _o0 = self._parse_odds(str(horse.get("odds", "")))
+                    self._record_sighting(course, _ctx0.get("race", "?"),
+                                          name, _o0)
+                except Exception:
+                    pass
 
                 if await self._evaluate_condition(alert, horse, race_data, cache):
                     await self._trigger_alert(alert, horse, race_data)
@@ -262,6 +388,33 @@ class AlertEngine:
             "odds": horse.get("odds", "TBD"),
             "timestamp": now.isoformat(),
         }
+        # Alert Digest v2 context (additive only — existing keys untouched).
+        try:
+            ctx = self._race_context(race_data)
+            if ctx.get("race"):
+                msg["race"] = ctx["race"]
+            if ctx.get("off"):
+                msg["off"] = ctx["off"]
+            if ctx.get("mins_to_off") is not None:
+                msg["mins_to_off"] = ctx["mins_to_off"]
+            try:
+                _cur = self._parse_odds(str(horse.get("odds", "")))
+            except (ValueError, ZeroDivisionError):
+                _cur = None
+            journey = self._record_sighting(
+                course, ctx.get("race", "?"), name, _cur)
+            if journey:
+                msg["journey"] = {
+                    k: journey.get(k) for k in
+                    ("open", "open_at", "latest", "latest_at")
+                    if journey.get(k) is not None
+                }
+            self._save_journey()
+            enrich = self._enrichment(horse if isinstance(horse, dict) else {})
+            if enrich:
+                msg["enrich"] = enrich
+        except Exception:
+            pass
 
         logger.info(
             f"🚨 ALERT! [{alert.condition_type}] {name} @ {course} is {msg['odds']}"

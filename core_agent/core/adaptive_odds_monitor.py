@@ -972,8 +972,14 @@ class AdaptiveOddsMonitor:
             f"🐎 {horse} @ {course}\n"
             f"💰 Odds: {odds}"
         )
+        # Alert Digest v2: structured meta rides alongside the legacy HTML
+        # so the renderer can build journey rows; HTML stays the fallback.
+        meta = {k: msg.get(k) for k in (
+            "course", "horse", "odds", "race", "off", "mins_to_off",
+            "journey", "enrich", "timestamp",
+        ) if msg.get(k) is not None}
         if tag in ("odds_drop", "value_bet"):
-            await self._digester.push(tag, html)
+            await self._digester.push(tag, html, meta=meta or None)
         else:
             await self._digester.push_critical(tag, html)
 
