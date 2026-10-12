@@ -134,3 +134,38 @@ def test_junk_enrichment_values_filtered(tmp_path):
     assert "S Ngcobo" in body
     assert "· 0 ·" not in body
     assert "watch only" in body
+
+
+def test_expired_snapshot_race_never_alerts(tmp_path):
+    import time as _time
+    from core_agent.core.alert_engine import AlertCondition
+    eng = AlertEngine(data_dir=str(tmp_path))
+    eng.alerts_cache["g"] = AlertCondition(
+        id="g", race_course="Any", horse_name=None,
+        condition_type="threshold", condition_value="20.0",
+        notification_channels=[], active=True, cooldown_minutes=0)
+    race = {"course": "Kempton",
+            "runners": [{"name": "Amorist", "odds": "13.0"}],
+            "expires_at": _time.time() - 600}
+    import asyncio as _a
+    fired = []
+    eng.notification_callback = lambda m: fired.append(m) or _a.sleep(0)
+    _a.run(eng.evaluate_odds_update(race))
+    assert fired == []
+
+
+def test_unparseable_race_older_than_ttl_never_alerts(tmp_path):
+    import time as _time
+    from core_agent.core.alert_engine import AlertCondition
+    eng = AlertEngine(data_dir=str(tmp_path))
+    eng.alerts_cache["g"] = AlertCondition(
+        id="g", race_course="Any", horse_name=None,
+        condition_type="threshold", condition_value="20.0",
+        notification_channels=[], active=True, cooldown_minutes=0)
+    race = {"course": "Kempton", "first_seen": _time.time() - 7 * 3600,
+            "runners": [{"name": "Amorist", "odds": "13.0"}]}
+    import asyncio as _a
+    fired = []
+    eng.notification_callback = lambda m: fired.append(m) or _a.sleep(0)
+    _a.run(eng.evaluate_odds_update(race))
+    assert fired == []

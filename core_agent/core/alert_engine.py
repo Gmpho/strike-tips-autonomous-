@@ -266,6 +266,28 @@ class AlertEngine:
     ) -> bool:
         """Core math evaluation logic with race status awareness and odds-change threshold."""
         try:
+            # Enforce the snapshot's own expiry contract (Oct-2026): the
+            # pruner stamps expires_at (= off-time + 2 min grace) and drops
+            # finished races — but unparseable feeds linger up to 6h and
+            # kept alerting on finished races. A race the snapshot itself
+            # considers expired, or seen 6h+ with no off-time, never alerts.
+            try:
+                _exp = race_data.get("expires_at")
+                if _exp is not None and float(_exp) <= datetime.now().timestamp():
+                    return False
+            except (TypeError, ValueError):
+                pass
+            try:
+                _fs = race_data.get("first_seen")
+                _has_off = any(
+                    race_data.get(k) for k in
+                    ("bf_off_time", "off_time", "offTime", "t", "st", "time")
+                )
+                if not _has_off and _fs is not None:
+                    if datetime.now().timestamp() - float(_fs) > 6 * 3600:
+                        return False
+            except (TypeError, ValueError):
+                pass
             # Skip if race is not upcoming (prevents alerts on finished races)
             status = race_data.get("status", race_data.get("race_status", "")).lower()
             # Expanded list of statuses that indicate race is not available for betting
