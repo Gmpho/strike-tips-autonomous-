@@ -245,6 +245,24 @@ class StrikeTipsScheduler:
             await self.strike.close()
 
     def europe_scan_job(self):
+        # Single-owner: the Modal heartbeat owns the daily Europe scan and
+        # stamps /app/data/.europe_scan_date. Stand down if it already ran
+        # today (prevents double scans + double digests on lucky container
+        # days). Docker keeps its SCHEDULER_DISABLE=europe_scan line too.
+        try:
+            import datetime as _dt
+            try:
+                from zoneinfo import ZoneInfo as _ZI
+                _tz = _ZI("Africa/Johannesburg")
+            except Exception:
+                _tz = None
+            _today = (_dt.datetime.now(_tz) if _tz else _dt.datetime.now()).date().isoformat()
+            with open(os.path.join(self.data_dir, ".europe_scan_date")) as _f:
+                if (_f.read() or "").strip() == _today:
+                    print(f"[SKIP] Europe scan already ran {_today} (heartbeat)")
+                    return
+        except Exception:
+            pass
         print(
             f"\n{'=' * 60}\n[TIME] Europe scan starting at {datetime.now().strftime('%H:%M')}\n{'='*60}"
         )

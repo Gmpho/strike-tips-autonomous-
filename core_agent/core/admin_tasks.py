@@ -179,6 +179,30 @@ def expire_old_bets(max_age_days: int = 3) -> dict:
     memory=256,
     timeout=300,
 )
+def stamp_file(path: str, content: str) -> dict:
+    """Write a small stamp file under /app/data (scheduler coordination)."""
+    import os
+    import sys
+    import json as _j
+
+    sys.path.insert(0, "/app")
+    full = os.path.join("/app/data", path.lstrip("/"))
+    if not full.startswith("/app/data/"):
+        print(_j.dumps({"written": False, "reason": "path escape"}))
+        return {"written": False}
+    with open(full, "w") as f:
+        f.write(content)
+    print(_j.dumps({"written": True, "path": path}))
+    return {"written": True}
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
 def rename_bet(bet_id: str, new_bet_id: str, race_number: int = 0) -> dict:
     """Give a shadowed (duplicate-ID) bet a unique ID so it becomes
     settleable/voidable again. Refuses if the target ID already exists."""

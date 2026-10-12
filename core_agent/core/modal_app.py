@@ -803,6 +803,48 @@ async def run_odds_monitor():
         await _asyncio3.wait_for(_settle_tick(), timeout=240)
     except Exception as _e:
         logger.debug("piggyback settle wrapper skipped: %s", _e)
+    # Europe heartbeat (Oct-2026): the in-app 12:30 fire dies with container
+    # churn (missed entirely on quiet days), so the daily Europe scan rides
+    # this cron instead. Volume-stamped once-per-day gate, fire-and-forget
+    # spawn (the scan takes ~15 min; awaiting it would blow the 900s cron
+    # budget). Fully guarded — never fails the monitor cycle.
+    try:
+        import datetime as _dt
+
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            _sast = _ZI("Africa/Johannesburg")
+        except Exception:
+            _sast = None
+        _now = _dt.datetime.now(_sast) if _sast else _dt.datetime.now()
+        _today = _now.date().isoformat()
+        _stamp_path = "/app/data/.europe_scan_date"
+        _stamped = ""
+        try:
+            with open(_stamp_path) as _f:
+                _stamped = (_f.read() or "").strip()
+        except Exception:
+            pass
+        if _stamped != _today and (_now.hour, _now.minute) >= (12, 30):
+            import modal as _modal
+
+            _fn = _modal.Function.from_name(
+                "strike-tips-racing", "europe_scan")
+            _fn.spawn()
+            try:
+                with open(_stamp_path, "w") as _f:
+                    _f.write(_today)
+            except Exception:
+                pass
+            logger.info(
+                "Europe heartbeat: spawned europe_scan for %s", _today)
+        else:
+            logger.debug(
+                "Europe heartbeat: already ran %s / too early",
+                _stamped or "never",
+            )
+    except Exception as _e:
+        logger.debug("Europe heartbeat spawn skipped: %s", _e)
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─
