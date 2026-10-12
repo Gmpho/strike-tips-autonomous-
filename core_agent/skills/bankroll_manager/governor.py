@@ -613,7 +613,12 @@ class BankrollGovernor:
                     return None
 
             now = datetime.now()
-            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
+            # Unique IDs (Oct-2026): same-second same-prefix bets shared one
+            # bet_id (e.g. two TRIFECTAs at 07:35:05) — settle/void/cancel
+            # all hit the first match, the rest became IMMORTAL (never
+            # settleable). Race number disambiguates; true dupes are still
+            # skipped by the guards above.
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}_R{race_number}"
 
             bet = BetRecord(
                 bet_id=bet_id,
@@ -725,7 +730,11 @@ class BankrollGovernor:
             combo_desc = ";".join(
                 f"R{c.get('race','?')}#{c.get('banker','?')}" for c in combinations[:3]
             )
-            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}"
+            # Unique IDs (Oct-2026): same-second same-pool bets shared one
+            # bet_id and all but the first became unsettleable ghosts.
+            # Race number disambiguates; true dupes still skip above.
+            first_leg = pool_legs[0] if pool_legs else 0
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}_R{first_leg}"
 
             bet = BetRecord(
                 bet_id=bet_id,

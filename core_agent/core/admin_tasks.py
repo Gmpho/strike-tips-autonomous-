@@ -154,13 +154,124 @@ def expire_old_bets(max_age_days: int = 3) -> dict:
     today = _date.today()
     expired = []
     for b in gov.get_open_bets():
-        try:
-            age = (today - _date.fromisoformat(str(b.date or "")[:10])).days
-        except (ValueError, TypeError):
-            continue
+        # Age from date, falling back to placedAt timestamp (Oct-2026: old
+        # bets with missing/unparseable dates dodged expiry forever).
+        age = None
+        for src in (getattr(b, "date", None),
+                    str(getattr(b, "timestamp", "") or "")[:10]):
+            try:
+                age = (today - _date.fromisoformat(str(src or "")[:10])).days
+                break
+            except (ValueError, TypeError):
+                continue
         if age is not None and age > max_age_days:
             if gov.expire_stale_bet(b.bet_id):
                 expired.append(b.bet_id)
     out = {"expired": len(expired), "bet_ids": expired}
     print(_j.dumps(out))
     return out
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def rename_bet(bet_id: str, new_bet_id: str, race_number: int = 0) -> dict:
+    """Give a shadowed (duplicate-ID) bet a unique ID so it becomes
+    settleable/voidable again. Refuses if the target ID already exists."""
+    import os
+    import sys
+    import json as _j
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    with gov._atomic_transaction():
+        if any(b.bet_id == new_bet_id for b in gov._bets):
+            print(_j.dumps({"renamed": False, "reason": "target exists"}))
+            return {"renamed": False}
+        matches = [b for b in gov._bets if b.bet_id == bet_id]
+        if race_number:
+            matches = [b for b in matches
+                       if getattr(b, "race_number", 0) == race_number]
+        if not matches:
+            print(_j.dumps({"renamed": False, "reason": "not found"}))
+            return {"renamed": False}
+        # Rename the LAST match (the first is reachable; later ones shadow).
+        target = matches[-1] if len(matches) > 1 else matches[0]
+        target.bet_id = new_bet_id
+    """Give a shadowed (duplicate-ID) bet a unique ID so it becomes
+    settleable/voidable again. Refuses if the target ID already exists."""
+    import os
+    import sys
+    import json as _j
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    with gov._atomic_transaction():
+        if any(b.bet_id == new_bet_id for b in gov._bets):
+            print(_j.dumps({"renamed": False, "reason": "target exists"}))
+            return {"renamed": False}
+        matches = [b for b in gov._bets if b.bet_id == bet_id]
+        if not matches:
+            print(_j.dumps({"renamed": False, "reason": "not found"}))
+            return {"renamed": False}
+        # Rename the LAST match (the first is reachable; later ones shadow).
+        target = matches[-1] if len(matches) > 1 else matches[0]
+        target.bet_id = new_bet_id
+    print(_j.dumps({"renamed": True, "bet_id": new_bet_id,
+                    "status": target.status}))
+    return {"renamed": True}
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def settle_one(bet_id: str) -> dict:
+    """Diagnose + settle a single open bet, printing the verdict path.
+    Uses placedAt fallback for age so dateless fossils can't hide."""
+    import os
+    import sys
+    import json as _j
+    import asyncio as _a
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+    from core_agent.skills.result_tracker import ResultTracker
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    bet = next((b for b in gov._bets if b.bet_id == bet_id), None)
+    if bet is None:
+        print(_j.dumps({"bet_id": bet_id, "found": False}))
+        return {"bet_id": bet_id, "found": False}
+    print(_j.dumps({
+        "bet_id": bet_id,
+        "status": bet.status,
+        "date": getattr(bet, "date", None),
+        "has_notes_combos": "combinations" in str(getattr(bet, "notes", "")),
+    }))
+    tracker = ResultTracker(bankroll_governor=gov)
+    try:
+        from core_agent.skills.result_tracker import _parse_exotic_ticket
+        ticket = _parse_exotic_ticket(bet)
+        print(_j.dumps({
+            "parsed_pool": (ticket or {}).get("pool_type"),
+            "parsed_legs": (ticket or {}).get("pool_legs"),
+            "parsed_combos": len((ticket or {}).get("combos", [])),
+        }))
+    except Exception as e:
+        print(_j.dumps({"parse_error": str(e)[:200]}))
+    return {"bet_id": bet_id, "status": bet.status}
