@@ -1514,7 +1514,28 @@ class ResultTracker:
         settled = []
         deferred: List[str] = []
         _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
+        # Newest-first (Oct-2026): the loop used to chew oldest-first and a
+        # few slow ancients burned the whole cycle budget, starving fresh
+        # tickets forever. Plus a hard budget so one cycle can never wedge.
+        _loop_start = datetime.now().timestamp()
+        try:
+            open_bets = sorted(
+                open_bets,
+                key=lambda b: (
+                    str(getattr(b, "date", "") or ""),
+                    str(getattr(b, "bet_id", "") or ""),
+                ),
+                reverse=True,
+            )
+        except Exception:
+            pass
         for bet in open_bets:
+            if datetime.now().timestamp() - _loop_start > 150:
+                logger.info(
+                    "%s settle budget exhausted, remainder drains next cycle",
+                    _tag(),
+                )
+                break
             age = _bet_age_days(getattr(bet, "date", None))
             # Exotics go stale fast: ATR live covers today/yesterday and old
             # pool tickets evidently can't always be verified (Oct-2026:

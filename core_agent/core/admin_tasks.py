@@ -128,3 +128,39 @@ def repair_notes(bet_id: str, notes_json: str) -> dict:
     print(_j.dumps({"bet_id": bet_id, "repaired": True,
                     "status": live.status}))
     return {"bet_id": bet_id, "repaired": True}
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def expire_old_bets(max_age_days: int = 3) -> dict:
+    """One-shot backlog hygiene: EXPIRE all PENDING bets older than N days.
+    No money moves (stakes already sunk); clears fossils the nightly
+    settle loop never reaches."""
+    import os
+    import sys
+    import json as _j
+    from datetime import date as _date
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    today = _date.today()
+    expired = []
+    for b in gov.get_open_bets():
+        try:
+            age = (today - _date.fromisoformat(str(b.date or "")[:10])).days
+        except (ValueError, TypeError):
+            continue
+        if age is not None and age > max_age_days:
+            if gov.expire_stale_bet(b.bet_id):
+                expired.append(b.bet_id)
+    out = {"expired": len(expired), "bet_ids": expired}
+    print(_j.dumps(out))
+    return out
