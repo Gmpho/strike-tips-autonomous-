@@ -117,6 +117,19 @@ export const BankrollView: React.FC = () => {
   }, [sortedExecs, execFilter]);
 
   const visible = filteredExecs.slice(0, execShown);
+
+  // Per-tab counts (Oct-2026): makes a mis-filtering tab self-evident —
+  // the count and the rows always derive from the same filtered set.
+  const tabCounts = React.useMemo(() => {
+    const counts: Record<ExecFilter, number> = { ALL: sortedExecs.length, WON: 0, LOST: 0, OPEN: 0 };
+    for (const b of sortedExecs) {
+      const st = betStatus(b);
+      if (st === 'WON') counts.WON += 1;
+      else if (st === 'LOST') counts.LOST += 1;
+      else if (st === 'PENDING') counts.OPEN += 1;
+    }
+    return counts;
+  }, [sortedExecs]);
   // Windowed ledger: offer the full pull once the 120-row paint window
   // is exhausted but the server holds more.
   const canPage = visible.length < filteredExecs.length;
@@ -241,7 +254,7 @@ export const BankrollView: React.FC = () => {
                   execFilter === f.key ? 'bg-purple-500/25 text-purple-200' : 'text-theme-secondary hover:text-theme-primary'
                 }`}
               >
-                {f.label}
+                {f.label} {tabCounts[f.key] > 0 ? `(${tabCounts[f.key]})` : ''}
               </button>
             ))}
           </div>
