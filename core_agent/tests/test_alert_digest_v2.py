@@ -106,3 +106,31 @@ def test_move_pct_direction():
     assert (AlertDigester._move_pct(
         {"journey": {"open": 2.0, "latest": 8.0}}) or 0) < 0
     assert AlertDigester._move_pct({}) is None
+
+
+def test_steady_rows_dropped_from_movers(tmp_path):
+    n = _StubNotifier()
+    d = AlertDigester(n, queue_path=str(tmp_path / "q.jsonl"))
+    asyncio.run(d.push("odds_drop", "x", meta=_meta(
+        horse="Plodder", opened=4.5, latest=4.5)))
+    asyncio.run(d.push("odds_drop", "x", meta=_meta(
+        horse="Mover", opened=10.0, latest=5.0)))
+    asyncio.run(d.flush_due(force=True))
+    body = n.sent[0]
+    assert "Plodder" not in body
+    assert "Mover" in body
+    assert "(1 mover(s)" in body
+
+
+def test_junk_enrichment_values_filtered(tmp_path):
+    n = _StubNotifier()
+    d = AlertDigester(n, queue_path=str(tmp_path / "q.jsonl"))
+    m = _meta()
+    m["enrich"] = {"trainer": "S Ngcobo", "form": "0", "rating": "--",
+                   "days": "N/A"}
+    asyncio.run(d.push("odds_drop", "x", meta=m))
+    asyncio.run(d.flush_due(force=True))
+    body = n.sent[0]
+    assert "S Ngcobo" in body
+    assert "· 0 ·" not in body
+    assert "watch only" in body

@@ -268,9 +268,14 @@ class AlertDigester:
                              ("days_since_last_run", None), ("days", None),
                              ("official_rating", None), ("rating", None)):
                 v = enrich.get(src)
+                # Junk filter (Oct-2026): present-but-meaningless values like
+                # form "0" or bare rating dumps rendered as noise ("· 0 · 0").
                 if v is None or v == "":
                     continue
-                bits.append(f"{dst}: {v}" if dst else str(v))
+                sv = str(v).strip()
+                if sv in ("0", "0.0", "-", "--", "N/A", "n/a"):
+                    continue
+                bits.append(f"{dst}: {sv}" if dst else sv)
                 if len(bits) >= 4:
                     break
             edge = None
@@ -293,10 +298,6 @@ class AlertDigester:
         sent: List[dict] = []
         for i in range(0, len(items), MAX_DIGEST_ITEMS):
             chunk = items[i : i + MAX_DIGEST_ITEMS]
-            lines = [
-                f"📋 <b>Market Movers</b> — {datetime.now().strftime('%H:%M')}",
-                f"({len(chunk)} alert(s) in the last {self._interval // 60} min) · prices that moved, not tips\n",
-            ]
             # Collapse repeats per horse: one trail line, latest record wins.
             seen: Dict[tuple, dict] = {}
             order: List[tuple] = []
@@ -311,6 +312,25 @@ class AlertDigester:
                     seen[key] = rec
                 else:
                     raw_fallback.append(rec)
+            # STEADY rows carry no movement: drop them from a movers digest
+            # (Oct-2026: first-seen-at-alert-time horses rendered 4.5→4.5).
+            # A fully steady chunk still sends its header (quiet half hour),
+            # never a bare silent drop.
+            steady_dropped = 0
+            live_order: List[tuple] = []
+            for key in order:
+                mv = abs(self._move_pct(seen[key].get("meta", {})) or 0.0)
+                if mv <= 0.0:
+                    steady_dropped += 1
+                    continue
+                live_order.append(key)
+            order = live_order
+            lines = [
+                f"📋 <b>Market Movers</b> — {datetime.now().strftime('%H:%M')}",
+                f"({len(order) + len(raw_fallback)} mover(s) in the last {self._interval // 60} min) · prices that moved, not tips\n",
+            ]
+            if steady_dropped and not order and not raw_fallback:
+                lines.append("😴 Quiet half hour — no price moved.\n")
             featured_key = None
             featured_move = 0.0
             for key in order:
