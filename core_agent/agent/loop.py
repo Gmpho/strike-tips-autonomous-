@@ -193,17 +193,34 @@ class AgentLoop:
             elif getattr(brain, "_scanning", False):
                 response_content = "🔄 Scan already in progress — please wait."
             else:
+                # `/scan europe` (uk/ire) runs the Europe wave only; plain
+                # `/scan` runs the full SA daily scan (Oct-2026: /scan
+                # europe used to silently scan SA instead).
+                _regions = None
+                _argtext = " ".join(args).lower() if args else ""
+                if _argtext and any(
+                    w in _argtext for w in ("europe", "europe", "uk", "ire", "eu")
+                ):
+                    _regions = ["UK", "IRE"]
                 brain._scanning = True
-                async def _run_scan_bg():
+
+                async def _run_scan_bg(regions=_regions):
                     try:
-                        await brain.strike.run_daily_scan()
+                        if regions:
+                            await brain.strike.run_region_scan(regions)
+                        else:
+                            await brain.strike.run_daily_scan()
                     except Exception as e:
                         logger.error("Scan command error: %s", e)
                     finally:
                         brain._scanning = False
-                
+
                 asyncio.create_task(_run_scan_bg())
-                response_content = "🚀 Starting today's full racing scan in background..."
+                response_content = (
+                    "🚀 Starting Europe (UK/IRE) scan in background..."
+                    if _regions
+                    else "🚀 Starting today's full racing scan in background..."
+                )
 
         elif cmd == "/dream":
             import re
