@@ -8,6 +8,7 @@ import {
 import { 
   buildSimulatedRunners, 
   computeSimulationFrame, 
+  PACE_LABEL,
   type SimulatedRunner, 
   type SimulationFrame 
 } from '../../engine/simulation/pacingEngine';
@@ -523,6 +524,12 @@ export const RaceSimulatorView: React.FC<RaceSimulatorViewProps> = ({
                                 VALUE
                               </span>
                             )}
+                            <span
+                              title={`Running style mined from form: ${PACE_LABEL[row.paceStyle]}`}
+                              className="text-[8px] bg-sky-500/15 text-sky-300 px-1 py-0.2 rounded border border-sky-500/30 uppercase tracking-wide"
+                            >
+                              {PACE_LABEL[row.paceStyle]}
+                            </span>
                           </div>
                         </td>
                         <td className="py-2 px-2 text-zinc-400">

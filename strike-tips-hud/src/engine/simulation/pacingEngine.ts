@@ -135,6 +135,9 @@ export function buildSimulatedRunners(
 
     const paletteIdx = idx % SILK_PALETTE.length;
 
+    const paceStyle = classifyPaceStyle(r.runner_comments, r.verdict);
+    const attrs = PACE_ATTRIBUTES[paceStyle];
+
     return {
       id: `${r.name}_${idx}`,
       name: r.name,
@@ -146,11 +149,12 @@ export function buildSimulatedRunners(
       finishOrder: idx + 1,
       isAiValue: !!isVal,
       isFavourite: !!isFav,
+      paceStyle,
       silkColor: SILK_PALETTE[paletteIdx].silk,
       capColor: SILK_PALETTE[paletteIdx].cap,
-      earlySpeed: 0.95 + (Math.sin(idx * 1.7) * 0.1),
-      stamina: 0.95 + (Math.cos(idx * 2.3) * 0.1),
-      kick: 0.95 + (Math.sin(idx * 3.1) * 0.1),
+      earlySpeed: attrs.earlySpeed,
+      stamina: attrs.stamina,
+      kick: attrs.kick,
     };
   });
 
@@ -228,16 +232,18 @@ export function computeSimulationFrame(
 
     let x = START_LINE_X;
     if (elapsedSec < arrivalTime) {
-      // Pacing curve:
-      // Early break (0 to 0.25), Mid-pack (0.25 to 0.70), Straight (0.70 to 1.0)
+      // Pacing curve driven by the horse's form-mined running style:
+      // FRONT_RUNNER shows daylight early then gets swallowed late,
+      // CLOSER creeps then pounces, TACTICAL tracks the even line.
+      // Finish order/margins are untouched — probability decides those.
       const tProgress = elapsedSec / arrivalTime;
 
       // Draw bias: low draws get slight rail positioning early
       const drawBonus = (runner.draw <= 4 ? 12 : -8) * Math.sin(tProgress * Math.PI);
-      
-      // Dynamic easing: cubic out towards finish with organic stride noise
-      const baseProg = Math.pow(tProgress, 1.25);
-      const strideJitter = Math.sin(elapsedSec * 6 + idx) * 3.5;
+
+      // Dynamic easing: archetype exponent shapes the story, stride noise keeps it organic
+      const baseProg = Math.pow(tProgress, PACE_EXPONENT[runner.paceStyle]);
+      const strideJitter = Math.sin(elapsedSec * 6 + idx) * 3.5 * runner.earlySpeed;
 
       x = START_LINE_X + (baseProg * TRACK_LENGTH) + drawBonus + strideJitter;
     } else {
@@ -281,6 +287,7 @@ export function computeSimulationFrame(
       margin: r.margin,
       hasFinished: pos ? pos.hasCrossedFinish : false,
       isAiValue: r.isAiValue,
+      paceStyle: r.paceStyle,
     };
   }).sort((a, b) => a.order - b.order);
 
