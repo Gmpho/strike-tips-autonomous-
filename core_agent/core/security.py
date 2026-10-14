@@ -25,6 +25,8 @@ SAFE_PATHS = {
     "/api/legal/responsible",
     "/api/legal/",
     "/api/monitoring/stream",
+    "/api/monitoring/snapshot-hash",
+    "/api/monitoring/snapshot",
     "/api/racing/exotics",
     "/api/news",
     "/api/news/images",
