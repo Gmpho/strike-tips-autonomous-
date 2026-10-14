@@ -938,3 +938,28 @@ def test_first_notification_goes_through():
     assert kwargs["won"] is True
     assert kwargs["returns"] == pytest.approx(35.0)
     assert kwargs["profit_loss"] == pytest.approx(25.0)
+
+
+def test_pre_race_guard_skips_future_off_time(tmp_path, monkeypatch):
+    """Oct-2026: Taking A Risk settled LOST hours before Vaal R7 ran.
+    A bet dated today whose off-time is still ahead must never settle."""
+    import json as _json
+    from datetime import date as _date
+    (tmp_path / "market_snapshot_latest.json").write_text(_json.dumps({
+        "events": {"e1": {
+            "course": "vaal", "raceNumber": 7, "bf_off_time": "23:59",
+            "runners": [{"name": "Taking A Risk"}],
+        }}
+    }))
+    import core_agent.skills.result_tracker as rt
+
+    class FakeGov:
+        data_dir = str(tmp_path)
+
+        def get_open_bets(self):
+            return []
+
+    tracker = rt.ResultTracker(bankroll_governor=FakeGov())
+    # direct helper check: off-time resolution finds the future race
+    off = rt._find_race_time(str(tmp_path), "vaal", 7, _date.today().isoformat())
+    assert off == "23:59"

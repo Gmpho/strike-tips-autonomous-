@@ -2,7 +2,7 @@ import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
   BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
-  TrendingUp, Flag, Ticket, Newspaper, Radar, Radio
+  TrendingUp, Flag, Ticket, Newspaper, Radar, Radio, Zap
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
@@ -90,6 +90,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const racingItems = [
+    { icon: Zap, label: 'Race Simulator', id: 'simulator' },
     { icon: Newspaper, label: 'News', id: 'news' },
     { icon: Radar, label: 'Live Ops', id: 'telemetry' },
     { icon: TrendingUp, label: 'Market Movers', id: 'market-movers' },

@@ -37,6 +37,7 @@ const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').
 const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
 const TelemetryView = React.lazy(() => import('./components/sidebar/TelemetryView').then(m => ({ default: m.TelemetryView })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
+const RaceSimulatorView = React.lazy(() => import('./components/sidebar/RaceSimulatorView').then(m => ({ default: m.RaceSimulatorView })));
 const SwarmPodcastView = React.lazy(() => import('./components/SwarmPodcastView').then(m => ({ default: m.SwarmPodcastView })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
@@ -61,7 +62,7 @@ const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'bet
 const PUBLIC_VIEWS = [...LEGAL_VIEWS];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
-  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
+  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results', 'simulator',
   ...LEGAL_VIEWS
 ];
 
@@ -214,6 +215,10 @@ export const App: React.FC = () => {
                     setPendingRaceEvent(ev);
                     navigate('chat');
                   }}
+                  onSimulateRace={(ev) => {
+                    setPendingRaceEvent(ev);
+                    navigate('simulator');
+                  }}
                 />
               ))}
             </div>
@@ -260,6 +265,12 @@ export const App: React.FC = () => {
         return <Suspense key="predictor-view" fallback={<ViewFallback />}><PredictorView /></Suspense>;
       case 'results':
         return <Suspense key="results-view" fallback={<ViewFallback />}><ResultsView /></Suspense>;
+      case 'simulator':
+        return (
+          <Suspense key="simulator-view" fallback={<ViewFallback />}>
+            <RaceSimulatorView initialRaceEvent={pendingRaceEvent ?? undefined} onNavigate={navigate} />
+          </Suspense>
+        );
       case 'privacy':
         return <Suspense key="privacy-view" fallback={<ViewFallback />}><PrivacyPage /></Suspense>;
       case 'terms':
