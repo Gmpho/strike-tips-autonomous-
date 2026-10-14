@@ -154,7 +154,7 @@ export const RaceSimulatorView: React.FC<RaceSimulatorViewProps> = ({
   }, [events, selectedEventId, initialRaceEvent]);
 
   // Simulator State
-  const [mode, setMode] = useState<'EXPECTED' | 'MONTE_CARLO'>('EXPECTED');
+  const [mode, setMode] = useState<'EXPECTED' | 'MONTE_CARLO'>('MONTE_CARLO');
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(1.0);
   const [highlightValueBet, setHighlightValueBet] = useState<boolean>(true);
