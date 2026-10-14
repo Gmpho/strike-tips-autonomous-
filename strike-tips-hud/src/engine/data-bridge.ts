@@ -169,7 +169,10 @@ export class DataBridge {
 
   private async hydrateNews() {
     try {
-      const res = await fetch('/api/news');
+      // apiFetch (not raw fetch): routes /api/news direct to Modal via
+      // backend-origin. Raw fetch stayed same-origin and ate Pages' SPA
+      // fallback HTML — the '<!DOCTYPE is not valid JSON' runSlow spam.
+      const res = await apiFetch('/api/news');
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.items) && data.items.length > 0) {
@@ -385,18 +388,21 @@ export class DataBridge {
 
       const currentState = hudStore.getState();
 
-      const history = (historyRes && historyRes.ok) ? await historyRes.json() : { bets: currentState.betHistory };
-      const stats = (statsRes && statsRes.ok) ? await statsRes.json() : currentState.betStats;
-      const roiRaw = (roiRes && roiRes.ok) ? await roiRes.json() : { roiByTrack: currentState.learning?.roiByTrack, accuracy: currentState.learning?.accuracy };
+      // Every .json() guarded: any leg that answers HTML (Pages fallback) or
+      // dies mid-parse falls back to current state instead of throwing the
+      // whole slow tick into the outer catch (the runSlow error spam).
+      const history = (historyRes && historyRes.ok) ? await historyRes.json().catch(() => ({ bets: currentState.betHistory })) : { bets: currentState.betHistory };
+      const stats = (statsRes && statsRes.ok) ? await statsRes.json().catch(() => currentState.betStats) : currentState.betStats;
+      const roiRaw = (roiRes && roiRes.ok) ? await roiRes.json().catch(() => ({ roiByTrack: currentState.learning?.roiByTrack, accuracy: currentState.learning?.accuracy })) : { roiByTrack: currentState.learning?.roiByTrack, accuracy: currentState.learning?.accuracy };
       const roiByTrack = roiRaw.roiByTrack ?? roiRaw;
       const roiAccuracy = roiRaw.accuracy ?? 0;
-      const roiOdds = (roiOddsRes && roiOddsRes.ok) ? await roiOddsRes.json() : currentState.learning?.roiByOddsRange;
-      const logs = (logsRes && logsRes.ok) ? await logsRes.json() : { logs: currentState.logs };
-      const healing = (healingRes && healingRes.ok) ? await healingRes.json() : { internal_events: currentState.healing.events, github_runs: currentState.healing.githubRuns };
-      const selectors = (selectorsRes && selectorsRes.ok) ? await selectorsRes.json() : { report: currentState.healing.selectors };
-      const vitals = (vitalsRes && vitalsRes.ok) ? await vitalsRes.json() : { vitals: currentState.vitals.docker };
-      const bankrollHist = (bankrollHistRes && bankrollHistRes.ok) ? await bankrollHistRes.json() : { history: currentState.bankrollHistory };
-      const memoryData = (memoryRes && memoryRes.ok) ? await memoryRes.json() : null;
+      const roiOdds = (roiOddsRes && roiOddsRes.ok) ? await roiOddsRes.json().catch(() => currentState.learning?.roiByOddsRange) : currentState.learning?.roiByOddsRange;
+      const logs = (logsRes && logsRes.ok) ? await logsRes.json().catch(() => ({ logs: currentState.logs })) : { logs: currentState.logs };
+      const healing = (healingRes && healingRes.ok) ? await healingRes.json().catch(() => ({ internal_events: currentState.healing.events, github_runs: currentState.healing.githubRuns })) : { internal_events: currentState.healing.events, github_runs: currentState.healing.githubRuns };
+      const selectors = (selectorsRes && selectorsRes.ok) ? await selectorsRes.json().catch(() => ({ report: currentState.healing.selectors })) : { report: currentState.healing.selectors };
+      const vitals = (vitalsRes && vitalsRes.ok) ? await vitalsRes.json().catch(() => ({ vitals: currentState.vitals.docker })) : { vitals: currentState.vitals.docker };
+      const bankrollHist = (bankrollHistRes && bankrollHistRes.ok) ? await bankrollHistRes.json().catch(() => ({ history: currentState.bankrollHistory })) : { history: currentState.bankrollHistory };
+      const memoryData = (memoryRes && memoryRes.ok) ? await memoryRes.json().catch(() => null) : null;
 
       hudStore.updateState({
         betHistory: history.bets || [],
