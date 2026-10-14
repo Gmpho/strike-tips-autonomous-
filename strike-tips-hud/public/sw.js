@@ -18,6 +18,11 @@ const APP_SHELL = [
 // Install Event: Open static cache and store the App Shell
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing Strike Tips service worker...');
+  // Activate immediately: without this the new worker waits until every tab
+  // closes, and users sit on the old bundle indefinitely (Oct-2026: prod
+  // served a stale index-*.js for hours after deploy). Activate already
+  // purges old caches + clients.claim()s, so this is safe.
+  self.skipWaiting();
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
       console.log('[SW] Pre-caching application shell');

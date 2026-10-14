@@ -245,7 +245,7 @@ export const RaceSimulatorView: React.FC<RaceSimulatorViewProps> = ({
               AI Broadcast Engine · 60 FPS Canvas
             </span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
             <span>Race Predictor Simulator</span>
             <Zap className="w-6 h-6 text-purple-400 fill-purple-400" />
           </h1>
