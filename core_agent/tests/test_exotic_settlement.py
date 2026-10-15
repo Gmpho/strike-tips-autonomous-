@@ -337,7 +337,21 @@ def test_over_age_bets_expire(stub_modules):
     gov = MagicMock()
     old = (date.today() - timedelta(days=9)).isoformat()
     bet = _bet(date=old, horse="Silver Storm", confidence="VALUE")
-    gov.get_open_bets.return_value = [bet]
+    bet.status = "PENDING"
+    # Model the real governor: get_open_bets() returns only PENDING rows and
+    # expire_stale_bet() flips the row. check_and_settle_open_bets() re-reads
+    # get_open_bets() after its network-free expiry pre-pass, so the refreshed
+    # list drops the bet and the main loop never re-expires it — the sweep
+    # must call expire_stale_bet exactly once (a static return_value here let
+    # the same bet leak back into the loop and caused a spurious 2nd call).
+    gov.get_open_bets.side_effect = lambda: [b for b in (bet,) if b.status == "PENDING"]
+
+    def _expire(bid):
+        assert bid == bet.bet_id
+        bet.status = "EXPIRED"
+        return True
+
+    gov.expire_stale_bet.side_effect = _expire
     tracker = ResultTracker(bankroll_governor=gov)
     settled = asyncio.run(tracker.check_and_settle_open_bets())
     assert settled == []
