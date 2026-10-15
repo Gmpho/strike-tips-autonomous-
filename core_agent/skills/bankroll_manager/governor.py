@@ -596,11 +596,14 @@ class BankrollGovernor:
                     logger.warning(f"Bet blocked by governor: {reason}")
                     return None
 
-            # Idempotency: same horse/track/race/date already pending (daily +
+            # Idempotency: same horse/track/race/date already recorded (daily +
             # value + midday scans all place) → don't stack duplicate tickets.
+            # Settled twins count too (Oct-2026): a re-run replaying a bet whose
+            # first copy already settled was appending a fresh PENDING duplicate
+            # that then sat forever. VOID/EXPIRED still permit a re-placement.
             for existing in self._bets:
                 if (
-                    existing.status == "PENDING"
+                    existing.status in ("PENDING", "WON", "LOST")
                     and existing.date == date.today().isoformat()
                     and str(existing.track).lower() == str(track).lower()
                     and existing.race_number == race_number
@@ -710,7 +713,7 @@ class BankrollGovernor:
             bank_names = [n for n in bank_names if n]
             for existing in self._bets:
                 if (
-                    existing.status == "PENDING"
+                    existing.status in ("PENDING", "WON", "LOST")
                     and existing.date == today_iso
                     and str(existing.track).lower() == str(track).lower()
                     and _fam(str(existing.horse).split(":")[0])
@@ -772,10 +775,37 @@ class BankrollGovernor:
             )
             return bet
 
+    def _find_bet(self, bet_id: str):
+        """Locate a bet by id, preferring the live row over settled twins.
+
+        bet_history can hold duplicate ids (pre-Oct-2026 same-second collisions
+        left a settled copy plus an immortal PENDING copy). A plain next()
+        match returns whichever row sits first — often the settled twin — so
+        settle/void/cancel/expire would no-op on the wrong row, leave the live
+        ticket unreachable, or resurrect a fossil. Rank: PENDING, then
+        WON/LOST (a real settlement), then VOID, then EXPIRED/other. Ties keep
+        file order.
+        """
+        matches = [b for b in self._bets if b.bet_id == bet_id]
+        if not matches:
+            return None
+
+        def _rank(b):
+            status = getattr(b, "status", None)
+            if status == "PENDING":
+                return 0
+            if status in ("WON", "LOST"):
+                return 1
+            if status == "VOID":
+                return 2
+            return 3
+
+        return min(matches, key=_rank)
+
     def settle_exotic_bet(self, bet_id: str, pool_return: float, notes: str = "") -> bool:
         """Settle an exotic pool bet with its actual pool dividend return."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Exotic bet not found: {bet_id}")
                 return False
@@ -837,7 +867,7 @@ class BankrollGovernor:
     def settle_bet(self, bet_id: str, won: bool, notes: str = "", placed: Optional[str] = None) -> bool:
         """Settle a pending bet with a result (Atomic)"""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Bet not found: {bet_id}")
                 return False
@@ -919,7 +949,7 @@ class BankrollGovernor:
         impact beyond the refund. Idempotent: already-VOID/settled bets
         are left alone (settled ones need void_settlement instead)."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Cancel failed, bet not found: {bet_id}")
                 return False
@@ -952,7 +982,7 @@ class BankrollGovernor:
         clears it from the open book so backlogs can't pile up forever.
         Idempotent."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 return False
             if bet.status != "PENDING":
@@ -976,7 +1006,7 @@ class BankrollGovernor:
           it; void-WON subtracts the credited dividend.
         """
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Void failed, bet not found: {bet_id}")
                 return False
