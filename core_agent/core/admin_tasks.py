@@ -31,6 +31,7 @@ def void_ticket(bet_id: str, notes: str = "") -> dict:
 
     gov = BankrollGovernor(data_dir="/app/data")
     ok = gov.void_settlement(bet_id, notes or "admin reversal of wrongful settle")
+    data_volume.commit()
     return {"bet_id": bet_id, "voided": ok}
 
 
@@ -52,6 +53,7 @@ def cancel_ticket(bet_id: str, notes: str = "") -> dict:
 
     gov = BankrollGovernor(data_dir="/app/data")
     ok = gov.cancel_pending_bet(bet_id, notes or "admin cancel")
+    data_volume.commit()
     return {"bet_id": bet_id, "cancelled": ok}
 
 
@@ -125,6 +127,7 @@ def repair_notes(bet_id: str, notes_json: str) -> dict:
             tags = prior[prior.find("| VOID"):]
         data = _j.loads(notes_json)
         live.notes = _j.dumps(data) + (f" {tags}" if tags else "")
+    data_volume.commit()
     print(_j.dumps({"bet_id": bet_id, "repaired": True,
                     "status": live.status}))
     return {"bet_id": bet_id, "repaired": True}
@@ -150,23 +153,39 @@ def expire_old_bets(max_age_days: int = 3) -> dict:
     os.environ.setdefault("DATA_DIR", "/app/data")
     from core_agent.skills.bankroll_manager.governor import BankrollGovernor
 
+    # Pull the latest committed volume state first: a fresh container mounts a
+    # snapshot, but a long-lived sibling may have committed since (Oct-2026).
+    try:
+        data_volume.reload()
+    except Exception:
+        pass
+
     gov = BankrollGovernor(data_dir="/app/data")
     today = _date.today()
     expired = []
-    for b in gov.get_open_bets():
-        # Age from date, falling back to placedAt timestamp (Oct-2026: old
-        # bets with missing/unparseable dates dodged expiry forever).
-        age = None
-        for src in (getattr(b, "date", None),
-                    str(getattr(b, "timestamp", "") or "")[:10]):
-            try:
-                age = (today - _date.fromisoformat(str(src or "")[:10])).days
-                break
-            except (ValueError, TypeError):
+    # Flip rows DIRECTLY inside one transaction. expire_stale_bet() looks the
+    # bet up by id, but bet_history can hold duplicate ids (a settled row plus
+    # a live PENDING row) — that lookup hits the settled twin and no-ops while
+    # still returning True (Oct-2026: 18 "expired" that never moved).
+    with gov._atomic_transaction():
+        for b in gov._bets:
+            if b.status != "PENDING":
                 continue
-        if age is not None and age > max_age_days:
-            if gov.expire_stale_bet(b.bet_id):
+            # Age from date, falling back to placedAt timestamp (Oct-2026:
+            # bets with missing/unparseable dates dodged expiry forever).
+            age = None
+            for src in (getattr(b, "date", None),
+                        str(getattr(b, "timestamp", "") or "")[:10]):
+                try:
+                    age = (today - _date.fromisoformat(str(src or "")[:10])).days
+                    break
+                except (ValueError, TypeError):
+                    continue
+            if age is not None and age > max_age_days:
+                b.status = "EXPIRED"
                 expired.append(b.bet_id)
+    # Modal Volumes only persist writes to other containers after commit().
+    data_volume.commit()
     out = {"expired": len(expired), "bet_ids": expired}
     print(_j.dumps(out))
     return out
@@ -192,6 +211,7 @@ def stamp_file(path: str, content: str) -> dict:
         return {"written": False}
     with open(full, "w") as f:
         f.write(content)
+    data_volume.commit()
     print(_j.dumps({"written": True, "path": path}))
     return {"written": True}
 
@@ -229,28 +249,7 @@ def rename_bet(bet_id: str, new_bet_id: str, race_number: int = 0) -> dict:
         # Rename the LAST match (the first is reachable; later ones shadow).
         target = matches[-1] if len(matches) > 1 else matches[0]
         target.bet_id = new_bet_id
-    """Give a shadowed (duplicate-ID) bet a unique ID so it becomes
-    settleable/voidable again. Refuses if the target ID already exists."""
-    import os
-    import sys
-    import json as _j
-
-    sys.path.insert(0, "/app")
-    os.environ.setdefault("DATA_DIR", "/app/data")
-    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
-
-    gov = BankrollGovernor(data_dir="/app/data")
-    with gov._atomic_transaction():
-        if any(b.bet_id == new_bet_id for b in gov._bets):
-            print(_j.dumps({"renamed": False, "reason": "target exists"}))
-            return {"renamed": False}
-        matches = [b for b in gov._bets if b.bet_id == bet_id]
-        if not matches:
-            print(_j.dumps({"renamed": False, "reason": "not found"}))
-            return {"renamed": False}
-        # Rename the LAST match (the first is reachable; later ones shadow).
-        target = matches[-1] if len(matches) > 1 else matches[0]
-        target.bet_id = new_bet_id
+    data_volume.commit()
     print(_j.dumps({"renamed": True, "bet_id": new_bet_id,
                     "status": target.status}))
     return {"renamed": True}
@@ -298,4 +297,5 @@ def settle_one(bet_id: str) -> dict:
         }))
     except Exception as e:
         print(_j.dumps({"parse_error": str(e)[:200]}))
+    data_volume.commit()
     return {"bet_id": bet_id, "status": bet.status}
