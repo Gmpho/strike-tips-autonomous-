@@ -299,3 +299,136 @@ def settle_one(bet_id: str) -> dict:
         print(_j.dumps({"parse_error": str(e)[:200]}))
     data_volume.commit()
     return {"bet_id": bet_id, "status": bet.status}
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def dump_exotic_legs(bet_id: str) -> dict:
+    """Read-only: the MERGED day results the exotic settler scores against,
+    per leg, plus the ticket's parsed candidates. Use to explain a verdict."""
+    import os
+    import sys
+    import json as _j
+    import asyncio as _a
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+    from core_agent.skills.result_tracker import (
+        ResultTracker,
+        _parse_exotic_ticket,
+        _race_runners_by_number,
+        _exotic_requirement,
+    )
+
+    try:
+        data_volume.reload()
+    except Exception:
+        pass
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    bet = next((b for b in gov._bets if b.bet_id == bet_id), None)
+    if bet is None:
+        print(_j.dumps({"bet_id": bet_id, "found": False}))
+        return {"bet_id": bet_id, "found": False}
+
+    tracker = ResultTracker(bankroll_governor=gov)
+    ticket = _parse_exotic_ticket(bet) or {}
+    req = sorted(_exotic_requirement(ticket.get("pool_type")))
+    try:
+        races = _a.run(tracker._exotic_leg_races(
+            getattr(bet, "track", ""), getattr(bet, "date", None)))
+    except Exception as e:
+        races = []
+        print(_j.dumps({"legRaces_error": str(e)[:200]}))
+
+    legs_out = []
+    for entry in ticket.get("combos", []):
+        runners = _race_runners_by_number(races, entry["race"]) or []
+        cands = entry.get("candidates", [])
+        def _pos(c):
+            best = None
+            for r in runners:
+                if tracker._fuzzy_match(str(r.get("name", "")), str(c)) >= 0.55:
+                    best = str(r.get("position", "")).strip() or best
+            return best
+        legs_out.append({
+            "race": entry["race"],
+            "requirement": req,
+            "candidates": cands,
+            "cand_positions": {str(c): _pos(c) for c in cands},
+            "runners": [
+                {"n": r.get("name"), "p": str(r.get("position", "")).strip()}
+                for r in runners if str(r.get("position", "")).strip()
+            ],
+        })
+    out = {
+        "bet_id": bet_id,
+        "pool_type": ticket.get("pool_type"),
+        "date": getattr(bet, "date", None),
+        "track": getattr(bet, "track", None),
+        "races_merged": len(races),
+        "race_titles": [str(r.get("title", "")) for r in races],
+        "legs": legs_out,
+    }
+    print(_j.dumps(out, default=str))
+    return out
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def settle_exotic_won(bet_id: str, pool_return: float, notes: str = "") -> dict:
+    """Correct a wrongfully-LOST exotic ticket: reverse the settlement and
+    re-settle it WON with an official pool dividend.
+
+    Run: modal run core_agent/core/admin_tasks.py::settle_exotic_won \\
+        --bet-id <id> --pool-return 1254.24 --notes "official TAB BI R174.20"
+    """
+    import os
+    import sys
+    import json as _j
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    # Pull the latest committed volume state first (a sibling container may
+    # have committed since this one mounted).
+    try:
+        data_volume.reload()
+    except Exception:
+        pass
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    # Reverse whatever settlement was applied (no-op if already PENDING).
+    voided = gov.void_settlement(
+        bet_id, "admin: wrongful LOST reversed for official dividend"
+    )
+    settled = gov.settle_exotic_bet(
+        bet_id,
+        pool_return,
+        notes or "Auto-settled (WON — corrected with official TAB dividend)",
+    )
+    bet = next((b for b in gov._bets if b.bet_id == bet_id), None)
+    data_volume.commit()
+    out = {
+        "bet_id": bet_id,
+        "voided": voided,
+        "settled": settled,
+        "status": getattr(bet, "status", None),
+        "actual_return": getattr(bet, "actual_return", None),
+        "profit_loss": getattr(bet, "profit_loss", None),
+        "is_paper": getattr(bet, "is_paper", None),
+    }
+    print(_j.dumps(out, default=str))
+    return out
