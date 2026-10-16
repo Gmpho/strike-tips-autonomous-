@@ -2719,8 +2719,11 @@ class StrikeTips:
                         vb.get("edge_percent") or vb.get("edge") or 0),
                         reverse=True)
                     race["value_bets"] = kept[:max_per_race]
-                if races:
-                    all_results[name] = races
+                # Oct-2026: always record the meeting, even when the scrape
+                # returns nothing. Omitting it here meant a totally-failed
+                # meeting (provider quota → empty response) never reached the
+                # digest at all — the Europe report showed 1 of 5 meetings.
+                all_results[name] = races or []
                 if progress_callback:
                     await progress_callback(name, i + 1, len(meetings))
             except Exception as e:

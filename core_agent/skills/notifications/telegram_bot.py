@@ -386,60 +386,71 @@ class TelegramNotifier:
         total_value_bets = sum(
             len(r.get("value_bets", []))
             for races in scan_results.values()
-            for r in races
+            for r in (races or [])
+            if isinstance(r, dict)
         )
 
         lines = [f"🏇 <b>STRIKE TIPS - {title}</b>\n"]
         lines.append(f"📊 Found <b>{total_value_bets}</b> value bet(s)\n")
 
         for track, races in scan_results.items():
+            races = [r for r in (races or []) if isinstance(r, dict)]
             vb_count = sum(len(r.get("value_bets", [])) for r in races)
+            # Oct-2026: every scanned meeting is listed with its status. A
+            # meeting whose AI analysis silently failed (provider quota
+            # exhausted → empty responses) used to vanish from the digest
+            # entirely, indistinguishable from "no value today" — the Europe
+            # digest showed 1 of 5 meetings while the other 4 returned nothing.
             if vb_count > 0:
                 lines.append(f"\n📍 <b>{track.title()}</b> — {vb_count} selections")
-                for race in races:
-                    insight = race.get("ai_insight", "")
-                    # LLM sometimes returns a JSON blob instead of prose —
-                    # extract the summary so raw JSON never reaches Telegram.
-                    # Oct-2026: also arrives code-fenced (```json ... ```) or
-                    # as an already-parsed dict (Greyville R8 went out raw).
-                    if isinstance(insight, dict):
-                        insight = insight.get("summary", "") or ""
-                    if isinstance(insight, str):
-                        _s = insight.strip()
-                        if _s.startswith("```"):
-                            import re as _re
-                            _s = _re.sub(r"^```(?:json)?\s*", "", _s)
-                            _s = _re.sub(r"\s*```$", "", _s).strip()
-                        if "{" in _s:
-                            try:
-                                import json as _json
-                                _sub = _s[_s.find("{"): _s.rfind("}") + 1]
-                                _parsed = _json.loads(_sub)
-                                if isinstance(_parsed, dict):
-                                    _s = _parsed.get("summary", "") or ""
-                            except Exception:
-                                pass
-                        insight = _s
-                    if insight:
-                        lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
-                    for vb in race.get("value_bets", [])[:2]:
-                        horse_name = (
-                            vb.get("horse")
-                            or vb.get("name")
-                            or vb.get("horse_name")
-                            or "Unknown"
-                        )
+            elif any(str(r.get("ai_insight") or "").strip() for r in races):
+                lines.append(f"\n📍 <b>{track.title()}</b> — no value found")
+            else:
+                lines.append(f"\n📍 <b>{track.title()}</b> — ⚠️ analysis unavailable")
+            for race in races:
+                insight = race.get("ai_insight", "")
+                # LLM sometimes returns a JSON blob instead of prose —
+                # extract the summary so raw JSON never reaches Telegram.
+                # Oct-2026: also arrives code-fenced (```json ... ```) or
+                # as an already-parsed dict (Greyville R8 went out raw).
+                if isinstance(insight, dict):
+                    insight = insight.get("summary", "") or ""
+                if isinstance(insight, str):
+                    _s = insight.strip()
+                    if _s.startswith("```"):
+                        import re as _re
+                        _s = _re.sub(r"^```(?:json)?\s*", "", _s)
+                        _s = _re.sub(r"\s*```$", "", _s).strip()
+                    if "{" in _s:
                         try:
-                            edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
-                        except (ValueError, TypeError):
-                            edge = 0.0
-                        if 0 < edge < 1:
-                            edge *= 100
-                        badge = "🔥" if edge >= 15.0 else "✅" if edge >= 8.0 else "💛"
-                        lines.append(
-                            f"  R{race['race_number']}: {badge} {horse_name} @ {vb.get('odds_decimal', '?')} "
-                            f"(+{edge:.1f}%)"
-                        )
+                            import json as _json
+                            _sub = _s[_s.find("{"): _s.rfind("}") + 1]
+                            _parsed = _json.loads(_sub)
+                            if isinstance(_parsed, dict):
+                                _s = _parsed.get("summary", "") or ""
+                        except Exception:
+                            pass
+                    insight = _s
+                if insight:
+                    lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
+                for vb in race.get("value_bets", [])[:2]:
+                    horse_name = (
+                        vb.get("horse")
+                        or vb.get("name")
+                        or vb.get("horse_name")
+                        or "Unknown"
+                    )
+                    try:
+                        edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                    except (ValueError, TypeError):
+                        edge = 0.0
+                    if 0 < edge < 1:
+                        edge *= 100
+                    badge = "🔥" if edge >= 15.0 else "✅" if edge >= 8.0 else "💛"
+                    lines.append(
+                        f"  R{race['race_number']}: {badge} {horse_name} @ {vb.get('odds_decimal', '?')} "
+                        f"(+{edge:.1f}%)"
+                    )
 
         lines.append("\n⚠️ Always bet responsibly.")
         await self.broadcast("\n".join(lines))

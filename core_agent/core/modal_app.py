@@ -39,7 +39,14 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
-         "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
+         "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev",
+         # Oct-2026: the in-app scheduler's europe_scan_job fires at 12:30 SAST
+         # but never stamps .europe_scan_date, so the odds-monitor heartbeat
+         # (~12:33, which does stamp) always ran a second Europe scan the same
+         # day — twin Groq stampedes + two digests, and the second landed on an
+         # exhausted provider quota (only the first meeting analysed). The
+         # heartbeat is the documented owner; opt this side out as docker does.
+         "SCHEDULER_DISABLE": "europe_scan"},
     scaledown_window=60,
     startup_timeout=300,
     min_containers=0,

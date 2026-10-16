@@ -155,3 +155,47 @@ async def test_region_scan_quality_gate(monkeypatch, tmp_path):
     kept = out["results"]["kempton"][0]["value_bets"]
     assert [v["horse"] for v in kept] == ["A", "B"]  # floor + top-2, ordered
     assert out["total_value_bets"] == 2
+
+
+@pytest.mark.asyncio
+async def test_region_scan_keeps_totally_failed_meeting(monkeypatch):
+    """A meeting whose scrape returns nothing must still reach the digest.
+
+    Oct-2026: the Europe report showed 1 of 5 meetings because the loop did
+    `if races: all_results[name] = races`, so a meeting that returned [] was
+    dropped before send_daily_tips could flag it as unavailable.
+    """
+    from core_agent.core.strike_tips import StrikeTips
+    import core_agent.skills.parsers.tab_content as tc
+
+    async def fake_manifest(day=None):
+        return {"cards": [
+            {"meeting": "kempton", "region": "UK", "date": "2026.10.05", "path": "p"},
+            {"meeting": "newcastle", "region": "UK", "date": "2026.10.05", "path": "q"},
+        ]}
+
+    monkeypatch.setattr(tc, "fetch_manifest", fake_manifest)
+
+    sent = {}
+
+    class FakeTelegram:
+        async def send_daily_tips(self, results, title="Daily Intelligence Report"):
+            sent["tracks"] = sorted(results.keys())
+            return True
+
+    strike = StrikeTips.__new__(StrikeTips)
+    strike.telegram = FakeTelegram()
+    strike.data_dir = "/tmp"
+
+    async def fake_scrape(track, date_str=None):
+        if track == "newcastle":
+            return []  # total failure — nothing analysed
+        return [{"track": track, "race_number": 1,
+                 "value_bets": [{"horse": "A", "edge_percent": 12.0, "odds_decimal": 5.0}]}]
+
+    strike.scrape_and_analyze_track = fake_scrape
+    out = await strike.run_region_scan(["UK"])
+
+    assert out["meetings_scanned"] == 2
+    assert out["results"]["newcastle"] == []
+    assert sent["tracks"] == ["kempton", "newcastle"]
