@@ -224,3 +224,38 @@ async def test_single_race_topup_parses():
     finally:
         monkeypatch.undo()
     assert sorted(p["pool"] for p in out) == ["QUARTET", "TRIFECTA"]
+
+
+def test_validate_drops_incomplete_combinations():
+    """Oct-2026: AI returned the right leg count but omitted a leg's
+    selections. Those tickets were carded and bet even though they can never
+    win their pool. A partial fill must now be dropped."""
+    from core_agent.core.strike_tips import _validate_exotic_layout
+    plays = [
+        # JACKPOT 4-7 with only leg 4 populated -> dropped
+        {"pool": "JACKPOT 1", "legs": [4, 5, 6, 7],
+         "combinations": [{"race": 4, "banker": "Casperita", "savers": ["Queen Amina"]}]},
+        # PICK 6 3-8 with only legs 3-7 populated -> dropped
+        {"pool": "PICK 6", "legs": [3, 4, 5, 6, 7, 8],
+         "combinations": [{"race": r, "banker": f"H{r}", "savers": []} for r in range(3, 8)]},
+        # Fully populated PICK 6 (all 6 legs) -> kept
+        {"pool": "PICK 6", "legs": [3, 4, 5, 6, 7, 8],
+         "combinations": [{"race": r, "banker": f"K{r}", "savers": []} for r in range(3, 9)]},
+    ]
+    out = _validate_exotic_layout(plays, 8)
+    assert len(out) == 1
+    assert out[0]["pool"] == "PICK 6"
+    assert [c["race"] for c in out[0]["combinations"]] == [3, 4, 5, 6, 7, 8]
+
+
+def test_pool_estimate_dividend_never_sentinel():
+    """A missing estimate must scale with the pool family/leg count and never
+    fall back to the 2.0 sentinel that produced a bogus potential_return."""
+    from core_agent.core.strike_tips import _pool_estimate_dividend
+    assert _pool_estimate_dividend("EXACTA", [4]) == 150.0
+    assert _pool_estimate_dividend("TRIFECTA", [7]) == 350.0
+    assert _pool_estimate_dividend("QUARTET", [6]) == 600.0
+    assert _pool_estimate_dividend("BIPOT 1", [2, 3, 4, 5, 6, 7]) == 2700.0
+    assert _pool_estimate_dividend("JACKPOT 1", [4, 5, 6, 7]) == 1800.0
+    assert _pool_estimate_dividend("PICK 6", [3, 4, 5, 6, 7, 8]) == 2700.0
+    assert _pool_estimate_dividend(None, None) == 450.0

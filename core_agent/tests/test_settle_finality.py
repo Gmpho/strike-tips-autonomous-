@@ -137,7 +137,7 @@ def test_genuinely_dead_ticket_still_settles_lost():
     asyncio.run(go())
 
 
-# ── Selections-aware dupe key ─────────────────────────────────────────
+# ── One-ticket-per-pool-per-day dupe key ──────────────────────────────
 
 def _gov(tmp_path):
     d = tmp_path / "data"
@@ -145,14 +145,21 @@ def _gov(tmp_path):
     return BankrollGovernor(data_dir=str(d), starting_bankroll=1000.0)
 
 
-def test_same_pool_legs_different_bankers_both_place(tmp_path):
+def test_same_pool_legs_different_bankers_second_skipped(tmp_path):
+    """Oct-2026 policy reversal: exotic identity is (date, track, pool family,
+    legs), so a later scan of the same pool+legs is skipped even with fresh
+    bankers. Supersedes the earlier "different bankers = a new ticket" rule,
+    which let the 05:00 and 09:30 scans both stay live on the same pool.
+    """
     gov = _gov(tmp_path)
     combos_a = _combos(["Task Force", "Tiger Cody"])
     combos_b = _combos(["Gallic King", "Prophet"])
     a = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos_a, 1.2, 100.0)
     b = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos_b, 1.2, 100.0)
-    assert a is not None and b is not None
-    assert "Gallic King" in b.notes and "Task Force" in a.notes
+    assert a is not None and b is None
+    # A different pool family on the same card is unaffected.
+    p6 = gov.record_exotic_bet("greyville", "P6", [1, 2], combos_b, 1.2, 100.0)
+    assert p6 is not None
 
 
 def test_identical_ticket_still_skipped(tmp_path):

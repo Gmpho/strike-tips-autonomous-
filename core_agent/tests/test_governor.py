@@ -377,3 +377,55 @@ def test_settle_bet_captures_placed(temp_data_dir):
     assert settled_w.placed == "1st"
     pr = gov.place_rate()
     assert pr == {"n": 2, "place_rate": 1.0, "wins": 1, "places": 2}
+
+
+def test_exotic_one_per_pool_per_day_ignores_bankers(temp_data_dir):
+    """Oct-2026 policy: one ticket per pool per day. The 05:00 daily scan and
+    the 09:30 value scan used to place the same pool twice with different
+    bankers (double exposure, both live). A later scan must now skip it."""
+    gov = _paper_gov(temp_data_dir)
+    first = gov.record_exotic_bet(
+        track="fairview", pool_type="JP1", pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Alpha", "savers": ["A1"]}],
+        ticket_cost=1.2, estimated_dividend=1800.0,
+    )
+    assert first is not None
+    # Same pool + legs + day, different bankers, canonicalised label -> skipped
+    second = gov.record_exotic_bet(
+        track="fairview", pool_type="JACKPOT 1", pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Beta", "savers": ["B1"]}],
+        ticket_cost=1.2, estimated_dividend=1800.0,
+    )
+    assert second is None
+    # A different pool family on the same card is unaffected
+    other = gov.record_exotic_bet(
+        track="fairview", pool_type="P6", pool_legs=[3, 4, 5, 6, 7, 8],
+        combinations=[{"race": 3, "banker": "Gamma", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=2700.0,
+    )
+    assert other is not None
+    # A different track is unaffected
+    away = gov.record_exotic_bet(
+        track="greyville", pool_type="JP1", pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Delta", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=1800.0,
+    )
+    assert away is not None
+
+
+def test_exotic_void_allows_replacement(temp_data_dir):
+    """A voided ticket must not block a corrected re-placement of that pool."""
+    gov = _paper_gov(temp_data_dir)
+    first = gov.record_exotic_bet(
+        track="fairview", pool_type="JP1", pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Alpha", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=1800.0,
+    )
+    assert first is not None
+    assert gov.cancel_pending_bet(first.bet_id, "malformed") is True
+    again = gov.record_exotic_bet(
+        track="fairview", pool_type="JP1", pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Alpha2", "savers": []}],
+        ticket_cost=1.2, estimated_dividend=1800.0,
+    )
+    assert again is not None

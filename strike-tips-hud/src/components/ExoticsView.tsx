@@ -285,7 +285,9 @@ export const ExoticsView: React.FC = () => {
                           <div className="text-right">
                             <div className="text-[9px] text-theme-secondary font-black">EST. DIVIDEND</div>
                             <div className="text-xl font-black text-emerald-400 tabular leading-none mt-1">
-                              R{play.estimated_dividend?.toLocaleString() || '0'}
+                              {typeof play.estimated_dividend === 'number' && play.estimated_dividend > 0
+                                ? `R${play.estimated_dividend.toLocaleString()}`
+                                : '—'}
                             </div>
                           </div>
                         </div>

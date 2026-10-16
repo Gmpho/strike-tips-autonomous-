@@ -263,16 +263,17 @@ def _slim_race_for_prompt(r, track: str) -> dict:
     }
 
 
-# TAB Daily Tipping Sheet prints exact pool ranges per meeting, e.g.
-# "Bipot (1-6)", "PA (2-8)", "Pick 6 (3-8)", "Jackpot 1 (4-7)".
+# TAB prints pool ranges in two notations: the Daily Tipping Sheet writes
+# "Bipot (1-6)" / "PA (2-8)", while the Computaform "Best Bets & Perms"
+# page writes "BIPOT (RACES 1 - 6)" / "P/A (RACES 2 - 8)".
 # (pool label, leg count, code prefix)
 _TIPS_POOL_RES = (
-    (r"\bBIPOT\s*\((\d+)\s*-\s*(\d+)\)", 6, "BI1"),
-    (r"\bPA\s*\((\d+)\s*-\s*(\d+)\)", 7, "PA"),
-    (r"PICK\s*6\s*\((\d+)\s*-\s*(\d+)\)", 6, "P6"),
-    (r"PICK\s*3\s*\((\d+)\s*-\s*(\d+)\)", 3, "P3"),
-    (r"JACKPOT\s*1?\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP1"),
-    (r"JACKPOT\s*2\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP2"),
+    (r"\bBIPOT\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 6, "BI1"),
+    (r"\bP\s*/?\s*A\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 7, "PA"),
+    (r"PICK\s*6\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 6, "P6"),
+    (r"PICK\s*3\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 3, "P3"),
+    (r"JACKPOT\s*1?\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 4, "JP1"),
+    (r"JACKPOT\s*2\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 4, "JP2"),
 )
 
 
@@ -305,16 +306,111 @@ def _tips_meeting_section(raw_text: str, track: str) -> str:
     return "\n".join(section)
 
 
+def _fields_meeting_name(raw_text: str) -> str:
+    """Meeting name from a Computaform "Best Bets & Perms" page.
+
+    The page's pool blocks sit directly above a
+    "BEST BETS & PERMS   by <tipster>" line followed by the meeting line,
+    e.g. "Tab Fairview Polytrack, Friday 16 October 2026" or
+    "Hollywoodbets Greyville Polytrack, Friday 16 October 2026". Each
+    harvested Fields PDF covers a single meeting, so this name identifies
+    every pool block in the document.
+    """
+    lines = str(raw_text or "").splitlines()
+    for i, ln in enumerate(lines):
+        if "BEST BETS" in ln.upper() and "PERM" in ln.upper():
+            for nxt in lines[i + 1 : i + 4]:
+                s = re.sub(r"^Tab\s+", "", nxt.strip()).split(",")[0].strip()
+                if len(s) >= 3:
+                    return s
+            break
+    return ""
+
+
+def _tips_scan_blob(raw_text: str, track: str) -> str:
+    """Text region to scan for pool blocks.
+
+    The Daily Tipping Sheet is multi-meeting, so its track section is used
+    when it actually carries pool headers. A Computaform Fields PDF is
+    single-meeting: its "section" is just the first race header, so when no
+    pool header is present the whole document is scanned — but only when the
+    document's one meeting matches the requested track (the racecourse legend
+    lists every SA track, so a bare substring check would mis-match).
+    """
+    blob = _tips_meeting_section(raw_text, track)
+    if blob and any(
+        re.search(pat, blob, re.IGNORECASE) for pat, _, _ in _TIPS_POOL_RES
+    ):
+        return blob
+    meeting = _fields_meeting_name(raw_text)
+    if meeting:
+        mt, wt = _norm_text(meeting), _norm_text(track)
+        if wt and (mt == wt or wt in mt or mt in wt):
+            return str(raw_text or "")
+    return blob
+
+
+def _parse_pool_legs(
+    lines: List[str], j: int, first: int, last: int
+) -> "tuple[Dict[int, List[int]], int]":
+    """Parse one pool block's per-leg selections starting at line index j.
+
+    Handles both TAB layouts:
+      * Computaform Fields page — explicit "LEG n" markers with picks on their
+        own lines ("LEG 2\\n1\\n2\\n4\\n8").
+      * Daily Tipping Sheet — one comma-separated number line per leg, in order
+        ("1, 7, 9, 10").
+    Returns ({race_number: [cloth, ...]}, next_line_index). An optional
+    leading cost line ("R256") is skipped.
+    """
+    legs: Dict[int, List[int]] = {}
+    if j < len(lines) and re.fullmatch(
+        r"R\s?[\d\s.,]+", lines[j].strip(), re.IGNORECASE
+    ):
+        j += 1
+    if j < len(lines) and re.fullmatch(r"LEG\s*\d+", lines[j].strip(), re.IGNORECASE):
+        cur: Optional[int] = None
+        while j < len(lines):
+            s = lines[j].strip()
+            m_leg = re.fullmatch(r"LEG\s*(\d+)", s, re.IGNORECASE)
+            if m_leg:
+                cur = first + int(m_leg.group(1)) - 1
+                legs.setdefault(cur, [])
+                j += 1
+                continue
+            if cur is None or not re.fullmatch(r"[\d,\s]+", s):
+                break
+            nums = [int(x) for x in re.findall(r"\d+", s)]
+            if not nums:
+                break
+            legs[cur].extend(nums)
+            j += 1
+        return {k: v for k, v in legs.items() if v}, j
+    for rn in range(first, last + 1):
+        if j >= len(lines):
+            break
+        s = lines[j].strip()
+        if not re.fullmatch(r"[\d,\s]+", s):
+            break
+        nums = [int(x) for x in re.findall(r"\d+", s)]
+        if not nums:
+            break
+        legs[rn] = nums
+        j += 1
+    return legs, j
+
+
 def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
-    """Exact pool start races from the TAB Daily Tipping Sheet text.
+    """Exact pool start races from the TAB tips text.
 
     Scopes to the track's meeting section (headers are bare caps names like
-    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL).
+    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL),
+    or to the whole document for a single-meeting Computaform Fields page.
     Returns {"BI1": 1, "PA": 2, ...}. Entries whose range length disagrees
     with the pool's leg count are ignored ( OCR/parse noise guard).
     """
     out: Dict[str, int] = {}
-    blob = _tips_meeting_section(raw_text, track)
+    blob = _tips_scan_blob(raw_text, track)
     if not blob:
         return out
     for pat, legs, code in _TIPS_POOL_RES:
@@ -330,50 +426,36 @@ def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
 def _tips_official_picks(raw_text: str, track: str) -> Dict[str, Dict[int, List[int]]]:
     """TAB official per-leg selections (cloth numbers) per pool.
 
-    Parses pool blocks like "Bipot (2-7)\\nR480\\n1, 7, 9, 10\\n1, 9\\n..."
-    where each following number-line maps to consecutive leg races. Returns
-    {pool_code: {race_number: [cloth, ...]}}. Numbers-only lines only —
-    anything with letters ends the block ( OCR/noise guard).
+    Parses pool blocks in either TAB layout — the Daily Tipping Sheet's
+    "Bipot (2-7)\\nR480\\n1, 7, 9, 10\\n1, 9\\n..." (one comma-number line per
+    leg) and the Computaform "Best Bets & Perms" page's
+    "JACKPOT 1 (RACES 4 - 7)\\nR216\\nLEG 1\\n1\\n2\\n3\\n..." (explicit LEG
+    markers). Returns {pool_code: {race_number: [cloth, ...]}}.
     """
     out: Dict[str, Dict[int, List[int]]] = {}
-    blob = _tips_meeting_section(raw_text, track)
+    blob = _tips_scan_blob(raw_text, track)
     if not blob:
         return out
     lines = blob.splitlines()
     i = 0
     while i < len(lines):
         header = None
-        for pat, legs, code in _TIPS_POOL_RES:
+        for pat, n_legs, code in _TIPS_POOL_RES:
             m = re.search(pat, lines[i], re.IGNORECASE)
             if m:
                 groups = [int(g) for g in m.groups()]
                 first, last = groups[-2], groups[-1]
-                if last - first + 1 == legs:
+                if last - first + 1 == n_legs:
                     header = (code, first, last)
                 break
         if header is None:
             i += 1
             continue
         code, first, last = header
-        legs: Dict[int, List[int]] = {}
-        j = i + 1
-        # Skip the cost line (R480) if present.
-        if j < len(lines) and re.fullmatch(r"R\s?[\d\s.,]+", lines[j].strip(), re.IGNORECASE):
-            j += 1
-        for rn in range(first, last + 1):
-            if j >= len(lines):
-                break
-            s = lines[j].strip()
-            if not re.fullmatch(r"[\d,\s]+", s):
-                break
-            nums = [int(x) for x in re.findall(r"\d+", s)]
-            if not nums:
-                break
-            legs[rn] = nums
-            j += 1
-        if legs:
-            out[code] = legs
-            i = j  # j sits on the first non-number line (next header/time)
+        leg_map, j = _parse_pool_legs(lines, i + 1, first, last)
+        if leg_map:
+            out[code] = leg_map
+            i = j  # j sits on the first non-pick line (next header/time)
         else:
             i += 1  # advance one line so a following header is still scanned
     return out
@@ -663,6 +745,27 @@ _POOL_LEG_COUNTS = (
 )
 
 
+# Canonical pooled dividend estimates for single-race pool families. Mirrors
+# the deterministic blueprint's _DIVS so AI and fallback tickets quote the
+# same ballpark. Multi-leg pools scale with leg count (450 x legs).
+_POOL_SINGLE_DIVS = {"QUARTET": 600.0, "TRIFECTA": 350.0, "EXACTA": 150.0}
+
+
+def _pool_estimate_dividend(pool, legs=None) -> float:
+    """Canonical dividend estimate for a play when the model omits one.
+
+    A missing estimated_dividend must never become the 2.0 sentinel
+    (Oct-2026: two live tickets carried odds=2.0 and a bogus
+    potential_return). Single-race pools use their family constant;
+    multi-leg pools scale with leg count, matching the blueprint.
+    """
+    name = str(pool or "").upper()
+    for code, div in _POOL_SINGLE_DIVS.items():
+        if code in name:
+            return float(div)
+    return 450.0 * max(1, len(legs or []))
+
+
 def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
     """Drop impossible or duplicate pool layouts before they reach the board.
 
@@ -670,9 +773,12 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
       the whole pool: a ticket with phantom legs is worse than no ticket.
     - Wrong leg counts for the pool family are dropped (BI 6 / JP 4 /
       P6 6 / PA 7).
+    - A declared leg with no combination is dropped (incomplete ticket —
+      unscorable even if the leg count is right).
     - Identical (pool, legs, bankers) duplicates keep the first occurrence
-      only — same pool+legs with different bankers are different tickets
-      and both stay on the board (Oct-2026: two live Bipots).
+      only. Same pool+legs with different bankers are both kept here (a later
+      scan may pick better bankers) but the governor's one-ticket-per-pool-per-
+      day guard skips the second at placement, so only the first goes live.
     Overlapping ranges across DIFFERENT pools (PA containing P6 legs) are
     normal SA structure and are kept.
     """
@@ -706,6 +812,19 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
         if len(legs) != expected:
             print(f"[EXOTIC] Dropped '{p.get('pool')}': {len(legs)} legs, {expected} required")
             continue
+        # Every declared leg must carry a combination. The AI routinely
+        # returns the right leg count but omits a leg's selections
+        # (Oct-2026: JACKPOT 4-7 with only leg 4, PICK 6 3-8 with only
+        # 3-7 recorded and bet). A ticket missing a leg can never win its
+        # pool, so it is dropped rather than carded. Plays with no
+        # combinations at all are left to the placement guard.
+        _combos = p.get("combinations") or []
+        if _combos:
+            covered = {c.get("race") for c in _combos if isinstance(c, dict)}
+            missing = [r for r in legs if r not in covered]
+            if missing:
+                print(f"[EXOTIC] Dropped '{p.get('pool')}': legs {missing} have no selection (incomplete ticket)")
+                continue
         key = _exotic_card_key(p)
         if key in seen:
             print(f"[EXOTIC] Dropped duplicate '{p.get('pool')}' legs {legs}")
@@ -2226,6 +2345,25 @@ class StrikeTips:
             exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
             exotic_plays = [p for p in exotic_plays if _play_has_balance(p, _snap_odds)]
             exotic_plays = [p for p in exotic_plays if _play_has_no_nrs(p, _nr_names)]
+            # Normalise fields the model routinely omits so AI and blueprint
+            # tickets render identically on the board and in the ledger
+            # (Oct-2026: AI tickets showed "· —" for distance and odds=2.0).
+            # This is the choke point for BOTH exotics_latest.json and the
+            # auto-bet placement below.
+            for _p in exotic_plays:
+                _pd = _p.get("estimated_dividend")
+                if not isinstance(_pd, (int, float)) or _pd <= 0:
+                    _p["estimated_dividend"] = _pool_estimate_dividend(
+                        _p.get("pool"), _p.get("legs"))
+                _tinfo = all_results.get(_p.get("_track"), []) or []
+                for _c in (_p.get("combinations") or []):
+                    if not isinstance(_c, dict) or _c.get("distance_m"):
+                        continue
+                    _ri = next((r for r in _tinfo
+                                if isinstance(r, dict) and r.get("race_number") == _c.get("race")), None)
+                    _rd = (_ri or {}).get("distance")
+                    if _rd:
+                        _c["distance_m"] = _rd
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
                 if self.telegram:
@@ -2464,7 +2602,9 @@ class StrikeTips:
                             pool = play.get("pool", "UNKNOWN")
                             legs = play.get("legs", [])
                             combos = play.get("combinations", [])
-                            estimated_div = play.get("estimated_dividend", 2.0)
+                            estimated_div = play.get("estimated_dividend")
+                            if not isinstance(estimated_div, (int, float)) or estimated_div <= 0:
+                                estimated_div = _pool_estimate_dividend(play.get("pool"), legs)
                             play_track = play.get("_track", list(all_results.keys())[0])
                             if not combos:
                                 continue
