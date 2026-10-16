@@ -403,6 +403,86 @@ def test_monitor_cache_serves_fresh_exotic_without_atr(stub_modules, past_off, g
     gov.settle_exotic_bet.assert_called_once()
 
 
+# --- Completeness guard + forensic LOST notes (2026-10-16 Fairview) ---------
+def test_partial_place_feed_does_not_kill_live_leg(stub_modules, past_off, gov):
+    """2026-10-16 Fairview Bipot (official 6/6, R174.20) was buried LOST: the
+    R6 feed carried the winner but no 2nd yet, so our candidates matched rows
+    with BLANK positions and the fail path read blank as "missed". A place
+    pool leg may only die when the data holds the placings the pool needs."""
+    races = [{"title": "6 15:10 Fairview Novice", "runners": [
+        {"name": "Coastal Path", "position": "1st"},
+        {"name": "Worldly", "position": ""},
+        {"name": "Stokesy", "position": ""},
+        {"name": "Soundsofsymphonies", "position": ""},
+    ]}]
+
+    class FakeATRPartial:
+        async def get_results_for_track(self, track, date="yesterday"):
+            return races
+
+    atr_stub = MagicMock(name="atr_partial")
+    atr_stub.AtTheRacesAPI = FakeATRPartial
+    bet = _bet(horse="BIPOT:6", race_number=6, stake=7.2,
+               notes=_ticket_notes("BIPOT", [
+                   (6, "Stokesy", ["Soundsofsymphonies", "Worldly"])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(sys.modules,
+                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])):
+            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    # No 2nd recorded -> the leg cannot be proven dead -> stays PENDING.
+    assert rec is None
+    gov.settle_exotic_bet.assert_not_called()
+
+
+def test_place_leg_still_dies_when_placings_complete(stub_modules, past_off, gov):
+    """The guard must not block a genuine loss: with 1st/2nd present and our
+    Bipot candidates down the field, the leg is dead as before."""
+    races = [{"title": "6 15:10 Fairview Novice", "runners": [
+        {"name": "Coastal Path", "position": "1st"},
+        {"name": "Some Second", "position": "2nd"},
+        {"name": "Worldly", "position": "5th"},
+        {"name": "Stokesy", "position": "7th"},
+    ]}]
+
+    class FakeATRDead:
+        async def get_results_for_track(self, track, date="yesterday"):
+            return races
+
+    atr_stub = MagicMock(name="atr_dead")
+    atr_stub.AtTheRacesAPI = FakeATRDead
+    bet = _bet(horse="BIPOT:6", race_number=6, stake=7.2,
+               notes=_ticket_notes("BIPOT", [
+                   (6, "Stokesy", ["Worldly"])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(sys.modules,
+                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])):
+            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is not None and rec["won"] is False
+    gov.settle_exotic_bet.assert_called_once()
+
+
+def test_lost_note_names_dead_leg_and_evidence(stub_modules, past_off, gov):
+    """A LOST exotic verdict must be forensic: name the dead leg(s) and the
+    placings the data carried, so a wrong settle stays provable once the
+    day's sources rotate away (log retention is minutes, not days)."""
+    bet = _bet(notes=_ticket_notes("JACKPOT", [
+        (4, "PRESSONREGARDLESS", ["ALSO RAN"]),
+    ]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])):
+        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is not None and rec["won"] is False
+    note = gov.settle_exotic_bet.call_args[0][2]
+    assert "dead leg(s) R4" in note
+    assert "evidence" in note
+    assert "PRESSONREGARDLESS=3rd" in note
+
+
 # --- Merged day sources (Sep-2026 Greyville PA stall) -----------------------
 def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
     """The monitor cache lists placed horses only (R6 1st/2nd); the full

@@ -1253,6 +1253,21 @@ class ResultTracker:
                 return "pass"
             return "fail"
 
+        def _cand_positions(entry: Dict) -> Dict[str, str]:
+            """candidate -> confirmed placing ("" when the feed lists the name
+            but no position). Diagnostic only: recorded in settlement notes so
+            a wrong verdict stays provable after the day's sources rotate."""
+            runners = _race_runners_by_number(races, entry["race"]) or []
+            out: Dict[str, str] = {}
+            for cand in entry.get("candidates", []):
+                best = ""
+                for r in runners:
+                    if self._fuzzy_match(
+                            str(r.get("name", "")), str(cand)) >= 0.55:
+                        best = str(r.get("position", "")).strip() or best
+                out[str(cand)] = best
+            return out
+
         def leg_status(entry: Dict) -> str:
             runners = _race_runners_by_number(races, entry["race"])
             if not runners:
@@ -1325,6 +1340,18 @@ class ResultTracker:
                             return "pass"
                         best = pos or best
             if matched_any and not missing_cands:
+                # Completeness guard (2026-10-16 Fairview Bipot: an official
+                # 6/6 R174.20 ticket was buried LOST). A place-pool leg may
+                # only be declared DEAD when the data actually carries every
+                # placing the pool requires. A partial feed (winner recorded,
+                # 2nd/3rd still blank) matched our candidates by name with
+                # EMPTY positions, and the old code read blank as "missed".
+                # Missing placings => unknown, never a fabricated dead leg.
+                confirmed = {
+                    str(r.get("position", "")).strip() for r in runners
+                }
+                if not requirement <= confirmed:
+                    return "unknown"
                 return "fail"  # all listed candidates ran and missed
             if missing_cands and not matched_any:
                 # Nothing listed ran — outcome hinges on the TAB
@@ -1431,9 +1458,29 @@ class ResultTracker:
             ok = gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
             won = True
         elif all_dead:
+            # Forensic verdict: name the dead leg(s) and the placings the
+            # data actually carried. A bare "dead leg" note made the
+            # 2026-10-16 Fairview Bipot unexplainable once the day's
+            # sources rotated away.
+            _dead = [
+                ticket["combos"][i]
+                for i, s in enumerate(legs_state) if s == "fail"
+            ]
+            _dead_races = ", ".join(f"R{d.get('race')}" for d in _dead) or "?"
+            _evidence = "; ".join(
+                "R{}: {}".format(
+                    d.get("race"),
+                    ", ".join(
+                        "{}={}".format(c, p or "?")
+                        for c, p in _cand_positions(d).items()
+                    ),
+                )
+                for d in _dead
+            )
             notes = (
-                f"Auto-settled (LOST — dead leg, "
+                f"Auto-settled (LOST — dead leg(s) {_dead_races}, "
                 f"requirement {sorted(requirement)} not met)"
+                + (f" | evidence {_evidence}" if _evidence else "")
             )
             ok = gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
             won = False
