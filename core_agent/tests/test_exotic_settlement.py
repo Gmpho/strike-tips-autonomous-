@@ -483,6 +483,35 @@ def test_lost_note_names_dead_leg_and_evidence(stub_modules, past_off, gov):
     assert "PRESSONREGARDLESS=3rd" in note
 
 
+def test_exacta_blank_banker_holds_not_fails(stub_modules, past_off, gov):
+    """(ii) Oct-2026: a listed banker with no published placing is missing
+    data, not proof it lost — single-race pools stay PENDING (matching the
+    function's own "missing place data stays unknown, never guessed" rule)."""
+    races = [{"title": "1 12:15 Fairview Maiden", "runners": [
+        {"name": "Other One", "position": "1st"},
+        {"name": "Banker Horse", "position": ""},
+        {"name": "Saver Horse", "position": ""},
+    ]}]
+
+    class FakeATRBlank:
+        async def get_results_for_track(self, track, date="yesterday"):
+            return races
+
+    atr_stub = MagicMock(name="atr_blank")
+    atr_stub.AtTheRacesAPI = FakeATRBlank
+    bet = _bet(horse="EXACTA:1", race_number=1,
+               notes=_ticket_notes("EXACTA", [
+                   (1, "Banker Horse", ["Saver Horse"])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(sys.modules,
+                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])):
+            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is None
+    gov.settle_exotic_bet.assert_not_called()
+
+
 # --- Merged day sources (Sep-2026 Greyville PA stall) -----------------------
 def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
     """The monitor cache lists placed horses only (R6 1st/2nd); the full

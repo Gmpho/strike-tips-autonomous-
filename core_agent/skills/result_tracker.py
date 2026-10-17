@@ -1225,14 +1225,16 @@ class ResultTracker:
                 needed = {"2nd", "3rd", "4th"}
 
             def _pos(name: str) -> Optional[str]:
-                best_p: Optional[str] = None
+                # (ii) A listed runner with no placing is "not published yet",
+                # not "proven unplaced" (Oct-2026): the docstring rule
+                # "missing place data stays unknown, never guessed" applies
+                # here too. Returning "" made a blank banker a hard FAIL.
                 for r in runners:
                     if self._fuzzy_match(str(r.get("name", "")), str(name)) >= 0.55:
                         p = str(r.get("position", "")).strip()
                         if p:
                             return p
-                        best_p = best_p or ""
-                return best_p
+                return None
 
             banker_pos = _pos(cands[0]) if cands else None
             if banker_pos is None:
