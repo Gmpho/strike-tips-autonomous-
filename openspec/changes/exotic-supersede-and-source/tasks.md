@@ -45,6 +45,6 @@
 ## 5. Ship
 
 - [x] 5.1 `compile()` check on every edited file
-- [ ] 5.2 Commit + push
-- [ ] 5.3 `modal deploy core_agent/core/modal_app.py`
-- [ ] 5.4 Post-deploy: `/api/betting/history` returns data
+- [x] 5.2 Commit + push
+- [x] 5.3 `modal deploy core_agent/core/modal_app.py` (05:31 SAST 2026-10-17)
+- [x] 5.4 Post-deploy: `/api/betting/history` returns data
