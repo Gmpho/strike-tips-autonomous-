@@ -145,6 +145,60 @@ def _gov(tmp_path):
     return BankrollGovernor(data_dir=str(d), starting_bankroll=1000.0)
 
 
+def test_later_scan_supersedes_pending_ticket(tmp_path):
+    """(b) Oct-2026 user policy: a later scan of the same pool replaces an
+    earlier still-pending ticket. On 2026-10-16 Fairview the 05:00 daily
+    Bipot/PA lost while the 09:30 value ones won (R3,328 paper forfeited);
+    first-wins threw both winners away."""
+    gov = _gov(tmp_path)
+    combos_a = _combos(["Task Force", "Tiger Cody"])
+    combos_b = _combos(["Gallic King", "Prophet"])
+    a = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos_a, 1.2, 100.0,
+                              source="daily")
+    b = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos_b, 1.2, 100.0,
+                              supersede=True, source="value")
+    assert a is not None and b is not None
+    # Same-second calls share a bet_id (pre-existing quirk), so assert on the
+    # row set rather than _find_bet (which ranks PENDING first).
+    voided = [x for x in gov._bets if x.status == "VOID"]
+    live = [x for x in gov._bets if x.status == "PENDING"]
+    assert len(voided) == 1 and "superseded by value" in voided[0].notes
+    assert len(live) == 1
+    assert json.loads(live[0].notes)["source"] == "value"
+
+
+def test_supersede_never_touches_settled_ticket(tmp_path):
+    """Money is final: a settled ticket is never replaced, even when a later
+    scan asks to supersede."""
+    gov = _gov(tmp_path)
+    combos = _combos(["Gallic King", "Prophet"])
+    a = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0)
+    # Settle through the governor so the status is persisted (a plain
+    # attribute write is discarded when the bet is reloaded from disk).
+    assert gov.settle_exotic_bet(a.bet_id, 0.0, "test loss") is True
+    b = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0,
+                              supersede=True, source="value")
+    assert b is None
+    assert gov._find_bet(a.bet_id).status == "LOST"
+
+
+def test_default_remains_first_wins(tmp_path):
+    gov = _gov(tmp_path)
+    combos = _combos(["Task Force", "Tiger Cody"])
+    a = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0)
+    b = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0)
+    assert a is not None and b is None
+
+
+def test_source_recorded_in_ticket_notes(tmp_path):
+    """(i) source tag: the ledger can say which scan placed a ticket."""
+    gov = _gov(tmp_path)
+    combos = _combos(["Gallic King", "Prophet"])
+    a = gov.record_exotic_bet("greyville", "BI1", [1, 2], combos, 1.2, 100.0,
+                              source="value")
+    assert json.loads(a.notes)["source"] == "value"
+
+
 def test_same_pool_legs_different_bankers_second_skipped(tmp_path):
     """Oct-2026 policy reversal: exotic identity is (date, track, pool family,
     legs), so a later scan of the same pool+legs is skipped even with fresh

@@ -660,6 +660,8 @@ class BankrollGovernor:
         combinations: List[Dict],
         ticket_cost: float,
         estimated_dividend: float,
+        supersede: bool = False,
+        source: str = "",
     ) -> Optional[BetRecord]:
         """Record an exotic pool bet (Pick 6, Jackpot, Bipot, etc.)"""
         total_cost = len(combinations) * ticket_cost
@@ -713,6 +715,38 @@ class BankrollGovernor:
                     == _fam(pool_type)
                     and str(existing.horse).endswith(f":{leg_key}")
                 ):
+                    # Supersede (Oct-2026 user policy). A later scan of the
+                    # same pool may replace an earlier *unsettled* ticket: on
+                    # 2026-10-16 Fairview the 05:00 daily scan's Bipot/PA lost
+                    # while the 09:30 value scan's won, and first-wins threw
+                    # the winners away (R3,328 paper). Never touch a settled
+                    # ticket — money is final — and never cross the paper/real
+                    # boundary. The caller only sets `supersede` while the
+                    # meeting has not started, so a winner still awaiting
+                    # settlement can never be voided here.
+                    if (
+                        supersede
+                        and existing.status == "PENDING"
+                        and existing.is_paper == is_paper
+                    ):
+                        # Terminal VOID (not void_settlement, which returns the
+                        # ticket to PENDING): VOID is outside the dupe key set,
+                        # so the pool is freed for the replacement.
+                        existing.status = "VOID"
+                        _tag = f"VOID (superseded by {source or 'rescan'})"
+                        existing.notes = (
+                            f"{existing.notes} | {_tag}" if existing.notes else _tag
+                        )
+                        if existing.is_paper:
+                            self.paper_balance += existing.stake
+                        else:
+                            self.current_bankroll += existing.stake
+                            self.total_profit_loss += existing.stake
+                        logger.info(
+                            f"Superseding exotic {existing.bet_id} with fresher "
+                            f"{pool_type} {leg_key} @ {track} ({source or 'rescan'})"
+                        )
+                        continue
                     logger.info(
                         f"One-per-pool-per-day: exotic skipped {pool_type} {leg_key} "
                         f"@ {track} (already placed as {existing.bet_id})"
@@ -748,6 +782,7 @@ class BankrollGovernor:
                     "pool_legs": pool_legs,
                     "combinations": combinations,
                     "ticket_cost": ticket_cost,
+                    "source": source,
                 }),
                 distance=None,
                 is_paper=is_paper,

@@ -2167,6 +2167,7 @@ class StrikeTips:
     async def run_daily_scan(
         self, tracks: Optional[List[str]] = None,
         progress_callback: Optional[callable] = None,
+        source: Optional[str] = None,
     ) -> Dict:
         """
         Run daily scan for all tracks and SAVE to memory for RAG grounding.
@@ -2174,6 +2175,18 @@ class StrikeTips:
         falls back to legacy scrape_and_analyze_track otherwise.
         """
         tracks = tracks or list(TRACKS.keys())
+
+        # (i) source tag (Oct-2026): which scheduled job placed a ticket, so
+        # "the daily scan picked X, the value scan picked Y" is answerable
+        # from the ledger. Both Modal crons run the same CLI command, so the
+        # two automatic paths are told apart by start hour (05:00 vs 09:30),
+        # which matches the two real callers. Explicit `source` wins.
+        if source is None:
+            from datetime import timezone as _tz, timedelta as _td
+            source = (
+                "daily" if datetime.now(_tz(_td(hours=2))).hour < 8 else "value"
+            )
+        _scan_source = source
 
         from core_agent.core.correlation import bind as _bind_cid, new_id as _new_cid, tag as _tag
 
@@ -2598,6 +2611,46 @@ class StrikeTips:
                     # Auto-bet exotic plays
                     if exotic_plays:
                         ticket_cost = float(settings.get("exotic_ticket_cost", 1.2))
+
+                        def _meeting_started(_track: str, _legs: list) -> bool:
+                            """True when any leg of this pool has already run.
+
+                            Supersede safety (Oct-2026): replacing an earlier
+                            ticket after its races have started could void a
+                            winner that simply has not settled yet. Unreadable
+                            off time => assume started, so we never supersede.
+                            """
+                            from datetime import timezone, timedelta
+                            from core_agent.core.adaptive_odds_monitor import (
+                                _parse_race_off_time,
+                            )
+                            _sast = timezone(timedelta(hours=2))
+                            _now = datetime.now(_sast)
+                            _races = all_results.get(_track) or []
+                            _want = {int(x) for x in _legs if str(x).isdigit()}
+                            _seen = False
+                            for _r in _races:
+                                try:
+                                    _rn = int(_r.get("race_number"))
+                                except (TypeError, ValueError):
+                                    continue
+                                if _rn not in _want:
+                                    continue
+                                _raw = (
+                                    _r.get("race_time") or _r.get("time")
+                                    or _r.get("start_time") or ""
+                                )
+                                _off = (
+                                    _parse_race_off_time(str(_raw), _now)
+                                    if _raw else None
+                                )
+                                if _off is None:
+                                    return True
+                                _seen = True
+                                if _off <= _now:
+                                    return True
+                            return False if _seen else True
+
                         for play in exotic_plays:
                             pool = play.get("pool", "UNKNOWN")
                             legs = play.get("legs", [])
@@ -2615,6 +2668,8 @@ class StrikeTips:
                                 combinations=combos,
                                 ticket_cost=ticket_cost,
                                 estimated_dividend=estimated_div,
+                                supersede=not _meeting_started(play_track, legs),
+                                source=_scan_source,
                             )
                             if bet:
                                 exotic_bets_placed += 1
