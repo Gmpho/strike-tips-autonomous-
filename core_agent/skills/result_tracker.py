@@ -1400,13 +1400,19 @@ class ResultTracker:
                 agent="ResultTracker",
                 status="WARN",
             )
-        if any(s == "unknown" for s in legs_state):
+        # A confirmed dead leg kills the (single) combination outright: a
+        # multi-leg pool only wins when EVERY leg passes, so one proven
+        # "fail" is a sound LOST even while another leg is still unknown.
+        # (Oct-2026: a scratched-candidate leg held a provably dead
+        # Durbanville BiPot — and 4 Fairview losers — PENDING until the
+        # 3-day expiry. Unknown legs may hold a ticket, never a dead one.)
+        if any(s == "fail" for s in legs_state):
+            all_dead = True
+        elif any(s == "unknown" for s in legs_state):
             return None
-        if all(s == "pass" for s in legs_state):
+        elif all(s == "pass" for s in legs_state):
             any_won_combo = True
             all_dead = False
-        elif all(s == "fail" for s in legs_state):
-            all_dead = True
         else:
             # Mixed pass/fail across legs of a single combination ticket:
             # a failed leg kills the only combination.

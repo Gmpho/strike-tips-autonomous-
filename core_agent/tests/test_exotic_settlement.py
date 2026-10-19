@@ -512,6 +512,47 @@ def test_exacta_blank_banker_holds_not_fails(stub_modules, past_off, gov):
     gov.settle_exotic_bet.assert_not_called()
 
 
+def test_dead_leg_settles_lost_despite_unknown_leg(stub_modules, past_off, gov):
+    """Oct-2026: a provably dead leg must settle LOST even when another leg
+    is unknown. A Durbanville BiPot whose R4 leg was definitively dead (every
+    candidate ran and missed) sat PENDING for three days because its R2 leg
+    held scratched candidates with no snapshot source for the TAB favourite-
+    substitution — then expired instead of settling LOST. A legitimate WON is
+    still impossible while any leg is unknown, so this cannot over-award."""
+    races = [
+        {"title": "2 12:40 Durbanville Maiden", "runners": [
+            {"name": "Sauterelle", "position": "1st"},
+            {"name": "Naughty Princess", "position": "2nd"},
+            {"name": "Evana", "position": "8th"},
+        ]},
+        {"title": "4 13:50 Durbanville Handicap", "runners": [
+            {"name": "Bullet Tooth Tony", "position": "1st"},
+            {"name": "Royal Eagle", "position": "2nd"},
+        ]},
+    ]
+
+    class FakeATRDeadUnknown:
+        async def get_results_for_track(self, track, date="yesterday"):
+            return races
+
+    atr_stub = MagicMock(name="atr_dead_unknown")
+    atr_stub.AtTheRacesAPI = FakeATRDeadUnknown
+    bet = _bet(horse="BIPOT:2-3-4-5-6-7", race_number=2, stake=7.2,
+               notes=_ticket_notes("BIPOT", [
+                   (2, "Evana", []),
+                   (4, "World Supreme", ["Okayama", "Raise A Hoof"])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.dict(sys.modules,
+                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
+        with patch.object(ResultTracker, "_raceform_results",
+                          new=AsyncMock(return_value=[])):
+            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is not None and rec["won"] is False
+    gov.settle_exotic_bet.assert_called_once()
+    note = gov.settle_exotic_bet.call_args[0][2]
+    assert "dead leg(s) R2" in note
+
+
 # --- Merged day sources (Sep-2026 Greyville PA stall) -----------------------
 def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
     """The monitor cache lists placed horses only (R6 1st/2nd); the full
