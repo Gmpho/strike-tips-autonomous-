@@ -432,3 +432,50 @@ def settle_exotic_won(bet_id: str, pool_return: float, notes: str = "") -> dict:
     }
     print(_j.dumps(out, default=str))
     return out
+
+
+@app.function(
+    image=image,
+    secrets=secrets,
+    volumes={"/app/data": data_volume},
+    memory=256,
+    timeout=300,
+)
+def shadow_stamp(bet_id: str, payout: float = 0.0, note: str = "") -> dict:
+    """Stamp what a superseded ticket WOULD have paid into its notes.
+
+    Audit only: the row stays VOID and no balance moves. Use when the tote
+    dividend is known but the resolver cannot fetch it, so the ledger still
+    shows what the supersede policy gave up.
+
+    Run: modal run core_agent/core/admin_tasks.py::shadow_stamp \\
+        --bet-id <id> --payout 139.68 --note "BIPOT R19.40 x 7.2"
+    """
+    import os
+    import sys
+    import json as _j
+
+    sys.path.insert(0, "/app")
+    os.environ.setdefault("DATA_DIR", "/app/data")
+    from core_agent.skills.bankroll_manager.governor import BankrollGovernor
+
+    try:
+        data_volume.reload()
+    except Exception:
+        pass
+
+    gov = BankrollGovernor(data_dir="/app/data")
+    frag = (
+        f"shadow: WON R{float(payout):.2f}" if payout > 0 else "shadow: LOST"
+    ) + (f" ({note})" if note else "")
+    written = gov.annotate_notes(bet_id, frag)
+    bet = next((b for b in gov._bets if b.bet_id == bet_id), None)
+    data_volume.commit()
+    out = {
+        "bet_id": bet_id,
+        "written": written,
+        "status": getattr(bet, "status", None),
+        "notes_tail": str(getattr(bet, "notes", "") or "")[-160:],
+    }
+    print(_j.dumps(out, default=str))
+    return out

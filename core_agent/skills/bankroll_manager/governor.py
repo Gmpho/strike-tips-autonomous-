@@ -936,6 +936,25 @@ class BankrollGovernor:
             )
             return True
 
+    def annotate_notes(self, bet_id: str, fragment: str) -> bool:
+        """Append an audit fragment to a bet's notes (no ledger movement).
+
+        Used by the shadow-line sweep (Oct-2026) to record what a
+        superseded ticket would have paid without altering its VOID status
+        or any balance. Returns True when the note was appended.
+        """
+        if not fragment:
+            return False
+        with self._atomic_transaction():
+            bet = self._find_bet(bet_id)
+            if bet is None:
+                return False
+            prior = str(bet.notes or "")
+            if fragment in prior:
+                return False
+            bet.notes = f"{prior} | {fragment}" if prior else fragment
+        return True
+
     def mark_notified(self, bet_id: str, won: bool) -> bool:
         """Persistent settle-notification dedupe (cross-process safe).
 

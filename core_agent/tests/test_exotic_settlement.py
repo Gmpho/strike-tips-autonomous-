@@ -753,3 +753,69 @@ def test_parse_raceform_dividend_matches_ticket_legs():
     # Legacy callers without legs keep first-match behaviour.
     assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT") == 496.5
     assert _parse_raceform_dividend(RF_DIV, "BIPOT") == 53.5
+
+
+# --- shadow lines for superseded tickets -------------------------------------
+def test_dry_run_scores_without_settling(stub_modules, past_off, gov):
+    """Shadow scoring must return the verdict but never move the ledger."""
+    bet = _bet(stake=4.8, notes=_ticket_notes("JACKPOT", [
+        (4, "PRESSONREGARDLESS", ["KENSAL GREEN"]),
+        (5, "BISOU BISOU", ["KUDIKARAN"]),
+    ]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(ResultTracker, "_scrape_sa_results_direct",
+                      new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
+        rec = asyncio.run(
+            tracker._settle_exotic_ticket(bet, None, None, dry_run=True)
+        )
+    assert rec is not None and rec["won"] is True and rec["dry_run"] is True
+    assert rec["pool_return"] == pytest.approx(250.0 * 4.8)
+    gov.settle_exotic_bet.assert_not_called()
+
+
+class _ShadowGov:
+    def __init__(self, bets):
+        self._bets = bets
+        self.annotated = []
+
+    def annotate_notes(self, bet_id, fragment):
+        self.annotated.append((bet_id, fragment))
+        return True
+
+
+def test_shadow_sweep_annotates_superseded_winner(stub_modules, past_off):
+    """Superseded BIPOT-style winner gets 'shadow: WON R...' in notes."""
+    bet = _bet(
+        stake=8.4,
+        notes=_ticket_notes("JACKPOT", [
+            (4, "PRESSONREGARDLESS", ["KENSAL GREEN"]),
+            (5, "BISOU BISOU", ["KUDIKARAN"]),
+        ]) + " | VOID (superseded by value)",
+    )
+    bet.status = "VOID"
+    g = _ShadowGov([bet])
+    tracker = ResultTracker(bankroll_governor=g)
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(ResultTracker, "_scrape_sa_results_direct",
+                      new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
+        n = asyncio.run(tracker._shadow_score_superseded(g, None))
+    assert n == 1
+    assert g.annotated == [(bet.bet_id, "shadow: WON R2100.00")]
+
+
+def test_shadow_sweep_skips_live_and_already_stamped(stub_modules, past_off):
+    live = _bet(bet_id="live", notes=_ticket_notes("JACKPOT", [(4, "X", [])]))
+    live.status = "PENDING"
+    stamped = _bet(
+        bet_id="done",
+        notes=_ticket_notes("JACKPOT", [(4, "X", [])])
+        + " | VOID (superseded by value) | shadow: LOST",
+    )
+    stamped.status = "VOID"
+    g = _ShadowGov([live, stamped])
+    tracker = ResultTracker(bankroll_governor=g)
+    n = asyncio.run(tracker._shadow_score_superseded(g, None))
+    assert n == 0 and g.annotated == []

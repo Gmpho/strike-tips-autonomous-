@@ -1148,7 +1148,9 @@ class ResultTracker:
         except (ValueError, IndexError):
             return None
 
-    async def _settle_exotic_ticket(self, bet, gov, brain) -> Optional[Dict]:
+    async def _settle_exotic_ticket(
+        self, bet, gov, brain, dry_run: bool = False
+    ) -> Optional[Dict]:
         from core_agent.core.correlation import tag as _tag
         """Settle one exotic pool ticket from ATR placed results.
 
@@ -1463,7 +1465,9 @@ class ResultTracker:
                 f"Auto-settled (WON all {len(legs_state)} legs, "
                 f"tote dividend R{div:.2f}/R1)"
             )
-            ok = gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
+            ok = True if dry_run else (
+                gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
+            )
             won = True
         elif all_dead:
             # Forensic verdict: name the dead leg(s) and the placings the
@@ -1490,7 +1494,9 @@ class ResultTracker:
                 f"requirement {sorted(requirement)} not met)"
                 + (f" | evidence {_evidence}" if _evidence else "")
             )
-            ok = gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
+            ok = True if dry_run else (
+                gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
+            )
             won = False
             pool_return = 0.0
         else:
@@ -1498,6 +1504,16 @@ class ResultTracker:
 
         if not ok:
             return None
+        if dry_run:
+            # Shadow mode (Oct-2026): return the verdict so a superseded
+            # ticket can be scored read-only. No ledger movement, no notify.
+            return {
+                "bet_id": bet.bet_id,
+                "won": won,
+                "pool_return": pool_return,
+                "notes": notes,
+                "dry_run": True,
+            }
         logger.info(
             "Auto-settled exotic: %s (%s) - %s (%s)",
             bet.horse, getattr(bet, "track", ""), "WON" if won else "LOST", notes,
@@ -1528,6 +1544,57 @@ class ResultTracker:
             "notes": notes,
         }
 
+    async def _shadow_score_superseded(self, gov, brain) -> int:
+        """Score superseded exotic tickets read-only (Oct-2026).
+
+        Supersede voids the earlier ticket *before* the replacement is
+        recorded, so a daily pick that would have won vanishes from the
+        ledger without a trace (21-Oct-2026 Durbanville: a 6/6 BIPOT worth
+        R139.68 was replaced by a loser and the ledger only showed the
+        void). Stamp what the voided row would have paid so the audit trail
+        keeps it; compare against the replacement's result to see the real
+        cost of the supersede (a shadow WON beside a replacement WON is not
+        a loss and must never be summed into the ledger).
+
+        Read-only: no bankroll movement, no Telegram. A ticket whose
+        dividend is not published yet returns None and is retried next
+        cycle. Returns the number of rows annotated.
+        """
+        scored = 0
+        try:
+            rows = list(getattr(gov, "_bets", []) or [])
+        except Exception:
+            return 0
+        for bet in rows:
+            try:
+                if str(getattr(bet, "status", "")) != "VOID":
+                    continue
+                notes = str(getattr(bet, "notes", "") or "")
+                if "superseded" not in notes.lower() or "shadow:" in notes:
+                    continue
+                if not hasattr(gov, "annotate_notes"):
+                    return scored
+                res = await self._settle_exotic_ticket(
+                    bet, None, brain, dry_run=True
+                )
+                if not res:
+                    continue
+                if res.get("won"):
+                    frag = f"shadow: WON R{float(res.get('pool_return') or 0.0):.2f}"
+                else:
+                    frag = "shadow: LOST"
+                if gov.annotate_notes(bet.bet_id, frag):
+                    scored += 1
+                    logger.info(
+                        "Shadow-scored superseded ticket %s: %s",
+                        bet.bet_id, frag,
+                    )
+            except Exception as e:
+                logger.debug(
+                    f"Shadow scoring skipped for {getattr(bet, 'bet_id', '?')}: {e}"
+                )
+        return scored
+
     async def check_and_settle_open_bets(
         self, max_age_days: int = MAX_SETTLE_AGE_DAYS
     ) -> List[Dict]:
@@ -1556,6 +1623,14 @@ class ResultTracker:
             sync_volume(max_age_secs=120)
         except Exception:
             pass
+
+        # Shadow sweep (Oct-2026): runs even when the open book is empty, so
+        # a superseded winner still gets its verdict recorded once the tote
+        # dividend publishes. Read-only — no bankroll movement.
+        try:
+            await self._shadow_score_superseded(gov, brain)
+        except Exception as _shadow_err:
+            logger.debug(f"Shadow sweep skipped: {_shadow_err}")
 
         open_bets = gov.get_open_bets()
         if not open_bets:
