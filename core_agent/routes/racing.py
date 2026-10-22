@@ -4,6 +4,7 @@ API endpoints for scanning tracks and gathering racing intelligence.
 """
 
 import os
+import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 import logging
@@ -151,7 +152,18 @@ async def get_results():
 
 @router.get("/racing/exotics")
 async def get_latest_exotics():
-    """Return latest computed exotic plays from exotics_latest.json."""
+    """Return latest computed exotic plays from exotics_latest.json.
+
+    serve_api containers never idle, so their volume mount stays at the
+    snapshot taken at boot; the scan writes this file from a sibling
+    container (Oct-2026: the 09:30 value plays never reached the HUD while
+    the volume itself was current). Pull fresh state first.
+    """
+    try:
+        from core_agent.core.volume_sync import sync_volume
+        await asyncio.to_thread(sync_volume, 15)
+    except Exception as e:
+        logger.debug(f"Volume sync skipped for exotics: {e}")
     path = str(DATA_DIR / "exotics_latest.json")
     if os.path.exists(path):
         with open(path, "r") as f:
