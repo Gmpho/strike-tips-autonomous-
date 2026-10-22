@@ -7,7 +7,7 @@ import { apiFetch } from '../../lib/api-fetch';
 import { BETTING_ENDPOINTS } from '../../lib/api-prefixes';
 import type { BetRecord } from '../../types';
 
-type ExecFilter = 'ALL' | 'WON' | 'LOST' | 'OPEN';
+type ExecFilter = 'ALL' | 'WON' | 'LOST' | 'OPEN' | 'VOID';
 
 function betStatus(bet: BetRecord): 'WON' | 'LOST' | 'PENDING' | 'VOID' | 'EXPIRED' {
   const s = String(bet.status || '').toUpperCase();
@@ -21,7 +21,19 @@ function betPnl(bet: BetRecord): number | null {
   const stake = bet.stake ?? 0;
   if (st === 'WON') return (bet.payout ?? 0) - stake;
   if (st === 'LOST') return -stake;
+  if (st === 'VOID' || st === 'EXPIRED') return 0;
   return null;
+}
+
+// Superseded tickets carry the settler's shadow verdict in notes, e.g.
+// "… | shadow: WON R139.68 (…)" — the Void tab shows what the ticket
+// would have returned had the fresher replacement not taken its place.
+function shadowVerdict(bet: BetRecord): { won: boolean; amount: number | null } | null {
+  const m = /shadow:\s*(WON|LOST)(?:\s*R([\d.]+))?/i.exec(String(bet.notes || ''));
+  if (!m) return null;
+  const won = m[1].toUpperCase() === 'WON';
+  const amount = m[2] ? Number(m[2]) : null;
+  return { won, amount: Number.isFinite(amount as number) ? amount : null };
 }
 
 function fmtTime(iso: string): string {
@@ -55,6 +67,7 @@ const FILTERS: { key: ExecFilter; label: string }[] = [
   { key: 'WON', label: 'Wins' },
   { key: 'LOST', label: 'Losses' },
   { key: 'OPEN', label: 'Open' },
+  { key: 'VOID', label: 'Void' },
 ];
 
 const PAGE = 30;
@@ -113,6 +126,8 @@ export const BankrollView: React.FC = () => {
   const filteredExecs = React.useMemo(() => {
     if (execFilter === 'ALL') return sortedExecs;
     if (execFilter === 'OPEN') return sortedExecs.filter((b) => betStatus(b) === 'PENDING');
+    // Void tab folds EXPIRED in: both mean "no result, stake returned".
+    if (execFilter === 'VOID') return sortedExecs.filter((b) => ['VOID', 'EXPIRED'].includes(betStatus(b)));
     return sortedExecs.filter((b) => betStatus(b) === execFilter);
   }, [sortedExecs, execFilter]);
 
@@ -121,12 +136,13 @@ export const BankrollView: React.FC = () => {
   // Per-tab counts (Oct-2026): makes a mis-filtering tab self-evident —
   // the count and the rows always derive from the same filtered set.
   const tabCounts = React.useMemo(() => {
-    const counts: Record<ExecFilter, number> = { ALL: sortedExecs.length, WON: 0, LOST: 0, OPEN: 0 };
+    const counts: Record<ExecFilter, number> = { ALL: sortedExecs.length, WON: 0, LOST: 0, OPEN: 0, VOID: 0 };
     for (const b of sortedExecs) {
       const st = betStatus(b);
       if (st === 'WON') counts.WON += 1;
       else if (st === 'LOST') counts.LOST += 1;
       else if (st === 'PENDING') counts.OPEN += 1;
+      else if (st === 'VOID' || st === 'EXPIRED') counts.VOID += 1;
     }
     return counts;
   }, [sortedExecs]);
@@ -244,7 +260,7 @@ export const BankrollView: React.FC = () => {
         <div className="px-6 py-4 border-b border-theme bg-theme-secondary/30 flex flex-wrap items-center gap-3">
           <DollarSign className="w-4 h-4 text-emerald-500" />
           <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest mr-auto">Recent Executions</h3>
-          <div className="flex items-center gap-1 bg-black/20 rounded-xl p-1 border border-white/5">
+          <div className="flex flex-wrap items-center justify-end gap-1 bg-black/20 rounded-xl p-1 border border-white/5">
             {FILTERS.map((f) => (
               <button
                 key={f.key}
@@ -298,6 +314,7 @@ export const BankrollView: React.FC = () => {
                   const st = betStatus(bet);
                   const sty = STATUS_STYLE[st];
                   const pnl = betPnl(bet);
+                  const shadow = st === 'VOID' ? shadowVerdict(bet) : null;
                   return (
                     // Plain div (no mount animation): animating rows
                     // delayed LCP and thrashed layout on every paint.
@@ -319,12 +336,20 @@ export const BankrollView: React.FC = () => {
                           <div className="text-[10px] text-theme-secondary font-bold uppercase tracking-widest truncate">
                             {bet.track} • RACE {bet.raceNumber} • {fmtTime(bet.placedAt)}
                           </div>
+                          {shadow && (
+                            <div className={`text-[9px] font-black uppercase tracking-widest truncate ${shadow.won ? 'text-emerald-500/80' : 'text-red-400/70'}`}>
+                              Shadow: {shadow.won ? 'WON' : 'LOST'}
+                              {shadow.won && shadow.amount !== null ? ` R${shadow.amount.toFixed(2)}` : ''}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
                         <div className="text-sm font-black text-theme-primary tabular">R {(bet.stake ?? 0).toFixed(2)}</div>
                         <div className="text-[10px] font-black tabular">
-                          {pnl !== null ? (
+                          {st === 'VOID' || st === 'EXPIRED' ? (
+                            <span className="text-theme-secondary">R0.00</span>
+                          ) : pnl !== null ? (
                             <span className={pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
                               {pnl >= 0 ? '+' : ''}R{pnl.toFixed(2)}
                             </span>
