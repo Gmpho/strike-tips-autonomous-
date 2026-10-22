@@ -414,10 +414,15 @@ export class DataBridge {
         learning: {
           totalRoi: stats?.roi || 0,
           samples: stats?.totalBets || 0,
-          topTrack: Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
+          topTrack: roiRaw.topTrack || Object.entries(roiByTrack).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'N/A',
           accuracy: roiAccuracy,
           roiByTrack,
           roiByOddsRange: roiOdds,
+          trackStats: roiRaw.trackStats,
+          bestTrack: roiRaw.bestTrack ?? null,
+          worstTrack: roiRaw.worstTrack ?? null,
+          minSample: roiRaw.minSample,
+          recencyDays: roiRaw.recencyDays,
         },
         bankrollHistory: bankrollHist.history || [],
         honcho: memoryData ? {

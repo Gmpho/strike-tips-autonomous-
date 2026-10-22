@@ -18,7 +18,17 @@ router = APIRouter(tags=["betting"])
 
 
 def _load_json(filename: str) -> Any:
-    """Load JSON from data directory"""
+    """Load JSON from data directory, refreshing the Modal volume first.
+
+    serve_api containers never idle, so their /app/data mount stays at the
+    boot snapshot; scans settle from sibling containers (Oct-2026: fresh
+    ledger/exotics invisible until a rotation).
+    """
+    try:
+        from core_agent.core.volume_sync import sync_volume
+        sync_volume(max_age_secs=15)
+    except Exception:
+        pass
     path = str(DATA_DIR / filename)
     if os.path.exists(path):
         with open(path, "r") as f:
@@ -220,92 +230,31 @@ async def get_open_bets():
 
 @router.get("/stats")
 async def get_bet_stats():
-    """Get daily/all-time betting statistics on settled and total bets"""
+    """All-time stats. VOID/EXPIRED are refunds, never "pending"."""
+    from core_agent.services.bet_analytics import compute_bet_stats
+
     bets_data = _load_json("bet_history.json")
     if not bets_data or not isinstance(bets_data, list):
-        return {
-            "totalBets": 0,
-            "wins": 0,
-            "losses": 0,
-            "stakeTotal": 0.0,
-            "payoutTotal": 0.0,
-            "roi": 0.0,
-        }
-
-    total_bets = len(bets_data)
-    settled = [b for b in bets_data if b.get("status") in ("WON", "LOST")]
-    wins = sum(1 for b in settled if b.get("status") == "WON")
-    losses = sum(1 for b in settled if b.get("status") == "LOST")
-    settled_stake_total = sum(b.get("stake", 0.0) for b in settled)
-    payout_total = sum(
-        b.get("actual_return", 0.0) for b in settled if b.get("status") == "WON"
-    )
-    all_stake_total = sum(b.get("stake", 0.0) for b in bets_data)
-    roi = ((payout_total - settled_stake_total) / settled_stake_total * 100) if settled_stake_total > 0 else 0.0
-
-    return {
-        "totalBets": total_bets,
-        "settledBets": len(settled),
-        "pendingBets": total_bets - len(settled),
-        "wins": wins,
-        "losses": losses,
-        "stakeTotal": settled_stake_total,
-        "allStakeTotal": all_stake_total,
-        "payoutTotal": payout_total,
-        "roi": round(roi, 2),
-    }
+        return compute_bet_stats([])
+    return compute_bet_stats(bets_data)
 
 
 @router.get("/learning/roi-by-track")
 async def get_roi_by_track():
-    """Get ROI grouped by track + accuracy vs implied probability"""
-    roi = {}
-    if brain and brain.strike and brain.strike.learning:
-        roi = brain.strike.learning.get_roi_summary()
+    """ROI by track computed from the ledger, with sample/recency gates.
+
+    Was served from learning_stats.json, which the auto-settler never fed —
+    it froze in mid-Oct and reported turffontein at -34% while the ledger
+    booked +413%. The ledger is the source of truth; the engine is not.
+    """
+    from core_agent.services.bet_analytics import compute_calibration, compute_track_stats
+
     bets_data = _load_json("bet_history.json") or []
-    settled = [b for b in bets_data if b.get("status") in ("WON", "LOST")]
-    accuracy = 0.0
-    if settled:
-        wins = sum(1 for b in settled if b.get("status") == "WON")
-        actual_wr = wins / len(settled)
-        avg_implied = sum(1.0 / max(b.get("odds", 1.0), 1.01) for b in settled) / len(settled)
-        accuracy = round((actual_wr - avg_implied) * 100, 1)
-
-    # Fallback to direct calculation from settled bets if learning summary is empty
-    if not roi and settled:
-        track_stats: dict[str, dict] = {}
-        for b in settled:
-            t = b.get("track", "").lower()
-            if not t:
-                continue
-            if t not in track_stats:
-                track_stats[t] = {"staked": 0.0, "returned": 0.0}
-            track_stats[t]["staked"] += b.get("stake", 0.0)
-            if b.get("status") == "WON":
-                track_stats[t]["returned"] += b.get("actual_return", 0.0)
-        roi = {
-            t: round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)
-            for t, v in track_stats.items()
-            if v["staked"] > 0
-        }
-
-    top_track = None
-    if roi:
-        top_track = max(roi.items(), key=lambda x: x[1])[0]
-    elif settled:
-        track_counts: dict[str, int] = {}
-        for b in settled:
-            t = b.get("track", "")
-            if t:
-                track_counts[t] = track_counts.get(t, 0) + 1
-        if track_counts:
-            top_track = max(track_counts.items(), key=lambda x: x[1])[0]
-
-    return {
-        "roiByTrack": roi,
-        "accuracy": accuracy,
-        "topTrack": top_track.title() if top_track else "Kenilworth",
-    }
+    result = compute_track_stats(bets_data)
+    result.update(compute_calibration(bets_data))
+    best = result.get("bestTrack")
+    result["topTrack"] = best["name"] if best else "N/A"
+    return result
 
 
 @router.get("/learning/roi-by-odds-range")

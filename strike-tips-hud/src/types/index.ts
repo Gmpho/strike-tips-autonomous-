@@ -74,6 +74,12 @@ export interface LearningState {
   accuracy: number;
   roiByTrack?: Record<string, number>;
   roiByOddsRange?: Record<string, any>;
+  /** Ledger-derived per-track detail (sample + recency gated). */
+  trackStats?: Record<string, TrackStat>;
+  bestTrack?: RankedTrack | null;
+  worstTrack?: RankedTrack | null;
+  minSample?: number;
+  recencyDays?: number;
 }
 
 export interface HealingEvent {
@@ -123,6 +129,33 @@ export interface BetStats {
   stakeTotal: number;
   payoutTotal: number;
   roi: number;
+  /** Ledger buckets (Oct-2026: VOID/EXPIRED are refunds, not pending). */
+  settledBets?: number;
+  pendingBets?: number;
+  voidBets?: number;
+  expiredBets?: number;
+  settlementRate?: number;
+  allStakeTotal?: number;
+  avgStake?: number;
+  /** Gross returns / lost stakes; null when nothing has lost yet. */
+  profitFactor?: number | null;
+  /** Disclosure only: expired tickets counted as losses. */
+  roiIncludingExpired?: number;
+}
+
+export interface TrackStat {
+  roi: number;
+  n: number;
+  wins: number;
+  staked: number;
+  returned: number;
+  lastSeen: string | null;
+  daysSince: number | null;
+  eligible: boolean;
+}
+
+export interface RankedTrack extends TrackStat {
+  name: string;
 }
 
 export interface MarketMover {
