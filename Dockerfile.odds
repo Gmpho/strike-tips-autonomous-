@@ -4,7 +4,13 @@ WORKDIR /app
 RUN mkdir -p /app/data/browser_profile /app/data/cache
 
 # 2. Dependencies — install uv, then use it (uv is 10-100x faster than pip)
-RUN pip install --no-cache-dir uv -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn
+# Refresh OS trust store (emSign root removal) and pin uv: <0.13.4 ships a
+# vendored webpki bundle that still trusts the compromised emSign ECC Root CA - G3.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir "uv>=0.13.4" -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn
 COPY pinned-requirements.txt .
 ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 RUN uv pip install --prerelease=allow --system -r pinned-requirements.txt

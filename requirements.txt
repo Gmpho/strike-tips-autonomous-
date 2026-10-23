@@ -31,6 +31,7 @@ beautifulsoup4==4.14.3
 PyMuPDF==1.25.3
 ddgs==9.11.4
 requests>=2.32.3,<2.33
+certifi==2026.10.19  # eMudhra/emSign CA incident (Oct-2026): pip/httpx must not trust revoked intermediates
 
 # Utilities
 python-telegram-bot==22.7
