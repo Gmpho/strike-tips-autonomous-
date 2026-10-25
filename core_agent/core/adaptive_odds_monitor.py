@@ -1322,6 +1322,19 @@ class AdaptiveOddsMonitor:
         """Alert if ATR snapshots haven't been updated within max_age_hours."""
         from core_agent.config.paths import ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH
         import json
+
+        # While the fetch breaker is open the host is blocking us outright, so
+        # the snapshots cannot refresh. Alarming on that every 5 minutes is pure
+        # noise — the breaker already logged the trip once.
+        try:
+            from core_agent.skills.parsers.attheraces_api import atr_circuit_open
+
+            if atr_circuit_open():
+                logger.debug("ATR staleness check skipped — circuit breaker open")
+                return
+        except Exception:
+            pass
+
         now = datetime.now()
         stale_alerts = []
         for path, name in [

@@ -58,6 +58,76 @@ except ImportError:
 BROWSER_PROFILE = "/app/data/browser_profile"
 
 logger = logging.getLogger("at-the-races")
+
+# ─── Circuit breaker (Oct-2026) ─────────────────────────────────────────────
+# ATR moved behind Fastly bot protection: httpx gets 403, curl_cffi and a real
+# headless Chromium both get a challenge shell with no content. Verified from
+# both the Modal workers and a plain developer machine, so it is not our egress
+# IP. Every 5-min odds cycle used to burn 10-15s per dead URL and log a warning
+# per attempt; the staleness monitor then alarmed every cycle. Trip after N
+# consecutive failures and stay silent for the cooldown instead. The flag sits
+# on the data volume so it is shared by all containers and survives cold starts,
+# and any successful fetch clears it (self-heals if ATR ever opens back up).
+_BREAKER_FAILURE_THRESHOLD = 6
+_BREAKER_COOLDOWN_SECS = 6 * 3600
+_breaker_failures = 0
+
+
+def _breaker_flag_path():
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        return DATA_DIR / ".atr_blocked_until"
+    except Exception:
+        return None
+
+
+def atr_circuit_open() -> bool:
+    """True while the breaker is holding ATR fetches off."""
+    try:
+        import time as _time
+
+        flag = _breaker_flag_path()
+        if flag is None or not flag.exists():
+            return False
+        return float(flag.read_text().strip() or 0) > _time.time()
+    except Exception:
+        return False
+
+
+def _record_failure(path: str) -> None:
+    global _breaker_failures
+    _breaker_failures += 1
+    if _breaker_failures < _BREAKER_FAILURE_THRESHOLD:
+        return
+    try:
+        import time as _time
+
+        flag = _breaker_flag_path()
+        if flag is not None:
+            flag.write_text(str(_time.time() + _BREAKER_COOLDOWN_SECS))
+        logger.warning(
+            "ATR circuit breaker TRIPPED after %d consecutive failures (last: %s) — "
+            "pausing ATR fetches for %dh; host is blocking every tier",
+            _breaker_failures,
+            path,
+            _BREAKER_COOLDOWN_SECS // 3600,
+        )
+    except Exception:
+        pass
+
+
+def _record_success() -> None:
+    global _breaker_failures
+    if _breaker_failures:
+        logger.info("ATR fetch recovered — circuit breaker reset")
+    _breaker_failures = 0
+    try:
+        flag = _breaker_flag_path()
+        if flag is not None and flag.exists():
+            flag.unlink()
+    except Exception:
+        pass
 logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 TRACK_NAME_ALIASES = {
@@ -267,6 +337,18 @@ class AtTheRacesAPI:
             return True
 
     def _fetch(self, path: str) -> Optional[bytes]:
+        """Fetch with the circuit breaker wrapped around the tiered fallback."""
+        if atr_circuit_open():
+            logger.debug("ATR circuit breaker open — skipping %s", path)
+            return None
+        body = self._fetch_tiered(path)
+        if body:
+            _record_success()
+        else:
+            _record_failure(path)
+        return body
+
+    def _fetch_tiered(self, path: str) -> Optional[bytes]:
         """Fetch page with cheap-first tiered fallback: httpx → Fetcher → StealthyFetcher.
 
         Order matters: the 5-min cron hammers these URLs, so the lightweight
@@ -349,7 +431,9 @@ class AtTheRacesAPI:
                         logger.debug("Stealth fetch attempt %d failed for %s: %s", _attempt + 1, path, e)
                     _time.sleep(3)
 
-        logger.warning("ATR all fetch tiers failed for %s — keeping last-good snapshot", url)
+        # Breaker owns the operator-facing noise: it logs the trip once and then
+        # goes quiet for the cooldown, so per-attempt warnings stay at debug.
+        logger.debug("ATR all fetch tiers failed for %s — keeping last-good snapshot", url)
         return None
 
     def _parse_one_runner(self, runner_el) -> Optional[Dict]:
