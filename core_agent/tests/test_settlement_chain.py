@@ -648,7 +648,9 @@ def test_stale_bets_excluded_from_exposure(tmp_path):
     assert gov.get_open_exposure() == pytest.approx(40.0)
     assert gov.get_open_exposure(include_stale=True) == pytest.approx(70.0)
 
-    # Unparseable dates fail open (counted).
+    # Unparseable dates fail open (counted). Re-bind to the live record: read
+    # paths now reload from disk, so the pre-reload object is a detached copy.
+    stale = next(b for b in gov._bets if b.bet_id == stale.bet_id)
     stale.date = "soon"
     gov._save_state()
     assert gov.get_open_exposure() == pytest.approx(70.0)

@@ -206,6 +206,10 @@ class BankrollGovernor:
             
             # Reload state to ensure we have the absolute latest from disk
             self._load_state(self._starting_bankroll)
+            # State is fresh for the whole transaction; a nested read-path
+            # refresh must NOT reload mid-flight or it would drop mutations
+            # made before the read (see refresh_from_disk).
+            self._in_tx = True
             
             yield
             
@@ -213,6 +217,7 @@ class BankrollGovernor:
             self._save_state()
             
         finally:
+            self._in_tx = False
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             lock_fd.close()
 
@@ -304,6 +309,38 @@ class BankrollGovernor:
             (self.peak_bankroll - self.current_bankroll) / self.peak_bankroll
         ) * 100.0
 
+    def refresh_from_disk(self, force: bool = False) -> None:
+        """Reload ledger state another container/process may have written.
+
+        Warm web containers keep the snapshot taken in ``__init__``. A scan (or
+        settlement) running in a *different* Modal container records bets this
+        process never sees, so read paths — exposure, today's stats, account
+        summary — reported stale numbers until the container recycled (Oct-2026:
+        /bankroll showed R9.60 exposure vs the real R342.60 after the morning
+        scan). Writes already reload under the file lock; this brings reads to
+        parity. Reload is mtime-guarded so a quiet ledger costs one stat() per
+        call after the volume-sync throttle.
+        """
+        try:
+            from core_agent.core.volume_sync import sync_volume
+
+            sync_volume(max_age_secs=15)
+        except Exception:
+            pass
+        if getattr(self, "_in_tx", False):
+            # Inside a write transaction the state was reloaded under the file
+            # lock already; reloading again here could discard in-memory
+            # mutations made earlier in the same transaction.
+            return
+        try:
+            mtime = os.path.getmtime(self._bets_file)
+        except OSError:
+            mtime = 0.0
+        if not force and mtime == getattr(self, "_bets_mtime", None):
+            return
+        self._load_state(self._starting_bankroll)
+        self._bets_mtime = mtime
+
     def get_open_exposure(self, include_stale: bool = False) -> float:
         """Total stake of currently open/pending bets.
 
@@ -313,6 +350,7 @@ class BankrollGovernor:
         governor (daily-limit wall) so no new bet could ever be placed.
         Pass include_stale=True for the gross accounting figure.
         """
+        self.refresh_from_disk()
         try:
             from core_agent.skills.result_tracker import MAX_SETTLE_AGE_DAYS
         except Exception:
@@ -1099,6 +1137,7 @@ class BankrollGovernor:
 
     def get_today_stats(self) -> DailyStats:
         """Get statistics for today"""
+        self.refresh_from_disk()
         today = date.today().isoformat()
         today_bets = [b for b in self._bets if b.date == today]
         stats = DailyStats(date=today)
