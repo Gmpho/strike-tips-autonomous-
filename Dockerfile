@@ -43,15 +43,10 @@ RUN pip install --timeout=600 --retries=5 openai==2.30.0
 # OpenTelemetry semantic conventions for AI (needed by agent-framework tracing at runtime)
 RUN pip install --timeout=600 --retries=5 opentelemetry-semantic-conventions-ai
 
-# Install Playwright system dependencies
-RUN playwright install-deps chromium 2>&1 || echo "System deps install failed"
-
-# Pre-download Playwright browsers at build time (CDN is reachable from buildkit now)
-RUN playwright install chromium 2>&1 || echo "Playwright browsers pre-download failed — will retry at runtime"
-
-# Pre-download Patchright (scrapling's Chromium fork) browser — StealthyFetcher
-# needs its own binary (ms-playwright/chromium-1234), Playwright's copy is separate
-RUN python -m patchright install chromium 2>&1 || patchright install chromium 2>&1 || echo "Patchright browser pre-download failed — StealthyFetcher will fall back to Fetcher/httpx"
+# No browser stack: scrapers use httpx + curl_cffi policy clients and parse
+# with bs4/lxml. (Removed Nov-2026 with the honest-client change — ATR is no
+# longer fetched with a stealth browser, so Playwright/Patchright/Chromium are
+# dead weight.)
 
 # Pre-download ChromaDB ONNX embedding model (all-MiniLM-L6-v2, ~79MB)
 COPY prewarm_chroma.py .

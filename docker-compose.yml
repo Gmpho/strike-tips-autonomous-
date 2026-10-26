@@ -24,7 +24,6 @@ services:
     volumes:
       - .:/app
       - chroma_cache:/root/.cache/chroma
-      - playwright_cache:/root/.cache/ms-playwright
     ports:
       - "127.0.0.1:8000:8000"
     dns:
@@ -60,9 +59,7 @@ services:
       - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
     volumes:
       - .:/app
-      - ./data/browser_profile:/app/data/browser_profile
       - chroma_cache:/root/.cache/chroma
-      - playwright_cache:/root/.cache/ms-playwright
     ipc: host
     shm_size: 2gb
     init: true
@@ -71,7 +68,7 @@ services:
       - 8.8.4.4
     security_opt:
       - seccomp:seccomp_profile.json
-    command: /bin/sh -c "playwright install chromium 2>&1 || true && python3 core_agent/core/adaptive_odds_monitor.py"
+    command: /bin/sh -c "python3 core_agent/core/adaptive_odds_monitor.py"
     deploy:
       resources:
         limits:
@@ -129,4 +126,3 @@ volumes:
   redisinsight_data:
   redis_data:
   chroma_cache:
-  playwright_cache:

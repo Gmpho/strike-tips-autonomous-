@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-RUN mkdir -p /app/data/browser_profile /app/data/cache
+RUN mkdir -p /app/data/cache
 
 # 2. Dependencies — install uv, then use it (uv is 10-100x faster than pip)
 # Refresh OS trust store (emSign root removal) and pin uv: <0.13.4 ships a
@@ -15,16 +15,9 @@ COPY pinned-requirements.txt .
 ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
 RUN uv pip install --prerelease=allow --system -r pinned-requirements.txt
 
-# 3. Playwright system deps (libglib2.0, libnss3, etc.)
-RUN playwright install-deps chromium 2>&1 || echo "System deps install failed — will retry at runtime"
-
-# 4. Source Code Layer
+# 3. Source Code Layer
 COPY . .
 
-# Persist Scrapling cache under host-mounted volume
-RUN mkdir -p /app/data/.scrapling && ln -sfn /app/data/.scrapling /root/.scrapling
-
-# Install browsers at runtime (CDN reachable from containers, not Docker build daemon).
-# Patchright (scrapling's Chromium fork) needs its OWN binary — Playwright's copy
-# lives elsewhere. Without it StealthyFetcher fails and ATR parsing degrades.
-CMD playwright install chromium 2>&1 || true && (python -m patchright install chromium 2>&1 || patchright install chromium 2>&1 || true) && python core_agent/core/adaptive_odds_monitor.py
+# No browser: the odds monitor talks to Betway's TrackRacing JSON endpoint via
+# the paced policy client. Chromium/Playwright were removed Nov-2026.
+CMD python core_agent/core/adaptive_odds_monitor.py

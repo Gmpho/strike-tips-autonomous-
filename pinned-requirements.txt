@@ -675,9 +675,7 @@ platformdirs==4.10.0
     # via
     #   black
     #   fastmcp
-playwright==1.58.0
     # via -r /tmp/reqs-with-extras.txt
-patchright==1.62.3
     # via scrapling (stealth headless-Chromium engine; missing it breaks
     # scrapling.fetchers import and kills ATR Tier 1/2 — Modal Sep-2026)
 pluggy==1.6.0
@@ -929,7 +927,6 @@ s3transfer==0.19.0
     # via boto3
 schedule==1.2.2
     # via -r /tmp/reqs-with-extras.txt
-scrapling==0.4.10
     # via -r /tmp/reqs-with-extras.txt
 secretstorage==3.5.0
     # via keyring
