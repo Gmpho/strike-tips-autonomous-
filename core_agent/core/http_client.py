@@ -1,8 +1,12 @@
-"""
-Shared HTTP clients — curl_cffi with rotating proxies + TLS fingerprint spoofing.
-Each call gets a fresh proxy + browser impersonation to avoid detection.
+"""Shared HTTP clients with an honest-client outbound policy.
+
+Every request is paced per host and identifies as `strike-tips/1.0`. Browser
+TLS impersonation is off by default — `SCRAPER_IMPERSONATE` re-enables it
+explicitly and warns, because a browser fingerprint without a browser is
+evasion rather than scraping. See `core_agent/config/compliance.py`.
 """
 
+import asyncio
 import logging
 import socket
 import time
@@ -11,6 +15,7 @@ from typing import Optional
 from curl_cffi.curl import CurlOpt
 from curl_cffi.requests import Session, AsyncSession
 
+from core_agent.config.compliance import impersonate_profile, reserve_slot, user_agent
 from core_agent.core.proxy_manager import get_proxy_manager
 
 logger = logging.getLogger("http-client")
@@ -59,11 +64,41 @@ def _resolve_hosts_curl_opts(hosts: set[str]) -> dict:
     return {}
 
 
+def _policy_headers(url: str, headers: Optional[dict]) -> dict:
+    """Attach the honest User-Agent unless the caller set one deliberately."""
+    merged = dict(headers or {})
+    if not any(str(k).lower() == "user-agent" for k in merged):
+        merged["User-Agent"] = user_agent()
+    return merged
+
+
+class PolicySession(Session):
+    """Sync client that paces requests and identifies honestly."""
+
+    def request(self, method, url, *args, **kwargs):
+        delay = reserve_slot(url)
+        if delay > 0:
+            time.sleep(delay)
+        kwargs["headers"] = _policy_headers(url, kwargs.get("headers"))
+        return super().request(method, url, *args, **kwargs)
+
+
+class AsyncPolicySession(AsyncSession):
+    """Async client that paces requests and identifies honestly."""
+
+    async def request(self, method, url, *args, **kwargs):
+        delay = reserve_slot(url)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        kwargs["headers"] = _policy_headers(url, kwargs.get("headers"))
+        return await super().request(method, url, *args, **kwargs)
+
+
 def _build_session(async_mode: bool, timeout: float = REQUEST_TIMEOUT, **kwargs):
     pm = get_proxy_manager()
     proxy = pm.get_proxy()
     proxies = {"https": proxy, "http": proxy} if proxy else None
-    impersonate = pm.get_impersonate()
+    impersonate = impersonate_profile()
 
     # Merge any existing curl_options with pre-resolved hostnames
     existing_opts = kwargs.pop("curl_options", {}) or {}
@@ -71,7 +106,7 @@ def _build_session(async_mode: bool, timeout: float = REQUEST_TIMEOUT, **kwargs)
     if resolve_hosts:
         existing_opts.update(_resolve_hosts_curl_opts(resolve_hosts))
 
-    cls = AsyncSession if async_mode else Session
+    cls = AsyncPolicySession if async_mode else PolicySession
     return cls(
         timeout=timeout,
         impersonate=impersonate,

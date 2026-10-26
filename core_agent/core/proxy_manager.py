@@ -4,18 +4,11 @@ Loads proxies from SCRAPER_PROXIES env var (comma-separated).
 """
 
 import os
-import random
 import logging
 from typing import Optional, List
 
 logger = logging.getLogger("proxy-manager")
 
-BROWSERS = [
-    "chrome131",
-    "chrome124",
-    "safari17_0",
-    "firefox135",
-]
 
 class ProxyManager:
     def __init__(self):
@@ -40,9 +33,6 @@ class ProxyManager:
         if proxy:
             self._dead.add(proxy)
             logger.warning(f"Proxy marked dead: {proxy} ({len(self._dead)}/{len(self._proxies)} dead)")
-
-    def get_impersonate(self) -> str:
-        return random.choice(BROWSERS)
 
     @property
     def has_proxies(self) -> bool:
