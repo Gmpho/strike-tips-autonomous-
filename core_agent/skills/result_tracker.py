@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta, timezone
 from html import unescape as _html_unescape
 from typing import Dict, List, Optional, Tuple
 
+from core_agent.skills.settlement_diagnostics import record_pending as _record_pending
+
 logger = logging.getLogger("result-tracker")
 
 # South Africa has no daylight saving — fixed UTC+2, safe without tzdata.
@@ -1173,11 +1175,20 @@ class ResultTracker:
         # against some OTHER day's races. Until then honestly PENDING.
         try:
             if (_bet_age_days(getattr(bet, "date", None)) or 0) > EXOTIC_MAX_AGE_DAYS:
+                _record_pending(
+                    bet.bet_id, "age_expired",
+                    f"older than {EXOTIC_MAX_AGE_DAYS}d — no day-scoped source can prove it",
+                    getattr(bet, "track", ""),
+                )
                 return None
         except Exception:
             pass
         ticket = _parse_exotic_ticket(bet)
         if not ticket or not ticket["combos"]:
+            _record_pending(
+                bet.bet_id, "unparseable", "no combinations in stored legs",
+                getattr(bet, "track", ""),
+            )
             return None
         requirement = _exotic_requirement(ticket["pool_type"])
         legs = ticket["pool_legs"]
@@ -1190,8 +1201,12 @@ class ResultTracker:
             )
         except Exception as e:
             logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
+            _record_pending(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
+                            getattr(bet, "track", ""), ticket["pool_type"])
             return None
         if not races:
+            _record_pending(bet.bet_id, "no_results", "no day-scoped result source",
+                            getattr(bet, "track", ""), ticket["pool_type"])
             return None
 
         # Gate on the last leg's off-time when known (a ticket can't be dead
@@ -1207,6 +1222,11 @@ class ResultTracker:
             if last_off.tzinfo is None:
                 last_off = last_off.replace(tzinfo=_SAST)
             if datetime.now(_SAST) < last_off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
+                _record_pending(
+                    bet.bet_id, "before_off_time",
+                    f"final leg off {last_off.isoformat()} + {OFF_TIME_GRACE_MINUTES}m grace",
+                    getattr(bet, "track", ""), ticket["pool_type"],
+                )
                 return None
 
         flagged_sub: List[str] = []
@@ -1411,6 +1431,12 @@ class ResultTracker:
         if any(s == "fail" for s in legs_state):
             all_dead = True
         elif any(s == "unknown" for s in legs_state):
+            _unknown = [i for i, st in enumerate(legs_state) if st == "unknown"]
+            _record_pending(
+                bet.bet_id, "unknown_legs",
+                f"legs without confirmed placing: {_unknown}",
+                getattr(bet, "track", ""), ticket["pool_type"],
+            )
             return None
         elif all(s == "pass" for s in legs_state):
             any_won_combo = True
@@ -1453,6 +1479,11 @@ class ResultTracker:
                     f"placed, awaiting tote dividend"
                 )
                 logger.info(msg)
+                _record_pending(
+                    bet.bet_id, "no_dividend",
+                    f"{ticket['pool_type']} dividend not published/found",
+                    getattr(bet, "track", ""), ticket["pool_type"],
+                )
                 _healing_event(
                     "EXOTIC_AWAITING_DIVIDEND",
                     msg,
@@ -1503,6 +1534,11 @@ class ResultTracker:
             return None
 
         if not ok:
+            _record_pending(
+                bet.bet_id, "settle_failed",
+                "governor refused settlement write",
+                getattr(bet, "track", ""), ticket["pool_type"],
+            )
             return None
         if dry_run:
             # Shadow mode (Oct-2026): return the verdict so a superseded
