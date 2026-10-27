@@ -13,6 +13,12 @@ RUN apt-get update \
 RUN pip install --no-cache-dir "uv>=0.13.4" -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn
 COPY pinned-requirements.txt .
 ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
+# WSL2 with 6GB RAM: uv's default fan-out mmaps hundreds of wheels at once and
+# the kernel drops pages mid-write -> Bus error. Throttle it; copy beats hardlink
+# across the overlay.
+ENV UV_CONCURRENT_DOWNLOADS=4 \
+    UV_CONCURRENT_BUILDS=2 \
+    UV_LINK_MODE=copy
 RUN uv pip install --prerelease=allow --system -r pinned-requirements.txt
 
 # 3. Source Code Layer
