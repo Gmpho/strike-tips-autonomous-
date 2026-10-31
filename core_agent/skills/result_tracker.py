@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from html import unescape as _html_unescape
 from typing import Dict, List, Optional, Tuple
@@ -42,6 +43,19 @@ OFF_TIME_GRACE_MINUTES = 15
 # review: settling a week-old bet against yesterday's results for the same
 # track+race number would usually settle the WRONG race (usually as LOST).
 MAX_SETTLE_AGE_DAYS = 3
+
+# Singles get their finishing position from ATR ("this exists for the losers").
+# ATR is Fastly-challenged from every egress we have, so a loser single could
+# never be proven LOST and sat PENDING until the age cap expired it (Oct-2026:
+# Vaal Hat's Queen / Astrophile stuck 2 days). Raceform is plain HTTP and
+# carries the FULL field with positions, so it backs the ATR lookup for any
+# day still inside the archive window.
+RACEFORM_PLACING_MAX_AGE_DAYS = 21
+
+# A failed Raceform fetch is cached only briefly: one transient timeout used to
+# poison that URL for the whole container lifetime, turning a single blip into a
+# day of "no_results". Retry after this many seconds.
+RACEFORM_FAIL_RETRY_SECS = 120
 
 # Exotics get a wider window than singles: the Raceform archive
 # (/horse-racing-results/{track}/{date}, plain HTTP, no CF challenge) serves
@@ -277,6 +291,10 @@ def _parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
         runners.setdefault(raceno, []).append({
             "name": nm.group(1),
             "position": _finish_ordinal(fin) or "",
+            # finish 0 = did not run (scratched/withdrawn): the card lists the
+            # horse with no finishing position. Settlement refunds these
+            # instead of scoring them LOST.
+            "non_runner": fin <= 0,
         })
     races: List[Dict] = []
     for raceno in sorted(runners):
@@ -699,8 +717,8 @@ class ResultTracker:
         """Raw Raceform archive HTML for one track+date (plain HTTP — no CF
         challenge, unlike ATR/TAB). Cached per instance so the leg scorer and
         the dividend lookup share one fetch per meeting per sweep; failures
-        are cached too (one attempt, no hammering). None on any failure or
-        on a date outside the archive (404).
+        are cached with a short backoff (see RACEFORM_FAIL_RETRY_SECS). None on
+        any failure or on a date outside the archive (404).
         """
         url = _raceform_url(track, iso_date)
         if not url:
@@ -711,7 +729,14 @@ class ResultTracker:
             cache = {}
             self._raceform_cache = cache
         if url in cache:
-            return cache[url]
+            # A failure is retried after a short backoff: caching it forever
+            # let one transient timeout poison every later lookup for the
+            # life of the container (Oct-2026: a day of no_results).
+            if cache[url] is not None:
+                return cache[url]
+            if time.time() - getattr(self, "_raceform_fail_ts", {}).get(url, 0) \
+                    < RACEFORM_FAIL_RETRY_SECS:
+                return None
         try:
             from core_agent.core.http_client import get_async_client
             client = get_async_client(timeout=15)
@@ -723,6 +748,10 @@ class ResultTracker:
             logger.debug(f"Raceform fetch failed for {url}: {e}")
             page = None
         cache[url] = page
+        if page is None:
+            if getattr(self, "_raceform_fail_ts", None) is None:
+                self._raceform_fail_ts = {}
+            self._raceform_fail_ts[url] = time.time()
         return page
 
     async def _raceform_results(self, track: str, iso_date: str) -> List[Dict]:
@@ -757,10 +786,12 @@ class ResultTracker:
         Fastly-solved ATR fetch). Reusing it means zero contention with the
         headless-Chromium throttle slot and zero CF challenge risk.
 
-        Trusted only while its embedded timestamp is from TODAY: the file
-        holds ATR's "today/yesterday" labels, which shift meaning across
-        midnight — an older snapshot would silently describe different
-        calendar days than its labels suggest. Never raises; [] on any miss.
+        The file holds ATR's "today/yesterday" labels, which shift meaning
+        across midnight, so the labels are resolved against the SNAPSHOT'S OWN
+        day (its ``timestamp``), not against today. Requiring a snapshot from
+        today discarded real data for 48h while ATR was blocked (Oct-2026: 492
+        results sat on disk unused, so every exotic recorded "no_results").
+        Never raises; [] on any miss.
         """
         try:
             from core_agent.config.paths import ATR_RESULTS_PATH
@@ -768,11 +799,16 @@ class ResultTracker:
                 return []
             with open(ATR_RESULTS_PATH) as f:
                 blob = json.load(f)
-            if str(blob.get("timestamp") or "")[:10] != date.today().isoformat():
+            try:
+                ts_day = date.fromisoformat(str(blob.get("timestamp") or "")[:10])
+            except (TypeError, ValueError):
                 return []
+            # A clock-skewed future stamp would shift the labels forward.
+            if ts_day > date.today():
+                ts_day = date.today()
             cal = {
-                "today": date.today().isoformat(),
-                "yesterday": (date.today() - timedelta(days=1)).isoformat(),
+                "today": ts_day.isoformat(),
+                "yesterday": (ts_day - timedelta(days=1)).isoformat(),
             }
             out = []
             for race in blob.get("results") or []:
@@ -859,13 +895,42 @@ class ResultTracker:
             for rn in sorted(merged)
         ]
 
+    async def _raceform_non_runner(self, track: str, iso_date: str,
+                                   race_number: int, horse: str) -> bool:
+        """True when the horse was scratched on its own race day.
+
+        The Raceform archive lists withdrawn horses on the card with
+        ``"finish":0`` and no position, so a scratched single is provably a
+        non-runner even while ATR is challenged. False on any doubt —
+        unknown must never void a live ticket.
+        """
+        if not horse or ":" in str(horse) or not iso_date or not race_number:
+            return False
+        try:
+            races = await self._raceform_results(track, iso_date)
+            runners = _race_runners_by_number(races, int(race_number))
+            # Pre-off cards parse with every finish at 0. Only a race that
+            # already has a real finisher can mark anyone scratched —
+            # otherwise today's live tickets would be voided.
+            if not any(str(x.get("position", "")).strip() for x in runners):
+                return False
+            for x in runners:
+                if self._fuzzy_match(str(x.get("name", "")), horse) >= 0.55:
+                    return bool(x.get("non_runner")) and not str(
+                        x.get("position", "")).strip()
+        except Exception as e:
+            logger.debug(f"Raceform NR lookup failed for {horse}: {e}")
+        return False
+
     async def _atr_placing(self, track: str, race_number: int, horse: str,
                            bet_date: Optional[str] = None) -> Optional[str]:
-        """Official finishing position for one single (ATR results).
+        """Official finishing position for one single.
 
         Winners are already known ("1st"); this exists for the losers —
         a LOST ticket that ran 2nd is place-pool signal, not noise.
-        Cached per track/day; None on any failure (never blocks settling).
+        ATR first (cheap, cached per track/day), then the Raceform archive so
+        a blocked/challenged ATR never strands a loser single as PENDING.
+        None on any failure (never blocks settling).
         """
         if not horse or ":" in str(horse):
             return None
@@ -880,13 +945,33 @@ class ResultTracker:
             runners = _race_runners_by_number(
                 self._atr_track_cache[key], int(race_number or 0)
             )
-            if not runners:
-                return None
-            for r in runners:
-                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
-                    return str(r.get("position", "")).strip() or None
+            if runners:
+                for r in runners:
+                    if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
+                        placing = str(r.get("position", "")).strip()
+                        if placing:
+                            return placing
         except Exception as e:
             logger.debug(f"ATR placing lookup failed for {horse}: {e}")
+
+        # Fallback: full-field Raceform archive for the bet's OWN race day.
+        iso = str(bet_date)[:10] if bet_date else ""
+        age = _bet_age_days(iso)
+        if not iso or age is None or age < 0 or age > RACEFORM_PLACING_MAX_AGE_DAYS:
+            return None
+        try:
+            races = await self._raceform_results(track, iso)
+            for r in _race_runners_by_number(races, int(race_number or 0)):
+                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
+                    placing = str(r.get("position", "")).strip()
+                    if placing:
+                        logger.info(
+                            "[RACEFORM] placing for %s %s R%s: %s (%s)",
+                            horse, track, race_number, placing, iso,
+                        )
+                        return placing
+        except Exception as e:
+            logger.debug(f"Raceform placing lookup failed for {horse}: {e}")
         return None
 
     def _fuzzy_match(self, name_a: str, name_b: str) -> float:
@@ -1169,13 +1254,25 @@ class ResultTracker:
           Without a dividend the ticket stays PENDING ("awaiting dividend").
         Returns the settled record dict, or None when left PENDING.
         """
+        # Shadow scoring (read-only audit of VOID/superseded tickets, Oct-2026)
+        # re-walks every VOID ticket each sweep. It must never write settlement
+        # diagnostics: its undecidable legs used to bury the real settlement
+        # picture — 692 of 3 244 rows were unknown_legs/no_results against just
+        # 12 already-VOID bet_ids, one repeated 183 times. Live diagnostics
+        # answer "why is money still open?"; a voided ticket is not open money.
+        def _diag(bet_id: str, reason: str, detail: str = "",
+                  track: str = "", pool_type: str = "") -> None:
+            if dry_run:
+                return
+            _record_pending(bet_id, reason, detail, track, pool_type)
+
         # ATR only serves today/yesterday result pages and the Raceform
         # archive covers ~2 weeks back — beyond EXOTIC_MAX_AGE_DAYS no source
         # can prove the ticket's own day, so scoring would mean matching
         # against some OTHER day's races. Until then honestly PENDING.
         try:
             if (_bet_age_days(getattr(bet, "date", None)) or 0) > EXOTIC_MAX_AGE_DAYS:
-                _record_pending(
+                _diag(
                     bet.bet_id, "age_expired",
                     f"older than {EXOTIC_MAX_AGE_DAYS}d — no day-scoped source can prove it",
                     getattr(bet, "track", ""),
@@ -1185,7 +1282,7 @@ class ResultTracker:
             pass
         ticket = _parse_exotic_ticket(bet)
         if not ticket or not ticket["combos"]:
-            _record_pending(
+            _diag(
                 bet.bet_id, "unparseable", "no combinations in stored legs",
                 getattr(bet, "track", ""),
             )
@@ -1201,11 +1298,11 @@ class ResultTracker:
             )
         except Exception as e:
             logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
-            _record_pending(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
+            _diag(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
                             getattr(bet, "track", ""), ticket["pool_type"])
             return None
         if not races:
-            _record_pending(bet.bet_id, "no_results", "no day-scoped result source",
+            _diag(bet.bet_id, "no_results", "no day-scoped result source",
                             getattr(bet, "track", ""), ticket["pool_type"])
             return None
 
@@ -1222,7 +1319,7 @@ class ResultTracker:
             if last_off.tzinfo is None:
                 last_off = last_off.replace(tzinfo=_SAST)
             if datetime.now(_SAST) < last_off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
-                _record_pending(
+                _diag(
                     bet.bet_id, "before_off_time",
                     f"final leg off {last_off.isoformat()} + {OFF_TIME_GRACE_MINUTES}m grace",
                     getattr(bet, "track", ""), ticket["pool_type"],
@@ -1432,7 +1529,7 @@ class ResultTracker:
             all_dead = True
         elif any(s == "unknown" for s in legs_state):
             _unknown = [i for i, st in enumerate(legs_state) if st == "unknown"]
-            _record_pending(
+            _diag(
                 bet.bet_id, "unknown_legs",
                 f"legs without confirmed placing: {_unknown}",
                 getattr(bet, "track", ""), ticket["pool_type"],
@@ -1864,6 +1961,25 @@ class ResultTracker:
                 except Exception as nr_err:
                     logger.debug(f"NR check skipped for {bet.bet_id}: {nr_err}")
                     _is_nr = False
+                # Snapshot-only NR detection misses historical meetings (the
+                # snapshot no longer lists yesterday's card), which stranded
+                # scratched singles as PENDING until the age cap expired them
+                # (Oct-2026: Vaal Hat's Queen / Astrophile, finish:0). The
+                # Raceform archive still proves the scratch for its own day.
+                if not _is_nr:
+                    try:
+                        _nr_iso = str(getattr(bet, "date", "") or "")[:10]
+                        _nr_age = _bet_age_days(_nr_iso)
+                        if (_nr_iso and _nr_age is not None
+                                and 0 <= _nr_age <= RACEFORM_PLACING_MAX_AGE_DAYS):
+                            _is_nr = await self._raceform_non_runner(
+                                getattr(bet, "track", ""), _nr_iso,
+                                int(getattr(bet, "race_number", 0) or 0),
+                                str(bet.horse),
+                            )
+                    except Exception as nr_rf_err:
+                        logger.debug(
+                            f"Raceform NR check skipped for {bet.bet_id}: {nr_rf_err}")
                 if _is_nr and gov and hasattr(gov, "cancel_pending_bet"):
                     try:
                         if gov.cancel_pending_bet(

@@ -6,24 +6,9 @@ import { hudStore } from '../../store/hud-store';
 import { apiFetch } from '../../lib/api-fetch';
 import { BETTING_ENDPOINTS } from '../../lib/api-prefixes';
 import type { BetRecord } from '../../types';
+import { betPnl, betStatus } from '../../lib/bet-status';
 
 type ExecFilter = 'ALL' | 'WON' | 'LOST' | 'OPEN' | 'VOID';
-
-function betStatus(bet: BetRecord): 'WON' | 'LOST' | 'PENDING' | 'VOID' | 'EXPIRED' {
-  const s = String(bet.status || '').toUpperCase();
-  if (s === 'WON' || s === 'LOST' || s === 'VOID' || s === 'EXPIRED' || s === 'PENDING') return s;
-  if (bet.settled) return bet.won ? 'WON' : 'LOST';
-  return 'PENDING';
-}
-
-function betPnl(bet: BetRecord): number | null {
-  const st = betStatus(bet);
-  const stake = bet.stake ?? 0;
-  if (st === 'WON') return (bet.payout ?? 0) - stake;
-  if (st === 'LOST') return -stake;
-  if (st === 'VOID' || st === 'EXPIRED') return 0;
-  return null;
-}
 
 // Superseded tickets carry the settler's shadow verdict in notes, e.g.
 // "… | shadow: WON R139.68 (…)" — the Void tab shows what the ticket

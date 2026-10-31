@@ -819,3 +819,87 @@ def test_shadow_sweep_skips_live_and_already_stamped(stub_modules, past_off):
     tracker = ResultTracker(bankroll_governor=g)
     n = asyncio.run(tracker._shadow_score_superseded(g, None))
     assert n == 0 and g.annotated == []
+
+
+# --- Monitor snapshot: labels resolve against the SNAPSHOT'S own day --------
+def _snap(tmp_path, monkeypatch, stamp_day, rows):
+    import core_agent.config.paths as paths
+    snap = tmp_path / "atr_results_snapshot.json"
+    snap.write_text(json.dumps({
+        "timestamp": f"{stamp_day.isoformat()}T03:40:36.840088",
+        "results": rows,
+    }))
+    monkeypatch.setattr(paths, "ATR_RESULTS_PATH", snap)
+
+
+def test_monitor_cache_honours_two_day_old_snapshot(tmp_path, monkeypatch):
+    """Oct-2026: ATR was Fastly-blocked, so the monitor could not rewrite its
+    snapshot. The file still described its own today/yesterday, but the
+    today-only gate discarded 492 real results and every exotic recorded
+    'no_results'. Its labels must resolve against its own timestamp."""
+    two_days_ago = date.today() - timedelta(days=2)
+    rows = [
+        {"course": "Turffontein", "date": "today",
+         "title": "4 14:05 Maiden", "runners": [{"name": "A", "position": "1st"}]},
+        {"course": "Turffontein", "date": "yesterday",
+         "title": "5 14:40 Maiden", "runners": [{"name": "B", "position": "2nd"}]},
+    ]
+    _snap(tmp_path, monkeypatch, two_days_ago, rows)
+
+    tracker = ResultTracker()
+    today_rows = tracker._monitor_cached_results("turffontein", two_days_ago.isoformat())
+    assert [r["title"] for r in today_rows] == ["4 14:05 Maiden"]
+    yday_rows = tracker._monitor_cached_results(
+        "turffontein", (two_days_ago - timedelta(days=1)).isoformat())
+    assert [r["title"] for r in yday_rows] == ["5 14:40 Maiden"]
+
+
+def test_monitor_cache_does_not_bleed_labels_onto_later_days(tmp_path, monkeypatch):
+    """Trusting a 2-day-old stamp must not make its 'today' answer for the
+    real today/yesterday — that is exactly the label shift the old gate
+    guarded against."""
+    two_days_ago = date.today() - timedelta(days=2)
+    rows = [{"course": "Turffontein", "date": "today",
+             "title": "4 14:05 Maiden", "runners": [{"name": "A", "position": "1st"}]}]
+    _snap(tmp_path, monkeypatch, two_days_ago, rows)
+
+    tracker = ResultTracker()
+    assert tracker._monitor_cached_results("turffontein", date.today().isoformat()) == []
+    assert tracker._monitor_cached_results(
+        "turffontein", (date.today() - timedelta(days=1)).isoformat()) == []
+
+
+def test_monitor_cache_rejects_unparsable_timestamp(tmp_path, monkeypatch):
+    import core_agent.config.paths as paths
+    snap = tmp_path / "atr_results_snapshot.json"
+    snap.write_text(json.dumps({
+        "timestamp": "not-a-date",
+        "results": [{"course": "Turffontein", "date": "today",
+                     "title": "4 14:05 Maiden", "runners": []}],
+    }))
+    monkeypatch.setattr(paths, "ATR_RESULTS_PATH", snap)
+    assert ResultTracker()._monitor_cached_results(
+        "turffontein", date.today().isoformat()) == []
+
+
+def test_shadow_scoring_writes_no_settlement_diagnostics(
+        stub_modules, past_off, gov):
+    """Oct-2026: shadow scoring re-walks every VOID/superseded ticket each
+    sweep. Because it shares _settle_exotic_ticket, its undecidable legs wrote
+    live settlement diagnostics: 692 of 3 244 rows were unknown_legs/no_results
+    against 12 already-VOID bet_ids (one repeated 183 times), burying the real
+    'why is money still open' signal. A voided ticket is not open money."""
+    bet = _bet(notes=_ticket_notes("BIPOT", [(4, "NOBODY LISTED", [])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_raceform_results",
+                      new=AsyncMock(return_value=[])), \
+         patch("core_agent.skills.result_tracker._record_pending") as diag:
+        shadow = asyncio.run(
+            tracker._settle_exotic_ticket(bet, None, None, dry_run=True))
+        assert shadow is None
+        diag.assert_not_called()
+
+        live = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+        assert live is None
+        diag.assert_called_once()
+        assert diag.call_args[0][1] == "unknown_legs"
