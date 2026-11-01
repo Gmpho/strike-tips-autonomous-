@@ -429,3 +429,31 @@ def test_exotic_void_allows_replacement(temp_data_dir):
         ticket_cost=1.2, estimated_dividend=1800.0,
     )
     assert again is not None
+
+
+def test_exotic_bet_rejects_implausible_track(temp_data_dir):
+    """Regression (2026-10-31): 24 exotic rows dated 2026-09-18 carried a
+    single-character track ("T", etc). Such a ticket can never be matched to a
+    real meeting at settlement, so it sits PENDING until expiry and is reported
+    as `no_results` forever. The ledger must refuse it instead of taking money.
+    """
+    gov = _paper_gov(temp_data_dir)
+    kwargs = dict(
+        pool_type="JACKPOT",
+        pool_legs=[4, 5, 6, 7],
+        combinations=[{"race": 4, "banker": "Alpha", "savers": []}],
+        ticket_cost=1.2,
+        estimated_dividend=1800.0,
+    )
+
+    for bad in ("T", "", "   ", None, "1", " - "):
+        assert gov.record_exotic_bet(track=bad, **kwargs) is None
+
+    # Nothing was placed, so no exposure was taken.
+    assert gov.get_open_bets() == []
+    assert gov.current_bankroll == pytest.approx(1000.0)
+
+    # Real venues still flow through, and surrounding whitespace is trimmed.
+    ok = gov.record_exotic_bet(track="  Turffontein  ", **kwargs)
+    assert ok is not None
+    assert ok.track == "Turffontein"

@@ -1,10 +1,13 @@
 """at-the-races.com Scraper -- Results, Market Movers, Predictor, and Winner Lookup
-Uses Scrapling adaptive/self-healing selectors via desktop site (www).
 
-Architecture (tiered fallback):
-  1. StealthyFetcher  — headless Chromium + Cloudflare solver, persistent browser profile
-  2. Fetcher           — fast HTTP-level impersonation (curl_cffi)
-  3. if data: guard    — preserves last good snapshot if both fetchers fail
+Architecture (cheap-first, no browser):
+  1. httpx             — plain client, honest User-Agent
+  2. curl_cffi policy  — paced fallback, no TLS impersonation
+  3. circuit breaker   — ATR sits behind Fastly bot protection; when it blocks
+                         us we back off for hours instead of hammering it.
+
+We deliberately do NOT attempt to defeat that protection (no stealth browser,
+no challenge solving). ATR is a UK/IRE results backstop only.
 
 Integration:
     api = AtTheRacesAPI()
@@ -20,44 +23,18 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
 
-_SCRAPLING_AVAILABLE = False
-_STEALTH_AVAILABLE = False
-
-try:
-    from scrapling.fetchers import Fetcher, StealthyFetcher
-    _SCRAPLING_AVAILABLE = True
-    _STEALTH_AVAILABLE = True
-except ImportError:
-    _STEALTH_AVAILABLE = False
-    try:
-        from scrapling.fetchers import Fetcher
-        _SCRAPLING_AVAILABLE = True
-    except ImportError:
-        _SCRAPLING_AVAILABLE = False
-
-        class Fetcher:
-            @staticmethod
-            def get(url, **kwargs):
-                return type("Page", (), {"status": 200, "body": b"", "headers": {}})()
-
-# Selector imported independently — a fetcher-only failure (e.g. missing
-# `patchright` on Modal) must never kill HTML parsing (lxml/bs4 path).
-try:
-    from scrapling.parser import Selector
-    _SELECTOR_AVAILABLE = True
-except ImportError:
-    _SELECTOR_AVAILABLE = False
-
-    class Selector:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def css(self, *args, **kwargs):
-            return []
-
-BROWSER_PROFILE = "/app/data/browser_profile"
+from core_agent.core.html_selector import Selector
 
 logger = logging.getLogger("at-the-races")
+
+from core_agent.config.compliance import user_agent  # noqa: E402
+
+try:
+    from core_agent.core.http_client import get_sync_client
+    _CLIENT_AVAILABLE = True
+except Exception:  # pragma: no cover - curl_cffi always present in the image
+    _CLIENT_AVAILABLE = False
+    get_sync_client = None  # type: ignore[assignment]
 
 # ─── Circuit breaker (Oct-2026) ─────────────────────────────────────────────
 # ATR moved behind Fastly bot protection: httpx gets 403, curl_cffi and a real
@@ -128,7 +105,6 @@ def _record_success() -> None:
             flag.unlink()
     except Exception:
         pass
-logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 TRACK_NAME_ALIASES = {
     "greyville": "Greyville",
@@ -315,27 +291,6 @@ class AtTheRacesAPI:
             return True
         return False
 
-    # Minimum gap between headless-Chromium escalations. The browser solve is
-    # expensive (~60s cold) and looks bot-like at 5-min cron cadence — it likely
-    # got our egress IP rate-limited on 2026-09-03 (18h of challenge shells
-    # right after Tier 1 was enabled). Throttle file lives on the data volume
-    # so it is shared across cold containers.
-    _STEALTH_MIN_GAP_SECS = 3600
-
-    def _stealth_allowed(self) -> bool:
-        try:
-            import time as _time
-            from core_agent.config.paths import DATA_DIR
-            flag = DATA_DIR / ".atr_stealth_last"
-            if flag.exists():
-                last = float(flag.read_text().strip() or 0)
-                if _time.time() - last < self._STEALTH_MIN_GAP_SECS:
-                    return False
-            flag.write_text(str(_time.time()))
-            return True
-        except Exception:
-            return True
-
     def _fetch(self, path: str) -> Optional[bytes]:
         """Fetch with the circuit breaker wrapped around the tiered fallback."""
         if atr_circuit_open():
@@ -349,13 +304,12 @@ class AtTheRacesAPI:
         return body
 
     def _fetch_tiered(self, path: str) -> Optional[bytes]:
-        """Fetch page with cheap-first tiered fallback: httpx → Fetcher → StealthyFetcher.
+        """Fetch page with cheap-first fallback: httpx → paced curl_cffi client.
 
-        Order matters: the 5-min cron hammers these URLs, so the lightweight
-        HTTP tiers run first and the headless browser is a throttled last
-        resort (max 1/hour, shared flag on the data volume). Each tier must
-        return HTTP 200 with a non-challenge body, otherwise the next tier is
-        tried. A 200 challenge shell (e.g. Fastly 3KB page) is NOT accepted.
+        Each tier must return HTTP 200 with a non-challenge body, otherwise the
+        next tier is tried. A 200 challenge shell (e.g. Fastly 3KB page) is NOT
+        accepted — and is never escalated to a stealth browser: we treat it as
+        "ATR does not want us" and let the circuit breaker back off.
         """
         url = f"{self.BASE_URL}{path}"
 
@@ -373,7 +327,7 @@ class AtTheRacesAPI:
             import httpx
 
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "User-Agent": user_agent(),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             }
@@ -387,49 +341,20 @@ class AtTheRacesAPI:
         except Exception as e:
             logger.debug("httpx fetch failed for %s: %s", path, e)
 
-        # Tier 2: Basic Fetcher — fast HTTP impersonation (curl_cffi)
-        if _SCRAPLING_AVAILABLE:
+        # Tier 2: curl_cffi policy client — same honest UA, paced per host
+        if _CLIENT_AVAILABLE:
             try:
-                page = Fetcher.get(url, impersonate="chrome131", timeout=30)
-                if page and page.status == 200 and not self._is_challenge_page(page.body):
-                    return page.body
-                if page and page.status == 200:
-                    logger.debug("Basic fetch returned challenge shell for %s — trying next tier", path)
+                client = get_sync_client(timeout=30)
+                try:
+                    resp = client.get(url)
+                finally:
+                    client.close()
+                if resp.status_code == 200 and resp.content and not self._is_challenge_page(resp.content):
+                    return resp.content
+                if resp.status_code == 200:
+                    logger.debug("Tier 2 returned challenge shell for %s — giving up", path)
             except Exception as e:
-                logger.debug("Basic fetch failed for %s: %s", path, e)
-
-        # Tier 3: StealthyFetcher — real headless Chromium, throttled last resort.
-        # solve_cloudflare=False: ATR uses Fastly (not Cloudflare) — the CF solver
-        # just errors with "No Cloudflare challenge found". With plain JS enabled
-        # the Fastly proof-of-work runs, sets its cookie in the persistent
-        # profile, and the second load (same cookies) returns the real page.
-        if _STEALTH_AVAILABLE:
-            if not self._stealth_allowed():
-                logger.debug("Stealth fetch throttled for %s (browser used <1h ago)", path)
-            else:
-                import time as _time
-                for _attempt in range(2):
-                    try:
-                        page = StealthyFetcher.fetch(
-                            url,
-                            headless=True,
-                            solve_cloudflare=False,
-                            user_data_dir=BROWSER_PROFILE,
-                            timeout=45000,
-                            disable_resources=True,
-                            retries=1,
-                            retry_delay=2,
-                        )
-                        if page and page.status == 200 and not self._is_challenge_page(page.body):
-                            return page.body
-                        if page and page.status == 200:
-                            logger.debug(
-                                "Stealth fetch attempt %d returned challenge shell for %s — reloading with cookies",
-                                _attempt + 1, path,
-                            )
-                    except Exception as e:
-                        logger.debug("Stealth fetch attempt %d failed for %s: %s", _attempt + 1, path, e)
-                    _time.sleep(3)
+                logger.debug("Tier 2 fetch failed for %s: %s", path, e)
 
         # Breaker owns the operator-facing noise: it logs the trip once and then
         # goes quiet for the cooldown, so per-attempt warnings stay at debug.
@@ -516,11 +441,11 @@ class AtTheRacesAPI:
         }
 
     async def get_results(self, date: str = "yesterday") -> List[Dict]:
-        """Scrape race results via Scrapling with self-healing selectors + retry.
+        """Scrape race results with retry.
 
-        Timeout is 150s (not 60s): on a cold Modal container Tier 1 StealthyFetcher
-        launches Chromium + solves the Fastly challenge (~40-60s) before Tier 2/3
-        get a turn. Worst case 2×150s (yesterday+today) still fits the 600s cron.
+        Timeout stays at 150s for cold containers (DNS + TLS handshake), though
+        without a browser tier the normal path is seconds. Worst case 2×150s
+        (yesterday+today) still fits the 600s cron.
         """
         for attempt in range(3):
             try:

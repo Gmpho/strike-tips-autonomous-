@@ -3,6 +3,7 @@ import { Ticket, Coins, Trophy, Calendar, Activity, Loader2, Star } from 'lucide
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../hooks/useHUD';
 import { apiFetch } from '../lib/api-fetch';
+import { betStatus, isRefunded } from '../lib/bet-status';
 import { CAMPAIGNS, markSeen } from '../lib/campaigns';
 import { PromoCard } from './promos/PromoCard';
 
@@ -27,6 +28,8 @@ interface ExoticPlay {
   official?: Record<string, number[]>;
   /** ISO event date (YYYY-MM-DD). Boards persist per day until raceday. */
   event_date?: string;
+  /** SA | UK | IRE | INTL — tags the meeting's racing jurisdiction. */
+  jurisdiction?: string;
 }
 
 function sourceChip(source?: string): { label: string; cls: string } {
@@ -84,6 +87,10 @@ function groupPlaysByDay(plays: ExoticPlay[]): DayGroup[] {
   return [...map.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
+// Live board jurisdictions. "INTL" is an international card whose country the
+// TAB manifest did not name — shown rather than silently dropped.
+const JURISDICTION_FILTER = ["SA", "UK", "IRE", "INTL"];
+
 export const ExoticsView: React.FC = () => {
   const { betHistory } = useHUD();
   const [activePlays, setActivePlays] = useState<ExoticPlay[]>([]);
@@ -97,7 +104,8 @@ export const ExoticsView: React.FC = () => {
         const res = await apiFetch('/api/racing/exotics');
         if (res.ok && active) {
           const data = await res.json();
-          setActivePlays(data || []);
+          const filtered = data?.filter((play: ExoticPlay) => JURISDICTION_FILTER.includes(play.jurisdiction ?? "SA")) || [];
+          setActivePlays(filtered);
         }
       } catch (err) {
         console.error('Failed to fetch exotics:', err);
@@ -130,8 +138,13 @@ export const ExoticsView: React.FC = () => {
   }, [activePlays.length, showIntro]);
 
   // Calculate Exotic stats
-  const totalStaked = exoticHistory.reduce((sum, b) => sum + b.stake, 0);
-  const totalPayout = exoticHistory.reduce((sum, b) => sum + (b.payout || 0), 0);
+  // Refunded tickets (VOID/EXPIRED) are not staked money: the stake came
+  // back. Counting them in both sides inflates turnover and drags ROI toward
+  // zero, which read as "the exotics are bleeding" while 110 tickets were
+  // simply voids.
+  const settledHistory = exoticHistory.filter((b) => !isRefunded(b));
+  const totalStaked = settledHistory.reduce((sum, b) => sum + b.stake, 0);
+  const totalPayout = settledHistory.reduce((sum, b) => sum + (b.payout || 0), 0);
   const totalPnL = totalPayout - totalStaked;
   const exoticRoi = totalStaked > 0 ? (totalPnL / totalStaked) * 100 : 0;
 
@@ -240,10 +253,19 @@ export const ExoticsView: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                       {group.plays.map((play, index) => {
-                  const permutations = play.estimated_combinations || (play.combinations || []).reduce(
+                  // Cost must be derived from the SAME figure it is labelled
+                  // with. Backend `estimated_combinations` and the blueprint
+                  // product disagreed for some pools (Oct-2026), so the card
+                  // showed e.g. "12 permutations / R18.00" — two answers to one
+                  // question. The blueprint is the ticket, so it wins; the
+                  // backend estimate is only a fallback when legs are absent.
+                  const blueprintCombos = (play.combinations || []).reduce(
                     (acc, c) => acc * (1 + (Array.isArray(c.savers) ? c.savers.length : 0)),
                     1
                   );
+                  const permutations = (play.combinations || []).length > 0
+                    ? blueprintCombos
+                    : (play.estimated_combinations || 0);
                   const estCost = permutations * 1.20; // Suggested R1.20 unit cost
                   return (
                     <motion.div
@@ -428,18 +450,28 @@ export const ExoticsView: React.FC = () => {
                           <td className="py-3 px-2 text-purple-300">{bet.horse}</td>
                           <td className="py-3 px-2 text-right tabular">R{bet.stake.toFixed(2)}</td>
                           <td className="py-3 px-2 text-right tabular text-emerald-400">
-                            {bet.settled && bet.won ? `R${bet.payout?.toFixed(2)}` : '-'}
+                            {betStatus(bet) === 'WON' ? `R${(bet.payout ?? 0).toFixed(2)}` : '-'}
                           </td>
                           <td className="py-3 px-2 text-center">
-                            <span className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase ${
-                              bet.settled 
-                                ? bet.won 
-                                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' 
-                                  : 'border-red-500/30 text-red-400 bg-red-500/10'
-                                : 'border-amber-500/30 text-amber-400 bg-amber-500/10'
-                            }`}>
-                              {bet.settled ? bet.won ? 'WON' : 'LOST' : 'OPEN'}
-                            </span>
+                            {(() => {
+                              // VOID/EXPIRED are terminal refunds, not open
+                              // money — they used to render as "OPEN" forever.
+                              const st = betStatus(bet);
+                              const label = st === 'PENDING' ? 'OPEN' : st;
+                              const cls =
+                                st === 'WON'
+                                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                                  : st === 'LOST'
+                                    ? 'border-red-500/30 text-red-400 bg-red-500/10'
+                                    : st === 'VOID' || st === 'EXPIRED'
+                                      ? 'border-slate-500/30 text-slate-400 bg-slate-500/10'
+                                      : 'border-amber-500/30 text-amber-400 bg-amber-500/10';
+                              return (
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase ${cls}`}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}

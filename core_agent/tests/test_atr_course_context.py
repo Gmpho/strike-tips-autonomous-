@@ -81,7 +81,6 @@ POISONED_PAGE = b"""
 
 def test_meeting_tables_ignore_page_headings():
     """Regression: page title and horse headers must not become courses."""
-    pytest.importorskip("scrapling")
     from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI, Selector
     api = AtTheRacesAPI()
     sel = Selector(POISONED_PAGE, auto_save=True, adaptive=True)

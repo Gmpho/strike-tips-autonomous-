@@ -15,25 +15,11 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
-try:
-    from scrapling.fetchers import Fetcher
-    from scrapling.parser import Selector
-    _SCRAPLING_AVAILABLE = True
-except ImportError:
-    _SCRAPLING_AVAILABLE = False
+from bs4 import BeautifulSoup
 
-    class Fetcher:
-        @staticmethod
-        def get(url, **kwargs):
-            return type("Page", (), {"status": 200, "body": b""})()
-
-    class Selector:
-        def __init__(self, html): pass
-        def css(self, sel): return []
-        def xpath(self, sel): return type("XPath", (), {"get": lambda *a, **kw: None})()
+from core_agent.core.http_client import get_sync_client
 
 logger = logging.getLogger("racing-odds")
-logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 
 def _fractional_to_decimal(fractional: str) -> float:
@@ -60,11 +46,8 @@ class RacingOddsAPI:
 
     def _fetch(self, path: str) -> Optional[bytes]:
         url = f"{self.BASE_URL}{path}"
-        if not _SCRAPLING_AVAILABLE:
-            logger.warning("Racing-odds scrapling not installed — using stub fallback, will return empty")
-            return None
 
-        # DNS pre-check — skip Scrapling retries if domain can't resolve
+        # DNS pre-check — skip retries if domain can't resolve
         import socket as _socket
         try:
             _socket.setdefaulttimeout(3)
@@ -74,14 +57,18 @@ class RacingOddsAPI:
             return None
 
         try:
-            page = Fetcher.get(url, impersonate="chrome131", timeout=8)
-            if page.status != 200:
-                logger.debug("Racing-odds %s -> %s", path, page.status)
+            client = get_sync_client(timeout=8)
+            try:
+                resp = client.get(url)
+            finally:
+                client.close()
+            if resp.status_code != 200:
+                logger.debug("Racing-odds %s -> %s", path, resp.status_code)
                 return None
-            body_len = len(page.body) if page.body else 0
-            if body_len < 500:
-                logger.debug("Racing-odds %s suspiciously small body (%d bytes)", path, body_len)
-            return page.body
+            body = resp.content or b""
+            if len(body) < 500:
+                logger.debug("Racing-odds %s suspiciously small body (%d bytes)", path, len(body))
+            return body
         except Exception as e:
             logger.debug("Racing-odds fetch failed for %s: %s", path, e)
             return None
@@ -90,12 +77,12 @@ class RacingOddsAPI:
     # Daily page -- list of today's meetings + per-race detail URLs
     # ------------------------------------------------------------------
     def _parse_daily(self, html: bytes) -> List[Dict]:
-        sel = Selector(html, auto_save=True)
+        soup = BeautifulSoup(html, "lxml")
         races: List[Dict] = []
         seen: set = set()
 
-        for a in sel.css('a[href*="/daily/"]'):
-            href = a.attrib.get("href", "")
+        for a in soup.select('a[href*="/daily/"]'):
+            href = a.get("href", "")
             # href: /daily/{course}/{date}/{time}  (race detail)
             parts = href.strip("/").split("/")
             if len(parts) != 4:
@@ -109,7 +96,7 @@ class RacingOddsAPI:
                 "date": date,
                 "time": time,
                 "detail_url": href,
-                "race_time_display": a.get_all_text(strip=True),
+                "race_time_display": a.get_text(" ", strip=True),
             })
 
         return races
@@ -128,27 +115,27 @@ class RacingOddsAPI:
     # Race detail page -- per-horse, per-bookmaker odds
     # ------------------------------------------------------------------
     def _parse_race_detail(self, html: bytes) -> List[Dict]:
-        sel = Selector(html, auto_save=True)
+        soup = BeautifulSoup(html, "lxml")
         horses: List[Dict] = []
 
-        for card in sel.css(".ro-runners .ro-racecard"):
-            name_el = card.css(".ro-racecard__name")
+        for card in soup.select(".ro-runners .ro-racecard"):
+            name_el = card.select(".ro-racecard__name")
             if not name_el:
                 continue
-            raw_name = name_el[0].get_all_text(strip=True)
+            raw_name = name_el[0].get_text(" ", strip=True)
             # Strip leading number+dot: "1. Arishka's Dream" -> "Arishka's Dream"
             horse_name = re.sub(r"^\d+\.\s*", "", raw_name).strip()
             if not horse_name:
                 continue
 
-            detail = card.css(".ro-racecard__detail")
-            odds_container = detail[0].css(".ro-racecard__odds") if detail else []
+            detail = card.select(".ro-racecard__detail")
+            odds_container = detail[0].select(".ro-racecard__odds") if detail else []
 
             bookmakers: Dict[str, float] = {}
             if odds_container:
-                for odds_btn in odds_container[0].css('a[href*="/go/"]'):
-                    href = odds_btn.attrib.get("href", "")
-                    text = odds_btn.get_all_text(strip=True)
+                for odds_btn in odds_container[0].select('a[href*="/go/"]'):
+                    href = odds_btn.get("href", "")
+                    text = odds_btn.get_text(" ", strip=True)
                     # Extract just the fractional part (ignore arrows/status)
                     frac_match = re.match(r"(\d+/\d+)", text)
                     if not frac_match:

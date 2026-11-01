@@ -22,7 +22,7 @@ __pycache__/
 
 # Git
 .git/
-.dockerignore
+# .dockerignore is tracked: image build hygiene must not depend on one machine
 
 # Agent Metadata & Skills
 .adal/
