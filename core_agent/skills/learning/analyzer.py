@@ -38,8 +38,6 @@ class AdaptiveAnalyzer:
         Returns:
             Adjusted probability dict (same keys, adjusted values)
         """
-        self.engine.refresh_from_ledger()
-
         adjusted = {}
         for horse, prob in probability_estimates.items():
             odds = (odds_map or {}).get(horse, 5.0)
@@ -78,7 +76,6 @@ class AdaptiveAnalyzer:
         Called daily by scheduler.update_learning_job() to keep
         probability adjustments current.
         """
-        self.engine.refresh_from_ledger()
         stats = {}
         # Load raw stats from engine for summary
         try:

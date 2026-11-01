@@ -23,7 +23,7 @@ class AIResponse:
 
 class AIProvider:
     ALLOWED_MODELS = {
-        "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
         "gemini": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
     }
 
@@ -38,11 +38,10 @@ class AIProvider:
         from core_agent.config.model_factory import get_client
 
         async def _run(prompt: str) -> AIResponse:
-            # Primary: Groq GPT-OSS 120B (live-verified Sep-2026; the old
-            # llama-3.3-70b-versatile ID is retired and 404s on every call).
+            # Primary: Groq llama-3.3-70b-versatile
             if ModelConfig.groq_available():
                 try:
-                    client = get_client(ModelConfig.ORCHESTRATOR)
+                    client = get_client("llama-3.3-70b-versatile")
                     agent = client.as_agent()
                     session = agent.create_session()
                     from agent_framework import Message
@@ -69,7 +68,7 @@ class AIProvider:
     _call_kimi_parallel = _call_parallel
 
     async def direct_chat(
-        self, prompt: str, model_name: str = f"groq:{ModelConfig.GROQ_FAST}"
+        self, prompt: str, model_name: str = "groq:llama-3.1-8b-instant"
     ) -> AIResponse:
         from core_agent.config.model_factory import get_client
 
@@ -81,10 +80,7 @@ class AIProvider:
         provider, model = model_name.split(":", 1)
 
         try:
-            # Pass the bare model id — get_client's resolver infers the
-            # provider from the model name; a "provider:model" string would
-            # leak the prefix into model_id (Sep-2026).
-            client = get_client(model)
+            client = get_client(f"{provider}:{model}")
             agent = client.as_agent()
             session = agent.create_session()
             from agent_framework import Message

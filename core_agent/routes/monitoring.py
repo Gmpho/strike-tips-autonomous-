@@ -84,25 +84,13 @@ async def stream_snapshot(request: Request):
                         last_results_hash = r_hash
                         yield f"event: results\ndata: {json.dumps(res_data.get('results', []))}\n\n"
 
-                # Check news for changes — use in-memory cache first (refreshed
-                # every 15s by news_mtime_refresh_loop), fall back to disk.
-                try:
-                    from core_agent.core.snapshot_cache import get_news as _get_news_cache
-                    _news_items = _get_news_cache()
-                    if _news_items:
-                        news_data = _news_items
-                    elif NEWS_PATH.exists():
-                        news_data = json.loads(NEWS_PATH.read_text())
-                    else:
-                        news_data = None
-                except Exception:
-                    news_data = json.loads(NEWS_PATH.read_text()) if NEWS_PATH.exists() else None
-                if news_data is not None:
+                # Check news for changes
+                if NEWS_PATH.exists():
+                    news_data = json.loads(NEWS_PATH.read_text())
                     n_hash = hashlib.md5(json.dumps(news_data, sort_keys=True).encode()).hexdigest()
                     if n_hash != last_news_hash:
                         last_news_hash = n_hash
-                        payload = news_data if isinstance(news_data, list) else news_data
-                        yield f"event: news\ndata: {json.dumps(payload)}\n\n"
+                        yield f"event: news\ndata: {json.dumps(news_data)}\n\n"
 
                 # Check engine telemetry for new events
                 try:
@@ -153,16 +141,7 @@ async def get_snapshot_hash(request: Request):
         n = len((cache.get("events") or {}))
     except Exception:
         n = 0
-    result = {"snapshot_hash": digest, "event_count": n}
-    try:
-        from core_agent.core.snapshot_cache import get_snapshot_meta
-
-        meta = get_snapshot_meta()
-        result["snapshot_age_secs"] = meta.get("age_secs")
-        result["snapshot_source"] = meta.get("source")
-    except Exception:
-        pass
-    return result
+    return {"snapshot_hash": digest, "event_count": n}
 
 
 @router.get("/monitoring/snapshot")
@@ -180,17 +159,6 @@ async def get_monitoring_snapshot(request: Request):
         json.dumps(result, sort_keys=True).encode()
     ).hexdigest()
 
-    # Freshness: how long ago the monitor/scan wrote this card. The HUD uses
-    # it to badge a stalled feed instead of rendering stale races as live.
-    try:
-        from core_agent.core.snapshot_cache import get_snapshot_meta
-
-        meta = get_snapshot_meta()
-        result["snapshot_age_secs"] = meta.get("age_secs")
-        result["snapshot_source"] = meta.get("source")
-    except Exception:
-        pass
-
     # Inject recently triggered alerts from the AlertEngine's history log
     result["alerts"] = _load_recent_alerts(20)
 
@@ -199,14 +167,7 @@ async def get_monitoring_snapshot(request: Request):
     result["movers"] = _read_json_file(ATR_MOVERS_PATH)
     result["predictor"] = _read_json_file(ATR_PREDICTOR_PATH)
     result["results"] = _read_json_file(ATR_RESULTS_PATH)
-    # News: serve from in-memory cache (refreshed every 15s by
-    # news_mtime_refresh_loop) — avoids a disk read per snapshot poll.
-    try:
-        from core_agent.core.snapshot_cache import get_news as _get_news_cache
-        _news = _get_news_cache()
-        result["news"] = _news if _news else _read_json_file(NEWS_PATH)
-    except Exception:
-        result["news"] = _read_json_file(NEWS_PATH)
+    result["news"] = _read_json_file(NEWS_PATH)
     try:
         from core_agent.core.telemetry import get_events
 
@@ -324,69 +285,21 @@ async def get_intelligence_vitals():
         }
     )
 
-    # Monitor liveness: the odds monitor is a separate cron container, so its
-    # cadence is only observable through the snapshot it writes. Surfacing the
-    # age here is what makes "is the feed current?" answerable on the Vitals
-    # page instead of "vitals only shows the orchestrator".
-    #
-    # The 5-min monitor cron is the primary writer; the scheduler's 15-min
-    # BHM-time scan is a legit fallback source. LIVE threshold = 45min (3 scan
-    # intervals + margin) so the badge only flips when BOTH writers are dead.
-    try:
-        from core_agent.core.snapshot_cache import get_snapshot_meta
-
-        meta = get_snapshot_meta()
-        age = meta.get("age_secs")
-        ev_count = 0
-        try:
-            from core_agent.core.snapshot_cache import get_snapshot
-
-            ev_count = len((get_snapshot().get("events") or {}))
-        except Exception:
-            pass
-        vitals.append(
-            {
-                "id": "odds-monitor",
-                "name": "ODDS MONITOR (5-MIN CRON)",
-                "cpu": f"{ev_count} races",
-                "mem": "LIVE" if age is not None and age < 2700 else "STALE",
-                "mem_usage": (
-                    f"snapshot {age / 60:.1f} min old · source {meta.get('source')}"
-                    if age is not None
-                    else "no snapshot yet"
-                ),
-            }
-        )
-    except Exception:
-        pass
-
     return {"success": True, "vitals": vitals, "timestamp": datetime.now().isoformat()}
 
 
 @router.get("/news")
-async def get_news_route():
-    """Latest horse-racing news from free RSS feeds (BBC/Guardian/Mirror).
-
-    Serves from the in-memory news cache (refreshed every 15s by
-    news_mtime_refresh_loop) rather than reading news_latest.json on every
-    request. Falls back to a direct disk read when the cache is empty
-    (e.g. fresh container before first refresh tick).
-    """
+async def get_news():
+    """Latest horse-racing news from free RSS feeds (BBC/Guardian/Mirror)."""
+    if not NEWS_PATH.exists():
+        return {"items": [], "count": 0}
     try:
-        from core_agent.core.snapshot_cache import get_news as _get_news_cache
-        items = _get_news_cache()
+        with open(NEWS_PATH) as f:
+            items = json.load(f)
         return {"items": items, "count": len(items)}
     except Exception as e:
-        logger.warning(f"News cache read failed, falling back to disk: {e}")
-        if not NEWS_PATH.exists():
-            return {"items": [], "count": 0}
-        try:
-            with open(NEWS_PATH) as f:
-                items = json.load(f)
-            return {"items": items, "count": len(items)}
-        except Exception as e2:
-            logger.warning(f"News disk fallback failed: {e2}")
-            return {"items": [], "count": 0, "error": str(e2)}
+        logger.warning(f"News read failed: {e}")
+        return {"items": [], "count": 0, "error": str(e)}
 
 
 @router.get("/telemetry")
@@ -413,13 +326,6 @@ async def proxy_news_image(url: str = Query(...)):
         "i2-prod.dailystar.co.uk",
         "i.dailymail.co.uk",
         "www.justhorseracing.com.au",
-        # RSS feed image hosts (Sep-2026: every SA-feed image 400'd —
-        # substring match covers their subdomains/CDN paths too).
-        "thoroughbreddailynews.com",
-        "sportingpost.co.za",
-        "goldcircle.co.za",
-        "dubairacingclub.com",
-        "scmp.com",
     )
     if not any(h in url for h in allowed_hosts):
         return Response(status_code=400, content="Disallowed image source")

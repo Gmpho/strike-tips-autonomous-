@@ -41,13 +41,7 @@ function formatRaceCardPrompt(event: RaceEvent, focusRunner?: Runner): string {
       const odds = typeof r.odds === 'number' ? r.odds.toFixed(2) : r.odds || 'SP';
       const jockey = r.jockeyName || 'TBA';
       const trainer = r.trainerName || 'TBA';
-      const extras = [
-        r.draw != null ? `Draw: ${r.draw}` : '',
-        r.gear ? `Gear: ${r.gear}` : '',
-        r.daysSinceRun != null ? `${r.daysSinceRun}d since run` : '',
-        r.pedigree ? `Pedigree: ${r.pedigree}` : '',
-      ].filter(Boolean).join(' — ');
-      return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}${extras ? ` — ${extras}` : ''}`;
+      return `${i + 1}. ${r.name} — ${odds} — Form: ${r.form || 'N/A'} — ${jockey} / ${trainer}`;
     })
     .join('\n');
   const focusLine = focusRunner ? `\nFOCUS RUNNER: ${focusRunner.name}${typeof focusRunner.odds === 'number' ? ` @ ${focusRunner.odds.toFixed(2)}` : ''} — analyse this runner's value case in depth (form, draw, jockey/trainer stats, and how it compares to the field below).\n` : '';
@@ -63,28 +57,6 @@ ${focusRunner ? `Assess whether ${focusRunner.name} represents a value bet versu
 export interface AIChatProps {
   initialRaceEvent?: RaceEvent;
   initialRunner?: Runner;
-}
-
-/** Short display name for a model id in the active-model badge. */
-function shortModelName(id: string): string {
-  const v = String(id || '').toLowerCase();
-  if (!v || v === 'auto') return 'Auto Router';
-  if (v.includes('gpt-oss-120b')) return 'GPT-OSS 120B';
-  if (v.includes('gpt-oss-20b')) return 'GPT-OSS 20B';
-  if (v.includes('qwen3.8') || v.includes('qwen-3.8')) return 'Qwen 3.8';
-  if (v.includes('qwen3.6') || v.includes('qwen-3.6')) return 'Qwen 3.6';
-  if (v.includes('gemma-2') || v.includes('gemma2')) return 'Gemma 2';
-  if (v.includes('3.3') || v.includes('70b')) return 'Llama 70B';
-  if (v.includes('3.1') || v.includes('8b')) return 'Llama 8B';
-  if (v.includes('mixtral') || v.includes('8x7b')) return 'Mixtral';
-  if (v.includes('gemma-4')) return 'Gemma 4';
-  if (v.includes('3.5')) return 'Gemini 3.5';
-  if (v.includes('3.8')) return 'Gemini 3.8';
-  if (v.includes('3.1-pro')) return 'Gemini 3.1 Pro';
-  if (v.includes('flash-lite') || v.includes('lite')) return 'Flash-Lite';
-  if (v.includes('flash')) return 'Gemini Flash';
-  if (v.includes('pro')) return 'Gemini Pro';
-  return String(id).slice(0, 18);
 }
 
 export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner }) => {
@@ -196,32 +168,14 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
     try {
       const reader = new FileReader();
       reader.onload = async () => {
-        let base64Str = (reader.result as string).split(',')[1] || '';
-        let mimeType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
-        let noted = false;
-        if (isImage) {
-          // Downscale phone photos before upload (Oct-2026: multi-MB originals
-          // died with "request too large" before any model saw pixels).
-          try {
-            const { downscaleImage } = await import('../lib/image-downscale');
-            const out = await downscaleImage(file);
-            base64Str = out.data;
-            mimeType = out.mimeType;
-            if (out.downscaled) {
-              flashNote(`Attached ${file.name} (compressed for analysis)`);
-              noted = true;
-            }
-          } catch {
-            /* fall through with the original bytes */
-          }
-        }
+        const base64Str = (reader.result as string).split(',')[1] || '';
         setAttachedDoc({
           name: file.name,
-          mimeType,
+          mimeType: isPdf ? 'application/pdf' : (file.type || 'image/jpeg'),
           data: base64Str,
           previewUrl: isImage ? URL.createObjectURL(file) : undefined,
         });
-        if (!noted) flashNote(`Attached ${file.name} (${isPdf ? 'PDF Racecard' : 'Image'})`);
+        flashNote(`Attached ${file.name} (${isPdf ? 'PDF Racecard' : 'Image'})`);
 
         // If in on-device WebLLM mode with an image, also extract on-device text as fallback
         if (selectedModel.startsWith('webllm-') && isImage) {
@@ -552,28 +506,6 @@ export const AIChat: React.FC<AIChatProps> = ({ initialRaceEvent, initialRunner 
           }
         }
 
-        // Live web ground via the keyless same-origin proxy (edge cascade:
-        // Tavily -> Exa; the search key never reaches the browser).
-        let searchSources: Array<{ title: string; url: string }> = [];
-        if (searchGrounding && !summarizeMode) {
-          try {
-            const sRes = await apiFetch(`/api/search?q=${encodeURIComponent(userMsg.slice(0, 200))}`);
-            if (sRes.ok) {
-              const sData = await sRes.json();
-              if (Array.isArray(sData.results) && sData.results.length) {
-                searchSources = sData.results.slice(0, 5).map((r: any) => ({ title: r.title, url: r.url }));
-                compiledContext += `\n\n[LIVE WEB SEARCH RESULTS — provider: ${sData.provider}, fetched ${new Date().toISOString().slice(0, 10)}]\n`
-                  + sData.results.slice(0, 5).map((r: any, i: number) => `${i + 1}. ${r.title} — ${r.url}${r.snippet ? `\n   ${r.snippet}` : ''}`).join('\n')
-                  + `\nUse these when relevant, cite the URLs, and say so if they do not cover the question.`;
-              } else {
-                compiledContext += '\n\n[LIVE WEB SEARCH — UNAVAILABLE] No live results retrieved; say so if the question needs them.';
-              }
-            }
-          } catch (e) {
-            console.warn('[WebLLM Edge Search Fetch Failed]', e);
-          }
-        }
-
         if (controller.signal.aborted) return;
 
         const systemPrompt = summarizeMode
@@ -642,13 +574,6 @@ ${compiledContext || 'No context data available.'}`;
           if (delta) streamBufRef.current += delta;
         }
 
-        if (searchSources.length) {
-          setMessages(prev => prev.map((m, i) =>
-            i === prev.length - 1 && m.role === 'ai'
-              ? { ...m, groundingSources: searchSources }
-              : m
-          ));
-        }
         setLastModelUsed(selectedModel);
 
       } catch (err: any) {
@@ -733,14 +658,7 @@ ${compiledContext || 'No context data available.'}`;
       });
 
       if (!res.ok) {
-        // Surface the server's friendly error (e.g. MODEL_UNAVAILABLE with
-        // support link) instead of a generic connectivity message.
-        let friendly: string | null = null;
-        try {
-          const body = await res.clone().json();
-          if (body && typeof body.error === 'string' && body.error) friendly = body.error;
-        } catch {}
-        throw new Error(friendly || `HTTP ${res.status}`);
+        throw new Error(`HTTP ${res.status}`);
       }
 
       const reader = res.body?.getReader();
@@ -774,17 +692,6 @@ ${compiledContext || 'No context data available.'}`;
           }
           try {
             const parsed = JSON.parse(payload);
-            if (parsed && typeof parsed.error === 'string' && parsed.error) {
-              setMessages(prev => prev.map((m, i) =>
-                i === prev.length - 1 && m.role === 'ai'
-                  ? { ...m, content: parsed.error }
-                  : m
-              ));
-              streamBufRef.current = '';
-              clearInterval(actInterval);
-              setCurrentActivity(null);
-              continue;
-            }
             const delta = parsed.choices?.[0]?.delta?.content || '';
             const finish = parsed.choices?.[0]?.finish_reason;
             if (delta) {
@@ -813,10 +720,9 @@ ${compiledContext || 'No context data available.'}`;
         return;
       }
       clearInterval(actInterval);
-      const friendly = err?.message && !/^HTTP \d+$/.test(err.message) ? err.message : null;
       setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === 'ai'
-          ? { ...m, content: friendly || 'Error connecting to brain.' }
+          ? { ...m, content: 'Error connecting to brain.' }
           : m
       ));
     } finally {
@@ -930,11 +836,9 @@ ${compiledContext || 'No context data available.'}`;
 
       {/* 3. Main Chat Panel */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat Header — wraps on small screens so the activity pill
-            (emoji status) gets its own full-width row instead of being
-            crushed to nothing between the title and buttons. */}
-        <div className="p-3 sm:p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-2 sm:gap-4 shrink-0 flex-wrap">
-            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
+        {/* Chat Header */}
+        <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-4 overflow-hidden shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               {/* Menu toggle for mobile history drawer */}
               <button 
                 onClick={() => setIsSidebarOpen(true)}
@@ -946,13 +850,13 @@ ${compiledContext || 'No context data available.'}`;
               </button>
               
               <Bot className="w-5 h-5 text-purple-400 shrink-0" />
-              <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-theme-primary truncate">Strike Command</span>
+              <span className="text-sm font-black uppercase tracking-widest text-theme-primary truncate">Strike Command</span>
             </div>
 
             {currentActivity && (
-                <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center justify-center gap-2 animate-pulse min-w-0 basis-full sm:basis-auto order-last sm:order-none">
+                <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center gap-2 animate-pulse min-w-0">
                     <Loader2 className="w-3 h-3 text-purple-400 animate-spin shrink-0" />
-                    <span className="text-[11px] sm:text-xs font-bold text-purple-300 uppercase truncate">{currentActivity}</span>
+                    <span className="text-xs font-bold text-purple-300 uppercase truncate">{currentActivity}</span>
                 </div>
             )}
             
@@ -969,12 +873,11 @@ ${compiledContext || 'No context data available.'}`;
               <div className="px-2 py-1 bg-purple-900/30 border border-purple-500/50 rounded text-xs font-bold text-purple-300 uppercase">
                 {loading ? 'RUNNING' : 'ACTIVE'}
               </div>
-              <div
-                title={`Active model: ${lastModelUsed || selectedModel}`}
-                className="px-2 py-1 bg-emerald-900/30 border border-emerald-500/40 rounded text-xs font-bold text-emerald-300 uppercase"
-              >
-                {shortModelName(lastModelUsed || selectedModel)}
-              </div>
+              {lastModelUsed && (
+                <div className="hidden sm:block px-2 py-1 bg-emerald-900/30 border border-emerald-500/40 rounded text-xs font-bold text-emerald-300 uppercase">
+                  {lastModelUsed}
+                </div>
+              )}
               {/* Mobile and Desktop Accessible Clean/Clear Chat Button */}
               <button 
                 onClick={clearActiveSession}
@@ -994,7 +897,7 @@ ${compiledContext || 'No context data available.'}`;
             const el = e.currentTarget;
             stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
-          className="flex-1 p-3 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 font-mono text-[13px] sm:text-sm custom-scrollbar bg-black/10"
+          className="flex-1 p-6 overflow-y-auto space-y-6 font-mono text-sm custom-scrollbar bg-black/10"
         >
             {messages.length === 0 && (
                 <div className="text-center text-slate-600 mt-20 italic text-sm uppercase tracking-wider select-none">
@@ -1011,7 +914,7 @@ ${compiledContext || 'No context data available.'}`;
                 <div className="text-[10px] text-slate-600 uppercase px-2 font-bold select-none">{m.timestamp}</div>
                 <div className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''} w-full`}>
                     {m.role === 'ai' && <Bot className="w-5 h-5 text-purple-500 shrink-0 mt-1" />}
-                    <div className={`p-3 sm:p-4 rounded-2xl max-w-[92%] sm:max-w-[85%] break-words leading-relaxed ${
+                    <div className={`p-4 rounded-2xl max-w-[85%] break-words leading-relaxed ${
                       m.role === 'user' 
                         ? 'bg-purple-600/90 text-white shadow-[0_0_15px_rgba(168,85,247,0.2)] ml-auto border border-purple-500/30' 
                         : 'bg-white/5 text-slate-300 border border-white/10 shadow-[0_0_15px_rgba(0,0,0,0.15)] mr-auto'
@@ -1022,7 +925,7 @@ ${compiledContext || 'No context data available.'}`;
                           <span className="animate-pulse">Thinking...</span>
                         </div>
                       ) : m.role === 'ai' && (m.content.startsWith('Loading:') || m.content.startsWith('Initializing')) && i === messages.length - 1 ? (
-                        <div className="flex flex-col gap-2.5 min-w-0 w-full max-w-[280px] py-1">
+                        <div className="flex flex-col gap-2.5 min-w-[240px] py-1">
                           <div className="flex items-center justify-between text-xs text-purple-400 font-bold">
                             <span className="flex items-center gap-1.5">
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1049,7 +952,7 @@ ${compiledContext || 'No context data available.'}`;
                           </span>
                         </div>
                       ) : m.role === 'ai' ? (
-                        <div className="markdown-body text-[13px] sm:text-sm leading-relaxed">
+                        <div className="markdown-body text-sm leading-relaxed">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -1079,7 +982,7 @@ ${compiledContext || 'No context data available.'}`;
                             <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-1.5">
                               <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
                                 <Globe className="w-3.5 h-3.5" />
-                                <span>Web Search Sources (Tavily/Exa):</span>
+                                <span>Google Search Verified Sources:</span>
                               </div>
                               <div className="flex flex-wrap gap-1.5">
                                 {m.groundingSources.map((src, idx) => (
@@ -1164,7 +1067,7 @@ ${compiledContext || 'No context data available.'}`;
         </div>
 
         {/* On-device AI toolbar: target language, voice, form-image reader */}
-        <div className="px-3 sm:px-4 pt-3 flex items-center gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
+        <div className="px-4 pt-3 flex items-center gap-2 text-xs shrink-0">
           <select
             value={mt.langId}
             onChange={(e) => mt.setLangId(e.target.value as 'af' | 'zu' | 'st')}
@@ -1282,8 +1185,6 @@ ${compiledContext || 'No context data available.'}`;
                     <option value="groq-llama-70b" className="bg-[#0c0817]">Groq · Llama 3.3 70B (Versatile Racing AI)</option>
                     <option value="groq-llama-8b" className="bg-[#0c0817]">Groq · Llama 3.1 8B (Instant Speed ~100ms)</option>
                     <option value="groq-mixtral" className="bg-[#0c0817]">Groq · Mixtral 8x7B (MoE Analysis)</option>
-                    <option value="groq-oss-120b" className="bg-[#0c0817]">Groq · GPT-OSS 120B (Deep Reasoning & Tools)</option>
-                    <option value="groq-oss-20b" className="bg-[#0c0817]">Groq · GPT-OSS 20B (Instant Speed)</option>
                   </optgroup>
                   <optgroup label="🌐 Browser Local (WebGPU Private)" className="bg-[#0c0817]">
                     <option value="webllm-qwen-0.5b" className="bg-[#0c0817] text-xs" disabled={!webGpuSupported}>
@@ -1304,20 +1205,21 @@ ${compiledContext || 'No context data available.'}`;
                   </optgroup>
                 </select>
 
-                <button
-                  onClick={() => setSearchGrounding(v => !v)}
-                  aria-pressed={searchGrounding}
-                  aria-label="Toggle live web search"
-                  title={searchGrounding ? 'Live web search active (free-tier edge cascade: Tavily/Exa)' : 'Live web search disabled'}
-                  className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 text-xs font-bold ${
-                    searchGrounding
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
-                  }`}
-                >
-                  <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="inline">Search</span>
-                </button>
+                {(selectedModel === 'gemini-3.5-flash' || selectedModel === 'auto') && (
+                  <button
+                    onClick={() => setSearchGrounding(v => !v)}
+                    aria-pressed={searchGrounding}
+                    title={searchGrounding ? 'Google Search Grounding active: live web racing data enabled' : 'Google Search Grounding disabled'}
+                    className={`shrink-0 min-h-[48px] px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 text-xs font-bold ${
+                      searchGrounding
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'bg-white/5 border-white/10 text-theme-secondary hover:text-theme-primary'
+                    }`}
+                  >
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline">Search</span>
+                  </button>
+                )}
               </div>
               
             <div className="flex gap-2 flex-1 w-full min-w-0 items-start">

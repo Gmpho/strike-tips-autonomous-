@@ -11,7 +11,6 @@ interface RaceCardProps {
   idx?: number;
   onExecutePosition?: (event: RaceEvent) => void;
   onExecuteRunner?: (event: RaceEvent, runner: Runner) => void;
-  onSimulateRace?: (event: RaceEvent) => void;
 }
 
 type SortKey = 'name' | 'age' | 'draw' | 'starRating' | 'form' | 'edge' | 'odds' | 'daysSinceRun';
@@ -79,12 +78,7 @@ function InsightBanner({ text, kind }: { text: string; kind: 'timeform' | 'swarm
   );
 }
 
-export const RaceCard: React.FC<RaceCardProps> = React.memo(({ 
-  event, 
-  onExecutePosition, 
-  onExecuteRunner,
-  onSimulateRace 
-}) => {
+export const RaceCard: React.FC<RaceCardProps> = React.memo(({ event, onExecutePosition, onExecuteRunner }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<'value' | 'favourite' | 'outsider'>('value');
   const [sort, setSort] = useState<SortState | null>(null);
@@ -288,21 +282,8 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({
         <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
           {/* Header Controls for Expanded View: View switcher on small screens */}
           <div className="flex items-center justify-between gap-2 pb-1">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 text-[10px] text-theme-secondary font-black uppercase tracking-wider">
-                <span className="text-purple-400">{sortedRunners.length}</span> Runners
-              </div>
-              {onSimulateRace && (
-                <button
-                  type="button"
-                  onClick={() => onSimulateRace(event)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-300 border border-purple-500/30 transition-all cursor-pointer shadow-xs active:scale-95"
-                  title="Open in Race Simulator"
-                >
-                  <Zap className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400 fill-purple-600/20 dark:fill-purple-400/20" />
-                  <span>Simulate Race</span>
-                </button>
-              )}
+            <div className="flex items-center gap-1 text-[10px] text-theme-secondary font-black uppercase tracking-wider">
+              <span className="text-purple-400">{sortedRunners.length}</span> Runners
             </div>
 
             {/* Mobile View Toggle: Table vs Cards */}
@@ -585,32 +566,16 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({
             OFF_TIME: {event.t}{typeof event.distance_m === 'number' && event.distance_m > 0 ? ` · ${event.distance_m}M` : ''}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          {onSimulateRace && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSimulateRace(event);
-              }}
-              className="inline-flex items-center gap-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-300 border border-purple-500/30 text-[10px] sm:text-[11px] font-black px-3.5 sm:px-4 py-2.5 rounded-xl uppercase tracking-tight transition-all active:scale-95 cursor-pointer shadow-xs min-h-[38px]"
-              title="Open in Race Simulator"
-            >
-              <Zap className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 fill-purple-600/20 dark:fill-purple-400/20 shrink-0" />
-              Simulate Race
-            </button>
-          )}
-          <button
-            onClick={() => onExecutePosition?.(event)}
-            className="inline-flex items-center gap-1.5 bg-theme-primary text-theme-panel text-[10px] sm:text-[11px] font-black px-4 sm:px-5 py-2.5 rounded-xl uppercase tracking-tight
-            hover:bg-purple-500 hover:text-white hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] transition-all active:scale-95
-            disabled:opacity-40 disabled:cursor-not-allowed min-h-[38px]"
-            disabled={!onExecutePosition}
-          >
-            <CircleDot className="w-3.5 h-3.5 shrink-0" />
-            Execute Position
-          </button>
-        </div>
+        <button
+          onClick={() => onExecutePosition?.(event)}
+          className="inline-flex items-center gap-1.5 bg-theme-primary text-theme-panel text-[10px] sm:text-[11px] font-black px-4 sm:px-5 py-2.5 rounded-xl uppercase tracking-tight
+          hover:bg-purple-500 hover:text-white hover:shadow-[0_0_20px_rgba(168,85,247,0.3)] transition-all active:scale-95
+          disabled:opacity-40 disabled:cursor-not-allowed min-h-[38px]"
+          disabled={!onExecutePosition}
+        >
+          <CircleDot className="w-3.5 h-3.5 shrink-0" />
+          Execute Position
+        </button>
       </div>
     </motion.div>
   );

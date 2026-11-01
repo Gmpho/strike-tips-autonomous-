@@ -151,28 +151,8 @@ function aiServicesPlugin(): import('vite').Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd() + '/..', '');
-  // Server middleware (chat/podcast/tts/live/form services) reads
-  // process.env directly, but loadEnv() never populates it — bridge the
-  // server-side keys from the repo-root .env so `npm run dev` works
-  // without exporting vars first. Real env always wins.
-  for (const k of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'STRIKE_TIPS_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) {
-    if (!process.env[k] && env[k]) process.env[k] = env[k];
-  }
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('[dev] GEMINI_API_KEY missing — podcast/chat/tts/live endpoints will 500. Add it to the repo-root .env.');
-  }
   const key = env.STRIKE_TIPS_API_KEY || process.env.STRIKE_TIPS_API_KEY || '';
   const apiKeyHeader = key ? { 'X-API-KEY': key } : {};
-  // Backend selector: local dev must NOT burn prod (Modal GB-s + Groq).
-  // VITE_BACKEND=local (default) → docker strike-bot-new on :8000.
-  // VITE_BACKEND=prod → live Modal backend (explicit opt-in only).
-  const backendMode = (env.VITE_BACKEND || process.env.VITE_BACKEND || 'local').toLowerCase();
-  const modalTarget = backendMode === 'prod'
-    ? 'https://gmpho--strike-tips-racing-serve-api.modal.run'
-    : 'http://localhost:8000';
-  if (backendMode !== 'prod') {
-    console.log(`[vite] backend mode=local → ${modalTarget} (set VITE_BACKEND=prod for live backend)`);
-  }
 
   return {
     envDir: '..',
@@ -271,25 +251,25 @@ export default defineConfig(({ mode }) => {
           headers: apiKeyHeader,
         },
         '/api': {
-          target: modalTarget,
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/docs': {
-          target: modalTarget,
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/openapi.json': {
-          target: modalTarget,
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,
         },
         '/v1': {
-          target: modalTarget,
+          target: 'https://gmpho--strike-tips-racing-serve-api.modal.run',
           changeOrigin: true,
           secure: true,
           headers: apiKeyHeader,

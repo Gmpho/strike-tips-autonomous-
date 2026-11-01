@@ -3,12 +3,6 @@ import { useEffect, useState, Suspense } from 'react';
 import { useHUD } from './hooks/useHUD';
 import { useTelegram } from './hooks/useTelegram';
 import { usePWA } from './hooks/usePWA';
-import { useSupabaseSession } from './hooks/useSupabaseSession';
-import { usePromoActions } from './hooks/usePromoActions';
-import { eligibleCampaigns } from './lib/campaigns';
-import { PromoCarousel } from './components/promos/PromoCarousel';
-import { LandingPage } from './components/landing/LandingPage';
-import { GuestBanner } from './components/landing/GuestBanner';
 import { UpdateToast } from './components/UpdateToast';
 import { apiFetch } from './lib/api-fetch';
 import type { RaceEvent, Runner } from './types';
@@ -37,7 +31,6 @@ const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').
 const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
 const TelemetryView = React.lazy(() => import('./components/sidebar/TelemetryView').then(m => ({ default: m.TelemetryView })));
 const AIChat = React.lazy(() => import('./components/AIChat').then(m => ({ default: m.AIChat })));
-const RaceSimulatorView = React.lazy(() => import('./components/sidebar/RaceSimulatorView').then(m => ({ default: m.RaceSimulatorView })));
 const SwarmPodcastView = React.lazy(() => import('./components/SwarmPodcastView').then(m => ({ default: m.SwarmPodcastView })));
 const ExoticsView = React.lazy(() => import('./components/ExoticsView').then(m => ({ default: m.ExoticsView })));
 const HowToBetPage = React.lazy(() => import('./components/pages/HowToBetPage').then(m => ({ default: m.HowToBetPage })));
@@ -57,12 +50,9 @@ const ViewFallback = () => (
 );
 
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
-// Logged-out visitors may read support + legal pages (with a sign-in
-// banner); every other view gates to the landing page.
-const PUBLIC_VIEWS = [...LEGAL_VIEWS];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
-  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results', 'simulator',
+  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results',
   ...LEGAL_VIEWS
 ];
 
@@ -115,13 +105,6 @@ export const App: React.FC = () => {
   const state = useHUD();
   useTelegram();
   const { hasUpdate, updateSW } = usePWA();
-  // Google-auth gate (Oct-2026): logged-out users see the landing page.
-  // Inactive when Supabase keys are absent, so existing deploys keep working.
-  const { configured: authOn, loading: authLoading, session } = useSupabaseSession();
-  // NOTE: every hook must stay above the logged-out early return below —
-  // hooks after a conditional return crash React (#300) for logged-out users.
-  const promoAction = usePromoActions(navigate);
-  const { isInstallable, isInstalled } = usePWA();
 
   // Load backend configuration at startup to sync sound prompts state to localStorage
   useEffect(() => {
@@ -155,13 +138,8 @@ export const App: React.FC = () => {
     setIsMobileMenuOpen(false);
   };
 
-  if (authOn && !authLoading && !session && !PUBLIC_VIEWS.includes(activeView)) {
-    return <LandingPage />;
-  }
-  const isGuest = authOn && !authLoading && !session;
-
   const renderView = () => {
-    const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll?.balance != null && state.bankroll.balance > 0);
+    const hasCachedData = Object.keys(state.events).length > 0 || (state.bankroll && state.bankroll.balance > 0);
 
     if (!hasCachedData && activeView === 'dashboard') {
       return (
@@ -190,15 +168,6 @@ export const App: React.FC = () => {
       case 'dashboard':
         return (
           <div className="flex flex-col gap-4 w-full">
-            <PromoCarousel
-              campaigns={eligibleCampaigns({
-                loggedIn: !!session,
-                telegramLinked: (() => { try { const v = localStorage.getItem('strike_telegram_linked'); return v === '1' ? true : v === '0' ? false : null; } catch { return null; } })(),
-                pwa: isInstalled ? 'installed' : isInstallable ? 'installable' : 'browser',
-                view: 'dashboard',
-              })}
-              onAction={promoAction}
-            />
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-4 md:gap-6 w-full">
               {visibleEvents.map((event, idx) => (
                 <RaceCard
@@ -214,10 +183,6 @@ export const App: React.FC = () => {
                     setPendingRunner(runner);
                     setPendingRaceEvent(ev);
                     navigate('chat');
-                  }}
-                  onSimulateRace={(ev) => {
-                    setPendingRaceEvent(ev);
-                    navigate('simulator');
                   }}
                 />
               ))}
@@ -265,12 +230,6 @@ export const App: React.FC = () => {
         return <Suspense key="predictor-view" fallback={<ViewFallback />}><PredictorView /></Suspense>;
       case 'results':
         return <Suspense key="results-view" fallback={<ViewFallback />}><ResultsView /></Suspense>;
-      case 'simulator':
-        return (
-          <Suspense key="simulator-view" fallback={<ViewFallback />}>
-            <RaceSimulatorView initialRaceEvent={pendingRaceEvent ?? undefined} onNavigate={navigate} />
-          </Suspense>
-        );
       case 'privacy':
         return <Suspense key="privacy-view" fallback={<ViewFallback />}><PrivacyPage /></Suspense>;
       case 'terms':
@@ -372,7 +331,6 @@ export const App: React.FC = () => {
           {/* Main Content Area: Responsive padding with safe bottom space for mobile navigation dock */}
           <div className="px-3 sm:px-6 md:px-8 lg:px-12 py-4 sm:py-6 md:py-8 pb-24 md:pb-8 flex-1 flex flex-col min-h-0 w-full max-w-full">
             <div className="w-full flex-1 flex flex-col min-h-0 max-w-7xl mx-auto">
-              {isGuest && <GuestBanner />}
               <AnimatePresence>
                 <motion.div
                   key={activeView}

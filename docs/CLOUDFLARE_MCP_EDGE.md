@@ -6,14 +6,14 @@
 
 ## Overview
 
-The Cloudflare MCP Edge layer sits between the Pages HUD frontend and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
+The Cloudflare MCP Edge layer sits between the Vercel HUD frontend and the Modal backend, providing **always-free** compute for compute-light operations (OKF knowledge retrieval, Monte Carlo simulations, Kelly calculations, odds caching) while routing heavier AI/analysis workloads to Modal.
 
 ### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Pages HUD (Vite + React)                      │
-│                  https://strike-tips-hud.pages.dev                    │
+│                        Vercel HUD (Vite + React)                     │
+│                  https://strike-tips-hud.vercel.app                   │
 │                          middleware.ts                                │
 │              Routes /api/* /v1/* /mcp based on path                   │
 └─────────────────┬───────────────────────────────────┬────────────────┘
@@ -73,7 +73,7 @@ Modal handles all heavyweight compute: AI analysis, Telegram bot logic, dream en
 
 ### What It Is
 
-The **OKF (On-Device Knowledge Framework)** bundle is a set of 15 curated markdown files covering South African horse racing knowledge (Oct-2026: +3 exotics textbook files, +punter-rules on all tracks). Each file has YAML frontmatter (title, description, tags, timestamp) and markdown body content.
+The **OKF (On-Device Knowledge Framework)** bundle is a set of 12 curated markdown files covering South African horse racing knowledge. Each file has YAML frontmatter (title, description, tags, timestamp) and markdown body content.
 
 ### File Structure
 
@@ -84,11 +84,8 @@ knowledge/racing/
 │   └── going.md                          # Going & track conditions explained
 ├── strategies/
 │   ├── kelly-criterion.md                # Optimal bet sizing math
-│   ├── value-betting.md                  # Value betting & merit ratings
-│   ├── exotics-pools.md                  # Full tote shelf: JP/P6/PA/BI/Pick3/Double + Exacta/Trifecta/Quartet
-│   ├── exotics-construction.md           # Ticket doctrine: banker/saver, widen-the-murk
-│   └── exotics-case-friday-night.md      # Case study: Phutulicious (coverage vs insight)
-├── tracks/
+│   └── value-betting.md                  # Value betting & merit ratings
+└── tracks/
     ├── index.md                          # Track overview index
     ├── durbanville.md                    # Durbanville (1922, Cape Town)
     ├── fairview.md                       # Fairview (1977, Gqeberha)
@@ -98,10 +95,6 @@ knowledge/racing/
     ├── turffontein.md                    # Turffontein (1887, Johannesburg)
     └── vaal.md                           # Vaal (1946, Gauteng)
 ```
-
-> Flamingo Park (Kimberley sand) is deliberately EXCLUDED — closed July 2020.
-> Query it via MCP: `search_racing_knowledge` (ranked), `get_racing_knowledge`
-> (full entry by path), `list_racing_knowledge` (browse).
 
 ### Build Process
 
@@ -211,7 +204,7 @@ The Worker registers 16 MCP tools accessible at `/mcp` via JSON-RPC 2.0:
 
 | Tool | Description |
 |------|-------------|
-| `web_search_racing` | Web search (free-tier cascade: Tavily → Exa → Brave) |
+| `web_search_racing` | Web search (requires `SEARCH_API_KEY` secret) |
 
 MCP protocol requires:
 - `POST` to `/mcp`
@@ -271,24 +264,25 @@ npm run deploy
 # Set secrets
 npx wrangler secret put BACKEND_API_URL
 npx wrangler secret put BACKEND_API_KEY
-npx wrangler secret put SEARCH_API_KEY   # optional legacy (Brave, paid)
-npx wrangler secret put TAVILY_API_KEY    # free tier 1000/mo — edge search primary
-npx wrangler secret put EXA_API_KEY       # free tier ~1400/mo — semantic fallback
+npx wrangler secret put SEARCH_API_KEY   # optional, for web search
 ```
 
-### Pages HUD
+### Vercel HUD
 
 ```bash
 cd strike-tips-hud
 
-# Production build
-npm run build
+# Preview deploy
+vercel
 
-# Deploy to Pages (production)
-npx wrangler pages deploy dist --project-name strike-tips-hud
+# Production deploy
+vercel --prod
+
+# Force fresh build (no cache)
+vercel deploy --prod -y --force
 ```
 
-Local builds read `strike-tips-hud/.env` (`VITE_*` baked at build time).
+A fresh build requires `--force` flag to skip Vercel's build cache.
 
 ---
 
@@ -300,9 +294,7 @@ Local builds read `strike-tips-hud/.env` (`VITE_*` baked at build time).
 |--------|----------|-------------|
 | `BACKEND_API_URL` | Yes | Modal backend URL |
 | `BACKEND_API_KEY` | Yes | Shared API key for Modal auth |
-| `SEARCH_API_KEY` | No | Brave Search API key for `web_search_racing` (legacy last resort; paid) |
-| `TAVILY_API_KEY` | No | Tavily key — edge search primary (free 1000/mo, KV-metered) |
-| `EXA_API_KEY` | No | Exa key — semantic fallback (free ~1400/mo, KV-metered) |
+| `SEARCH_API_KEY` | No | Brave Search API key for `web_search_racing` |
 
 ### Vercel HUD
 

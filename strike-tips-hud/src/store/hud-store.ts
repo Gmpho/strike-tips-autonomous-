@@ -16,9 +16,6 @@ class HUDStore {
       totalExposure: 0
     },
     betHistory: [],
-    betHistoryTotal: 0,
-    betHistoryFull: false,
-    betHistoryReady: false,
     betStats: {
       totalBets: 0,
       wins: 0,
@@ -55,7 +52,6 @@ class HUDStore {
     predictions: [],
     results: [],
     news: [],
-    lastSyncTs: 0,
     telemetry: [],
     lastUpdate: Date.now()
   };

@@ -2,8 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, Minus, Eye, MapPin, Clock, BarChart2, Flame, Star, Globe, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
-import { useHorseMeetingIndex } from '../../hooks/useHorseMeetingIndex';
-import { CourseChip } from '../CourseChip';
 import type { MarketMover, RaceEvent, Runner } from '../../types';
 
 import { getFullCourseName } from '../../lib/course-names';
@@ -192,11 +190,8 @@ function oddsChangeColor(movement: string, firstShow?: string, currentOdds?: str
 }
 
 // ─── Single Mover Card ────────────────────────────────────────────────────────
-function MoverCard({ mover, index, runner, meetingCourse, meetingTime }: {
-  mover: MarketMover; index: number; runner?: Runner; meetingCourse?: string; meetingTime?: string;
-}) {
-  const course = mover.course || meetingCourse || '';
-  const fullCourse = course ? getFullCourseName(course) : '';
+function MoverCard({ mover, index, runner }: { mover: MarketMover; index: number; runner?: Runner }) {
+  const fullCourse = getFullCourseName(mover.course);
   const { direction } = parseMovement(mover.movement, mover.first_show, mover.current_odds);
   const [showFull, setShowFull] = useState(false);
 
@@ -241,23 +236,12 @@ function MoverCard({ mover, index, runner, meetingCourse, meetingTime }: {
         <MovementBadge movement={mover.movement} firstShow={mover.first_show} currentOdds={mover.current_odds} />
       </div>
 
-      {/* Venue — ATR course, else live-snapshot cross-ref, else honest unverified */}
+      {/* Venue */}
       <div className="flex items-start gap-1.5 mb-3">
-        {fullCourse ? (
-          <>
-            <MapPin className="w-3 h-3 text-theme-secondary shrink-0 mt-0.5" />
-            <div className="flex flex-col gap-1">
-              <p className="text-[11px] font-semibold text-theme-secondary leading-snug">
-                {fullCourse}
-              </p>
-              <CourseChip course={course} region={mover.region} time={mover.time || meetingTime} intel={false} />
-            </div>
-          </>
-        ) : (
-          <p className="text-[10px] font-bold text-theme-secondary/70 uppercase tracking-wider">
-            Course unverified — confirm on ATR
-          </p>
-        )}
+        <MapPin className="w-3 h-3 text-theme-secondary shrink-0 mt-0.5" />
+        <p className="text-[11px] font-semibold text-theme-secondary leading-snug">
+          {fullCourse}
+        </p>
       </div>
 
       {/* Insight strip: Betway timeForm (UK/IRE) or Swarm insight (all other regions) */}
@@ -368,9 +352,7 @@ function MarketLegend() {
 export const MarketMoversView: React.FC = () => {
   const store = useHUD();
   const marketMovers = Array.isArray(store.marketMovers) ? store.marketMovers : [];
-  const meetingIndex = useHorseMeetingIndex(store.events);
   const runnerIndex = useMemo(() => buildRunnerIndex(store.events), [store.events]);
-  const meetingFor = (m: MarketMover) => meetingIndex.get((m.horse || '').trim().toLowerCase());
   const runnerFor = (m: MarketMover) => runnerIndex.get((m.horse || '').trim().toLowerCase());
 
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -501,7 +483,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {shortened.slice(0, limitShortened).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={i} runner={runnerFor(mover)} meetingCourse={meetingFor(mover)?.course} meetingTime={meetingFor(mover)?.time} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={i} runner={runnerFor(mover)} />
                 ))}
                 {shortened.length > limitShortened && (
                   <button
@@ -530,7 +512,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {drifted.slice(0, limitDrifted).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + i} runner={runnerFor(mover)} meetingCourse={meetingFor(mover)?.course} meetingTime={meetingFor(mover)?.time} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + i} runner={runnerFor(mover)} />
                 ))}
                 {drifted.length > limitDrifted && (
                   <button
@@ -559,7 +541,7 @@ export const MarketMoversView: React.FC = () => {
               </div>
               <div className="space-y-2.5">
                 {stable.slice(0, limitStable).map((mover, i) => (
-                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + drifted.length + i} runner={runnerFor(mover)} meetingCourse={meetingFor(mover)?.course} meetingTime={meetingFor(mover)?.time} />
+                  <MoverCard key={`${mover.horse}-${mover.course}-${i}`} mover={mover} index={shortened.length + drifted.length + i} runner={runnerFor(mover)} />
                 ))}
                 {stable.length > limitStable && (
                   <button

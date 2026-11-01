@@ -3,15 +3,6 @@
   Cross-Origin-Embedder-Policy: credentialless
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Report-Only CSP (harden-pages-functions 3.1): violation telemetry is via
-  browser devtools during the observation period; flip to enforcing
-  (drop the -Report-Only suffix) only after a violation-free window.
-  style-src keeps 'unsafe-inline' — required by the Three.js/Framer stack.
-  Turnstile needs script+frame from challenges.cloudflare.com; connect-src
-  covers the LLM hosts the edge relays to and the two backend origins used
-  by direct-call utilities.
-*/
-Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.groq.com https://generativelanguage.googleapis.com https://gmpho--strike-tips-racing-serve-api.modal.run https://striketips-mcp.gmphorg379.workers.dev; frame-src https://challenges.cloudflare.com; object-src 'none'
 
 /sw.js
   Cache-Control: no-cache

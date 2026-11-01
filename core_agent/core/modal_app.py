@@ -27,7 +27,7 @@ app = modal.App("strike-tips-racing")
 
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
 
-secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key"), modal.Secret.from_name("strike-tips-search"), modal.Secret.from_name("supabase-strike-tips")]
+secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key")]
 
 
 # ── ASGI: FastAPI + Telegram webhook ──────────────────────────────────
@@ -39,16 +39,9 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
          # Explicit (beats secrets): TWA must open the live Pages HUD, never the paused Vercel deploy.
-         "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev",
-         # Oct-2026: the in-app scheduler's europe_scan_job fires at 12:30 SAST
-         # but never stamps .europe_scan_date, so the odds-monitor heartbeat
-         # (~12:33, which does stamp) always ran a second Europe scan the same
-         # day — twin Groq stampedes + two digests, and the second landed on an
-         # exhausted provider quota (only the first meeting analysed). The
-         # heartbeat is the documented owner; opt this side out as docker does.
-         "SCHEDULER_DISABLE": "europe_scan"},
+         "TELEGRAM_TWA_URL": "https://strike-tips-hud.pages.dev"},
     scaledown_window=60,
-    startup_timeout=300,
+    startup_timeout=120,
     min_containers=0,
     max_containers=3,
 )
@@ -79,15 +72,6 @@ def serve_api():
         brain.initialize()
         bot = telegram.Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
 
-        # Proof-of-life (Oct-2026): any inbound message proves the chat
-        # receives, so release it from broadcast quarantine immediately.
-        # A genuinely blocked chat re-quarantines on the next failed send.
-        try:
-            from core_agent.skills.notifications.telegram_bot import clear_quarantine
-            clear_quarantine(chat_id)
-        except Exception:
-            pass
-
         # ── Access control ───────────────────────────────────────────
         from core_agent.config.settings import NOTIFICATIONS
         from core_agent.core.access_control import is_authorized, authorize
@@ -97,49 +81,6 @@ def serve_api():
 
         if not is_authorized(chat_id, owner_id):
             try:
-                # Passcode-first (Oct-2026): /start ST-XXXXX redeems INSIDE the
-                # gate — strangers are unauthorized by definition, so a redeem
-                # placed after the gate is unreachable (the original bug:
-                # passcode only worked post-PIN). PIN stays as fallback below.
-                _parts = text.split()
-                if _parts and _parts[0].lower() == "/start" and len(_parts) > 1 \
-                        and _parts[1].upper().startswith("ST-"):
-                    from core_agent.core.telegram_gate import (
-                        parse_start_code,
-                        redeem_and_authorize,
-                    )
-                    _code = parse_start_code(text)
-                    _username = (msg.get("from", {}) or {}).get("username")
-                    _linked = redeem_and_authorize(_code, int(chat_id), _username) \
-                        if _code else False
-                    if _linked:
-                        try:
-                            _ac.authorize(int(chat_id))
-                        except Exception:
-                            pass
-                        try:
-                            _cq(chat_id)
-                        except Exception:
-                            pass
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=(f"✅ *Telegram linked!*\n\nWelcome — this chat now receives alerts for your account"
-                                  f"{f' (@{_username})' if _username else ''}.\nAsk me anything, or try `/help`."),
-                            parse_mode="Markdown",
-                        )
-                    else:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=(
-                                "⚠️ *That code didn't work.*\n\n"
-                                "Codes are single-use and expire after 15 minutes.\n\n"
-                                "1️⃣ Open the HUD and sign in with Google\n"
-                                "2️⃣ Settings → Telegram Alerts → Refresh Code\n"
-                                "3️⃣ Send the fresh `/start ST-XXXXX` here"
-                            ),
-                            parse_mode="Markdown",
-                        )
-                    return {"ok": True}
                 if text.startswith("/auth"):
                     from core_agent.core.access_control import pin_locked, record_pin_attempt
 
@@ -172,11 +113,8 @@ def serve_api():
                         chat_id=chat_id,
                         text=(
                             "🔒 *Restricted Access*\n\n"
-                            "This bot is linked to Strike Tips accounts.\n\n"
-                            "1️⃣ Open the HUD and sign in with Google\n"
-                            "2️⃣ Go to Settings → Telegram Alerts\n"
-                            "3️⃣ Generate a passcode and send `/start ST-XXXXX` here\n\n"
-                            f"Or send `/auth <PIN>` if you have one."
+                            "This bot requires authorization. "
+                            f"Send `/auth <PIN>` to gain access."
                         ),
                         parse_mode="Markdown",
                     )
@@ -215,46 +153,6 @@ def serve_api():
 
                 if cmd == "/start":
                     from core_agent.config.settings import NOTIFICATIONS
-                    # Passcode link (CryptoPulse-style): /start ST-12345 binds
-                    # this chat to the HUD account that minted the code.
-                    if len(parts) > 1 and parts[1].upper().startswith("ST-"):
-                        try:
-                            from core_agent.db.repository import LedgerRepository
-                            from core_agent.db.client import get_service_client
-                            from core_agent.core import access_control as _ac
-                            repo = LedgerRepository(get_service_client())
-                            username = (msg.get("from", {}) or {}).get("username")
-                            linked = repo.redeem_link_code(parts[1], int(chat_id), username)
-                            if linked:
-                                try:
-                                    _ac.authorize(int(chat_id))
-                                except Exception:
-                                    pass
-                                try:
-                                    from core_agent.skills.notifications.telegram_bot import clear_quarantine as _cq
-                                    _cq(chat_id)
-                                except Exception:
-                                    pass
-                                await bot.send_message(
-                                    chat_id=chat_id,
-                                    text=(f"✅ *Telegram linked!*\n\nThis chat now receives alerts for your account"
-                                          f"{f' (@{username})' if username else ''}. Open Settings → Telegram Alerts to verify."),
-                                    parse_mode="Markdown",
-                                )
-                            else:
-                                await bot.send_message(
-                                    chat_id=chat_id,
-                                    text="⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code.",
-                                    parse_mode="Markdown",
-                                )
-                        except Exception as e:
-                            logger.warning("link redeem failed: %r", e)
-                            await bot.send_message(
-                                chat_id=chat_id,
-                                text="⚠️ *Linking is unavailable right now.* Please try again in a minute.",
-                                parse_mode="Markdown",
-                            )
-                        return {"ok": True}
                     welcome = (
                         "🏇 *Strike Tips Agent*\n\n"
                         "I'm your AI Racing Data Analyst. Just chat with me or use commands:\n\n"
@@ -262,8 +160,7 @@ def serve_api():
                         "/scan - Daily race scan\n"
                         "/status - Quick balance check\n"
                         "/chart - Performance chart\n"
-                        "/help - Show all commands\n\n"
-                        "_Link this chat in HUD Settings → Telegram Alerts for personal alerts._"
+                        "/help - Show all commands"
                     )
                     kb = [[InlineKeyboardButton("🚀 Open Intelligence HUD", web_app={"url": NOTIFICATIONS.twa_url})]]
                     await bot.send_message(chat_id=chat_id, text=welcome, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
@@ -275,7 +172,6 @@ def serve_api():
                         "🧠 *Available Commands*\n\n"
                         "/auth <PIN> - Unlock bot access\n"
                         "/scan - Start today's full racing scan\n"
-                        "/scan europe - Scan the Europe wave (UK/IRE)\n"
                         "/status - Get current bankroll & ROI stats\n"
                         "/chart - Show 15-day performance chart\n"
                         "/clear - Reset conversation history\n\n"
@@ -324,17 +220,6 @@ def serve_api():
                     if not brain.strike:
                         await bot.send_message(chat_id=chat_id, text="❌ System not initialized")
                         return {"ok": True}
-                    # `/scan europe` runs the Europe wave; plain `/scan`
-                    # runs the SA daily scan (Oct-2026: europe arg was
-                    # silently ignored and always scanned SA).
-                    _argtext = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
-                    if _argtext and any(
-                        w in _argtext for w in ("europe", "europe", "uk", "ire", "eu")
-                    ):
-                        await bot.send_message(chat_id=chat_id, text="🔄 *Starting Europe (UK/IRE) Scan on Modal...*\n_You will receive the digest when it completes._", parse_mode="Markdown")
-                        # Spawn on a dedicated Modal container (survives webhook return)
-                        europe_scan.spawn()
-                        return {"ok": True}
                     await bot.send_message(chat_id=chat_id, text="🔄 *Starting Daily Scan on Modal...*\n_You will receive progress updates as each track completes._", parse_mode="Markdown")
                     # Spawn on a dedicated Modal container (survives webhook return)
                     run_scan.spawn(chat_id)
@@ -346,22 +231,6 @@ def serve_api():
 
             # ── AI pipeline (non-command): bus-based chat ─────────
             from core_agent.bus.events import InboundMessage, OutboundMessage
-            from core_agent.agent.telegram_format import (
-                markdown_to_telegram_html,
-                markdown_table_to_pre,
-                format_race_card_for_telegram,
-                split_for_telegram,
-            )
-
-            async def _send_typing_loop(b, c_id):
-                try:
-                    while True:
-                        await b.send_chat_action(chat_id=c_id, action="typing")
-                        await asyncio.sleep(4.0)
-                except (asyncio.CancelledError, Exception):
-                    pass
-
-            typing_task = asyncio.create_task(_send_typing_loop(bot, chat_id))
 
             inbound = InboundMessage(
                 session_key=f"tg:{chat_id}",
@@ -385,25 +254,15 @@ def serve_api():
             except asyncio.TimeoutError:
                 reply = "⏳ I'm still thinking. Please try a simpler question or check back later."
             finally:
-                typing_task.cancel()
                 bus.unsubscribe(sub)
 
             reply = _clean(reply)
-
-            async def _send(raw_text: str) -> None:
-                """Send with Telegram HTML mode, formatting race cards and falling back to plain text."""
-                formatted_text = format_race_card_for_telegram(markdown_table_to_pre(raw_text))
-                chunks = split_for_telegram(formatted_text, max_length=3800)
-                for chunk in chunks:
-                    try:
-                        await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-                    except Exception as parse_err:
-                        if "parse" in str(parse_err).lower() or "entit" in str(parse_err).lower():
-                            await bot.send_message(chat_id=chat_id, text=raw_text[:4000])
-                        else:
-                            raise
-
-            await _send(reply)
+            MAX_LENGTH = 4000
+            if len(reply) > MAX_LENGTH:
+                for i in range(0, len(reply), MAX_LENGTH):
+                    await bot.send_message(chat_id=chat_id, text=reply[i:i+MAX_LENGTH], parse_mode="Markdown")
+            else:
+                await bot.send_message(chat_id=chat_id, text=reply, parse_mode="Markdown")
 
         except Exception as exc:
             logger.error("Webhook error: %s", exc, exc_info=True)
@@ -413,32 +272,23 @@ def serve_api():
                 pass
         return {"ok": True}
 
-    # ── Auto-register webhook on boot (background thread — the setWebhook
-    # round-trip must never sit in the container startup path; Sep-2026
-    # crash-loop postmortem: boot exceeded startup_timeout and Modal killed
-    # every fresh container before it served a single request).
+    # ── Auto-register webhook on boot ────────────────────────────────
     import os
-    import threading
-
-    def _register_webhook_bg() -> None:
-        import httpx
-
-        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        try:
-            r = httpx.post(
-                f"https://api.telegram.org/bot{token}/setWebhook",
-                json={"url": webhook_url, "allowed_updates": ["message"]},
-                timeout=10,
-            )
-            if r.json().get("ok"):
-                logger.info("Telegram webhook auto-registered → %s", webhook_url)
-            else:
-                logger.error("Webhook auto-registration failed: %s", r.json())
-        except Exception as exc:
-            logger.error("Webhook auto-registration error: %s", exc)
-
+    import httpx
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     webhook_url = "https://gmpho--strike-tips-racing-serve-api.modal.run/telegram-webhook"
-    threading.Thread(target=_register_webhook_bg, daemon=True).start()
+    try:
+        r = httpx.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url, "allowed_updates": ["message"]},
+            timeout=10,
+        )
+        if r.json().get("ok"):
+            logger.info("Telegram webhook auto-registered → %s", webhook_url)
+        else:
+            logger.error("Webhook auto-registration failed: %s", r.json())
+    except Exception as exc:
+        logger.error("Webhook auto-registration error: %s", exc)
 
     return fastapi_app
 
@@ -515,65 +365,6 @@ def value_scan():
     logger.info("Scheduled value scan starting...")
     result = subprocess.run(
         ["python3", "core_agent/core/strike_tips.py", "scan"],
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
-    if result.stderr:
-        print(f"Errors: {result.stderr}")
-    return {"status": "complete"}
-
-
-# ── Europe scan (Oct-2026 international work) ──────────────────────────
-# SCHEDULE OFF: free-tier quota counts stopped apps too (verified Oct-2026:
-# still blocked after June apps aged out). Docker scheduler owns 12:30;
-# europe_scan stays manual-trigger on Modal. Restore the line below if the
-# quota ever frees (support request or plan bump):
-#     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
-# ── Ledger reconcile (manual trigger, Oct-2026 hardening fix 5) ───────
-# No schedule (free-tier quota): run via
-#   modal run core_agent/core/modal_app.py::reconcile_ledger
-# RECONCILE_USER_ID must be set (Modal secret env or function env).
-@app.function(
-    image=image,
-    secrets=secrets,
-    volumes={"/app/data": data_volume},
-    memory=512,
-    timeout=300,
-    max_containers=1,
-)
-def reconcile_ledger():
-    """Compare JSON vs Postgres ledger; Telegram alert on drift."""
-    import os as _os
-
-    user_id = _os.getenv("RECONCILE_USER_ID", "")
-    if not user_id:
-        print("[RECONCILE] RECONCILE_USER_ID not set — nothing to compare")
-        return {"status": "skipped", "reason": "no RECONCILE_USER_ID"}
-    from core_agent.db.compare import compare_ledger
-
-    result = compare_ledger(user_id, "/app/data")
-    print(f"[RECONCILE] match={result['match']} notes={result['notes']}")
-    return {"status": "complete", **result}
-# still blocked after June apps aged out). Docker scheduler owns 12:30;
-# europe_scan stays manual-trigger on Modal. Restore the line below if the
-# quota ever frees (support request or plan bump):
-#     schedule=modal.Cron("30 12 * * *", timezone="Africa/Johannesburg"),
-@app.function(
-    image=image,
-    secrets=secrets,
-    volumes={"/app/data": data_volume},
-    memory=1024,
-    timeout=1800,
-    max_containers=1,
-)
-def europe_scan():
-    """Europe wave — runs at 12:30 SAST for UK/IRE afternoon cards."""
-    import subprocess
-
-    logger.info("Scheduled Europe scan starting...")
-    result = subprocess.run(
-        ["python3", "core_agent/core/strike_tips.py", "scan", "--region", "UK,IRE"],
         capture_output=True,
         text=True,
     )
@@ -697,173 +488,12 @@ async def run_scan(chat_id: Optional[int] = None):
 )
 async def run_odds_monitor():
     """Scheduled odds sync — one cycle every 5 min (05:00-23:00 SAST effective)."""
-    # Cost guard (Oct-2026): no SA racing runs 23:00-05:00 SAST, so night
-    # cycles are pure credit burn (container start + full init for zero
-    # meetings). Early exit before touching the monitor. Saves ~96 runs/day.
-    try:
-        from core_agent.core.racing_hours import in_quiet_hours, sast_hour
-        if in_quiet_hours(sast_hour()):
-            logger.info("Odds monitor quiet-hours skip")
-            return
-    except Exception as _e:
-        logger.debug("quiet-hours check skipped: %r", _e)
-    # Meeting-aware skip (Oct-2026 cost work): dark days have no SA card,
-    # so a full monitor cycle is pure burn. One cheap volume read decides.
-    # Fail-OPEN: any hiccup reading the snapshot runs the cycle anyway —
-    # a missed meeting costs more than a wasted run.
-    try:
-        from core_agent.core.snapshot_cache import get_snapshot as _get_snap
-        from core_agent.core.racing_hours import has_meetings_today as _has_meet
-        if not _has_meet(_get_snap()):
-            logger.info("Odds monitor dark-day skip (no meetings in snapshot)")
-            return
-    except Exception as _e:
-        logger.debug("meeting check failed, running anyway: %r", _e)
-    # Europe wave: docker scheduler owns the 12:30 firing
-    # (scheduler.europe_scan_job). A Modal piggyback here would double-digest
-    # — separate volumes mean no shared once-per-day mutex. europe_scan stays
-    # manual-trigger on Modal until the cron slot frees.
     from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
 
     monitor = AdaptiveOddsMonitor()
     await monitor.initialize()
     await monitor.run_single_cycle()
     logger.info("Odds monitor single cycle complete")
-    # Piggyback keep-warm: ping serve_api so its container never goes fully
-    # cold (Sep-2026: 2.5-min cold starts timed out every Pages proxy call
-    # at ~35s). Fire-and-forget — must never fail the monitor cycle. The
-    # standalone keep_warm() below stays for manual triggers (5-cron limit).
-    try:
-        import httpx as _httpx
-
-        _warm = _httpx.get(
-            "https://gmpho--strike-tips-racing-serve-api.modal.run/api/health",
-            timeout=8,
-        )
-        logger.debug("serve_api warm ping: %s", getattr(_warm, "status_code", "?"))
-    except Exception as _warm_err:
-        logger.debug("serve_api warm ping skipped: %s", _warm_err)
-    # Piggyback intelligence passes: heartbeat dreams + swarm backfill/news
-    # only run as infinite loops (docker) — on Modal cron they never execute,
-    # so telemetry/news/dreams go silent when docker is off (Sep-2026: 8h
-    # gap). Every 2nd cycle (~10 min), time-boxed so a hung provider call
-    # can never blow the 900s cron budget. Volume-backed counter: cron
-    # containers are stateless.
-    try:
-        _ctr_path = "/app/data/.piggyback_counter"
-        try:
-            with open(_ctr_path) as _f:
-                _ctr = int((_f.read() or "0").strip() or 0)
-        except Exception:
-            _ctr = 0
-        try:
-            with open(_ctr_path, "w") as _f:
-                _f.write(str(_ctr + 1))
-        except Exception:
-            pass
-        if _ctr % 2 == 1:
-            import asyncio as _asyncio
-
-            async def _piggyback() -> None:
-                try:
-                    from core_agent.core.heartbeat import _run_heartbeat_tick
-                    from core_agent.skills.memory.chroma_memory import RacingMemory
-                    await _asyncio.wait_for(
-                        _run_heartbeat_tick(RacingMemory()), timeout=180
-                    )
-                except Exception as _e:
-                    logger.debug("piggyback heartbeat skipped: %s", _e)
-                try:
-                    from core_agent.skills.swarm_researcher import (
-                        backfill_form_insights,
-                        poll_news,
-                    )
-                    from core_agent.core.snapshot_cache import get_snapshot
-
-                    _snap = get_snapshot() or {}
-                    if _snap.get("events"):
-                        await _asyncio.wait_for(
-                            backfill_form_insights(_snap), timeout=240
-                        )
-                    await _asyncio.wait_for(poll_news(), timeout=120)
-                except Exception as _e:
-                    logger.debug("piggyback swarm skipped: %s", _e)
-
-            await _asyncio.wait_for(_piggyback(), timeout=500)
-            logger.info("Odds monitor piggyback intelligence pass complete")
-    except Exception as _piggy_err:
-        logger.debug("piggyback intelligence skipped: %s", _piggy_err)
-    # Settlement piggyback (Oct-2026): the in-app 5-min settler dies with
-    # container churn (fresh scheduler every few minutes, zero executions),
-    # so settlement rides this cron heartbeat instead. Fully guarded and
-    # time-boxed — never fails the monitor cycle; partial progress persists
-    # per-bet, the rest drains next cycle.
-    try:
-        import asyncio as _asyncio3
-
-        async def _settle_tick() -> None:
-            try:
-                from core_agent.skills.result_tracker import ResultTracker
-                from core_agent.skills.bankroll_manager.governor import (
-                    BankrollGovernor,
-                )
-                _gov = BankrollGovernor(data_dir="/app/data")
-                _rt = ResultTracker(bankroll_governor=_gov)
-                _settled = await _asyncio3.wait_for(
-                    _rt.check_and_settle_open_bets(), timeout=180
-                )
-                logger.info(
-                    "Odds monitor piggyback settle pass: %d settled",
-                    len(_settled or []),
-                )
-            except Exception as _e:
-                logger.debug("piggyback settle skipped: %s", _e)
-
-        await _asyncio3.wait_for(_settle_tick(), timeout=240)
-    except Exception as _e:
-        logger.debug("piggyback settle wrapper skipped: %s", _e)
-    # Europe heartbeat (Oct-2026): the in-app 12:30 fire dies with container
-    # churn (missed entirely on quiet days), so the daily Europe scan rides
-    # this cron instead. Volume-stamped once-per-day gate, fire-and-forget
-    # spawn (the scan takes ~15 min; awaiting it would blow the 900s cron
-    # budget). Fully guarded — never fails the monitor cycle.
-    try:
-        import datetime as _dt
-
-        try:
-            from zoneinfo import ZoneInfo as _ZI
-            _sast = _ZI("Africa/Johannesburg")
-        except Exception:
-            _sast = None
-        _now = _dt.datetime.now(_sast) if _sast else _dt.datetime.now()
-        _today = _now.date().isoformat()
-        _stamp_path = "/app/data/.europe_scan_date"
-        _stamped = ""
-        try:
-            with open(_stamp_path) as _f:
-                _stamped = (_f.read() or "").strip()
-        except Exception:
-            pass
-        if _stamped != _today and (_now.hour, _now.minute) >= (12, 30):
-            import modal as _modal
-
-            _fn = _modal.Function.from_name(
-                "strike-tips-racing", "europe_scan")
-            _fn.spawn()
-            try:
-                with open(_stamp_path, "w") as _f:
-                    _f.write(_today)
-            except Exception:
-                pass
-            logger.info(
-                "Europe heartbeat: spawned europe_scan for %s", _today)
-        else:
-            logger.debug(
-                "Europe heartbeat: already ran %s / too early",
-                _stamped or "never",
-            )
-    except Exception as _e:
-        logger.debug("Europe heartbeat spawn skipped: %s", _e)
 
 
 # ── Keep-warm ping for serve_api during racing hours (05:00-22:00) ─

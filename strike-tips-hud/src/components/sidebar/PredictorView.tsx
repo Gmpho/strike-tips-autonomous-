@@ -1,10 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy, Zap, Globe, ShieldCheck, AlertTriangle, Flame } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
-import { useHorseMeetingIndex } from '../../hooks/useHorseMeetingIndex';
-import { CourseChip } from '../CourseChip';
-import type { Predictor, Runner } from '../../types';
+import type { Predictor, RaceEvent, Runner } from '../../types';
 
 // ─── Confidence badge from prediction text ────────────────────────────────────
 function extractConfidence(text: string): { label: string; color: string } | null {
@@ -22,11 +20,23 @@ function extractConfidence(text: string): { label: string; color: string } | nul
   return { label: 'AI Pick', color: 'text-purple-400 bg-purple-500/10 border-purple-500/25' };
 }
 
+// ─── Live-market cross-reference: horse name → matching runner in the Betway snapshot ──
+function buildRunnerIndex(events: Record<string, RaceEvent>): Map<string, Runner> {
+  const index = new Map<string, Runner>();
+  Object.values(events || {}).forEach((event: RaceEvent) => {
+    (event.runners || []).forEach((r) => {
+      const key = r.name.trim().toLowerCase();
+      if (key && !index.has(key)) index.set(key, r);
+    });
+  });
+  return index;
+}
+
 // ─── Main Predictor View ──────────────────────────────────────────────────────
 export const PredictorView: React.FC = () => {
   const store = useHUD();
   const predictions = Array.isArray(store.predictions) ? store.predictions : [];
-  const meetingIndex = useHorseMeetingIndex(store.events);
+  const runnerIndex = useMemo(() => buildRunnerIndex(store.events), [store.events]);
   const [expandAll, setExpandAll] = useState(false);
   const [selectedPrediction, setSelectedPrediction] = useState<Predictor | null>(null);
   
@@ -60,8 +70,7 @@ export const PredictorView: React.FC = () => {
   });
 
   const displayedPredictions = filteredPredictions.slice(0, limit);
-  const meetingFor = (horse: string) => meetingIndex.get(horse.trim().toLowerCase());
-  const runnerFor = (horse: string) => meetingFor(horse)?.runner;
+  const runnerFor = (horse: string) => runnerIndex.get(horse.trim().toLowerCase());
 
   return (
     <motion.div
@@ -199,7 +208,6 @@ export const PredictorView: React.FC = () => {
                 index={i}
                 forceExpand={expandAll}
                 runner={runnerFor(pred.horse)}
-                meeting={meetingFor(pred.horse)}
                 onOpenDetail={openDetail}
               />
             ))}
@@ -336,12 +344,9 @@ function PredictionDetailModal({
                 <h3 className="text-lg sm:text-xl font-black text-theme-primary leading-tight truncate">
                   {pred.horse}
                 </h3>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <CourseChip course={pred.course} region={pred.region} time={pred.time} />
-                  <p className="text-xs text-theme-secondary font-medium">
-                    AI Prediction Analysis
-                  </p>
-                </div>
+                <p className="text-xs text-theme-secondary font-medium mt-1">
+                  AI Prediction Analysis
+                </p>
               </div>
             </div>
             <button
@@ -516,14 +521,12 @@ function PredictionCardWrapper({
   index,
   forceExpand,
   runner,
-  meeting,
   onOpenDetail,
 }: {
   pred: Predictor;
   index: number;
   forceExpand: boolean;
   runner?: Runner;
-  meeting?: { course: string; time: string };
   onOpenDetail: (pred: Predictor) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -553,13 +556,6 @@ function PredictionCardWrapper({
               <h3 className="text-base font-black text-theme-primary group-hover:text-purple-300 transition-colors leading-snug truncate">
                 {pred.horse}
               </h3>
-              <div className="mt-1.5">
-                <CourseChip
-                  course={pred.course || meeting?.course}
-                  region={pred.region}
-                  time={pred.time || meeting?.time}
-                />
-              </div>
               {runner && (
                 <p className="flex items-center gap-1.5 mt-1 text-[10px] font-bold tabular-nums">
                   <Zap className="w-2.5 h-2.5 text-emerald-400 shrink-0" />

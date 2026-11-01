@@ -21,16 +21,6 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
                 race_map[r_num] = []
             race_map[r_num].append(tip.get("selections", "Unknown Horse"))
 
-    # Real per-race distances from the PDF harvest (races[rn].distance_m);
-    # None when the PDF gave none — never a 1600m placeholder.
-    race_dists = {}
-    for _k, _v in ((intelligence.get("races") or {}).items()):
-        try:
-            _d = (_v.get("distance_m") if isinstance(_v, dict) else None) or None
-            race_dists[int(_k)] = int(_d) if _d else None
-        except (ValueError, TypeError):
-            continue
-
     for r_num, runners_list in race_map.items():
         runners = [
             Runner(horse_name=str(name).strip(), odds_decimal=5.0)
@@ -46,7 +36,7 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
                     race_number=r_num,
                     race_time="12:00",
                     track_condition="Good",
-                    distance=race_dists.get(r_num),
+                    distance=1600,
                     runners=runners,
                 )
             )

@@ -13,15 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core_agent.skills.result_tracker import (
-    EXOTIC_MAX_AGE_DAYS,
     ResultTracker,
     _exotic_requirement,
     _extract_pool_dividend,
     _parse_exotic_ticket,
-    _parse_raceform_dividend,
-    _parse_raceform_results,
     _race_runners_by_number,
-    _raceform_url,
 )
 
 _SAST = timezone(timedelta(hours=2))
@@ -64,16 +60,6 @@ RACES = [
         {"name": "Kudikaran", "position": "4th"},
     ]},
 ]
-
-
-@pytest.fixture(autouse=True)
-def no_snapshot_favourite():
-    """Isolate legacy verdict tests from the live snapshot file: TAB
-    favourite-substitution only fires with snapshot data, so these tests
-    pin it to None (pre-substitution behavior)."""
-    with patch("core_agent.skills.result_tracker._snapshot_favourite",
-               return_value=None):
-        yield
 
 
 @pytest.fixture()
@@ -165,10 +151,7 @@ def test_jackpot_lost_when_banker_beaten(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),       # winner: alive, but R4 kills it
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    # Hermetic: stub-ATR-only (live Raceform data would change the legs).
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])):
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is not None and rec["won"] is False
     gov.settle_exotic_bet.assert_called_once()
     args = gov.settle_exotic_bet.call_args[0]
@@ -183,9 +166,7 @@ def test_saver_win_still_passes_leg(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])), \
-         patch.object(ResultTracker, "_scrape_sa_results_direct",
+    with patch.object(ResultTracker, "_scrape_sa_results_direct",
                       new=AsyncMock(return_value="no dividends")):
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is None
@@ -198,9 +179,7 @@ def test_won_settles_with_scraped_dividend(stub_modules, past_off, gov):
         (5, "BISOU BISOU", ["KUDIKARAN"]),
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])), \
-         patch.object(ResultTracker, "_scrape_sa_results_direct",
+    with patch.object(ResultTracker, "_scrape_sa_results_direct",
                       new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
         rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is not None and rec["won"] is True
@@ -224,10 +203,8 @@ def test_bipot_second_place_passes_leg(stub_modules, past_off, gov):
                notes=_ticket_notes("BIPOT", [(2, "SECOND BEST", [])]))
     tracker = ResultTracker(bankroll_governor=gov)
     with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])), \
-              patch.object(ResultTracker, "_scrape_sa_results_direct",
-                           new=AsyncMock(return_value="")):
+        with patch.object(ResultTracker, "_scrape_sa_results_direct",
+                          new=AsyncMock(return_value="")):
             rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     # 2nd satisfies Bipot, no dividend -> pending, no settle call
     assert rec is None
@@ -237,9 +214,7 @@ def test_bipot_second_place_passes_leg(stub_modules, past_off, gov):
 def test_unknown_results_stay_pending(stub_modules, past_off, gov):
     bet = _bet(notes=_ticket_notes("JACKPOT", [(9, "GHOST HORSE", [])]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])):
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is None
     gov.settle_exotic_bet.assert_not_called()
 
@@ -261,58 +236,23 @@ def test_full_loop_settles_exotic_lost(stub_modules, past_off, gov):
     ]))
     gov.get_open_bets.return_value = [bet]
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])):
-        settled = asyncio.run(tracker.check_and_settle_open_bets())
+    settled = asyncio.run(tracker.check_and_settle_open_bets())
     assert len(settled) == 1 and settled[0]["won"] is False
     gov.settle_exotic_bet.assert_called_once()
 
 
-def test_two_day_old_ticket_not_scored_without_own_day_results(stub_modules, past_off, gov):
-    # A historical ticket is only ever scored against ITS OWN race day
-    # (Raceform archive — date-addressable). With no results published for
-    # that day it must stay PENDING, never guess.
+def test_two_day_old_ticket_never_scored(stub_modules, past_off, gov):
+    # ATR serves today/yesterday only: a 2-day-old ticket must stay PENDING
+    # even with losing legs (Sep-2026: Sep-10 tickets scored vs Sep-12 winners).
     old = (date.today() - timedelta(days=2)).isoformat()
     bet = _bet(date=old, notes=_ticket_notes("JACKPOT", [
         (4, "PRESSONREGARDLESS", ["ALSO RAN"]),
         (5, "KUDIKARAN", ["ALSO RAN"]),
     ]))
     tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])) as rf:
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
     assert rec is None
     gov.settle_exotic_bet.assert_not_called()
-    # The bet's own ISO date is threaded — not a collapsed "yesterday" label.
-    rf.assert_awaited_once_with("turffontein", old)
-
-
-def test_two_day_old_ticket_settles_from_raceform_own_day(stub_modules, past_off, gov):
-    # A multi-day-old exotic IS scored when Raceform has its day — dead
-    # legs settle LOST against that day's real placings.
-    old = (date.today() - timedelta(days=2)).isoformat()
-    bet = _bet(date=old, notes=_ticket_notes("JACKPOT", [
-        (4, "PRESSONREGARDLESS", ["ALSO RAN"]),
-        (5, "KUDIKARAN", ["ALSO RAN"]),
-    ]))
-    day_races = [
-        {"title": "4 14:05 Turffontein Maiden", "runners": [
-            {"name": "Dead Winner", "position": "1st"},
-            {"name": "Pressonregardless", "position": "5th"},
-        ]},
-        {"title": "5 14:40 Turffontein Handicap", "runners": [
-            {"name": "Other Winner", "position": "1st"},
-            {"name": "Kudikaran", "position": "4th"},
-        ]},
-    ]
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=day_races)) as rf:
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    rf.assert_awaited_once_with("turffontein", old)
-    assert rec is not None and rec["won"] is False
-    gov.settle_exotic_bet.assert_called_once()
-    assert gov.settle_exotic_bet.call_args[0][1] == 0.0
 
 
 def test_duplicate_ticket_keeps_earliest(stub_modules, past_off):
@@ -337,569 +277,8 @@ def test_over_age_bets_expire(stub_modules):
     gov = MagicMock()
     old = (date.today() - timedelta(days=9)).isoformat()
     bet = _bet(date=old, horse="Silver Storm", confidence="VALUE")
-    bet.status = "PENDING"
-    # Model the real governor: get_open_bets() returns only PENDING rows and
-    # expire_stale_bet() flips the row. check_and_settle_open_bets() re-reads
-    # get_open_bets() after its network-free expiry pre-pass, so the refreshed
-    # list drops the bet and the main loop never re-expires it — the sweep
-    # must call expire_stale_bet exactly once (a static return_value here let
-    # the same bet leak back into the loop and caused a spurious 2nd call).
-    gov.get_open_bets.side_effect = lambda: [b for b in (bet,) if b.status == "PENDING"]
-
-    def _expire(bid):
-        assert bid == bet.bet_id
-        bet.status = "EXPIRED"
-        return True
-
-    gov.expire_stale_bet.side_effect = _expire
+    gov.get_open_bets.return_value = [bet]
     tracker = ResultTracker(bankroll_governor=gov)
     settled = asyncio.run(tracker.check_and_settle_open_bets())
     assert settled == []
     gov.expire_stale_bet.assert_called_once_with(bet.bet_id)
-def test_monitor_cache_serves_fresh_exotic_without_atr(stub_modules, past_off, gov,
-                                                       tmp_path, monkeypatch):
-    import core_agent.config.paths as paths
-
-    def dead(rno, loser):
-        return {
-            "course": "Turffontein", "date": "today",
-            "title": f"{rno} 14:0{rno} Turffontein Maiden",
-            "runners": [
-                {"name": "Dead Winner", "position": "1st"},
-                {"name": loser, "position": "5th"},
-            ],
-        }
-
-    snap = tmp_path / "atr_results_snapshot.json"
-    snap.write_text(json.dumps({
-        "timestamp": datetime.now().isoformat(),
-        "results": [dead(4, "Pressonregardless"), dead(5, "Kudikaran")],
-    }))
-    monkeypatch.setattr(paths, "ATR_RESULTS_PATH", snap)
-
-    atr_calls = []
-
-    class SpyATR:
-        async def get_results_for_track(self, track, date="yesterday"):
-            atr_calls.append((track, date))
-            return []
-
-    atr_stub = MagicMock(name="atr_spy")
-    atr_stub.AtTheRacesAPI = SpyATR
-
-    bet = _bet(notes=_ticket_notes("JACKPOT", [
-        (4, "PRESSONREGARDLESS", ["ALSO RAN"]),
-        (5, "KUDIKARAN", ["ALSO RAN"]),
-    ]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}), \
-         patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])):
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    # Merged sources: ATR live never dialed (cache + Raceform suffice);
-    # the dead legs still resolve LOST from the cache rows.
-    assert atr_calls == []
-    assert rec is not None and rec["won"] is False
-    gov.settle_exotic_bet.assert_called_once()
-
-
-# --- Completeness guard + forensic LOST notes (2026-10-16 Fairview) ---------
-def test_partial_place_feed_does_not_kill_live_leg(stub_modules, past_off, gov):
-    """2026-10-16 Fairview Bipot (official 6/6, R174.20) was buried LOST: the
-    R6 feed carried the winner but no 2nd yet, so our candidates matched rows
-    with BLANK positions and the fail path read blank as "missed". A place
-    pool leg may only die when the data holds the placings the pool needs."""
-    races = [{"title": "6 15:10 Fairview Novice", "runners": [
-        {"name": "Coastal Path", "position": "1st"},
-        {"name": "Worldly", "position": ""},
-        {"name": "Stokesy", "position": ""},
-        {"name": "Soundsofsymphonies", "position": ""},
-    ]}]
-
-    class FakeATRPartial:
-        async def get_results_for_track(self, track, date="yesterday"):
-            return races
-
-    atr_stub = MagicMock(name="atr_partial")
-    atr_stub.AtTheRacesAPI = FakeATRPartial
-    bet = _bet(horse="BIPOT:6", race_number=6, stake=7.2,
-               notes=_ticket_notes("BIPOT", [
-                   (6, "Stokesy", ["Soundsofsymphonies", "Worldly"])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules,
-                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])):
-            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    # No 2nd recorded -> the leg cannot be proven dead -> stays PENDING.
-    assert rec is None
-    gov.settle_exotic_bet.assert_not_called()
-
-
-def test_place_leg_still_dies_when_placings_complete(stub_modules, past_off, gov):
-    """The guard must not block a genuine loss: with 1st/2nd present and our
-    Bipot candidates down the field, the leg is dead as before."""
-    races = [{"title": "6 15:10 Fairview Novice", "runners": [
-        {"name": "Coastal Path", "position": "1st"},
-        {"name": "Some Second", "position": "2nd"},
-        {"name": "Worldly", "position": "5th"},
-        {"name": "Stokesy", "position": "7th"},
-    ]}]
-
-    class FakeATRDead:
-        async def get_results_for_track(self, track, date="yesterday"):
-            return races
-
-    atr_stub = MagicMock(name="atr_dead")
-    atr_stub.AtTheRacesAPI = FakeATRDead
-    bet = _bet(horse="BIPOT:6", race_number=6, stake=7.2,
-               notes=_ticket_notes("BIPOT", [
-                   (6, "Stokesy", ["Worldly"])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules,
-                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])):
-            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    assert rec is not None and rec["won"] is False
-    gov.settle_exotic_bet.assert_called_once()
-
-
-def test_lost_note_names_dead_leg_and_evidence(stub_modules, past_off, gov):
-    """A LOST exotic verdict must be forensic: name the dead leg(s) and the
-    placings the data carried, so a wrong settle stays provable once the
-    day's sources rotate away (log retention is minutes, not days)."""
-    bet = _bet(notes=_ticket_notes("JACKPOT", [
-        (4, "PRESSONREGARDLESS", ["ALSO RAN"]),
-    ]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])):
-        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    assert rec is not None and rec["won"] is False
-    note = gov.settle_exotic_bet.call_args[0][2]
-    assert "dead leg(s) R4" in note
-    assert "evidence" in note
-    assert "PRESSONREGARDLESS=3rd" in note
-
-
-def test_exacta_blank_banker_holds_not_fails(stub_modules, past_off, gov):
-    """(ii) Oct-2026: a listed banker with no published placing is missing
-    data, not proof it lost — single-race pools stay PENDING (matching the
-    function's own "missing place data stays unknown, never guessed" rule)."""
-    races = [{"title": "1 12:15 Fairview Maiden", "runners": [
-        {"name": "Other One", "position": "1st"},
-        {"name": "Banker Horse", "position": ""},
-        {"name": "Saver Horse", "position": ""},
-    ]}]
-
-    class FakeATRBlank:
-        async def get_results_for_track(self, track, date="yesterday"):
-            return races
-
-    atr_stub = MagicMock(name="atr_blank")
-    atr_stub.AtTheRacesAPI = FakeATRBlank
-    bet = _bet(horse="EXACTA:1", race_number=1,
-               notes=_ticket_notes("EXACTA", [
-                   (1, "Banker Horse", ["Saver Horse"])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules,
-                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])):
-            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    assert rec is None
-    gov.settle_exotic_bet.assert_not_called()
-
-
-def test_dead_leg_settles_lost_despite_unknown_leg(stub_modules, past_off, gov):
-    """Oct-2026: a provably dead leg must settle LOST even when another leg
-    is unknown. A Durbanville BiPot whose R4 leg was definitively dead (every
-    candidate ran and missed) sat PENDING for three days because its R2 leg
-    held scratched candidates with no snapshot source for the TAB favourite-
-    substitution — then expired instead of settling LOST. A legitimate WON is
-    still impossible while any leg is unknown, so this cannot over-award."""
-    races = [
-        {"title": "2 12:40 Durbanville Maiden", "runners": [
-            {"name": "Sauterelle", "position": "1st"},
-            {"name": "Naughty Princess", "position": "2nd"},
-            {"name": "Evana", "position": "8th"},
-        ]},
-        {"title": "4 13:50 Durbanville Handicap", "runners": [
-            {"name": "Bullet Tooth Tony", "position": "1st"},
-            {"name": "Royal Eagle", "position": "2nd"},
-        ]},
-    ]
-
-    class FakeATRDeadUnknown:
-        async def get_results_for_track(self, track, date="yesterday"):
-            return races
-
-    atr_stub = MagicMock(name="atr_dead_unknown")
-    atr_stub.AtTheRacesAPI = FakeATRDeadUnknown
-    bet = _bet(horse="BIPOT:2-3-4-5-6-7", race_number=2, stake=7.2,
-               notes=_ticket_notes("BIPOT", [
-                   (2, "Evana", []),
-                   (4, "World Supreme", ["Okayama", "Raise A Hoof"])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules,
-                    {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])):
-            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    assert rec is not None and rec["won"] is False
-    gov.settle_exotic_bet.assert_called_once()
-    note = gov.settle_exotic_bet.call_args[0][2]
-    assert "dead leg(s) R2" in note
-
-
-# --- Merged day sources (Sep-2026 Greyville PA stall) -----------------------
-def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
-    """The monitor cache lists placed horses only (R6 1st/2nd); the full
-    field (Scandalize 3rd) must still arrive via the Raceform fold —
-    first-non-empty-wins left the PA leg 'unknown' forever."""
-    cache_races = [{
-        "course": "Greyville", "date": "today",
-        "title": "6 15:05 Lucky Fish Monopoly",
-        "runners": [
-            {"name": "Your Ladyship", "position": "1st"},
-            {"name": "Poursomesugaronme", "position": "2nd"},
-        ],
-    }]
-    rf_races = [{
-        "course": "Greyville", "date": date.today().isoformat(),
-        "title": "6 15:05 Lucky Fish Monopoly",
-        "runners": [
-            {"name": "Your Ladyship", "position": "1st"},
-            {"name": "Poursomesugaronme", "position": "2nd"},
-            {"name": "Scandalize", "position": "3rd"},
-        ],
-    }]
-    tracker = ResultTracker(bankroll_governor=MagicMock())
-    with patch.object(ResultTracker, "_monitor_cached_results",
-                      return_value=cache_races), \
-         patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=rf_races)):
-        races = asyncio.run(tracker._exotic_leg_races(
-            "greyville", date.today().isoformat()))
-    r6 = _race_runners_by_number(races, 6)
-    assert r6 is not None
-    pos = {r["name"]: r["position"] for r in r6}
-    assert pos == {"Your Ladyship": "1st",
-                   "Poursomesugaronme": "2nd",
-                   "Scandalize": "3rd"}
-
-
-# --- Raceform parsers (shape verified against live Sep-2026 pages) ------------
-RF_HTML = """
-<div wire:snapshot="{&quot;racesid&quot;:137171,&quot;raceno&quot;:1,&quot;raceofftime&quot;:&quot;12:15&quot;,&quot;racedate&quot;:&quot;2026-09-22&quot;,&quot;trackname&quot;:&quot;Vaal&quot;}">
-{"raceno":1,"finish":0,"horsename":"God's Country","racename":"Maiden Plate","trackname":"Vaal"}
-{"raceno":1,"finish":2,"horsename":"Stilo Novo","racename":"Maiden Plate","trackname":"Vaal"}
-{"raceno":1,"finish":1,"horsename":"Berry Lancer","racename":"Maiden Plate","trackname":"Vaal"}
-</div>
-"""
-
-RF_DIV = """
-{"bet_type":"Bipot","selections":"4,7/2,3,6/1,4,7","dividend":"53.500"}
-{"bet_type":"Place Accumulator","selections":"2,3,6/1,2","dividend":"39.300"}
-{"bet_type":"Pick 6","selections":"4,7/3,6,8/6","dividend":"1712.500"}
-{"bet_type":"Pick 3","selections":"2/4/3","dividend":"85.100"}
-{"bet_type":"Jackpot","selections":"3,6,8/6/4/6","dividend":"209.600"}
-"""
-
-
-def test_parse_raceform_results_positions_and_titles():
-    races = _parse_raceform_results(RF_HTML, "vaal", "2026-09-22")
-    assert len(races) == 1
-    race = races[0]
-    # Title carries "N HH:MM" — the contract with _race_runners_by_number.
-    assert race["title"] == "1 12:15 Maiden Plate"
-    assert race["course"] == "Vaal"
-    assert race["date"] == "2026-09-22"
-    runners = _race_runners_by_number(races, 1)
-    assert runners is not None
-    pos = {r["name"]: r["position"] for r in runners}
-    # Non-finisher (finish:0) gets no ordinal — it can satisfy no pool.
-    assert pos == {"God's Country": "", "Stilo Novo": "2nd", "Berry Lancer": "1st"}
-    assert _race_runners_by_number(races, 9) is None
-
-
-def test_parse_raceform_results_garbage_returns_empty():
-    assert _parse_raceform_results("", "vaal", "2026-09-22") == []
-    assert _parse_raceform_results("<html>Client Challenge</html>",
-                                   "vaal", "2026-09-22") == []
-
-
-def test_parse_raceform_dividend_pools():
-    assert _parse_raceform_dividend(RF_DIV, "BIPOT") == 53.5
-    assert _parse_raceform_dividend(RF_DIV, "PLACE ACCUMULATOR") == 39.3
-    assert _parse_raceform_dividend(RF_DIV, "PICK6") == 1712.5
-    assert _parse_raceform_dividend(RF_DIV, "PICK 3") == 85.1
-    assert _parse_raceform_dividend(RF_DIV, "JACKPOT") == 209.6
-    assert _parse_raceform_dividend(RF_DIV, "MYSTERY POOL") is None
-    assert _parse_raceform_dividend("", "BIPOT") is None
-    # Entity-encoded copy (wire:snapshot style) parses identically.
-    assert _parse_raceform_dividend(RF_DIV.replace('"', "&quot;"), "BIPOT") == 53.5
-
-
-def test_parse_raceform_dividend_rendered_row_fallback():
-    page = "<td><strong>Bipot</strong></td><td>4,7/2,3,6</td><td>R53.50</td>"
-    assert _parse_raceform_dividend(page, "BIPOT") == 53.5
-
-
-def test_raceform_url_validation():
-    assert _raceform_url("Vaal", "2026-09-16") == \
-        "https://raceform.co.za/horse-racing-results/vaal/2026-09-16"
-    assert _raceform_url("vaal", "2026-09-16") is not None
-    assert _raceform_url("ascot;rm -rf", "2026-09-16") is None
-    assert _raceform_url("vaal", "yesterday") is None
-    assert _raceform_url("", "2026-09-16") is None
-
-
-# --- Wrong-day guard (Raceform serves nearest meeting on no-meeting dates) ----
-def test_raceform_page_date_detects_fallback():
-    from core_agent.skills.result_tracker import _raceform_page_date
-    # RF_HTML serves exactly 2026-09-22.
-    assert _raceform_page_date(RF_HTML) == "2026-09-22"
-    # Ambiguous (two meetings' data on one page) or unreadable -> None.
-    assert _raceform_page_date(RF_HTML + RF_HTML.replace("2026-09-22", "2026-09-17")) is None
-    assert _raceform_page_date("<html>Client Challenge</html>") is None
-    assert _raceform_page_date("") is None
-
-
-def test_parse_raceform_results_rejects_wrong_day_page():
-    # Live repro 2026-09: GET /horse-racing-results/vaal/2026-09-16 returned
-    # HTTP 200 with the 2026-09-22 card — that page must never score a
-    # ticket dated 09-16 (the exact wrong-day bug this source fixes).
-    assert _parse_raceform_results(RF_HTML, "vaal", "2026-09-16") == []
-    # The matching day still parses.
-    assert len(_parse_raceform_results(RF_HTML, "vaal", "2026-09-22")) == 1
-
-
-def test_raceform_dividend_rejects_wrong_day_page(stub_modules):
-    tracker = ResultTracker.__new__(ResultTracker)
-    with patch.object(ResultTracker, "_raceform_page",
-                      new=AsyncMock(return_value=RF_HTML + RF_DIV)):
-        wrong_day = asyncio.run(
-            tracker._raceform_dividend("vaal", "2026-09-16", "BIPOT"))
-        right_day = asyncio.run(
-            tracker._raceform_dividend("vaal", "2026-09-22", "BIPOT"))
-    assert wrong_day is None  # no fabricated payout from another day's page
-    assert right_day == 53.5
-
-
-# --- Apostrophe-proof matching (2026-09-23 Durbanville BIPOT live bug) -----
-def test_fuzzy_match_ignores_punctuation():
-    tracker = ResultTracker.__new__(ResultTracker)
-    # The book spells it "Captains Elect"; the ticket "Captain's Elect".
-    assert tracker._fuzzy_match("Captain's Elect", "Captains Elect") == 1.0
-    assert tracker._fuzzy_match("Hey Jack Your Late", "Hey Jack Youre Late") >= 0.55
-    # Distinct horses still miss.
-    assert tracker._fuzzy_match("One Dawn", "Cold Summer") < 0.55
-    assert tracker._fuzzy_match("", "Something") == 0.0
-
-
-def test_apostrophe_winner_passes_bipot_leg(stub_modules, past_off, gov):
-    """Regression: source lists the winner WITHOUT the apostrophe while the
-    ticket has it — the leg must pass, not die as a false dead leg."""
-    races = [{"title": "1 13:07 Durbanville Maiden", "runners": [
-        {"name": "Captains Elect", "position": "1st"},
-        {"name": "One Dawn", "position": "3rd"},
-        {"name": "Cold Summer", "position": "12th"},
-    ]}]
-
-    class FakeATR3:
-        async def get_results_for_track(self, track, date="yesterday"):
-            return races
-
-    atr_stub = MagicMock(name="attheraces_api_stub3")
-    atr_stub.AtTheRacesAPI = FakeATR3
-    bet = _bet(horse="BIPOT:1", race_number=1, stake=7.2,
-               notes=_ticket_notes("BIPOT", [
-                   (1, "Captain's Elect", ["One Dawn", "Cold Summer"])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.dict(sys.modules, {"core_agent.skills.parsers.attheraces_api": atr_stub}):
-        with patch.object(ResultTracker, "_raceform_results",
-                          new=AsyncMock(return_value=[])), \
-             patch.object(ResultTracker, "_scrape_sa_results_direct",
-                          new=AsyncMock(return_value="")), \
-             patch.object(ResultTracker, "_raceform_dividend",
-                          new=AsyncMock(return_value=17.40)):
-            rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-    assert rec is not None and rec["won"] is True
-    args = gov.settle_exotic_bet.call_args[0]
-    assert args[1] == pytest.approx(17.40 * 7.2)
-
-
-# --- Leg-set-matched pool dividends (2026-09-23 Jackpot live bug) ----------
-RF_DIV_MULTI = """
-"results":[{"137190":[{"results":[[[{"raceno":7,"finish":1,"horsename":"Yamazaki"}]]]},
- {"137191":[{"results":[[[{"raceno":8,"finish":1,"horsename":"Scottish Links"}]]]},
- {"137189":[{"results":[[[{"raceno":6,"finish":1,"horsename":"Boozy Susie"}]]]}]
-{"id":8071,"RacesID":137190,"bet_type":"Jackpot","selections":"4,6,9/5/4/1","dividend":"496.500"}
-{"id":8072,"RacesID":137191,"bet_type":"Jackpot","selections":"5/4/1/1","dividend":"2257.400"}
-{"id":8073,"RacesID":137189,"bet_type":"Bipot","selections":"1,8/4,5/4,9,11/4,6,7,9/5,7/3,4","dividend":"17.400"}
-"""
-
-
-def test_parse_raceform_dividend_matches_ticket_legs():
-    # Each row pays only the ticket whose legs it exactly covers.
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [5, 6, 7, 8]) == 2257.4
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [4, 5, 6, 7]) == 496.5
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "BIPOT", [1, 2, 3, 4, 5, 6]) == 17.4
-    # No row covers these legs — never substitute another pool's dividend.
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT", [6, 7, 8, 9]) is None
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "PICK 6", [3, 4, 5, 6, 7, 8]) is None
-    # Legacy callers without legs keep first-match behaviour.
-    assert _parse_raceform_dividend(RF_DIV_MULTI, "JACKPOT") == 496.5
-    assert _parse_raceform_dividend(RF_DIV, "BIPOT") == 53.5
-
-
-# --- shadow lines for superseded tickets -------------------------------------
-def test_dry_run_scores_without_settling(stub_modules, past_off, gov):
-    """Shadow scoring must return the verdict but never move the ledger."""
-    bet = _bet(stake=4.8, notes=_ticket_notes("JACKPOT", [
-        (4, "PRESSONREGARDLESS", ["KENSAL GREEN"]),
-        (5, "BISOU BISOU", ["KUDIKARAN"]),
-    ]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])), \
-         patch.object(ResultTracker, "_scrape_sa_results_direct",
-                      new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
-        rec = asyncio.run(
-            tracker._settle_exotic_ticket(bet, None, None, dry_run=True)
-        )
-    assert rec is not None and rec["won"] is True and rec["dry_run"] is True
-    assert rec["pool_return"] == pytest.approx(250.0 * 4.8)
-    gov.settle_exotic_bet.assert_not_called()
-
-
-class _ShadowGov:
-    def __init__(self, bets):
-        self._bets = bets
-        self.annotated = []
-
-    def annotate_notes(self, bet_id, fragment):
-        self.annotated.append((bet_id, fragment))
-        return True
-
-
-def test_shadow_sweep_annotates_superseded_winner(stub_modules, past_off):
-    """Superseded BIPOT-style winner gets 'shadow: WON R...' in notes."""
-    bet = _bet(
-        stake=8.4,
-        notes=_ticket_notes("JACKPOT", [
-            (4, "PRESSONREGARDLESS", ["KENSAL GREEN"]),
-            (5, "BISOU BISOU", ["KUDIKARAN"]),
-        ]) + " | VOID (superseded by value)",
-    )
-    bet.status = "VOID"
-    g = _ShadowGov([bet])
-    tracker = ResultTracker(bankroll_governor=g)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])), \
-         patch.object(ResultTracker, "_scrape_sa_results_direct",
-                      new=AsyncMock(return_value="JACKPOT PAYS R250,00")):
-        n = asyncio.run(tracker._shadow_score_superseded(g, None))
-    assert n == 1
-    assert g.annotated == [(bet.bet_id, "shadow: WON R2100.00")]
-
-
-def test_shadow_sweep_skips_live_and_already_stamped(stub_modules, past_off):
-    live = _bet(bet_id="live", notes=_ticket_notes("JACKPOT", [(4, "X", [])]))
-    live.status = "PENDING"
-    stamped = _bet(
-        bet_id="done",
-        notes=_ticket_notes("JACKPOT", [(4, "X", [])])
-        + " | VOID (superseded by value) | shadow: LOST",
-    )
-    stamped.status = "VOID"
-    g = _ShadowGov([live, stamped])
-    tracker = ResultTracker(bankroll_governor=g)
-    n = asyncio.run(tracker._shadow_score_superseded(g, None))
-    assert n == 0 and g.annotated == []
-
-
-# --- Monitor snapshot: labels resolve against the SNAPSHOT'S own day --------
-def _snap(tmp_path, monkeypatch, stamp_day, rows):
-    import core_agent.config.paths as paths
-    snap = tmp_path / "atr_results_snapshot.json"
-    snap.write_text(json.dumps({
-        "timestamp": f"{stamp_day.isoformat()}T03:40:36.840088",
-        "results": rows,
-    }))
-    monkeypatch.setattr(paths, "ATR_RESULTS_PATH", snap)
-
-
-def test_monitor_cache_honours_two_day_old_snapshot(tmp_path, monkeypatch):
-    """Oct-2026: ATR was Fastly-blocked, so the monitor could not rewrite its
-    snapshot. The file still described its own today/yesterday, but the
-    today-only gate discarded 492 real results and every exotic recorded
-    'no_results'. Its labels must resolve against its own timestamp."""
-    two_days_ago = date.today() - timedelta(days=2)
-    rows = [
-        {"course": "Turffontein", "date": "today",
-         "title": "4 14:05 Maiden", "runners": [{"name": "A", "position": "1st"}]},
-        {"course": "Turffontein", "date": "yesterday",
-         "title": "5 14:40 Maiden", "runners": [{"name": "B", "position": "2nd"}]},
-    ]
-    _snap(tmp_path, monkeypatch, two_days_ago, rows)
-
-    tracker = ResultTracker()
-    today_rows = tracker._monitor_cached_results("turffontein", two_days_ago.isoformat())
-    assert [r["title"] for r in today_rows] == ["4 14:05 Maiden"]
-    yday_rows = tracker._monitor_cached_results(
-        "turffontein", (two_days_ago - timedelta(days=1)).isoformat())
-    assert [r["title"] for r in yday_rows] == ["5 14:40 Maiden"]
-
-
-def test_monitor_cache_does_not_bleed_labels_onto_later_days(tmp_path, monkeypatch):
-    """Trusting a 2-day-old stamp must not make its 'today' answer for the
-    real today/yesterday — that is exactly the label shift the old gate
-    guarded against."""
-    two_days_ago = date.today() - timedelta(days=2)
-    rows = [{"course": "Turffontein", "date": "today",
-             "title": "4 14:05 Maiden", "runners": [{"name": "A", "position": "1st"}]}]
-    _snap(tmp_path, monkeypatch, two_days_ago, rows)
-
-    tracker = ResultTracker()
-    assert tracker._monitor_cached_results("turffontein", date.today().isoformat()) == []
-    assert tracker._monitor_cached_results(
-        "turffontein", (date.today() - timedelta(days=1)).isoformat()) == []
-
-
-def test_monitor_cache_rejects_unparsable_timestamp(tmp_path, monkeypatch):
-    import core_agent.config.paths as paths
-    snap = tmp_path / "atr_results_snapshot.json"
-    snap.write_text(json.dumps({
-        "timestamp": "not-a-date",
-        "results": [{"course": "Turffontein", "date": "today",
-                     "title": "4 14:05 Maiden", "runners": []}],
-    }))
-    monkeypatch.setattr(paths, "ATR_RESULTS_PATH", snap)
-    assert ResultTracker()._monitor_cached_results(
-        "turffontein", date.today().isoformat()) == []
-
-
-def test_shadow_scoring_writes_no_settlement_diagnostics(
-        stub_modules, past_off, gov):
-    """Oct-2026: shadow scoring re-walks every VOID/superseded ticket each
-    sweep. Because it shares _settle_exotic_ticket, its undecidable legs wrote
-    live settlement diagnostics: 692 of 3 244 rows were unknown_legs/no_results
-    against 12 already-VOID bet_ids (one repeated 183 times), burying the real
-    'why is money still open' signal. A voided ticket is not open money."""
-    bet = _bet(notes=_ticket_notes("BIPOT", [(4, "NOBODY LISTED", [])]))
-    tracker = ResultTracker(bankroll_governor=gov)
-    with patch.object(ResultTracker, "_raceform_results",
-                      new=AsyncMock(return_value=[])), \
-         patch("core_agent.skills.result_tracker._record_pending") as diag:
-        shadow = asyncio.run(
-            tracker._settle_exotic_ticket(bet, None, None, dry_run=True))
-        assert shadow is None
-        diag.assert_not_called()
-
-        live = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
-        assert live is None
-        diag.assert_called_once()
-        assert diag.call_args[0][1] == "unknown_legs"

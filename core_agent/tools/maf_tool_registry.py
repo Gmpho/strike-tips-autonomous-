@@ -19,11 +19,6 @@ from core_agent.skills.exotics.parser import (
     compute_win_probability,
 )
 from core_agent.skills.exotics.builder import build_exotics_blueprint
-from core_agent.tools.composio_tools import (
-    create_analysis_sheet,
-    export_pnl_report,
-    publish_tip_post,
-)
 
 logger = logging.getLogger("maf-tool-registry")
 
@@ -110,7 +105,7 @@ TOOL_INFO: Dict[str, Dict] = {
         "use_case": "Show me past results at Turffontein over 1600m",
     },
     "search_racing_data": {
-        "description": "Search for racing information via free-tier web cascade (Tavily, then Exa, then DDGS).",
+        "description": "Search for racing information via DuckDuckGo web search.",
         "specialist": "racing_llama",
         "category": "data",
         "speed": "~3-5s",
@@ -171,27 +166,6 @@ TOOL_INFO: Dict[str, Dict] = {
         "category": "search",
         "speed": "~2s",
         "use_case": "Find anything about Turffontein 1600m form — exact or similar",
-    },
-    "create_analysis_sheet": {
-        "description": "Append form-analysis/tips rows to a tab in a spreadsheet in the subscriber's own Google account.",
-        "specialist": "racing_qwen",
-        "category": "publish",
-        "speed": "~3s",
-        "use_case": "Send today's Greyville analysis to my sheet",
-    },
-    "export_pnl_report": {
-        "description": "Write precomputed PnL rows to a tab in the subscriber's own Google Sheet. Figures pass through untouched.",
-        "specialist": "racing_qwen",
-        "category": "publish",
-        "speed": "~3s",
-        "use_case": "Export my weekly PnL to my sheet",
-    },
-    "publish_tip_post": {
-        "description": "Post a tipped slip as plain text to the subscriber's own X account. Link-free; daily cap applies.",
-        "specialist": "racing_llama",
-        "category": "publish",
-        "speed": "~3s",
-        "use_case": "Post my Turffontein slip to X",
     },
     "save_learned_insight": {
         "description": "Save a learned analysis pattern after a multi-step tool chain (5+ calls). Captures the winning approach for future reuse.",
@@ -868,10 +842,8 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "simulate_race_scenarios": simulate_race_scenarios,
     "query_racing_dreams": query_racing_dreams,
     "analyze_full_race_card": analyze_full_race_card,
-    "create_analysis_sheet": create_analysis_sheet,
-    "export_pnl_report": export_pnl_report,
-    "publish_tip_post": publish_tip_post,
 }
+
 
 def get_tool_names() -> List[str]:
     """Return all registered MAF tool names."""

@@ -7,12 +7,8 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import date, datetime, timedelta, timezone
-from html import unescape as _html_unescape
 from typing import Dict, List, Optional, Tuple
-
-from core_agent.skills.settlement_diagnostics import record_pending as _record_pending
 
 logger = logging.getLogger("result-tracker")
 
@@ -43,94 +39,6 @@ OFF_TIME_GRACE_MINUTES = 15
 # review: settling a week-old bet against yesterday's results for the same
 # track+race number would usually settle the WRONG race (usually as LOST).
 MAX_SETTLE_AGE_DAYS = 3
-
-# Singles get their finishing position from ATR ("this exists for the losers").
-# ATR is Fastly-challenged from every egress we have, so a loser single could
-# never be proven LOST and sat PENDING until the age cap expired it (Oct-2026:
-# Vaal Hat's Queen / Astrophile stuck 2 days). Raceform is plain HTTP and
-# carries the FULL field with positions, so it backs the ATR lookup for any
-# day still inside the archive window.
-RACEFORM_PLACING_MAX_AGE_DAYS = 21
-
-# A failed Raceform fetch is cached only briefly: one transient timeout used to
-# poison that URL for the whole container lifetime, turning a single blip into a
-# day of "no_results". Retry after this many seconds.
-RACEFORM_FAIL_RETRY_SECS = 120
-
-# Exotics get a wider window than singles: the Raceform archive
-# (/horse-racing-results/{track}/{date}, plain HTTP, no CF challenge) serves
-# SA meetings by exact date ~2 weeks back, so a historical ticket is only
-# ever scored against ITS OWN race day. Beyond this bound no source can prove
-# that day anymore — the ticket is expired/deferred for manual review, never
-# guessed.
-EXOTIC_MAX_AGE_DAYS = 14
-
-
-def _healing_event(
-    action: str, details: str, agent: str = "ResultTracker", status: str = "SUCCESS"
-) -> None:
-    """Append a healing event so blockers show up in Live Ops instead of
-    living only in container logs (e.g. a won exotic awaiting its dividend).
-    Mirrors the monitor's event shape; never raises."""
-    try:
-        from core_agent.config.paths import DATA_DIR
-
-        path = DATA_DIR / "healing_events.json"
-        events = []
-        if os.path.exists(path):
-            try:
-                with open(path) as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, list):
-                    events = loaded
-            except Exception:
-                events = []
-        events.append({
-            "id": f"{action.lower()}-{int(datetime.now().timestamp())}",
-            "timestamp": datetime.now().isoformat(),
-            "action": action,
-            "details": details,
-            "agent": agent,
-            "status": status,
-        })
-        tmp = str(path) + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(events[-50:], f, indent=2, default=str)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, str(path))
-    except Exception:
-        pass
-
-
-def _finish_ordinal(n) -> Optional[str]:
-    """\"1st\"/\"2nd\"/\"3rd\"/... for a finishing position, None for non-finishers.
-
-    Raceform stamps runners that did not complete with ``finish: 0`` — they
-    can satisfy no pool requirement, so they get no ordinal (ATR-shaped
-    runners carry \"\" for unknown/unplaced positions too).
-    """
-    try:
-        n = int(n)
-    except (ValueError, TypeError):
-        return None
-    if n <= 0:
-        return None
-    if 10 <= n % 100 <= 20:
-        suf = "th"
-    else:
-        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suf}"
-
-
-def _norm_name(value: str) -> str:
-    """Punctuation-insensitive name tokens.
-
-    Books disagree on punctuation ("Captain's Elect" vs "Captains
-    Elect"); overlap scoring must never hinge on an apostrophe —
-    2026-09-23 Durbanville BIPOT was falsely LOST on exactly that.
-    """
-    return re.sub(r"[^a-z0-9\s]", "", str(value or "").lower())
 
 
 def _log_settled_winner(bet, winner: str) -> None:
@@ -180,223 +88,6 @@ def _is_exotic_bet(bet) -> bool:
         return False
 
 
-def _rf_text(page: str) -> str:
-    """Normalise a Raceform page for regex parsing.
-
-    The same data appears twice: HTML-entity encoded inside Livewire
-    ``wire:snapshot`` attributes (&quot;) and JSON-escaped in embedded JS
-    (\\", \\/). Unescape both so one regex set matches either copy.
-    """
-    return _html_unescape(str(page or "")).replace("\\/", "/").replace('\\"', '"')
-
-
-def _raceform_url(track: Optional[str], iso_date: Optional[str]) -> Optional[str]:
-    """Raceform archive URL for one track+date, None when inputs are invalid.
-
-    Path shape verified live (Sep-2026): /horse-racing-results/{track}/{date}
-    returns the full meeting page as plain HTML — unlike ATR, which serves
-    only today/yesterday labels and 404s on ISO dates behind a Fastly
-    challenge (postmortem 2026-09-04).
-    """
-    t = str(track or "").strip().lower()
-    d = str(iso_date or "")[:10]
-    if not re.fullmatch(r"[a-z][a-z0-9-]{1,24}", t):
-        return None
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
-        return None
-    return f"https://raceform.co.za/horse-racing-results/{t}/{d}"
-
-
-def _pool_key(pool_type) -> str:
-    """Uppercase alphanumeric pool key: \"Pick 6\"/\"PICK6\"/\"pick 6\" -> PICK6."""
-    return re.sub(r"[^A-Z0-9]", "", str(pool_type or "").upper())
-
-
-def _raceform_page_date(page: str) -> Optional[str]:
-    """The single racedate a Raceform results page actually serves, or None.
-
-    CRITICAL: Raceform answers a no-meeting (track, date) URL with HTTP 200
-    serving the NEAREST meeting instead of a 404 (verified live 2026-09:
-    /vaal/2026-09-16 returned the full 2026-09-22 card). Every results /
-    dividend consumer must check this against the requested date — scoring a
-    ticket against the fallback day is the exact wrong-day bug this source
-    exists to fix. None = ambiguous (several dates) or unreadable.
-    """
-    text = _rf_text(page)
-    dates = set(re.findall(r'"racedate":"(\d{4}-\d{2}-\d{2})"', text))
-    return dates.pop() if len(dates) == 1 else None
-
-
-def _rf_float(raw) -> Optional[float]:
-    """Parse a dividend amount to float (>0), None on anything unparseable.
-
-    SA format: space thousands, comma decimals (\"1 234,50\") or plain dots
-    in Raceform's JSON (\"53.500\") — mirrors _extract_pool_dividend.
-    """
-    try:
-        val = float(str(raw).strip().replace(" ", "").replace(",", "."))
-        return val if val > 0 else None
-    except (ValueError, TypeError):
-        return None
-
-
-def _parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
-    """Parse a Raceform archive page into ATR-shaped race dicts.
-
-    Raceform embeds flat JSON runner objects in the page:
-        {\"raceno\":1,\"finish\":2,\"horsename\":\"...\",\"racename\":\"...\", ...}
-    plus meeting headers {\"raceno\":1,\"raceofftime\":\"12:15\", ...}. The
-    output mirrors AtTheRacesAPI.get_results() so ``_race_runners_by_number``
-    (which matches titles like \"N HH:MM ...\") and the leg scorer work
-    unchanged:
-        [{\"course\", \"date\", \"time\", \"title\", \"runners\": [{name, position}]}]
-    Returns [] when nothing parseable — callers treat that as no-evidence
-    (ticket stays PENDING), never as a result.
-    """
-    if not page:
-        return []
-    # Wrong-day guard: reject Raceform's silent nearest-meeting fallback —
-    # a no-meeting URL serves another day's card with HTTP 200.
-    if _raceform_page_date(page) != iso_date:
-        logger.info(
-            "[RACEFORM] %s %s: page serves another meeting (or none) — rejected",
-            track, iso_date,
-        )
-        return []
-    text = _rf_text(page)
-    offtimes: Dict[int, str] = {}
-    for m in re.finditer(r'"raceno":(\d+),"raceofftime":"(\d{2}:\d{2})"', text):
-        offtimes[int(m.group(1))] = m.group(2)
-    course = ""
-    names: Dict[int, str] = {}
-    runners: Dict[int, List[Dict]] = {}
-    for m in re.finditer(r'\{[^{}]*"raceno":\d+[^{}]*\}', text):
-        obj = m.group(0)
-        if '"horsename"' not in obj or '"finish"' not in obj:
-            continue  # meeting/race header, not a runner row
-        try:
-            raceno = int(re.search(r'"raceno":(\d+)', obj).group(1))
-            fin = int(re.search(r'"finish":(\d+)', obj).group(1))
-            nm = re.search(r'"horsename":"((?:[^"\\]|\\.)*)"', obj)
-        except AttributeError:
-            continue
-        if not nm:
-            continue
-        rn = re.search(r'"racename":"((?:[^"\\]|\\.)*)"', obj)
-        tk = re.search(r'"trackname":"((?:[^"\\]|\\.)*)"', obj)
-        if tk and not course:
-            course = tk.group(1)
-        if rn and raceno not in names:
-            names[raceno] = rn.group(1)
-        runners.setdefault(raceno, []).append({
-            "name": nm.group(1),
-            "position": _finish_ordinal(fin) or "",
-            # finish 0 = did not run (scratched/withdrawn): the card lists the
-            # horse with no finishing position. Settlement refunds these
-            # instead of scoring them LOST.
-            "non_runner": fin <= 0,
-        })
-    races: List[Dict] = []
-    for raceno in sorted(runners):
-        off = offtimes.get(raceno, "")
-        races.append({
-            "course": course or str(track or "").title(),
-            "date": iso_date,
-            "time": off,
-            # Title MUST carry \"N HH:MM\" — _race_runners_by_number keys on it.
-            "title": f"{raceno} {off} {names.get(raceno, '')}".strip(),
-            "runners": runners[raceno],
-        })
-    return races
-
-
-def _parse_raceform_dividend(
-    page: str, pool_type: str, pool_legs: Optional[List[int]] = None
-) -> Optional[float]:
-    """Tote dividend (R per R1) for one pool from a Raceform archive page.
-
-    Primary: embedded JSON dividend rows (verified live Sep-2026):
-        {"id":..,"RacesID":137185,"bet_type":"Bipot","selections":"4,7/2,3,6/...","dividend":"53.500"}
-    A page carries one row per pool PER LEG-RANGE (e.g. two Jackpots when
-    both R4-7 and R5-8 are offered) — first-match used to return the wrong
-    pool's dividend (2026-09-23: R4-7's R496.50 paid out on the R5-8
-    ticket instead of R2,257.40). When ``pool_legs`` is given, a row is
-    accepted only if its leg range (end race from the RacesID→raceno map,
-    length from the selections slashes) covers exactly those legs;
-    otherwise None (callers keep the ticket PENDING, never guess).
-    Fallback: the rendered table row ("Bipot 4,7/2,3,6/... R53.50").
-    Returns None when the pool's dividend isn't published — callers must
-    keep the ticket PENDING (never fabricate a payout).
-    """
-    want = _pool_key(pool_type)
-    if not page or not want:
-        return None
-    text = _rf_text(page)
-    legs_wanted = {int(x) for x in pool_legs} if pool_legs else None
-    rid_to_race: Dict[str, int] = {}
-    if legs_wanted:
-        # Per-race results blocks look like
-        # "results":[{"137185":[{"results":[[[{"raceno":6,... — map each
-        # block's RacesID to the first raceno inside it (blocks are
-        # per-race; bracket depth varies by page).
-        block_pat = re.compile(r'"(\d{5,})"\s*:\s*\[\{"results"')
-        blocks = list(block_pat.finditer(text))
-        for _bi, _bm in enumerate(blocks):
-            _end = blocks[_bi + 1].start() if _bi + 1 < len(blocks) else len(text)
-            _rm = re.search(r'"raceno"\s*:\s*(\d+)', text[_bm.end():_end])
-            if _rm:
-                rid_to_race.setdefault(_bm.group(1), int(_rm.group(1)))
-    first: Optional[float] = None
-    row_pat = (
-        r'(?:\"RacesID\"\s*:\s*(\d+)\s*,\s*)?'
-        r'"bet_type"\s*:\s*"([A-Za-z0-9 ]+)"\s*,\s*'
-        r'"selections"\s*:\s*"[^"]*"\s*,\s*'
-        r'"dividend"\s*:\s*"([\d.,]+)"'
-    )
-    for m in re.finditer(row_pat, text):
-        if _pool_key(m.group(2)) != want:
-            continue
-        val = _rf_float(m.group(3))
-        if val is None:
-            continue
-        if legs_wanted is None:
-            return val  # legacy: single-pool pages, first match
-        if first is None:
-            first = val
-        rid = m.group(1) or ""
-        end = rid_to_race.get(rid)
-        if end is None:
-            continue  # unattributable row — never guess the leg range
-        sel = re.search(
-            r'"selections"\s*:\s*"([^"]*)"',
-            m.group(0),
-        )
-        nlegs = (sel.group(1).count("/") + 1) if sel else 0
-        if legs_wanted is not None and len(legs_wanted) == 1 and end in legs_wanted:
-            # Single-race pools (Exacta/Trifecta/Quartet, Oct-2026): the
-            # selections count is HORSES, not legs — the range check below
-            # can never match a singleton, so every single-race dividend
-            # miss-attributed and no single-race winner ever settled (all
-            # hung PENDING). Match the end race directly.
-            return val
-        if nlegs and set(range(end - nlegs + 1, end + 1)) == legs_wanted:
-            return val
-    if legs_wanted is not None:
-        return None
-    if first is not None:
-        return first
-    # Rendered-row fallback: "Bipot 4,7/2,3,6/1,4,7 R53.50" in tag-stripped text.
-    stripped = re.sub(r"<[^>]+>", " ", text)
-    for m in re.finditer(
-        r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot)\s+[\d/,]+\s+R\s*([\d.,]+)",
-        stripped,
-        flags=re.IGNORECASE,
-    ):
-        if _pool_key(m.group(1)) == want:
-            return _rf_float(m.group(2))
-    return None
-
-
 # --- Exotic leg-based settlement -------------------------------------------
 # Pool finishing requirements per leg (SA tote rules). Unknown pools default
 # to the strictest (win-only) so a ticket is never wrongly marked LOST.
@@ -427,15 +118,7 @@ def _parse_exotic_ticket(bet) -> Optional[Dict]:
     try:
         notes = getattr(bet, "notes", "") or ""
         if notes.strip().startswith("{"):
-            try:
-                data = _json.loads(notes)
-            except Exception:
-                # Void/retry tags ("... | VOID (...)") are appended as plain
-                # text after the JSON by cancel/void paths (Oct-2026: this
-                # silently un-settleable — every voided exotic stayed
-                # PENDING forever because its notes no longer parsed).
-                # Recover the leading JSON object.
-                data = _json.loads(notes[: notes.rfind("}") + 1])
+            data = _json.loads(notes)
             pool_type = data.get("pool_type")
             pool_legs = [int(r) for r in (data.get("pool_legs") or [])]
             for c in (data.get("combinations") or []):
@@ -461,54 +144,6 @@ def _parse_exotic_ticket(bet) -> Optional[Dict]:
     if not pool_type or not pool_legs:
         return None
     return {"pool_type": pool_type, "pool_legs": pool_legs, "combos": combos}
-
-
-def _snapshot_favourite(track: str, race_number: int) -> Optional[str]:
-    """Tote-favourite proxy: shortest live odds in the monitor snapshot —
-    the same source the HUD MARKET LEADER cards read. Used for TAB
-    favourite-substitution of scratched exotic candidates. None when the
-    snapshot lacks the race (finished races are sanitized out) — callers
-    must then flag PENDING, never guess. Never raises."""
-
-    def _norm(value) -> str:
-        return re.sub(r"\s+", " ", str(value or "")).strip().lower()
-
-    try:
-        from core_agent.config.paths import MARKET_SNAPSHOT_PATH
-        with open(str(MARKET_SNAPSHOT_PATH)) as f:
-            blob = json.load(f)
-    except Exception:
-        return None
-    try:
-        events = (blob.get("events") or {}).values()
-    except AttributeError:
-        return None
-    want_track = _norm(track)
-    best: Optional[str] = None
-    best_odds = float("inf")
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        course = _norm(ev.get("course", ""))
-        if not (want_track and (want_track in course or course in want_track)):
-            continue
-        try:
-            rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
-        except (ValueError, TypeError):
-            continue
-        if rn != race_number:
-            continue
-        for r in (ev.get("runners") or []):
-            if not isinstance(r, dict):
-                continue
-            try:
-                o = float(r.get("odds"))
-            except (TypeError, ValueError):
-                continue
-            if o > 0 and o < best_odds:
-                best_odds = o
-                best = str(r.get("name") or r.get("outcomeName") or "")
-    return best or None
 
 
 def _race_runners_by_number(races: List[Dict], race_number: int) -> Optional[List[Dict]]:
@@ -713,224 +348,13 @@ class ResultTracker:
         # track/day no matter how many singles settle from it.
         self._atr_track_cache: Dict = {}
 
-    async def _raceform_page(self, track: str, iso_date: str) -> Optional[str]:
-        """Raw Raceform archive HTML for one track+date (plain HTTP — no CF
-        challenge, unlike ATR/TAB). Cached per instance so the leg scorer and
-        the dividend lookup share one fetch per meeting per sweep; failures
-        are cached with a short backoff (see RACEFORM_FAIL_RETRY_SECS). None on
-        any failure or on a date outside the archive (404).
-        """
-        url = _raceform_url(track, iso_date)
-        if not url:
-            return None
-        # Test instances may be built via __new__ — create the cache lazily.
-        cache = getattr(self, "_raceform_cache", None)
-        if cache is None:
-            cache = {}
-            self._raceform_cache = cache
-        if url in cache:
-            # A failure is retried after a short backoff: caching it forever
-            # let one transient timeout poison every later lookup for the
-            # life of the container (Oct-2026: a day of no_results).
-            if cache[url] is not None:
-                return cache[url]
-            if time.time() - getattr(self, "_raceform_fail_ts", {}).get(url, 0) \
-                    < RACEFORM_FAIL_RETRY_SECS:
-                return None
-        try:
-            from core_agent.core.http_client import get_async_client
-            client = get_async_client(timeout=15)
-            resp = await client.get(url, headers={"Accept": "text/html"})
-            page = resp.text if getattr(resp, "status_code", 0) == 200 else None
-            if page and len(page) < 20_000:
-                page = None  # stub/error shell, not the ~600KB results page
-        except Exception as e:
-            logger.debug(f"Raceform fetch failed for {url}: {e}")
-            page = None
-        cache[url] = page
-        if page is None:
-            if getattr(self, "_raceform_fail_ts", None) is None:
-                self._raceform_fail_ts = {}
-            self._raceform_fail_ts[url] = time.time()
-        return page
-
-    async def _raceform_results(self, track: str, iso_date: str) -> List[Dict]:
-        """ATR-shaped results for an exact race day from the Raceform archive."""
-        page = await self._raceform_page(track, iso_date)
-        if not page:
-            return []
-        races = _parse_raceform_results(page, track, iso_date)
-        logger.info("[RACEFORM] %s %s: %d races", track, iso_date, len(races))
-        return races
-
-    async def _raceform_dividend(
-        self, track: str, iso_date: str, pool_type: str,
-        pool_legs: Optional[List[int]] = None,
-    ) -> Optional[float]:
-        """Tote dividend (R per R1) for one pool from the Raceform archive.
-
-        Refuses pages whose served racedate isn't the requested day (the
-        archive silently falls back to the nearest meeting) — a dividend
-        from another day must never settle this ticket. ``pool_legs``
-        restricts the dividend to the row covering exactly the ticket's
-        legs (a page holds one row per offered leg-range).
-        """
-        page = await self._raceform_page(track, iso_date)
-        if not page or _raceform_page_date(page) != iso_date:
-            return None
-        return _parse_raceform_dividend(page, pool_type, pool_legs)
-
-    def _monitor_cached_results(self, track: str, iso_date: str) -> List[Dict]:
-        """Results the odds-monitor already scraped — the exact data the HUD
-        shows (``atr_results_snapshot.json`` written by the monitor's own
-        Fastly-solved ATR fetch). Reusing it means zero contention with the
-        headless-Chromium throttle slot and zero CF challenge risk.
-
-        The file holds ATR's "today/yesterday" labels, which shift meaning
-        across midnight, so the labels are resolved against the SNAPSHOT'S OWN
-        day (its ``timestamp``), not against today. Requiring a snapshot from
-        today discarded real data for 48h while ATR was blocked (Oct-2026: 492
-        results sat on disk unused, so every exotic recorded "no_results").
-        Never raises; [] on any miss.
-        """
-        try:
-            from core_agent.config.paths import ATR_RESULTS_PATH
-            if not os.path.exists(ATR_RESULTS_PATH):
-                return []
-            with open(ATR_RESULTS_PATH) as f:
-                blob = json.load(f)
-            try:
-                ts_day = date.fromisoformat(str(blob.get("timestamp") or "")[:10])
-            except (TypeError, ValueError):
-                return []
-            # A clock-skewed future stamp would shift the labels forward.
-            if ts_day > date.today():
-                ts_day = date.today()
-            cal = {
-                "today": ts_day.isoformat(),
-                "yesterday": (ts_day - timedelta(days=1)).isoformat(),
-            }
-            out = []
-            for race in blob.get("results") or []:
-                if not isinstance(race, dict):
-                    continue
-                if cal.get(str(race.get("date") or "").lower()) != iso_date:
-                    continue
-                if str(track or "").lower() not in str(race.get("course") or "").lower():
-                    continue
-                out.append(race)
-            return out
-        except Exception as e:
-            logger.debug(f"Monitor results cache read failed: {e}")
-            return []
-
-    async def _exotic_leg_races(
-        self, track: str, bet_date: Optional[str]
-    ) -> List[Dict]:
-        """Results for the bet's OWN race day — never another day's card.
-
-        Sources are MERGED per race (union of runners by name), not
-        first-non-empty-wins: the monitor cache / ATR lists only placed
-        horses and truncates 3rd+ (Sep-2026: Greyville PA sat PENDING with
-        R6/R7 "unknown" because Scandalize 3rd and What A Classic 3rd were
-        cut, while the full-field Raceform page was never consulted).
-        1. Monitor cache — the Fastly-solved ATR data the HUD already shows;
-           read while the bet is today/yesterday (ATR label semantics hold)
-           and the snapshot is fresh.
-        2. Raceform archive — date-addressable plain-HTTP source covering
-           ~2 weeks back with full fields.
-        3. ATR live — only when the merged view is still empty and
-           ``atr_date_label`` maps to the bet's calendar day (delta <= 1).
-
-        Empty list = no evidence; the caller must leave the ticket PENDING.
-        """
-        try:
-            iso = str(bet_date)[:10] if bet_date else date.today().isoformat()
-            delta = (date.today() - date.fromisoformat(iso)).days
-            if delta < 0:  # future-dated input: treat as today
-                iso, delta = date.today().isoformat(), 0
-        except (ValueError, TypeError):
-            iso, delta = date.today().isoformat(), 0
-        merged: Dict[int, Dict[str, Dict]] = {}
-        titles: Dict[int, str] = {}
-
-        def _fold(races: Optional[List[Dict]]) -> None:
-            for race in races or []:
-                m = re.search(r"(\d+)\s+\d{2}:\d{2}", str(race.get("title", "")))
-                if not m:
-                    continue
-                rn = int(m.group(1))
-                titles.setdefault(rn, str(race.get("title", "")))
-                slot = merged.setdefault(rn, {})
-                for r in race.get("runners") or []:
-                    key = _norm_name(str(r.get("name", "")))
-                    if not key:
-                        continue
-                    pos = str(r.get("position", "") or "").strip()
-                    prev = slot.get(key)
-                    if prev is None or (not prev.get("position") and pos):
-                        slot[key] = {
-                            "name": str(r.get("name", "")),
-                            "position": pos,
-                        }
-
-        if delta <= 1:
-            _fold(self._monitor_cached_results(track, iso))
-        _fold(await self._raceform_results(track, iso))
-        if not merged and delta <= 1:
-            try:
-                from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
-                _fold(await AtTheRacesAPI().get_results_for_track(
-                    track, date=atr_date_label(iso)
-                ))
-            except Exception as e:
-                logger.debug(f"Exotic ATR lookup failed for {track} {iso}: {e}")
-        return [
-            {
-                "course": track,
-                "date": iso,
-                "title": titles[rn],
-                "runners": list(merged[rn].values()),
-            }
-            for rn in sorted(merged)
-        ]
-
-    async def _raceform_non_runner(self, track: str, iso_date: str,
-                                   race_number: int, horse: str) -> bool:
-        """True when the horse was scratched on its own race day.
-
-        The Raceform archive lists withdrawn horses on the card with
-        ``"finish":0`` and no position, so a scratched single is provably a
-        non-runner even while ATR is challenged. False on any doubt —
-        unknown must never void a live ticket.
-        """
-        if not horse or ":" in str(horse) or not iso_date or not race_number:
-            return False
-        try:
-            races = await self._raceform_results(track, iso_date)
-            runners = _race_runners_by_number(races, int(race_number))
-            # Pre-off cards parse with every finish at 0. Only a race that
-            # already has a real finisher can mark anyone scratched —
-            # otherwise today's live tickets would be voided.
-            if not any(str(x.get("position", "")).strip() for x in runners):
-                return False
-            for x in runners:
-                if self._fuzzy_match(str(x.get("name", "")), horse) >= 0.55:
-                    return bool(x.get("non_runner")) and not str(
-                        x.get("position", "")).strip()
-        except Exception as e:
-            logger.debug(f"Raceform NR lookup failed for {horse}: {e}")
-        return False
-
     async def _atr_placing(self, track: str, race_number: int, horse: str,
                            bet_date: Optional[str] = None) -> Optional[str]:
-        """Official finishing position for one single.
+        """Official finishing position for one single (ATR results).
 
         Winners are already known ("1st"); this exists for the losers —
         a LOST ticket that ran 2nd is place-pool signal, not noise.
-        ATR first (cheap, cached per track/day), then the Raceform archive so
-        a blocked/challenged ATR never strands a loser single as PENDING.
-        None on any failure (never blocks settling).
+        Cached per track/day; None on any failure (never blocks settling).
         """
         if not horse or ":" in str(horse):
             return None
@@ -945,78 +369,22 @@ class ResultTracker:
             runners = _race_runners_by_number(
                 self._atr_track_cache[key], int(race_number or 0)
             )
-            if runners:
-                for r in runners:
-                    if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
-                        placing = str(r.get("position", "")).strip()
-                        if placing:
-                            return placing
+            if not runners:
+                return None
+            for r in runners:
+                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
+                    return str(r.get("position", "")).strip() or None
         except Exception as e:
             logger.debug(f"ATR placing lookup failed for {horse}: {e}")
-
-        # Fallback: full-field Raceform archive for the bet's OWN race day.
-        iso = str(bet_date)[:10] if bet_date else ""
-        age = _bet_age_days(iso)
-        if not iso or age is None or age < 0 or age > RACEFORM_PLACING_MAX_AGE_DAYS:
-            return None
-        try:
-            races = await self._raceform_results(track, iso)
-            for r in _race_runners_by_number(races, int(race_number or 0)):
-                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
-                    placing = str(r.get("position", "")).strip()
-                    if placing:
-                        logger.info(
-                            "[RACEFORM] placing for %s %s R%s: %s (%s)",
-                            horse, track, race_number, placing, iso,
-                        )
-                        return placing
-        except Exception as e:
-            logger.debug(f"Raceform placing lookup failed for {horse}: {e}")
         return None
 
     def _fuzzy_match(self, name_a: str, name_b: str) -> float:
-        a = set(_norm_name(name_a).split())
-        b = set(_norm_name(name_b).split())
+        a = set(name_a.lower().split())
+        b = set(name_b.lower().split())
         if not a or not b:
             return 0.0
         intersection = len(a & b)
         return intersection / max(len(a), len(b))
-
-    async def _structured_placing(
-        self, track: str, race_number: int, horse: str,
-        bet_date: Optional[str] = None,
-    ) -> Optional[tuple]:
-        """Official (position, winner) for one single from merged day results.
-
-        Same day-scoped sources the exotic scorer uses (monitor cache +
-        Raceform archive, ATR live backstop) — structured proof beats the
-        DDGS text search below it. (Sep-2026: nine Greyville singles sat
-        PENDING 29h+ because ATR structured was throttle-starved and DDGS
-        text confirmed nothing, while the results sat in the snapshot.)
-        Returns (position, winner_name) with position like "1st", or None
-        when the horse isn't found — never fabricate.
-        """
-        if not horse or ":" in str(horse):
-            return None
-        try:
-            races = await self._exotic_leg_races(track, bet_date)
-            runners = _race_runners_by_number(races, int(race_number or 0))
-            if not runners:
-                return None
-            winner = next(
-                (str(r.get("name", "")) for r in runners
-                 if str(r.get("position", "")).strip() == "1st"),
-                "",
-            )
-            for r in runners:
-                if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
-                    pos = str(r.get("position", "")).strip() or None
-                    if pos:
-                        return (pos, winner)
-                    return None
-        except Exception as e:
-            logger.debug(f"Structured placing lookup failed for {horse}: {e}")
-        return None
 
     async def _search_result(self, track: str, race_number: int, bet_date: Optional[str] = None) -> Optional[str]:
         """Search for race result text — tries ATR first, then DDGS + direct SA sites."""
@@ -1130,22 +498,16 @@ class ResultTracker:
 
         for candidate in candidates:
             cl = candidate.lower()
-            # Patterns 1-4 are anchored (position token BEFORE the name) and
-            # sentence-bounded — high confidence. Pattern 5 is name-first, so
-            # it gets the same sentence bound plus reduced confidence: a name
-            # pages away from any result token must never score 1.0
-            # (Oct-2026 hardening: unanchored .*? matched across races).
-            anchored = [
+            patterns = [
                 rf'(?:^|\s)1st\s+[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)1\.\s*[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)winner:?\s*[^.?!]*?\b{re.escape(cl)}\b',
                 rf'(?:^|\s)won\s+by\s+[^.?!]*?\b{re.escape(cl)}\b',
+                rf'\b{re.escape(cl)}\b.*?\b1st\b',
             ]
-            for pat in anchored:
+            for pat in patterns:
                 if re.search(pat, text_lower):
                     return candidate, 1.0
-            if re.search(rf'\b{re.escape(cl)}\b[^.?!]*?\b1st\b', text_lower):
-                return candidate, 0.6
 
         return None, 0.0
 
@@ -1235,9 +597,7 @@ class ResultTracker:
         except (ValueError, IndexError):
             return None
 
-    async def _settle_exotic_ticket(
-        self, bet, gov, brain, dry_run: bool = False
-    ) -> Optional[Dict]:
+    async def _settle_exotic_ticket(self, bet, gov, brain) -> Optional[Dict]:
         from core_agent.core.correlation import tag as _tag
         """Settle one exotic pool ticket from ATR placed results.
 
@@ -1254,56 +614,30 @@ class ResultTracker:
           Without a dividend the ticket stays PENDING ("awaiting dividend").
         Returns the settled record dict, or None when left PENDING.
         """
-        # Shadow scoring (read-only audit of VOID/superseded tickets, Oct-2026)
-        # re-walks every VOID ticket each sweep. It must never write settlement
-        # diagnostics: its undecidable legs used to bury the real settlement
-        # picture — 692 of 3 244 rows were unknown_legs/no_results against just
-        # 12 already-VOID bet_ids, one repeated 183 times. Live diagnostics
-        # answer "why is money still open?"; a voided ticket is not open money.
-        def _diag(bet_id: str, reason: str, detail: str = "",
-                  track: str = "", pool_type: str = "") -> None:
-            if dry_run:
-                return
-            _record_pending(bet_id, reason, detail, track, pool_type)
-
-        # ATR only serves today/yesterday result pages and the Raceform
-        # archive covers ~2 weeks back — beyond EXOTIC_MAX_AGE_DAYS no source
-        # can prove the ticket's own day, so scoring would mean matching
-        # against some OTHER day's races. Until then honestly PENDING.
+        # ATR only serves today/yesterday result pages, so a ticket older
+        # than 1 day can NEVER be verified against its own race day —
+        # settling it would score it against a different day's winners.
         try:
-            if (_bet_age_days(getattr(bet, "date", None)) or 0) > EXOTIC_MAX_AGE_DAYS:
-                _diag(
-                    bet.bet_id, "age_expired",
-                    f"older than {EXOTIC_MAX_AGE_DAYS}d — no day-scoped source can prove it",
-                    getattr(bet, "track", ""),
-                )
+            if (_bet_age_days(getattr(bet, "date", None)) or 0) > 1:
                 return None
         except Exception:
             pass
         ticket = _parse_exotic_ticket(bet)
         if not ticket or not ticket["combos"]:
-            _diag(
-                bet.bet_id, "unparseable", "no combinations in stored legs",
-                getattr(bet, "track", ""),
-            )
             return None
         requirement = _exotic_requirement(ticket["pool_type"])
         legs = ticket["pool_legs"]
 
         try:
-            # Merged day-scoped sources (cache + Raceform + ATR backstop);
-            # always the bet's OWN race day, never a collapsed label.
-            races = await self._exotic_leg_races(
-                getattr(bet, "track", ""), getattr(bet, "date", None)
+            from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+            atr = AtTheRacesAPI()
+            races = await atr.get_results_for_track(
+                getattr(bet, "track", ""), date=atr_date_label(getattr(bet, "date", None))
             )
         except Exception as e:
-            logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
-            _diag(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
-                            getattr(bet, "track", ""), ticket["pool_type"])
+            logger.debug(f"Exotic ATR lookup failed for {bet.bet_id}: {e}")
             return None
         if not races:
-            _diag(bet.bet_id, "no_results", "no day-scoped result source",
-                            getattr(bet, "track", ""), ticket["pool_type"])
             return None
 
         # Gate on the last leg's off-time when known (a ticket can't be dead
@@ -1319,140 +653,15 @@ class ResultTracker:
             if last_off.tzinfo is None:
                 last_off = last_off.replace(tzinfo=_SAST)
             if datetime.now(_SAST) < last_off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
-                _diag(
-                    bet.bet_id, "before_off_time",
-                    f"final leg off {last_off.isoformat()} + {OFF_TIME_GRACE_MINUTES}m grace",
-                    getattr(bet, "track", ""), ticket["pool_type"],
-                )
                 return None
-
-        flagged_sub: List[str] = []
-
-        def single_race_status(entry: Dict, runners: List[Dict],
-                               pool_name: str) -> str:
-            """Order-aware verdict for single-race EXACTA/TRIFECTA/QUARTET
-            (Oct-2026): banker must be 1st and savers must cover the minor
-            placings — a ticket whose banker ran 4th is a LOSS even when a
-            saver won. The old any-first rule paid full tote dividends on
-            such tickets. Missing place data (e.g. no 4th listed) stays
-            unknown, never guessed."""
-            cands = entry["candidates"]
-            needed = {"2nd"}
-            if "TRIFECTA" in pool_name:
-                needed = {"2nd", "3rd"}
-            elif "QUARTET" in pool_name:
-                needed = {"2nd", "3rd", "4th"}
-
-            def _pos(name: str) -> Optional[str]:
-                # (ii) A listed runner with no placing is "not published yet",
-                # not "proven unplaced" (Oct-2026): the docstring rule
-                # "missing place data stays unknown, never guessed" applies
-                # here too. Returning "" made a blank banker a hard FAIL.
-                for r in runners:
-                    if self._fuzzy_match(str(r.get("name", "")), str(name)) >= 0.55:
-                        p = str(r.get("position", "")).strip()
-                        if p:
-                            return p
-                return None
-
-            banker_pos = _pos(cands[0]) if cands else None
-            if banker_pos is None:
-                return "unknown"  # banker scratched/absent: single pools
-                                  # refund via VOID path, never auto-verdict
-            if banker_pos != "1st":
-                return "fail"
-            for place in needed:
-                if not any(r.get("position", "") == place for r in runners
-                           if isinstance(r, dict)):
-                    return "unknown"  # feed lacks this placing: can't verify
-            saver_places = set()
-            for s in cands[1:]:
-                p = _pos(s)
-                if p:
-                    saver_places.add(p)
-            if needed <= saver_places:
-                return "pass"
-            return "fail"
-
-        def _cand_positions(entry: Dict) -> Dict[str, str]:
-            """candidate -> confirmed placing ("" when the feed lists the name
-            but no position). Diagnostic only: recorded in settlement notes so
-            a wrong verdict stays provable after the day's sources rotate."""
-            runners = _race_runners_by_number(races, entry["race"]) or []
-            out: Dict[str, str] = {}
-            for cand in entry.get("candidates", []):
-                best = ""
-                for r in runners:
-                    if self._fuzzy_match(
-                            str(r.get("name", "")), str(cand)) >= 0.55:
-                        best = str(r.get("position", "")).strip() or best
-                out[str(cand)] = best
-            return out
 
         def leg_status(entry: Dict) -> str:
             runners = _race_runners_by_number(races, entry["race"])
             if not runners:
-                return "unknown"            # Finality guard (Oct-2026: Greyville PA sat 7/7 Friday night and
-            # was buried LOST because R4-R8 legs evaluated against pre-race
-            # field listings with no positions — matched names, no confirmed
-            # winner anywhere. A leg whose race shows NO confirmed winner in
-            # the data is not final: unknown, never fail. LOST verdicts can
-            # only rest on finished races.)
-            if not any(
-                str(r.get("position", "")).strip() == "1st" for r in runners
-            ):
                 return "unknown"
-            # Single-race pools are order-sensitive (banker-1st + placed
-            # savers); multi-leg pools use pool-requirement semantics below.
-            _pname = str(ticket.get("pool_type", "")).upper()
-            if len(ticket.get("pool_legs") or []) == 1 and any(
-                k in _pname for k in ("EXACTA", "TRIFECTA", "QUARTET")
-            ):
-                return single_race_status(entry, runners, _pname)
-            # TAB substitution (Oct-2026 rulebook: Bipot/PA/P6/Jackpot/P3
-            # scratched horses are replaced with the tote favourite — no
-            # refunds, ticket lives). A candidate ABSENT from the result
-            # field never ran (scratched): the ticket is deemed to hold the
-            # favourite there, read from the same live snapshot the HUD
-            # dashboard's MARKET LEADER cards use. Strictly additive: the
-            # substitute can only PASS a leg (fave placed = sub placed),
-            # never fail one — every other verdict follows the listed
-            # candidates exactly as before.
-            field_names = [str(r.get("name", "")) for r in runners]
-            ran_cands = []
-            missing_cands = []
-            for cand in entry["candidates"]:
-                if any(
-                    self._fuzzy_match(rn, str(cand)) >= 0.55
-                    for rn in field_names if rn
-                ):
-                    ran_cands.append(cand)
-                else:
-                    missing_cands.append(cand)
-            effective_cands = list(ran_cands)
-            if missing_cands:
-                fav = _snapshot_favourite(
-                    getattr(bet, "track", ""), entry["race"])
-                if fav and not any(
-                    self._fuzzy_match(fav, str(c)) >= 0.55
-                    for c in ran_cands
-                ):
-                    logger.info(
-                        "Exotic %s R%s: scratched %s → TAB substitute (tote "
-                        "favourite) %s",
-                        getattr(bet, "bet_id", "?"), entry["race"],
-                        ", ".join(str(c) for c in missing_cands), fav,
-                    )
-                    effective_cands.append(fav)
-                else:
-                    flagged_sub.append(
-                        f"R{entry['race']}: "
-                        f"{', '.join(str(c) for c in missing_cands)} "
-                        f"scratched? (absent from results)"
-                    )
             best: Optional[str] = None
             matched_any = False
-            for cand in effective_cands:
+            for cand in entry["candidates"]:
                 for r in runners:
                     if self._fuzzy_match(str(r.get("name", "")), cand) >= 0.55:
                         matched_any = True
@@ -1460,40 +669,8 @@ class ResultTracker:
                         if pos in requirement:
                             return "pass"
                         best = pos or best
-            if matched_any and not missing_cands:
-                # Completeness guard (2026-10-16 Fairview Bipot: an official
-                # 6/6 R174.20 ticket was buried LOST). A place-pool leg may
-                # only be declared DEAD when the data actually carries every
-                # placing the pool requires. A partial feed (winner recorded,
-                # 2nd/3rd still blank) matched our candidates by name with
-                # EMPTY positions, and the old code read blank as "missed".
-                # Missing placings => unknown, never a fabricated dead leg.
-                confirmed = {
-                    str(r.get("position", "")).strip() for r in runners
-                }
-                if not requirement <= confirmed:
-                    return "unknown"
-                return "fail"  # all listed candidates ran and missed
-            if missing_cands and not matched_any:
-                # Nothing listed ran — outcome hinges on the TAB
-                # favourite-substitution. Never guess.
-                return "unknown"
-            if missing_cands:
-                # Listed runners missed, but a scratched candidate's TAB
-                # sub is unverified: hold fresh races for recheck (results
-                # and dividends still landing), judge only mature data.
-                try:
-                    _off = self._race_off_datetime(
-                        getattr(bet, "track", ""), entry["race"],
-                        getattr(bet, "date", None))
-                    _now = datetime.now(_SAST)
-                    _off_a = _off if (_off is not None and _off.tzinfo) \
-                        else (_off.replace(tzinfo=_SAST) if _off is not None else None)
-                    if _off_a is not None and _off_a <= _now and \
-                            (_now - _off_a) < timedelta(hours=3):
-                        return "unknown"
-                except Exception:
-                    pass
+            if matched_any:
+                return "fail"  # all candidates placed outside requirement
             # No candidate found in results. For win pools a confirmed
             # different winner still kills the leg; for place pools the
             # candidate could have placed unlisted, so stay unknown.
@@ -1508,36 +685,13 @@ class ResultTracker:
         # Each stored entry is one leg (banker + savers); the ticket is one
         # logical combination across all legs.
         legs_state = [leg_status(e) for e in ticket["combos"]]
-        if flagged_sub:
-            # Loud flag: a scratched candidate leaves this ticket hinging on
-            # the TAB favourite-substitution — needs human eyes on the
-            # official result, never a silent verdict.
-            _healing_event(
-                "EXOTIC_SCRATCH_SUB",
-                f"Exotic {bet.bet_id} @{getattr(bet, 'track', '?')}: "
-                + "; ".join(flagged_sub),
-                agent="ResultTracker",
-                status="WARN",
-            )
-        # A confirmed dead leg kills the (single) combination outright: a
-        # multi-leg pool only wins when EVERY leg passes, so one proven
-        # "fail" is a sound LOST even while another leg is still unknown.
-        # (Oct-2026: a scratched-candidate leg held a provably dead
-        # Durbanville BiPot — and 4 Fairview losers — PENDING until the
-        # 3-day expiry. Unknown legs may hold a ticket, never a dead one.)
-        if any(s == "fail" for s in legs_state):
-            all_dead = True
-        elif any(s == "unknown" for s in legs_state):
-            _unknown = [i for i, st in enumerate(legs_state) if st == "unknown"]
-            _diag(
-                bet.bet_id, "unknown_legs",
-                f"legs without confirmed placing: {_unknown}",
-                getattr(bet, "track", ""), ticket["pool_type"],
-            )
+        if any(s == "unknown" for s in legs_state):
             return None
-        elif all(s == "pass" for s in legs_state):
+        if all(s == "pass" for s in legs_state):
             any_won_combo = True
             all_dead = False
+        elif all(s == "fail" for s in legs_state):
+            all_dead = True
         else:
             # Mixed pass/fail across legs of a single combination ticket:
             # a failed leg kills the only combination.
@@ -1549,43 +703,9 @@ class ResultTracker:
             )
             div = _extract_pool_dividend(div_text or "", ticket["pool_type"])
             if div is None:
-                # The TAB-format scrape above only sees sources that still
-                # serve plain HTML (tab4racing/tab.co.za are JS shells now).
-                # Raceform's archive carries every SA pool's dividend for any
-                # past date — structured JSON in the page, no CF challenge.
-                _bd = str(getattr(bet, "date", "") or "")[:10]
-                try:
-                    date.fromisoformat(_bd)
-                except (ValueError, TypeError):
-                    _bd = date.today().isoformat()
-                try:
-                    div = await self._raceform_dividend(
-                        getattr(bet, "track", ""), _bd, ticket["pool_type"],
-                        ticket["pool_legs"],
-                    )
-                except Exception as rf_err:
-                    logger.debug(f"Raceform dividend lookup failed: {rf_err}")
-                    div = None
-            if div is None:
-                # Reported (not silent): a won ticket whose dividend isn't
-                # published yet stays PENDING, and the reason is visible in
-                # Live Ops via the healing log + telemetry.
-                msg = (
-                    f"Exotic {bet.bet_id} ({ticket['pool_type']} @ "
-                    f"{getattr(bet, 'track', '?')}) all {len(legs_state)} legs "
-                    f"placed, awaiting tote dividend"
-                )
-                logger.info(msg)
-                _record_pending(
-                    bet.bet_id, "no_dividend",
-                    f"{ticket['pool_type']} dividend not published/found",
-                    getattr(bet, "track", ""), ticket["pool_type"],
-                )
-                _healing_event(
-                    "EXOTIC_AWAITING_DIVIDEND",
-                    msg,
-                    agent="ResultTracker",
-                    status="WARN",
+                logger.info(
+                    "Exotic %s all legs placed, awaiting tote dividend — left PENDING",
+                    bet.bet_id,
                 )
                 return None
             pool_return = round(div * float(getattr(bet, "stake", 0.0) or 0.0), 2)
@@ -1593,60 +713,21 @@ class ResultTracker:
                 f"Auto-settled (WON all {len(legs_state)} legs, "
                 f"tote dividend R{div:.2f}/R1)"
             )
-            ok = True if dry_run else (
-                gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
-            )
+            ok = gov.settle_exotic_bet(bet.bet_id, pool_return, notes) if gov else False
             won = True
         elif all_dead:
-            # Forensic verdict: name the dead leg(s) and the placings the
-            # data actually carried. A bare "dead leg" note made the
-            # 2026-10-16 Fairview Bipot unexplainable once the day's
-            # sources rotated away.
-            _dead = [
-                ticket["combos"][i]
-                for i, s in enumerate(legs_state) if s == "fail"
-            ]
-            _dead_races = ", ".join(f"R{d.get('race')}" for d in _dead) or "?"
-            _evidence = "; ".join(
-                "R{}: {}".format(
-                    d.get("race"),
-                    ", ".join(
-                        "{}={}".format(c, p or "?")
-                        for c, p in _cand_positions(d).items()
-                    ),
-                )
-                for d in _dead
-            )
             notes = (
-                f"Auto-settled (LOST — dead leg(s) {_dead_races}, "
+                f"Auto-settled (LOST — dead leg, "
                 f"requirement {sorted(requirement)} not met)"
-                + (f" | evidence {_evidence}" if _evidence else "")
             )
-            ok = True if dry_run else (
-                gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
-            )
+            ok = gov.settle_exotic_bet(bet.bet_id, 0.0, notes) if gov else False
             won = False
             pool_return = 0.0
         else:
             return None
 
         if not ok:
-            _record_pending(
-                bet.bet_id, "settle_failed",
-                "governor refused settlement write",
-                getattr(bet, "track", ""), ticket["pool_type"],
-            )
             return None
-        if dry_run:
-            # Shadow mode (Oct-2026): return the verdict so a superseded
-            # ticket can be scored read-only. No ledger movement, no notify.
-            return {
-                "bet_id": bet.bet_id,
-                "won": won,
-                "pool_return": pool_return,
-                "notes": notes,
-                "dry_run": True,
-            }
         logger.info(
             "Auto-settled exotic: %s (%s) - %s (%s)",
             bet.horse, getattr(bet, "track", ""), "WON" if won else "LOST", notes,
@@ -1677,57 +758,6 @@ class ResultTracker:
             "notes": notes,
         }
 
-    async def _shadow_score_superseded(self, gov, brain) -> int:
-        """Score superseded exotic tickets read-only (Oct-2026).
-
-        Supersede voids the earlier ticket *before* the replacement is
-        recorded, so a daily pick that would have won vanishes from the
-        ledger without a trace (21-Oct-2026 Durbanville: a 6/6 BIPOT worth
-        R139.68 was replaced by a loser and the ledger only showed the
-        void). Stamp what the voided row would have paid so the audit trail
-        keeps it; compare against the replacement's result to see the real
-        cost of the supersede (a shadow WON beside a replacement WON is not
-        a loss and must never be summed into the ledger).
-
-        Read-only: no bankroll movement, no Telegram. A ticket whose
-        dividend is not published yet returns None and is retried next
-        cycle. Returns the number of rows annotated.
-        """
-        scored = 0
-        try:
-            rows = list(getattr(gov, "_bets", []) or [])
-        except Exception:
-            return 0
-        for bet in rows:
-            try:
-                if str(getattr(bet, "status", "")) != "VOID":
-                    continue
-                notes = str(getattr(bet, "notes", "") or "")
-                if "superseded" not in notes.lower() or "shadow:" in notes:
-                    continue
-                if not hasattr(gov, "annotate_notes"):
-                    return scored
-                res = await self._settle_exotic_ticket(
-                    bet, None, brain, dry_run=True
-                )
-                if not res:
-                    continue
-                if res.get("won"):
-                    frag = f"shadow: WON R{float(res.get('pool_return') or 0.0):.2f}"
-                else:
-                    frag = "shadow: LOST"
-                if gov.annotate_notes(bet.bet_id, frag):
-                    scored += 1
-                    logger.info(
-                        "Shadow-scored superseded ticket %s: %s",
-                        bet.bet_id, frag,
-                    )
-            except Exception as e:
-                logger.debug(
-                    f"Shadow scoring skipped for {getattr(bet, 'bet_id', '?')}: {e}"
-                )
-        return scored
-
     async def check_and_settle_open_bets(
         self, max_age_days: int = MAX_SETTLE_AGE_DAYS
     ) -> List[Dict]:
@@ -1757,14 +787,6 @@ class ResultTracker:
         except Exception:
             pass
 
-        # Shadow sweep (Oct-2026): runs even when the open book is empty, so
-        # a superseded winner still gets its verdict recorded once the tote
-        # dividend publishes. Read-only — no bankroll movement.
-        try:
-            await self._shadow_score_superseded(gov, brain)
-        except Exception as _shadow_err:
-            logger.debug(f"Shadow sweep skipped: {_shadow_err}")
-
         open_bets = gov.get_open_bets()
         if not open_bets:
             return []
@@ -1777,50 +799,9 @@ class ResultTracker:
         settled = []
         deferred: List[str] = []
         _nr_cache = {}  # lazy {date: {(course, race, horse)}} scratched sets
-        # Cheap expiry sweep FIRST (Oct-2026): the evaluation loop below is
-        # newest-first with a time budget, so ancients at the tail were
-        # never reached and never expired. This pass needs no network and
-        # always runs to completion.
-        try:
-            for _b in list(open_bets):
-                _age = _bet_age_days(getattr(_b, "date", None))
-                _cap = 3 if _is_exotic_bet(_b) else max_age_days
-                if _age is not None and _age > _cap:
-                    if gov and hasattr(gov, "expire_stale_bet"):
-                        gov.expire_stale_bet(_b.bet_id)
-                        deferred.append(f"{_b.bet_id} (expired, {_age}d old)")
-            open_bets = [b for b in gov.get_open_bets()] if gov and hasattr(gov, "get_open_bets") else open_bets
-        except Exception as _exp_err:
-            logger.debug(f"Expiry sweep failed: {_exp_err}")
-        # Newest-first (Oct-2026): the loop used to chew oldest-first and a
-        # few slow ancients burned the whole cycle budget, starving fresh
-        # tickets forever. Plus a hard budget so one cycle can never wedge.
-        _loop_start = datetime.now().timestamp()
-        try:
-            open_bets = sorted(
-                open_bets,
-                key=lambda b: (
-                    str(getattr(b, "date", "") or ""),
-                    str(getattr(b, "bet_id", "") or ""),
-                ),
-                reverse=True,
-            )
-        except Exception:
-            pass
         for bet in open_bets:
-            if datetime.now().timestamp() - _loop_start > 150:
-                logger.info(
-                    "%s settle budget exhausted, remainder drains next cycle",
-                    _tag(),
-                )
-                break
             age = _bet_age_days(getattr(bet, "date", None))
-            # Exotics go stale fast: ATR live covers today/yesterday and old
-            # pool tickets evidently can't always be verified (Oct-2026:
-            # week-old Jackpots clogged OPEN forever while tonight's card
-            # needed the book clean). Cap exotics at 3 days pending.
-            cap = 3 if _is_exotic_bet(bet) else max_age_days
-            if age is not None and age > cap:
+            if age is not None and age > max_age_days:
                 # Over-age bets can never be verified (ATR serves today /
                 # yesterday only) — expire them out of the open book instead
                 # of letting PENDINGs pile up forever. No money moves.
@@ -1831,59 +812,16 @@ class ResultTracker:
                     logger.debug(f"Expire failed for {bet.bet_id}: {exp_err}")
                 deferred.append(f"{bet.bet_id} ({bet.horse} @ {bet.track} R{bet.race_number}, {age}d old)")
                 continue
-            # Pre-race guard (Oct-2026: Taking A Risk settled LOST hours before
-            # Vaal R7 ran — stale snippets scored a future race). If the bet is
-            # dated today and its off-time is still ahead, NO evidence can be
-            # real; skip and leave PENDING. Unknown off-time fails open.
-            try:
-                _today_iso = date.today().isoformat()
-                _bet_day = str(getattr(bet, "date", "") or "")[:10]
-                if _bet_day and _bet_day >= _today_iso:
-                    _base = getattr(gov, "data_dir", None)
-                    _off = _find_race_time(
-                        _base, getattr(bet, "track", ""),
-                        getattr(bet, "race_number", 0),
-                        getattr(bet, "date", None)) if _base else None
-                    if _off and ":" in str(_off):
-                        from datetime import datetime as _dt
-                        try:
-                            from zoneinfo import ZoneInfo as _ZI
-                            _now = _dt.now(_ZI("Africa/Johannesburg")).strftime("%H:%M")
-                        except Exception:
-                            _now = _dt.now().strftime("%H:%M")
-                        if f"{int(_hh):02d}:{int(_mm):02d}" > _now:
-                            logger.info(
-                                f"{_tag()} Pre-race skip: {bet.horse} @ {bet.track} "
-                                f"R{bet.race_number} off {_off} (now {_now})")
-                            continue
-            except Exception as _pre_err:
-                logger.debug(f"Pre-race check skipped for {bet.bet_id}: {_pre_err}")
             if _is_exotic_bet(bet):
                 # Duplicate recordings (same track/date/ticket, e.g. from
                 # overlapping monitor runs) — keep the earliest, cancel the
-                # rest with stake refund. Same ticket means same bankers:
-                # a rescan with different selections is a NEW ticket even on
-                # identical pool+legs (Oct-2026: selections-blind cancel
-                # would eat improved tickets).
-                def _bankers(of) -> tuple:
-                    try:
-                        import json as _j
-                        data = _j.loads(getattr(of, "notes", "") or "{}")
-                        out = []
-                        for c in (data.get("combinations") or []):
-                            b = (c or {}).get("banker")
-                            out.append(
-                                b.get("name") if isinstance(b, dict) else str(b or "")
-                            )
-                        return tuple(out)
-                    except Exception:
-                        return ()
+                # rest with stake refund. The recorder treats this key as one
+                # ticket, so extras are never legitimate.
                 try:
                     my_key = (
                         str(getattr(bet, "track", "") or "").lower(),
                         str(getattr(bet, "date", "") or ""),
                         str(getattr(bet, "horse", "") or ""),
-                        _bankers(bet),
                     )
                     older = [
                         o for o in open_bets
@@ -1892,7 +830,6 @@ class ResultTracker:
                             str(getattr(o, "track", "") or "").lower(),
                             str(getattr(o, "date", "") or ""),
                             str(getattr(o, "horse", "") or ""),
-                            _bankers(o),
                         ) == my_key
                         and str(getattr(o, "bet_id", "")) < str(getattr(bet, "bet_id", ""))
                     ]
@@ -1961,25 +898,6 @@ class ResultTracker:
                 except Exception as nr_err:
                     logger.debug(f"NR check skipped for {bet.bet_id}: {nr_err}")
                     _is_nr = False
-                # Snapshot-only NR detection misses historical meetings (the
-                # snapshot no longer lists yesterday's card), which stranded
-                # scratched singles as PENDING until the age cap expired them
-                # (Oct-2026: Vaal Hat's Queen / Astrophile, finish:0). The
-                # Raceform archive still proves the scratch for its own day.
-                if not _is_nr:
-                    try:
-                        _nr_iso = str(getattr(bet, "date", "") or "")[:10]
-                        _nr_age = _bet_age_days(_nr_iso)
-                        if (_nr_iso and _nr_age is not None
-                                and 0 <= _nr_age <= RACEFORM_PLACING_MAX_AGE_DAYS):
-                            _is_nr = await self._raceform_non_runner(
-                                getattr(bet, "track", ""), _nr_iso,
-                                int(getattr(bet, "race_number", 0) or 0),
-                                str(bet.horse),
-                            )
-                    except Exception as nr_rf_err:
-                        logger.debug(
-                            f"Raceform NR check skipped for {bet.bet_id}: {nr_rf_err}")
                 if _is_nr and gov and hasattr(gov, "cancel_pending_bet"):
                     try:
                         if gov.cancel_pending_bet(
@@ -1999,65 +917,36 @@ class ResultTracker:
                     except Exception as void_err:
                         logger.debug(f"NR void failed for {bet.bet_id}: {void_err}")
                     continue
-            # 0. Structured proof first: merged day results (monitor cache +
-            # Raceform archive, ATR backstop). On a hit the DDGS text search
-            # below is skipped entirely.
+            result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
+            if not result_text:
+                continue
+
+            # 1. Direct check if our horse is declared winner
+            winner, confidence = self._extract_winner(result_text, [bet.horse])
             settle_needed = False
             won = False
             notes = ""
-            try:
-                _structured = await self._structured_placing(
-                    bet.track, bet.race_number, bet.horse, getattr(bet, "date", None)
-                )
-            except Exception as struct_err:
-                logger.debug(f"Structured placing skipped for {bet.bet_id}: {struct_err}")
-                _structured = None
-            if _structured:
-                _placed, _winner = _structured
-                if _placed == "1st":
-                    won = True
-                    notes = "Auto-settled (WINNER confirmed, structured)"
-                    _log_settled_winner(bet, bet.horse)
-                else:
-                    won = False
-                    if _winner:
-                        notes = f"Auto-settled (LOST - 1st was {_winner})"
-                    else:
-                        notes = f"Auto-settled (LOST - unplaced {_placed}, structured)"
-                    _log_settled_winner(bet, _winner or bet.horse)
+
+            if winner and confidence >= 0.55:
+                won = True
                 settle_needed = True
+                notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
+                _log_settled_winner(bet, winner)
             else:
-                result_text = await self._search_result(bet.track, bet.race_number, bet_date=bet.date)
-                if not result_text:
-                    continue
-
-                # 1. Text fallback — skipped when structured proof already spoke.
-                if not settle_needed:
-                    winner, confidence = self._extract_winner(result_text, [bet.horse])
-                    settle_needed = False
-                    won = False
-                    notes = ""
-
-                    if winner and confidence >= 0.55:
+                # 2. Check if a DIFFERENT winner was confirmed for this race
+                confirmed_winner = self._extract_race_winner(result_text)
+                if confirmed_winner:
+                    match_score = self._fuzzy_match(confirmed_winner, bet.horse)
+                    if match_score >= 0.55:
                         won = True
                         settle_needed = True
-                        notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
-                        _log_settled_winner(bet, winner)
+                        notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
+                        _log_settled_winner(bet, confirmed_winner)
                     else:
-                        # 2. Check if a DIFFERENT winner was confirmed for this race
-                        confirmed_winner = self._extract_race_winner(result_text)
-                        if confirmed_winner:
-                            match_score = self._fuzzy_match(confirmed_winner, bet.horse)
-                            if match_score >= 0.55:
-                                won = True
-                                settle_needed = True
-                                notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
-                                _log_settled_winner(bet, confirmed_winner)
-                            else:
-                                won = False
-                                settle_needed = True
-                                notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
-                                _log_settled_winner(bet, confirmed_winner)
+                        won = False
+                        settle_needed = True
+                        notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
+                        _log_settled_winner(bet, confirmed_winner)
 
             if settle_needed:
                 settled_ok = False

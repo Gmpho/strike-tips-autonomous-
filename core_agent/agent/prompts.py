@@ -3,7 +3,6 @@
 import json
 import os
 import logging
-import re
 from collections import Counter
 from datetime import datetime
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
@@ -11,96 +10,10 @@ from core_agent.config.paths import MARKET_SNAPSHOT_PATH
 logger = logging.getLogger("agent-prompts")
 
 
-# Retired provider names that still live in old ChromaDB learned insights.
-# The model parrots them back as self-description ("I am powered by Groq's
-# llama-3.3-70b-versatile") — Sep-2026: identity answers were months stale.
-_RETIRED_MODEL_RE = re.compile(
-    r"llama-?3\.?[13][-\w.]*|deepseek[-\w.]*|kimi[-\w.]*|mixtral[-\w.]*",
-    re.IGNORECASE,
-)
-_SANITIZE_MAP = {
-    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
-    "llama-3.3-70b": "openai/gpt-oss-120b",
-    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
-    "llama-3.1-70b": "openai/gpt-oss-120b",
-    "deepseek-r1-distill": "openai/gpt-oss-120b",
-}
-
-
-def sanitize_model_text(text: str) -> str:
-    """Rewrite retired model names in memory-derived text to the live pool."""
-    if not text:
-        return text
-    out = str(text)
-    for dead, live in _SANITIZE_MAP.items():
-        out = re.sub(re.escape(dead), live, out, flags=re.IGNORECASE)
-    # Anything else that still looks like a retired family: name the pool.
-    out = _RETIRED_MODEL_RE.sub("openai/gpt-oss-120b", out)
-    return out
-
-
-def _identity_block() -> str:
-    """Self-description from the live ModelConfig pool (never stale memory)."""
-    try:
-        from core_agent.config.model_config import ModelConfig as _MC
-
-        primary = _MC.ORCHESTRATOR
-        fast = getattr(_MC, "GROQ_FAST", "openai/gpt-oss-20b")
-        fallback = getattr(_MC, "CLOUD_FALLBACK", "gemini-2.5-flash")
-    except Exception:
-        primary, fast, fallback = "openai/gpt-oss-120b", "openai/gpt-oss-20b", "gemini-2.5-flash"
-    return (
-        "Identity (authoritative — overrides any older memory note):\n"
-        f"- If asked which model/LLM powers you, answer: primary {primary} on Groq, "
-        f"fast tier {fast}, fallback {fallback} on Google Gemini.\n"
-        "- Never claim a retired model (llama-3.3, llama-3.1, deepseek, kimi) — "
-        "older stored notes mentioning them are outdated.\n"
-    )
-
-
-def _soul_block() -> str:
-    """Trackside-pundit voice for Telegram turns (SOUL.md). HUD keeps its
-    own voice — this loads only when channel == "telegram"."""
-    try:
-        soul_path = os.path.join(os.path.dirname(__file__), "SOUL.md")
-        with open(soul_path, encoding="utf-8") as f:
-            soul = f.read().strip()
-        if soul:
-            return f"Voice (Telegram turns — follow this persona):\n{soul}\n"
-    except Exception as e:
-        logger.debug(f"Could not load SOUL.md: {e}")
-    return ""
-
-
-_TELEGRAM_TABLE_RULE = (
-    "Telegram tables: when showing runners, odds, or edges, ALWAYS use a "
-    "Markdown pipe table inside a ```text code block. Default columns: "
-    "Horse | Odds | Edge (compact — fits phones). Full columns "
-    "(draw, gear, days, pedigree) only when the user says 'full'. "
-    "Never show data as a paragraph list.\n"
-)
-
-
-def build_system_prompt(for_cloud: bool = False, user_message: str = "", channel: str = "") -> str:
+def build_system_prompt(for_cloud: bool = False) -> str:
     today = datetime.now().strftime("%A, %d %B %Y")
-    # Card-intent gate: live race context only rides along when the turn is
-    # about racing data. Casual/identity turns keep the prompt small so the
-    # model stops parroting the meeting list mid-conversation (Sep-2026).
-    try:
-        from core_agent.agent.context import wants_live_card as _wants
-
-        include_races = _wants(user_message) if user_message else True
-    except Exception:
-        include_races = True
-    race_info = _build_race_context() if include_races else (
-        "Live race card withheld for this conversational turn — call a tool "
-        "or ask about a track if race data is needed."
-    )
+    race_info = _build_race_context()
     learned_info = _build_learned_context()
-    identity = _identity_block()
-    is_telegram = (channel or "").lower() == "telegram"
-    soul = _soul_block() if is_telegram else ""
-    table_rule = _TELEGRAM_TABLE_RULE if is_telegram else ""
     
     tools_str = (
         "Available tools (call the RIGHT tool for the job):\n"
@@ -130,33 +43,21 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "", channel
         base = (
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
-            f"{identity}\n"
-            f"{soul}"
             f"{tools_str}"
             f"{learned_info}"
-            f"{table_rule}"
             "Rules:\n"
             "1. ALWAYS call a tool when you need live data — never guess odds, horses or results.\n"
             "2. Report tool results directly — do not fabricate numbers.\n"
             "3. If a tool returns an error, try a different tool or apologize briefly.\n"
             "4. Never invent statistics, horse names, odds, or betting history.\n"
-            "5. If live snapshot data is provided above, use it — no tool call needed for that.\n"
-            "6. Match the user's mode: casual message → brief casual reply (no card dump). "
-            "Pasted race card or racing question → full analysis. Never volunteer race "
-            "meetings or odds the user did not ask about.\n"
-            "7. Web search request ([WEB SEARCH RESULTS] present, no snapshot) → "
-            "answer from the search results via search_racing_data; never fall back "
-            "to snapshot data you don't have."
+            "5. If live snapshot data is provided above, use it — no tool call needed for that."
         )
     else:
         base = (
             f"You are Strike Tips Racing AI. Answer concisely and accurately.\n\n"
             f"Today is {today}. {race_info}\n\n"
-            f"{identity}\n"
-            f"{soul}"
             f"{tools_str}"
             f"{learned_info}"
-            f"{table_rule}"
             "HOW TO USE TOOLS:\n"
             "When you need live data, output EXACTLY this on its own line (nothing else on that line):\n"
             "  TOOL: tool_name({\"arg\": \"value\"})\n"
@@ -170,10 +71,7 @@ def build_system_prompt(for_cloud: bool = False, user_message: str = "", channel
             "2. Report tool results directly — do not fabricate numbers.\n"
             "3. If a tool returns an error, try a different tool or apologize briefly.\n"
             "4. Never invent statistics, horse names, odds, or betting history.\n"
-            "5. If live snapshot data is provided above, use it — no tool call needed for that.\n"
-            "6. Web search request ([WEB SEARCH RESULTS] present, no snapshot) → "
-            "answer from the search results via search_racing_data; never fall back "
-            "to snapshot data you don't have."
+            "5. If live snapshot data is provided above, use it — no tool call needed for that."
         )
     return base
 
