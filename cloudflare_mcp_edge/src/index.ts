@@ -420,6 +420,35 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       return json({ status: "ok", service: "striketips-mcp", version: "2.0.0" });
     }
 
+    // ── Betway proxy ──────────────────────────────────────────────────────────
+    // Modal datacenter IPs are blocked by Betway's Cloudflare Bot Management.
+    // This endpoint runs on Cloudflare's own edge (same network as Betway's CDN)
+    // so the fetch succeeds. Auth-gated — only Modal's backend key can call this.
+    if (path === "/api/fetch-betway") {
+      if (!isAuthorized(request, env)) return json({ error: "unauthorized" }, 401);
+      const betway_path = getStr(q, "path") || "GetDaily";
+      const qs = getStr(q, "qs") || "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2";
+      const betway_url = `https://www.betway.co.za/sportsapi/v1/TrackRacing/${betway_path}?${qs}`;
+      try {
+        const upstream = await fetch(betway_url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": "https://www.betway.co.za/sport/horse-racing",
+            "Origin": "https://www.betway.co.za",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-ZA,en;q=0.9",
+          },
+        });
+        const body = await upstream.text();
+        return new Response(body, {
+          status: upstream.status,
+          headers: { "Content-Type": upstream.headers.get("Content-Type") || "application/json" },
+        });
+      } catch (err) {
+        return json({ error: "betway_proxy_failed", detail: String(err) }, 502);
+      }
+    }
+
     return json({ error: "not found" }, 404);
   } catch {
     return json({ error: "internal error" }, 500);
