@@ -702,6 +702,17 @@ class BankrollGovernor:
         source: str = "",
     ) -> Optional[BetRecord]:
         """Record an exotic pool bet (Pick 6, Jackpot, Bipot, etc.)"""
+        # Reject implausible venues up front: single-char / empty / numeric /
+        # punctuation-only tracks can never be matched to a real meeting at
+        # settlement, so they'd sit PENDING forever. Trim surrounding
+        # whitespace on accepted venues.
+        if track is None:
+            track = ""
+        track = str(track).strip()
+        if len(track) < 2 or not any(ch.isalpha() for ch in track):
+            logger.warning(f"Exotic bet rejected: implausible track {track!r}")
+            return None
+
         total_cost = len(combinations) * ticket_cost
         if total_cost > self.MAX_EXOTIC_COST:
             logger.warning(f"Exotic cost R{total_cost:.2f} exceeds limit R{self.MAX_EXOTIC_COST:.2f}")

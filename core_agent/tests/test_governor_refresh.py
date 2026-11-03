@@ -29,6 +29,9 @@ def _append_pending(data_dir, bet_id="20261025050900_WIN_R5", stake=120.0, day=N
             raw = json.load(f)
     except Exception:
         raw = []
+    if day is None:
+        from datetime import date
+        day = date.today().isoformat()
     raw.append({
         "bet_id": bet_id,
         "timestamp": "2026-10-25T05:09:00",

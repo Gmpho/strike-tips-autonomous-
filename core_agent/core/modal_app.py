@@ -737,7 +737,7 @@ async def run_odds_monitor():
         import httpx as _httpx
 
         _warm = _httpx.get(
-            "https://gmpho--strike-tips-racing-serve-api.modal.run/api/health",
+            "https://gmpho--strike-tips-racing-serve-api.modal.run/api/system/health",
             timeout=8,
         )
         logger.debug("serve_api warm ping: %s", getattr(_warm, "status_code", "?"))
@@ -877,7 +877,7 @@ def keep_warm():
     """Ping serve_api health every 10 min during racing hours — prevents cold start."""
     import httpx
 
-    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/health"
+    url = "https://gmpho--strike-tips-racing-serve-api.modal.run/v1/health"
     try:
         httpx.get(url, timeout=10)
         logger.info("keep_warm ping ok")

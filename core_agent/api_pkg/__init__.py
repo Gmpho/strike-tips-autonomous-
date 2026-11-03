@@ -321,6 +321,16 @@ async def v1_models(request: Request):
 async def v1_health(request: Request):
     return await handle_health(request)
 
+
+@app.get("/health")
+async def root_health():
+    return {"status": "ok"}
+
+
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok"}
+
 @app.websocket("/ws/chat")
 async def ws_chat(websocket: WebSocket, session_id: str = Query(default="ws:default")):
     await handle_websocket(websocket, session_id)

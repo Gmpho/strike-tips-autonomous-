@@ -170,6 +170,12 @@ class TaskRouter:
         """Answer data-retrieval queries directly from local JSON snapshots."""
         last_msg = self._extract_user_query(messages)
 
+        # "Tomorrow" (or any non-today) queries must never be answered with
+        # today's snapshot card — that's stale/wrong data. Defer to the model
+        # (or a dedicated tomorrow feed) instead.
+        if "tomorrow" in last_msg:
+            return None
+
         # Explicit scan requests are ACTION asks — answer them before any
         # snapshot-dependent branch. (This used to live inside `if events:`,
         # so a stale/empty evening feed downgraded "run a full daily scan"
