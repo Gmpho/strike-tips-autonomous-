@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
-import { Radar, Newspaper, Sparkles, Scale, Radio, Clock } from 'lucide-react';
+import { Radar, Newspaper, Sparkles, Scale, Radio, Clock, ExternalLink, Tag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
+import { linkStoriesToRaces } from '../../lib/race-story-link';
 
 interface EngineMeta {
   key: string;
@@ -107,7 +108,17 @@ function EngineCard({ meta, lastEvent }: { meta: EngineMeta; lastEvent?: { messa
 }
 
 export const TelemetryView: React.FC = () => {
-  const { telemetry } = useHUD();
+  const { telemetry, events, news } = useHUD();
+
+  // Live races that news actually mentions (course or runner name). The
+  // backend links news -> racecards in Chroma (swarm_researcher) and emits
+  // a 🏷️ count into telemetry; this surfaces WHICH story belongs to WHICH
+  // race, with a link to the article.
+  const racesWithStories = useMemo(
+    () => linkStoriesToRaces(Object.values(events || {}), news || []),
+    [events, news],
+  );
+  const liveRaceCount = Object.keys(events || {}).length;
 
   // Latest event per engine
   const latestByEngine = useMemo(() => {
@@ -142,6 +153,91 @@ export const TelemetryView: React.FC = () => {
         {ENGINES.map((meta) => (
           <EngineCard key={meta.key} meta={meta} lastEvent={latestByEngine[meta.key]} />
         ))}
+      </div>
+
+      {/* Live races ⨯ news stories */}
+      <div className="shrink-0">
+        <div className="flex items-center gap-2 mb-3">
+          <Tag className="w-3.5 h-3.5 text-theme-secondary" />
+          <h3 className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">
+            Live Races ⨯ Stories
+          </h3>
+          <div className="flex-1 h-px bg-theme" />
+          <span className="text-[9px] font-black text-cyan-500/70 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20 tabular">
+            {liveRaceCount} race{liveRaceCount === 1 ? '' : 's'} live · {racesWithStories.length} linked
+          </span>
+        </div>
+
+        {racesWithStories.length === 0 ? (
+          <div className="rounded-2xl bg-theme-panel border border-theme px-4 py-5 text-center">
+            <p className="text-[11px] font-bold text-theme-primary/70">
+              {liveRaceCount === 0
+                ? 'No live races in the card right now'
+                : 'No live race is named in the current headlines yet'}
+            </p>
+            <p className="text-[10px] text-theme-secondary mt-1">
+              {liveRaceCount === 0
+                ? 'The odds monitor syncs the card every 5 minutes — races appear here as soon as they are on.'
+                : 'Stories appear here the moment a headline mentions one of today’s tracks or runners.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 max-h-[340px] overflow-y-auto custom-scrollbar scroll-container pr-1">
+            {racesWithStories.map((race) => (
+              <motion.div
+                key={race.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-2xl bg-theme-panel border border-theme px-3 py-2.5 hover:border-cyan-500/30 transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[11px] font-black text-theme-primary uppercase tracking-tight truncate">
+                    {race.course} R{race.raceNumber}
+                  </span>
+                  {race.offTime && (
+                    <span className="text-[9px] font-mono text-theme-secondary shrink-0">{race.offTime}</span>
+                  )}
+                  <span className="text-[9px] font-mono text-theme-secondary/70 shrink-0">
+                    {race.runnerCount} run
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {race.stories.map((story, idx) => {
+                    const chip = (
+                      <>
+                        <Tag className="w-3 h-3 shrink-0 text-cyan-400/80" />
+                        <span className="text-[10px] font-semibold text-theme-primary leading-snug line-clamp-2 min-w-0">
+                          {story.title}
+                        </span>
+                        <ExternalLink className="w-3 h-3 shrink-0 text-theme-secondary/60" />
+                      </>
+                    );
+                    return story.url ? (
+                      <a
+                        key={story.id || `${race.id}-${idx}`}
+                        href={story.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Linked via “${story.matchedOn}”${story.source ? ` · ${story.source}` : ''}`}
+                        className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-cyan-500/5 border border-cyan-500/15 hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-colors"
+                      >
+                        {chip}
+                      </a>
+                    ) : (
+                      <div
+                        key={story.id || `${race.id}-${idx}`}
+                        title={`Linked via “${story.matchedOn}”`}
+                        className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-cyan-500/5 border border-cyan-500/15"
+                      >
+                        {chip}
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Activity log */}

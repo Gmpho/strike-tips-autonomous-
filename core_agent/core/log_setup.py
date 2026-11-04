@@ -25,11 +25,39 @@ def configure_file_logging():
 
     Call once during application startup (lifespan).  The file is written
     to *DATA_DIR / strike.log* so the ``/api/logs`` endpoint can read it.
+    Idempotent: repeat calls attach nothing when a handler for the same
+    path already exists (lets volume-reload close + reopen cleanly).
     """
     path = ensure_log_file()
+    root = logging.getLogger()
+    for h in root.handlers:
+        if getattr(h, "baseFilename", "") == path:
+            return
     handler = RotatingFileHandler(path, maxBytes=5 * 1024 * 1024, backupCount=2)
     handler.setLevel(logging.INFO)
     handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
     logging.getLogger().addHandler(handler)
+    # httpx logs full request URLs at INFO — including the Telegram bot
+    # token as a path segment (Sep-2026: token visible in Modal logs).
+    # Warnings+ still surface real failures.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def close_file_handlers() -> None:
+    """Close + detach strike.log handlers.
+
+    Modal Volumes refuse ``reload()`` while any file is open — our own log
+    handler is the usual holder, freezing the web container's volume view
+    (Sep-2026: 8h-stale telemetry/news). Close across the reload, then call
+    ``configure_file_logging()`` again to reopen (idempotent, no dupes).
+    """
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        try:
+            if getattr(h, "baseFilename", ""):
+                root.removeHandler(h)
+                h.close()
+        except Exception:
+            pass

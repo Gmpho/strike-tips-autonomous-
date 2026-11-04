@@ -6,7 +6,7 @@
 
 A modular, AI-powered betting assistant that identifies value bets in South African horse racing using probability edge analysis and disciplined bankroll management.
 
-**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Vercel frontend, with an OKF (On-Device Knowledge) bundle of 12 curated SA racing docs.
+**3-Layer Architecture:** Cloudflare edge (always-free) → Modal serverless backend → Cloudflare Pages frontend, with an OKF (On-Device Knowledge) bundle of 15 curated SA racing docs.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -24,6 +24,8 @@ A modular, AI-powered betting assistant that identifies value bets in South Afri
 ![TWA](https://img.shields.io/badge/TWA-3DDC84?logo=android&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=white)
+![OKF](https://img.shields.io/badge/OKF-15_entries-8B5CF6)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-FF4B4B)
 ![Honcho](https://img.shields.io/badge/Honcho-Memory-8B5CF6)
 ![Playwright](https://img.shields.io/badge/Playwright-2EAD33?logo=playwright&logoColor=white)
@@ -112,13 +114,14 @@ Strike Tips is a "God Mode" betting intelligence system built on a modular archi
 The Cloudflare Worker (`cloudflare_mcp_edge/`) handles all compute-light operations at zero cost:
 
 ### OKF Knowledge Bundle
-12 curated SA racing knowledge files compiled to TypeScript at build time:
+15 curated SA racing knowledge files compiled to TypeScript at build time:
 
 | Category | Files | Contents |
 |----------|-------|----------|
-| **Tracks** | 7 files | Kenilworth, Durbanville, Fairview, Turffontein, Vaal, Scottsville, Greyville — real data (founded, features, draw bias) |
+| **Tracks** | 7 files | Kenilworth, Durbanville, Fairview, Turffontein, Vaal, Scottsville, Greyville — config, draw bias, punter rules |
 | **Conditions** | 1 file | Going & track conditions explained |
-| **Strategies** | 2 files | Value betting & Kelly Criterion with SA context |
+| **Strategies** | 5 files | Value betting, Kelly Criterion + exotics pools, construction doctrine, Friday-night case study |
+| **Index** | 2 files | Bundle root + tracks index |
 
 Search ranks by keyword match (10x title/tags, 5x body, + per-occurrence).
 
@@ -243,7 +246,7 @@ region / swarmInsight / insightSource before set_snapshot → SSE push
 
 ## 🚀 Quick Start
 
-### Option A: Deploy Cloudflare Worker + Vercel HUD (Cloud-Native)
+### Option A: Deploy Cloudflare Worker + Pages HUD (Cloud-Native)
 
 ```bash
 # 1. Deploy Cloudflare Worker (always-free edge)
@@ -251,9 +254,10 @@ cd cloudflare_mcp_edge
 node scripts/build-knowledge.js
 npm run deploy
 
-# 2. Deploy Vercel HUD (frontend)
+# 2. Deploy Pages HUD (frontend)
 cd ../strike-tips-hud
-vercel deploy --prod -y --force
+npm run build
+npx wrangler pages deploy dist --project-name strike-tips-hud
 
 # 3. Visit https://strike-tips-hud.pages.dev
 ```
@@ -609,7 +613,7 @@ cloudflare_mcp_edge/                      # Cloudflare Worker (always-free edge)
 ├── package.json                          # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                        # D1 + KV bindings
 
-strike-tips-hud/                          # Vite + React + Three.js frontend (Vercel)
+strike-tips-hud/                          # Vite + React + Three.js frontend (Cloudflare Pages)
 ├── src/                                  # UI components
 ├── middleware.ts                         # Routes API calls: Cloudflare vs Modal
 ├── vercel.json                           # SPA rewrites only

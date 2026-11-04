@@ -37,3 +37,14 @@ timestamp: 2026-06-28T00:00:00Z
 
 - Diana Stakes (Grade 3, fillies & mares, October)
 - World Sports Betting Matchem Stakes (Grade 3, October)
+
+## Punter rules
+
+- Low draws advantaged at almost every distance — but the false rail position
+  decides WHERE the race is run (stands-side vs inside). Read the rail before
+  the draw: a low draw racing away from the favoured strip is no advantage.
+- Course-specialist factory: small fields, tight track, consistent surface.
+  Horses-for-courses types repeat here; shippers without local form are suspect.
+- Handy/forward is the default winning style; deep closers need a genuine
+  turn of foot, not just stamina. Sprint-pace collapses are rarer here than
+  the market believes — don't overpay for the closer narrative.

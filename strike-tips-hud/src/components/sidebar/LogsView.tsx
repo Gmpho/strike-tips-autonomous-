@@ -1,7 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Terminal, Cpu, HardDrive, Activity, ArrowDown } from 'lucide-react';
+import { Search, Terminal, Cpu, HardDrive, Activity, ArrowDown, Link2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
+import { buildTimeline, type OpsEvent } from '../../lib/ops-links';
+
+// Cap rendered rows: 1644 bets × 2 events re-sorted every 10s poll turned
+// this view into a slideshow (Oct-2026). Newest 150 + pager.
+const PAGE_ROWS = 150;
 
 export const LogsView: React.FC = () => {
   const { logs, systemHealth, alerts, healing, betHistory } = useHUD();
@@ -57,77 +62,18 @@ export const LogsView: React.FC = () => {
     }
   };
 
-  // Synthesize events for the Operations Timeline
-  const timelineEvents = React.useMemo(() => {
-    const list: Array<{
-      id: string;
-      timestamp: string;
-      category: 'BET' | 'ALERT' | 'SYSTEM';
-      level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS';
-      source: string;
-      action: string;
-      message: string;
-    }> = [];
-
-    // 1. Map System Events
-    (healing.events || []).forEach(e => {
-      list.push({
-        id: e.id || `sys-${e.timestamp}-${Math.random()}`,
-        timestamp: e.timestamp,
-        category: 'SYSTEM',
-        level: e.status === 'FAILURE' ? 'ERROR' : e.status === 'SUCCESS' ? 'SUCCESS' : 'INFO',
-        source: e.agent || 'System',
-        action: e.action || 'EVENT',
-        message: e.details || ''
-      });
-    });
-
-    // 2. Map Alert Events
-    (alerts || []).forEach((a: any, idx: number) => {
-      const typeLabel = a.type === 'odds_drop' ? 'Odds Drop' : a.type === 'value_bet' ? 'Value Bet' : a.type;
-      list.push({
-        id: `alert-${a.timestamp}-${idx}`,
-        timestamp: a.timestamp,
-        category: 'ALERT',
-        level: a.type === 'odds_drop' ? 'WARN' : 'INFO',
-        source: 'AlertEngine',
-        action: (a.type || 'ALERT').toUpperCase(),
-        message: `${a.horse} @ ${a.course}: Opportunity detected (${typeLabel} | Odds: ${a.odds})`
-      });
-    });
-
-    // 3. Map Betting Events
-    (betHistory || []).forEach(b => {
-      const ts = b.placedAt || new Date().toISOString();
-      
-      // Placement event
-      list.push({
-        id: `bet-place-${b.id}`,
-        timestamp: ts,
-        category: 'BET',
-        level: 'INFO',
-        source: 'Governor',
-        action: 'PLACE_BET',
-        message: `Placed R${b.stake.toFixed(2)} on ${b.horse} @ ${b.track} R${b.raceNumber} (Odds: ${b.odds}, Edge: +${b.edgePercent}%)`
-      });
-
-      // Settlement event if settled
-      if (b.settled) {
-        list.push({
-          id: `bet-settle-${b.id}`,
-          timestamp: ts,
-          category: 'BET',
-          level: b.won ? 'SUCCESS' : 'WARN',
-          source: 'Governor',
-          action: b.won ? 'BET_WON' : 'BET_LOST',
-          message: `Settled bet on ${b.horse} @ ${b.track} R${b.raceNumber}: ${b.won ? 'WON (+R' + (b.payout || 0).toFixed(2) + ')' : 'LOST'}`
-        });
-      }
-    });
-
-    // Sort descending (newest first)
-    return list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }, [healing.events, alerts, betHistory]);
+  // Synthesize events for the Operations Timeline (stable build +
+  // cross-links live in lib/ops-links — no Math.random keys, no per-row
+  // motion, capped rendering).
+  const timelineEvents: OpsEvent[] = React.useMemo(
+    () => buildTimeline({
+      healing: healing.events || [],
+      alerts: alerts || [],
+      bets: betHistory || [],
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [healing.events, alerts, betHistory],
+  );
 
   const filteredEvents = timelineEvents.filter(ev => {
     if (activeCategory !== 'ALL' && ev.category !== activeCategory) return false;
@@ -139,6 +85,25 @@ export const LogsView: React.FC = () => {
       ev.action.toLowerCase().includes(q)
     );
   });
+
+  // Capped rendering with pager — the feed is thousands of rows.
+  const [rowShown, setRowShown] = useState(PAGE_ROWS);
+  useEffect(() => { setRowShown(PAGE_ROWS); }, [filter, activeCategory]);
+  const visibleEvents = filteredEvents.slice(0, rowShown);
+
+  // Category counts from the same filtered set (self-evident tabs).
+  const catCounts = React.useMemo(() => {
+    const c = { ALL: filteredEvents.length, BET: 0, ALERT: 0, SYSTEM: 0 };
+    for (const ev of filteredEvents) c[ev.category] += 1;
+    return c;
+  }, [filteredEvents]);
+
+  // Follow a cross-link: show the linked entity across all categories.
+  const followLink = useCallback((label: string) => {
+    setActiveCategory('ALL');
+    setFilter(label);
+    setRowShown(PAGE_ROWS);
+  }, []);
 
   const filteredLogs = logs.filter(log =>
     filter === '' || log.toLowerCase().includes(filter.toLowerCase())
@@ -255,10 +220,10 @@ export const LogsView: React.FC = () => {
       {viewMode === 'timeline' && (
         <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar shrink-0">
           {[
-            { id: 'ALL', label: 'All Operations', color: 'border-white/10 text-theme-primary' },
-            { id: 'BET', label: '💰 Betting Logs', color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
-            { id: 'ALERT', label: '🚨 Alerts Triggered', color: 'border-red-500/20 text-red-400 bg-red-500/5' },
-            { id: 'SYSTEM', label: '⚙️ Sync & Healing', color: 'border-indigo-500/20 text-indigo-400 bg-indigo-500/5' },
+            { id: 'ALL', label: `All Operations (${catCounts.ALL})`, color: 'border-white/10 text-theme-primary' },
+            { id: 'BET', label: `💰 Betting Logs (${catCounts.BET})`, color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
+            { id: 'ALERT', label: `🚨 Alerts Triggered (${catCounts.ALERT})`, color: 'border-red-500/20 text-red-400 bg-red-500/5' },
+            { id: 'SYSTEM', label: `⚙️ Sync & Healing (${catCounts.SYSTEM})`, color: 'border-indigo-500/20 text-indigo-400 bg-indigo-500/5' },
           ].map(cat => (
             <button
               key={cat.id}
@@ -283,9 +248,10 @@ export const LogsView: React.FC = () => {
           className={`absolute inset-0 bg-theme-panel border border-theme rounded-3xl overflow-y-auto p-4 md:p-6 custom-scrollbar`}
         >
           {viewMode === 'timeline' ? (
-            /* OPERATIONS TIMELINE FEED */
+            /* OPERATIONS TIMELINE FEED (plain divs — per-row motion on
+               hundreds of rows thrashed layout every poll) */
             <div className="space-y-2.5">
-              {filteredEvents.map((ev) => {
+              {visibleEvents.map((ev) => {
                 const badgeColor = 
                   ev.category === 'BET' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                   ev.category === 'ALERT' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
@@ -313,6 +279,22 @@ export const LogsView: React.FC = () => {
                         <p className="text-[9px] text-slate-500 uppercase font-black tracking-wider mt-1">
                           Source: {ev.source} • Action: {ev.action}
                         </p>
+                        {ev.links.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {ev.links.map((l) => (
+                              <button
+                                key={l.id}
+                                type="button"
+                                onClick={() => followLink(l.label)}
+                                title={`Show linked ${l.kind}`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-wider transition-all hover:bg-white/10 border-purple-500/30 text-purple-300"
+                              >
+                                <Link2 className="w-2.5 h-2.5" />
+                                {l.kind}: {l.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                     
@@ -333,6 +315,15 @@ export const LogsView: React.FC = () => {
                   <Terminal className="w-10 h-10" />
                   <div className="text-[9px] font-black uppercase tracking-widest">No Events Found</div>
                 </div>
+              )}
+              {visibleEvents.length < filteredEvents.length && (
+                <button
+                  type="button"
+                  onClick={() => setRowShown((n) => n + PAGE_ROWS)}
+                  className="w-full py-2.5 rounded-2xl border border-theme text-[10px] font-black uppercase tracking-widest text-purple-400 hover:bg-purple-500/5 transition-all"
+                >
+                  Show more ({filteredEvents.length - visibleEvents.length} older)
+                </button>
               )}
             </div>
           ) : (

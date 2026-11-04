@@ -16,6 +16,47 @@ except ImportError:
     HAS_CHROMA = False
 
 
+GEMMA2_MODEL = "embeddinggemma-2:270m"
+LEGACY_MODEL = "embeddinggemma:300m"
+
+
+def resolve_embedder_model() -> str:
+    """Pick the embedder: explicit MODEL_EMBEDDER env wins; otherwise prefer
+    EmbeddingGemma 2 (270m, 378MB, 8K context) when Ollama has it pulled,
+    falling back to the v1 300m model. Never raises — returns a name."""
+    import httpx
+
+    explicit = os.getenv("MODEL_EMBEDDER", "").strip()
+    if explicit:
+        return explicit
+    try:
+        from core_agent.config.model_config import ModelConfig
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{ModelConfig.OLLAMA_BASE_URL}/api/tags")
+            if r.status_code == 200:
+                names = [m.get("name", "") for m in r.json().get("models", [])]
+                if any(n.startswith("embeddinggemma-2") for n in names):
+                    return GEMMA2_MODEL
+    except Exception:
+        pass
+    return LEGACY_MODEL
+
+
+def collection_names(model: str | None = None) -> Dict[str, str]:
+    """Versioned collection names per embedding space.
+
+    A new embedding space MUST get new collections — mixing spaces in one
+    collection silently corrupts retrieval. v1 (300m) keeps the legacy
+    un-suffixed names; everything else gets _v2. Unspecified model resolves
+    exactly like the embedder itself (env → gemma2-if-pulled → legacy).
+    """
+    if model is None:
+        explicit = os.getenv("MODEL_EMBEDDER", "").strip()
+        model = explicit or resolve_embedder_model()
+    suffix = "" if model == LEGACY_MODEL else "_v2"
+    return {"form": f"form_insights{suffix}", "chat": f"chat_history{suffix}"}
+
+
 def _make_embedding_fn():
     """
     Returns the best available embedding function:
@@ -30,7 +71,7 @@ def _make_embedding_fn():
     class OllamaEmbeddingFn(EmbeddingFunction):
         def __init__(self):
             self._host = ModelConfig.OLLAMA_BASE_URL
-            self._model = os.getenv("MODEL_EMBEDDER", "embeddinggemma:300m")
+            self._model = resolve_embedder_model()
 
         def name(self) -> str:
             return f"ollama_{self._model.replace(':', '_').replace('/', '_')}"
@@ -52,7 +93,7 @@ def _make_embedding_fn():
             r = client.get(f"{ModelConfig.OLLAMA_BASE_URL}/api/tags")
         if r.status_code == 200:
             fn = OllamaEmbeddingFn()
-            logger.info("[MEMORY] Embedding: embeddinggemma:300m (Ollama) — deferred")
+            logger.info(f"[MEMORY] Embedding: {fn._model} (Ollama) — deferred")
             return fn
     except Exception:
         pass
@@ -123,28 +164,29 @@ class RacingMemory:
                 logger.info(f"[MEMORY] ChromaDB local: {self.data_dir}")
 
             col_kwargs = {"metadata": {"hnsw:space": "cosine"}, "embedding_function": embed_fn}
+            cols = collection_names(getattr(embed_fn, "_model", None))
             try:
                 self._form_collection = self._client.get_or_create_collection(
-                    name="form_insights", **col_kwargs
+                    name=cols["form"], **col_kwargs
                 )
             except Exception as e:
                 if "embedding function" in str(e).lower() or "conflict" in str(e).lower():
-                    logger.warning("[MEMORY] Embedding conflict for 'form_insights'. Re-trying without new embedding function parameter.")
+                    logger.warning(f"[MEMORY] Embedding conflict for '{cols['form']}'. Re-trying without new embedding function parameter.")
                     self._form_collection = self._client.get_or_create_collection(
-                        name="form_insights", metadata={"hnsw:space": "cosine"}
+                        name=cols["form"], metadata={"hnsw:space": "cosine"}
                     )
                 else:
                     raise e
 
             try:
                 self._chat_collection = self._client.get_or_create_collection(
-                    name="chat_history", **col_kwargs
+                    name=cols["chat"], **col_kwargs
                 )
             except Exception as e:
                 if "embedding function" in str(e).lower() or "conflict" in str(e).lower():
-                    logger.warning("[MEMORY] Embedding conflict for 'chat_history'. Re-trying without new embedding function parameter.")
+                    logger.warning(f"[MEMORY] Embedding conflict for '{cols['chat']}'. Re-trying without new embedding function parameter.")
                     self._chat_collection = self._client.get_or_create_collection(
-                        name="chat_history", metadata={"hnsw:space": "cosine"}
+                        name=cols["chat"], metadata={"hnsw:space": "cosine"}
                     )
                 else:
                     raise e

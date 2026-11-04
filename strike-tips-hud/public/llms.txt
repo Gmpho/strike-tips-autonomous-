@@ -2,6 +2,11 @@
 
 > Strike Tips is a real-time horse racing intelligence platform for South African racing. It combines AI-driven race analysis, market scanning, predictive pricing, and an automated betting assistant, surfaced through a live HUD dashboard and a Telegram bot.
 
+## Landing
+
+- First-time visitors land on a public page (nav: Home, Story, Learn More, About, Support, Sign In) with Google login. Support and legal pages are readable without login; the HUD itself requires sign-in.
+
+
 ## Key Features
 
 - **Racing Intelligence**: Live race cards for South African courses (Greyville, Turffontein, Fairview, Kenilworth, Vaal, Scottsville, Durbanville, and more) with AI selections for Value, Favourite, and Outsider picks.

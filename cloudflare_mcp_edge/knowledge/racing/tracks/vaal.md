@@ -54,3 +54,15 @@ timestamp: 2026-06-28T00:00:00Z
 - The Vaal is the "survivor track" — born outside the glamour circuit, rebuilt around whatever the industry needed next
 - Country racing atmosphere — relaxed, family-friendly
 - Served as the Vaal Training Centre base
+
+## Punter rules
+
+- Straight-course specialists exist: 1600m straight (longest in SA) is a
+  stamina test AND a pace-judgement test. Handy/front-running types dominate
+  despite the long run-in.
+- Stalls above 1400m sit at an angle — inside draws can be cut off cold.
+  Forgive inside-drawn horses that missed the break.
+- Turf course: low draws favoured 1200m/1450m (Classic) — but winter extremes
+  split fields into two groups (inside pack + outside pack); race-reading
+  beats draw-reading in winter.
+- Wet = outside bias (same drainage physics as Turffontein).

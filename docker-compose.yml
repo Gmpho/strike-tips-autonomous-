@@ -16,6 +16,11 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - PAPER_TRADING=true
+      # Single-owner map (Oct-2026): Modal owns the 11:00 default slot and
+      # the 12:30 Europe scan, so docker staggers to 10:30 and stands down
+      # from Europe — no twin Groq stampedes, no duplicate digests.
+      - SCAN_TIME=10:30
+      - SCHEDULER_DISABLE=europe_scan
     volumes:
       - .:/app
       - chroma_cache:/root/.cache/chroma

@@ -22,7 +22,7 @@ __pycache__/
 
 # Git
 .git/
-.dockerignore
+# .dockerignore is tracked: image build hygiene must not depend on one machine
 
 # Agent Metadata & Skills
 .adal/
@@ -66,3 +66,10 @@ gha-creds-*.json
 # Performance traces
 *.json.gz
 *.heapsnapshot
+
+# Wrangler local state
+.wrangler/
+.dev.vars
+
+# Uncompressed image sources (optimized WebP lives in public/assets/)
+strike-tips-hud/assets-src/

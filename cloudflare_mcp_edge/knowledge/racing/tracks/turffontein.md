@@ -57,3 +57,15 @@ Johannesburg is at ~1700m elevation. Times are faster due to thinner air. Horses
 - **Empress Club Stakes** (Grade 1, 1600m)
 - **Premier's Champions Challenge** (Grade 1, 2000m, Apr)
 - **Computaform Sprint** (Grade 1, 1000m)
+
+## Punter rules
+
+- The rise from the 1400m to the 800m mark makes this SA's most testing
+  track — stamina-laden horses and strong finishers; pure sprinters bleed late.
+- Rain flips the straight: dry = no draw bias; wet = high draws (water drains
+  to the low inside, outside dries first). Straight races after rain: forgive
+  low-drawn losers, upgrade high-drawn winners.
+- Inside track (all races round the turn, cambered): draw barely matters —
+  weight and form over gate.
+- Coastal raiders need 2–3 Highveld runs to adapt (~1700m altitude). First-time
+  raiders at short prices are lay material, not banker material.

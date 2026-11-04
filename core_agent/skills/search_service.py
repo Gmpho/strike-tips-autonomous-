@@ -1,10 +1,14 @@
 """
-Fast search — DDGS + httpx fetch. No duplicate of Betway/Schedule (already in context).
+Fast search — Tavily/Exa API keys first (free tiers), DDGS + httpx fetch
+as the free fallback. No duplicate of Betway/Schedule (already in context).
 """
 
 import asyncio
+import json
 import logging
+import os
 import re
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from core_agent.core.http_client import get_async_client
@@ -50,16 +54,186 @@ async def _fetch(url: str, timeout: int = 5) -> str:
     return ""
 
 
+# Free-tier monthly budgets (Tavily 1000, Exa ~1400). Tracked in a JSON
+# sidecar so every process shares the count; exhausted providers are
+# skipped, never billed. Sep-2026: Brave needed money, so these two
+# free tiers carry agent search.
+_SEARCH_BUDGETS = {"tavily": 1000, "exa": 1400}
+# Daily safety net on top of monthly caps (a sweep/chat loop must never
+# eat the month in a day). Chat agents need credits available all month.
+_DAILY_CAP = 40
+# Query-result cache: identical questions (monitor re-asks, chat repeats)
+# cost zero for 6h.
+_CACHE_TTL_SECS = 6 * 3600
+_cache: Dict[str, tuple] = {}
+
+
+def _budget_path() -> str:
+    try:
+        from core_agent.config.paths import DATA_DIR
+        return str(DATA_DIR / "search_budget.json")
+    except Exception:
+        return "/tmp/opencode-search-budget.json"
+
+
+def _budget_used() -> Dict[str, int]:
+    try:
+        with open(_budget_path()) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("month") == datetime.now(timezone.utc).strftime("%Y-%m"):
+            return {k: int(v) for k, v in (data.get("used") or {}).items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _daily_used() -> int:
+    try:
+        with open(_budget_path()) as f:
+            data = json.load(f)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if isinstance(data, dict) and data.get("day") == today:
+            return int(data.get("daily", 0))
+    except Exception:
+        pass
+    return 0
+
+
+def _budget_spend(provider: str) -> None:
+    try:
+        used = _budget_used()
+        used[provider] = used.get(provider, 0) + 1
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            with open(_budget_path()) as f:
+                prev = json.load(f)
+            daily = int(prev.get("daily", 0)) if prev.get("day") == today else 0
+        except Exception:
+            daily = 0
+        with open(_budget_path(), "w") as f:
+            json.dump({
+                "month": datetime.now(timezone.utc).strftime("%Y-%m"),
+                "used": used,
+                "day": today,
+                "daily": daily + 1,
+            }, f)
+    except Exception:
+        pass  # budget tracking is best-effort; never block search
+
+
+async def _tavily_search(query: str, limit: int) -> List[Dict]:
+    """Direct answers + clean text. Returns [] on any failure/no-budget."""
+    key = os.environ.get("TAVILY_API_KEY", "")
+    if not key or _budget_used().get("tavily", 0) >= _SEARCH_BUDGETS["tavily"]:
+        return []
+    if _daily_used() >= _DAILY_CAP:
+        logger.debug("[SEARCH] daily cap reached, skipping Tavily")
+        return []
+    try:
+        client = get_async_client(timeout=15)
+        r = await client.post(
+            "https://api.tavily.com/search",
+            json={"api_key": key, "query": query, "max_results": limit, "include_answer": False},
+        )
+        if r.status_code != 200:
+            return []
+        out = [
+            {"title": h.get("title", ""), "snippet": (h.get("content", "") or "")[:500], "url": h.get("url", "")}
+            for h in (r.json().get("results") or [])[:limit]
+            if h.get("url") and not _blocked(h.get("url", ""))
+        ]
+        if out:
+            _budget_spend("tavily")
+        return out
+    except Exception as e:
+        logger.debug(f"[SEARCH] Tavily failed: {e}")
+        return []
+
+
+async def _exa_search(query: str, limit: int) -> List[Dict]:
+    """Semantic search (patterns, profiles, PDF sheets). [] on failure."""
+    key = os.environ.get("EXA_API_KEY", "")
+    if not key or _budget_used().get("exa", 0) >= _SEARCH_BUDGETS["exa"]:
+        return []
+    if _daily_used() >= _DAILY_CAP:
+        logger.debug("[SEARCH] daily cap reached, skipping Exa")
+        return []
+    try:
+        client = get_async_client(timeout=15)
+        r = await client.post(
+            "https://api.exa.ai/search",
+            headers={"Content-Type": "application/json", "x-api-key": key},
+            json={"query": query, "numResults": limit},
+        )
+        if r.status_code != 200:
+            return []
+        out = [
+            {"title": h.get("title", ""), "snippet": (h.get("text", "") or "")[:500], "url": h.get("url", "")}
+            for h in (r.json().get("results") or [])[:limit]
+            if h.get("url") and not _blocked(h.get("url", ""))
+        ]
+        if out:
+            _budget_spend("exa")
+        return out
+    except Exception as e:
+        logger.debug(f"[SEARCH] Exa failed: {e}")
+        return []
+
+
 async def search_racing(query: str, limit: int = 5) -> Dict:
     """
     Fast web search for racing info. Betway+Schedule already in system prompt.
-    Just DDGS + httpx page fetch.
+    Cascade: Tavily (direct answers) -> Exa (semantic) -> DDGS + page fetch.
+    Identical queries reuse a 6h in-process cache (monitor re-asks, chat
+    repeats) so loops cost zero while credits stay reserved for chat agents.
     """
+    import time as _now
+
+    cache_key = f"{query.strip().lower()}|{limit}"
+    hit = _cache.get(cache_key)
+    if hit and _now.time() - hit[0] < _CACHE_TTL_SECS:
+        logger.debug(f"[SEARCH] cache hit: '{query[:40]}'")
+        return {"results": hit[1], "provider": hit[2]}
     results: List[Dict] = []
     seen: set = set()
     provider = "none"
 
-    # 1. DDGS → get URLs (try auto backend, not lite which was removed)
+    def _emit(provider_name: str, count: int) -> None:
+        # Live Ops visibility (Oct-2026): provider + hit count ONLY.
+        # Query text is NEVER emitted — chats stay private, telemetry
+        # shows activity, not content.
+        try:
+            from core_agent.core.telemetry import emit
+            emit("search", f"🌐 {provider_name}: {count} results",
+                 badge="WEB SEARCH")
+        except Exception:
+            pass
+
+    # 1. Tavily — best quality, no scraping needed.
+    tavily_items = await _tavily_search(query, limit)
+    for item in tavily_items:
+        if item["url"] not in seen:
+            seen.add(item["url"])
+            results.append(item)
+    if results:
+        provider = "tavily"
+        logger.info(f"[SEARCH] Tavily: {len(results)} results")
+        _cache[cache_key] = (_now.time(), results, provider)
+        _emit("Tavily", len(results))
+        return {"results": results, "provider": provider}
+
+    # 2. Exa — semantic fallback.
+    exa_items = await _exa_search(query, limit)
+    for item in exa_items:
+        if item["url"] not in seen:
+            seen.add(item["url"])
+            results.append(item)
+    if results:
+        provider = "exa"
+        logger.info(f"[SEARCH] Exa: {len(results)} results")
+        _cache[cache_key] = (_now.time(), results, provider)
+        _emit("Exa", len(results))
+        return {"results": results, "provider": provider}
     ddgs_items = []
     
     def _run_ddgs(q: str, lim: int) -> List[Dict]:
@@ -148,6 +322,8 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
 
     if not results:
         logger.info(f"[SEARCH] Empty for '{query[:60]}' (no results published yet)")
+
+    _emit(provider if provider != "none" else "DDGS/SA-fallback", len(results))
 
     return {
         "query": query,

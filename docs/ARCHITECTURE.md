@@ -431,6 +431,11 @@ data/
 └── daily_scan_YYYY-MM-DD.json # Historical scan results
 ```
 
+> Ledger future: Supabase Postgres mirrors this JSON state (Oct-2026 —
+> see `docs/SUPABASE_LEDGER_AUTH.md`). JSON remains the live source of truth
+> until the dual-write cutover; the import gate reconciles row census + settled
+> P&L (real and paper) before any read flips.
+
 ### Bet Record Schema
 
 ```json

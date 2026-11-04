@@ -58,6 +58,76 @@ except ImportError:
 BROWSER_PROFILE = "/app/data/browser_profile"
 
 logger = logging.getLogger("at-the-races")
+
+# ─── Circuit breaker (Oct-2026) ─────────────────────────────────────────────
+# ATR moved behind Fastly bot protection: httpx gets 403, curl_cffi and a real
+# headless Chromium both get a challenge shell with no content. Verified from
+# both the Modal workers and a plain developer machine, so it is not our egress
+# IP. Every 5-min odds cycle used to burn 10-15s per dead URL and log a warning
+# per attempt; the staleness monitor then alarmed every cycle. Trip after N
+# consecutive failures and stay silent for the cooldown instead. The flag sits
+# on the data volume so it is shared by all containers and survives cold starts,
+# and any successful fetch clears it (self-heals if ATR ever opens back up).
+_BREAKER_FAILURE_THRESHOLD = 6
+_BREAKER_COOLDOWN_SECS = 6 * 3600
+_breaker_failures = 0
+
+
+def _breaker_flag_path():
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        return DATA_DIR / ".atr_blocked_until"
+    except Exception:
+        return None
+
+
+def atr_circuit_open() -> bool:
+    """True while the breaker is holding ATR fetches off."""
+    try:
+        import time as _time
+
+        flag = _breaker_flag_path()
+        if flag is None or not flag.exists():
+            return False
+        return float(flag.read_text().strip() or 0) > _time.time()
+    except Exception:
+        return False
+
+
+def _record_failure(path: str) -> None:
+    global _breaker_failures
+    _breaker_failures += 1
+    if _breaker_failures < _BREAKER_FAILURE_THRESHOLD:
+        return
+    try:
+        import time as _time
+
+        flag = _breaker_flag_path()
+        if flag is not None:
+            flag.write_text(str(_time.time() + _BREAKER_COOLDOWN_SECS))
+        logger.warning(
+            "ATR circuit breaker TRIPPED after %d consecutive failures (last: %s) — "
+            "pausing ATR fetches for %dh; host is blocking every tier",
+            _breaker_failures,
+            path,
+            _BREAKER_COOLDOWN_SECS // 3600,
+        )
+    except Exception:
+        pass
+
+
+def _record_success() -> None:
+    global _breaker_failures
+    if _breaker_failures:
+        logger.info("ATR fetch recovered — circuit breaker reset")
+    _breaker_failures = 0
+    try:
+        flag = _breaker_flag_path()
+        if flag is not None and flag.exists():
+            flag.unlink()
+    except Exception:
+        pass
 logging.getLogger("scrapling").setLevel(logging.ERROR)
 
 TRACK_NAME_ALIASES = {
@@ -85,6 +155,140 @@ def _parse_odds(odds_text: Optional[str]) -> Optional[float]:
 
 def _text(el) -> str:
     return el.get_all_text(strip=True) if el else ""
+
+
+# ATR course shorthand → canonical track + region. ATR groups its pages by
+# meeting but the course lives in group headers, not row cells — parsers that
+# read cells alone produce "Unknown Venue" (Oct-2026: 439/574 movers). SA
+# codes follow Computaform (G/N Greyville turf/poly, E/F Fairview poly/turf…);
+# UK/IRL use ATR 3-letter codes. FP maps to defunct (Kimberley closed Jul-2020).
+ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
+    # SA — KwaZulu-Natal
+    "G": {"track": "Greyville", "region": "SA"},
+    "GREYVILLE": {"track": "Greyville", "region": "SA"},
+    "N": {"track": "Greyville Poly", "region": "SA"},
+    "S": {"track": "Scottsville", "region": "SA"},
+    "SCOTTSVILLE": {"track": "Scottsville", "region": "SA"},
+    "P": {"track": "Scottsville Inside", "region": "SA"},
+    # SA — Gauteng
+    "T": {"track": "Turffontein", "region": "SA"},
+    "TURFFONTEIN": {"track": "Turffontein", "region": "SA"},
+    "J": {"track": "Turffontein Inside", "region": "SA"},
+    "B": {"track": "Vaal Classic", "region": "SA"},
+    "V": {"track": "Vaal Turf", "region": "SA"},
+    "VAAL": {"track": "Vaal", "region": "SA"},
+    # SA — Western Cape
+    "K": {"track": "Kenilworth", "region": "SA"},
+    "KENILWORTH": {"track": "Kenilworth", "region": "SA"},
+    "W": {"track": "Kenilworth Winter", "region": "SA"},
+    "D": {"track": "Durbanville", "region": "SA"},
+    "DURBANVILLE": {"track": "Durbanville", "region": "SA"},
+    # SA — Eastern Cape
+    "E": {"track": "Fairview Poly", "region": "SA"},
+    "F": {"track": "Fairview Turf", "region": "SA"},
+    "FAIRVIEW": {"track": "Fairview", "region": "SA"},
+    # Defunct — never resolve to a live track
+    "Y": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    "FLAMINGO": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    "KIMBERLEY": {"track": "Flamingo Park (closed 2020)", "region": "defunct"},
+    # UK — ATR feed regulars
+    "NCS": {"track": "Newcastle", "region": "UK"},
+    "NEWCASTLE": {"track": "Newcastle", "region": "UK"},
+    "SAL": {"track": "Salisbury", "region": "UK"},
+    "SALISBURY": {"track": "Salisbury", "region": "UK"},
+    "STH": {"track": "Southwell", "region": "UK"},
+    "SOUTHWELL": {"track": "Southwell", "region": "UK"},
+    "NTT": {"track": "Nottingham", "region": "UK"},
+    "NOTTINGHAM": {"track": "Nottingham", "region": "UK"},
+    "CLO": {"track": "Clonmel", "region": "Ireland"},
+    "CLONMEL": {"track": "Clonmel", "region": "Ireland"},
+    "BEL": {"track": "Bellewstown", "region": "Ireland"},
+    "BELLEWSTOWN": {"track": "Bellewstown", "region": "Ireland"},
+    "ASC": {"track": "Ascot", "region": "UK"},
+    "CHL": {"track": "Cheltenham", "region": "UK"},
+    "NMK": {"track": "Newmarket", "region": "UK"},
+    # ATR 3-letter meeting codes as seen live (Oct-2026 movers feed)
+    "KMP": {"track": "Kempton", "region": "UK"},
+    "KEMPTON": {"track": "Kempton", "region": "UK"},
+    "STR": {"track": "Stratford", "region": "UK"},
+    "STRATFORD": {"track": "Stratford", "region": "UK"},
+    "PFR": {"track": "Pontefract", "region": "UK"},
+    "PONTEFRACT": {"track": "Pontefract", "region": "UK"},
+    "WOL": {"track": "Wolverhampton", "region": "UK"},
+    "WOLVERHAMPTON": {"track": "Wolverhampton", "region": "UK"},
+    "YAR": {"track": "Yarmouth", "region": "UK"},
+    "YARMOUTH": {"track": "Yarmouth", "region": "UK"},
+    "FAI": {"track": "Fairyhouse", "region": "Ireland"},
+    "FAIRYHOUSE": {"track": "Fairyhouse", "region": "Ireland"},
+    "KIL": {"track": "Killarney", "region": "Ireland"},
+    "KILLARNEY": {"track": "Killarney", "region": "Ireland"},
+    "GAL": {"track": "Galway", "region": "Ireland"},
+    "GALWAY": {"track": "Galway", "region": "Ireland"},
+    "LEI": {"track": "Leicester", "region": "UK"},
+    "LEICESTER": {"track": "Leicester", "region": "UK"},
+    "HUN": {"track": "Huntingdon", "region": "UK"},
+    "HUNTINGDON": {"track": "Huntingdon", "region": "UK"},
+    "BHA": {"track": "Brighton", "region": "UK"},
+    "BRIGHTON": {"track": "Brighton", "region": "UK"},
+}
+
+
+def normalize_course(raw: str) -> Dict[str, str]:
+    """ATR header/cell text → {track, region}.
+
+    Priority: map hit (codes + known names) → short-token passthrough (keeps
+    the old display behaviour: unmapped codes like "Ntt" still show instead
+    of blanking) → blank. Poison shapes (page titles, horse strings with
+    cloth numbers, menu words) ALWAYS blank — a wrong venue is infinitely
+    worse than a missing one (Oct-2026: "SHARK TWO ONE" as a venue).
+    """
+    _POISON_WORDS = ("summary", "results", "predictor", "movers", "login",
+                     "join", "menu", "account", "watch", "tips", "news",
+                     "replay", "calendar")
+    _TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,23}$")
+    key = (raw or "").strip().upper()
+    if not key:
+        return {"track": "", "region": ""}
+    # Headers look like "Newcastle Results" / "Greyville" / "Ntt 13:23".
+    for token in (key, key.split()[0] if key.split() else ""):
+        if token in ATR_COURSE_MAP:
+            return dict(ATR_COURSE_MAP[token])
+    text = (raw or "").strip()
+    lowered = text.lower()
+    if (not any(w in lowered for w in _POISON_WORDS)
+            and not any(ch.isdigit() for ch in text)
+            and _TOKEN_RE.match(text)):
+        return {"track": text, "region": ""}
+    return {"track": "", "region": ""}
+
+
+def _segment_by_headings(html: bytes) -> List[Tuple[str, str]]:
+    """Split raw HTML into (heading_text, table_html) pairs.
+
+    Every <table> inherits the nearest preceding <h1>–<h4>/caption text.
+    Titles are returned RAW — callers must pass them through
+    normalize_course (validate-or-blank), never display them directly.
+    """
+    try:
+        text = html.decode("utf-8", errors="ignore") if isinstance(html, bytes) else str(html)
+    except Exception:
+        return []
+    heads = [(m.start(), re.sub(r"<[^>]+>", " ", m.group(1)).strip())
+             for m in re.finditer(r"<h[1-4][^>]*>(.*?)</h[1-4]>", text,
+                                  re.IGNORECASE | re.DOTALL)]
+    tables = [(m.start(), m.group(0))
+              for m in re.finditer(r"<table.*?</table>", text,
+                                   re.IGNORECASE | re.DOTALL)]
+    out: List[Tuple[str, str]] = []
+    for tpos, thtml in tables:
+        title = ""
+        for hpos, htext in heads:
+            if hpos < tpos:
+                title = htext
+            else:
+                break
+        out.append((re.sub(r"\s+", " ", title).strip(), thtml))
+    return out
 
 
 class AtTheRacesAPI:
@@ -133,6 +337,18 @@ class AtTheRacesAPI:
             return True
 
     def _fetch(self, path: str) -> Optional[bytes]:
+        """Fetch with the circuit breaker wrapped around the tiered fallback."""
+        if atr_circuit_open():
+            logger.debug("ATR circuit breaker open — skipping %s", path)
+            return None
+        body = self._fetch_tiered(path)
+        if body:
+            _record_success()
+        else:
+            _record_failure(path)
+        return body
+
+    def _fetch_tiered(self, path: str) -> Optional[bytes]:
         """Fetch page with cheap-first tiered fallback: httpx → Fetcher → StealthyFetcher.
 
         Order matters: the 5-min cron hammers these URLs, so the lightweight
@@ -215,7 +431,9 @@ class AtTheRacesAPI:
                         logger.debug("Stealth fetch attempt %d failed for %s: %s", _attempt + 1, path, e)
                     _time.sleep(3)
 
-        logger.warning("ATR all fetch tiers failed for %s — keeping last-good snapshot", url)
+        # Breaker owns the operator-facing noise: it logs the trip once and then
+        # goes quiet for the cooldown, so per-attempt warnings stay at debug.
+        logger.debug("ATR all fetch tiers failed for %s — keeping last-good snapshot", url)
         return None
 
     def _parse_one_runner(self, runner_el) -> Optional[Dict]:
@@ -454,7 +672,12 @@ class AtTheRacesAPI:
         return None
 
     async def get_market_movers(self) -> List[Dict]:
-        """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov."""
+        """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov.
+
+        Meeting-group aware (Oct-2026): ATR groups tables under meeting headers,
+        so each table inherits its meeting's course; the cell race-string is
+        only a fallback. Previously 439/574 movers parsed empty course.
+        """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/market-movers"), timeout=150)
         except asyncio.TimeoutError:
@@ -466,7 +689,8 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         movers = []
 
-        for table in sel.css("table", adaptive=True):
+        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
+            header_course = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:
                 continue
@@ -480,16 +704,25 @@ class AtTheRacesAPI:
                 first_show = _text(cells[3]) if len(cells) > 3 else ""
                 movement = _text(cells[4]) if len(cells) > 4 else ""
 
-                course = time = ""
+                course = time = region = ""
+                if header_course.get("track"):
+                    course, region = header_course["track"], header_course["region"]
                 if race_str:
                     parts = race_str.strip().split()
                     if len(parts) >= 2:
-                        course = parts[0]
+                        if not course:
+                            cell = normalize_course(parts[0])
+                            course, region = cell["track"], cell["region"]
                         time = parts[1]
+                    elif len(parts) == 1 and not time:
+                        maybe_time = re.match(r"^(\d{1,2}:\d{2})$", parts[0])
+                        if maybe_time:
+                            time = maybe_time.group(1)
 
                 movers.append({
                     "horse": horse,
                     "course": course,
+                    "region": region,
                     "time": time,
                     "current_odds": last_price,
                     "first_show": first_show,
@@ -498,8 +731,100 @@ class AtTheRacesAPI:
 
         return movers
 
+    def _iter_meeting_tables(self, sel, html: bytes | None = None) -> List[Tuple[str, Any]]:
+        """Yield (meeting_title, table) in document order.
+
+        Meeting titles come ONLY from `a.panel-header h2` (the proven
+        results-page pattern) or a `caption` inside the table itself.
+        Page-level h2/h3 are deliberately ignored (Oct-2026: they caught
+        "MARKET MOVERS SUMMARY…" and poisoned every row's course).
+        When raw html is supplied, title-less tables inherit the nearest
+        preceding heading via _segment_by_headings (titles still pass
+        through normalize_course downstream — never displayed raw).
+        Falls back to bare tables with an empty title so legacy layouts
+        keep working. Logs distinct titles seen (DOM diagnostic).
+        """
+        out: List[Tuple[str, Any]] = []
+        seen: set = set()
+
+        def _sig(table) -> str:
+            # Adaptive selectors return fresh objects per query, so id()
+            # dedupe fails and grouped tables double-count. Signature on
+            # row count + first rows' text instead.
+            try:
+                rows = table.css("tr", adaptive=True) or []
+                head = "|".join(_text(r)[:60] for r in rows[:3])
+                return f"{len(rows)}:{head}"
+            except Exception:
+                return f"id:{id(table)}"
+
+        try:
+            meetings = sel.css(".push--x-small") or []
+        except Exception:
+            meetings = []
+        if not meetings:
+            # Movers/predictor pages group differently — try generic
+            # meeting sections before falling back to bare tables.
+            for container_sel in ("section.meeting", "div.meeting",
+                                  "section.panel", "div.panel",
+                                  "main section", "main div"):
+                try:
+                    meetings = sel.css(container_sel) or []
+                except Exception:
+                    meetings = []
+                if meetings:
+                    break
+        for meeting in meetings:
+            try:
+                headers = (meeting.css("a.panel-header h2", adaptive=True)
+                           or meeting.css("table caption", adaptive=True)
+                           or [])
+            except Exception:
+                headers = []
+            title = _text(headers[0]).replace("Results", "").strip() if headers else ""
+            try:
+                tables = meeting.css("table", adaptive=True) or []
+            except Exception:
+                tables = []
+            for table in tables:
+                sig = _sig(table)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                out.append((title, table))
+        try:
+            bare = sel.css("table", adaptive=True) or []
+        except Exception:
+            bare = []
+        for table in bare:
+            sig = _sig(table)
+            if sig not in seen:
+                seen.add(sig)
+                out.append(("", table))
+        # Regex backfill: when the DOM walk found no titles at all, pair
+        # tables positionally with nearest-preceding headings from raw html.
+        # DOM titles always win when present; segment titles only fill blanks.
+        if html and not any(t for t, _ in out):
+            try:
+                seg = _segment_by_headings(html)
+            except Exception:
+                seg = []
+            if seg and len(seg) == len(out):
+                out = [(st, tbl) for (st, _), (_, tbl) in zip(seg, out)]
+        try:
+            titles = sorted({t for t, _ in out if t})
+            logger.info("ATR meeting titles seen: %s",
+                        titles if titles else ["<none — bare tables only>"])
+        except Exception:
+            pass
+        return out
+
     async def get_predictor(self) -> List[Dict]:
-        """Scrape /predictor for AI predictions (table-based)."""
+        """Scrape /predictor for AI predictions (table-based, meeting-aware).
+
+        Oct-2026: previously scraped zero meeting context — every prediction
+        was courseless. Tables now inherit their meeting header's course/time.
+        """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/predictor"), timeout=150)
         except asyncio.TimeoutError:
@@ -511,7 +836,8 @@ class AtTheRacesAPI:
         sel = Selector(html, auto_save=True, adaptive=True)
         predictions = []
 
-        for table in sel.css("table", adaptive=True):
+        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
+            header = normalize_course(meeting_title)
             rows = table.css("tr", adaptive=True)
             if len(rows) < 2:
                 continue
@@ -532,6 +858,8 @@ class AtTheRacesAPI:
                     "horse": horse_name,
                     "raw": horse_raw,
                     "prediction": prediction,
+                    "course": header.get("track", ""),
+                    "region": header.get("region", ""),
                 })
 
         return predictions

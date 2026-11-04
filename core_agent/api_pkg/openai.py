@@ -95,12 +95,17 @@ async def handle_chat_completions(request: Request):
     # ── NORMAL PATH: bus-based AgentLoop ─────────────────────────────────────
     bus = request.app.state.bus
     model = body.get("model")
+    # HUD green Search toggle — previously dropped on the floor (Sep-2026).
+    search_grounding = body.get("searchGrounding", True)
+    if not isinstance(search_grounding, bool):
+        search_grounding = True
     msg = InboundMessage(
         session_key=f"api:{session_id}",
         channel="rest",
         chat_id=session_id,
         content=user_text,
         model=model,
+        search_grounding=search_grounding,
     )
 
     if stream:

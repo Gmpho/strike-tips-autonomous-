@@ -53,3 +53,14 @@ Four Grade 1 races on the same day in May — one of the biggest race days in SA
 - Smirnoff Plate (1963) also hosted here — both absorbed into the Golden Horse Sprint in 1996
 - Course was originally maintained by plough and oxen (old-fashioned method)
 - Local bikers with belt-propelled bikes were once asked to ride on the track to disperse divots
+
+## Punter rules
+
+- Straight course: inside bias was real, then jockeys stopped diving for it
+  and the bias faded — the LESSON is that widely-known biases get ridden out
+  of existence. Trust recent-race patterns over historical bias tables here.
+- Right-handed turn with a camber; handy types hold the advantage but
+  over-aggressive pacemaking collapses late — closers with one run are the
+  value in hot-pace setups.
+- Sprint carnival day (4× Grade 1 over 1200m, May): deepest 2yo/3yo sprint
+  fields in the country. Favourite-heavy pools; exotics pay under true odds.

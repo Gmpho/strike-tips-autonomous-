@@ -1,18 +1,20 @@
 {
   "name": "strike-tips-hud",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "optimize-hero": "node scripts/optimize-hero.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@mlc-ai/web-llm": "^0.2.84",
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
+    "@supabase/supabase-js": "^2.117.2",
     "apexcharts": "^7.3.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.0.0",
@@ -32,6 +34,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
     "typescript": "5.9.3",
     "vite": "^8.0.16"

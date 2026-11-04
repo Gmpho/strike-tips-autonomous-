@@ -21,7 +21,7 @@ def _resolve(tier_or_model: str) -> tuple[str, str]:
 
     # ORCHESTRATOR tier → Groq when key is available
     if tier_or_model == "ORCHESTRATOR" and ModelConfig.groq_available():
-        return "groq", "llama-3.3-70b-versatile"
+        return "groq", "openai/gpt-oss-120b"
 
     return "groq", model_name
 

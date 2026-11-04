@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { extractDocumentContent, type FormAttachment } from './form-reader-service.js';
+import { friendlyUpstreamError } from '../functions/lib/upstream-errors.js';
 
 export interface GroundingSource {
   title: string;
@@ -45,7 +46,7 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
     q.includes('monte carlo') || q.includes('permutation') || q.includes('compare runners')
   ) {
     if (hasKey.gemini) return { target: 'gemini-3.1-pro-preview', isGroq: false };
-    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
   }
 
   // 2. High-speed quick lookups, balance checks, short questions -> Groq Llama 8B or Gemini Lite
@@ -56,13 +57,13 @@ function resolveAutoModel(lastMessage: string, hasKey: { gemini: boolean; groq: 
       q.includes('status') || q.includes('ping')
     )
   ) {
-    if (hasKey.groq) return { target: 'llama-3.1-8b-instant', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-20b', isGroq: true };
     if (hasKey.gemini) return { target: 'gemini-3.1-flash-lite', isGroq: false };
   }
 
   // 3. Fast racing speed / versatile analysis -> Groq Llama 70B if available
   if (q.includes('fast') || q.includes('quick summary')) {
-    if (hasKey.groq) return { target: 'llama-3.3-70b-versatile', isGroq: true };
+    if (hasKey.groq) return { target: 'openai/gpt-oss-120b', isGroq: true };
   }
 
   // Default champion: Gemini 3.5 Flash with Google Search Grounding for live race info
@@ -135,8 +136,9 @@ export async function handleChatRequest(req: IncomingMessage, res: ServerRespons
     } catch (err: any) {
       console.error('[Chat Service Error]', err);
       if (!res.headersSent) {
+        const friendly = friendlyUpstreamError(500, err.message || '', 'Gemini', 'chat');
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message || 'Chat generation failed' }));
+        res.end(JSON.stringify(friendly));
       }
     }
   });
@@ -260,7 +262,8 @@ async function handleGeminiChat(
       res.end();
     } catch (streamErr: any) {
       console.error('[Gemini Stream Error]', streamErr);
-      res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+      const friendly = friendlyUpstreamError(500, streamErr.message || '', 'Gemini', targetModel);
+      res.write(`data: ${JSON.stringify({ error: friendly.error })}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
     }
@@ -309,7 +312,11 @@ async function handleGroqChat(
   }
 
   let groqModel = 'llama-3.3-70b-versatile';
-  if (modelName.includes('qwen3.8') || modelName.includes('qwen-3.8')) {
+  if (modelName.includes('gpt-oss-20b') || modelName.includes('oss-20b')) {
+    groqModel = 'openai/gpt-oss-20b';
+  } else if (modelName.includes('gpt-oss-120b') || modelName.includes('oss-120b')) {
+    groqModel = 'openai/gpt-oss-120b';
+  } else if (modelName.includes('qwen3.8') || modelName.includes('qwen-3.8')) {
     groqModel = 'qwen/qwen3.8-27b';
   } else if (modelName.includes('qwen3.6') || modelName.includes('qwen-3.6')) {
     groqModel = 'qwen/qwen3.6-27b';
@@ -368,28 +375,12 @@ async function handleGroqChat(
 
   if (!groqRes.ok) {
     const errText = await groqRes.text();
-    // Fallback: If Groq model alias is not enabled on account, fallback to llama-3.3-70b-versatile
-    if (groqModel !== 'llama-3.3-70b-versatile' && (errText.includes('model_not_found') || errText.includes('does not exist'))) {
-      console.warn(`[Groq Model Fallback] Model ${groqModel} not found on Groq, retrying with llama-3.3-70b-versatile`);
-      const fallbackRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          stream: isStream,
-          temperature: body.summarizeMode ? 0.3 : 0.6,
-          max_tokens: 2048,
-        }),
-      });
-
-      if (fallbackRes.ok && isStream && fallbackRes.body) {
-        pipeStream(res, fallbackRes.body, 'llama-3.3-70b-versatile');
-        return;
-      }
+    // Friendly model-availability message via the shared mapper.
+    const friendly = friendlyUpstreamError(groqRes.status, errText, 'Groq', groqModel);
+    if (friendly.code !== 'UPSTREAM_ERROR') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...friendly, supportUrl: friendly.supportUrl }));
+      return;
     }
 
     res.writeHead(groqRes.status, { 'Content-Type': 'application/json' });

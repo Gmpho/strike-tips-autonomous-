@@ -12,7 +12,16 @@ ENV PIP_TIMEOUT=600
 WORKDIR /app
 
 # Upgrade pip first (backtracking fixes in newer pip)
-RUN pip install --no-cache-dir --upgrade pip "setuptools<75"
+# eMudhra/emSign CA incident (Oct-2026): refresh the OS trust store too.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# pip vendors its own certifi copy, so the OS store alone is not enough:
+# pip < 26.2.2 keeps trusting the revoked emSign intermediates (CVE-class
+# MITM, GHSA-6q48-6c7w-9gw2).
+RUN pip install --no-cache-dir --upgrade "pip>=26.2.2" "setuptools<75"
 
 # Install agent-framework with --no-deps to avoid core-orchestrations version conflict
 # (agent-framework==1.0.0rc4 requires agent-framework-core==1.0.0rc4, but

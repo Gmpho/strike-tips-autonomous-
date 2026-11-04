@@ -126,6 +126,11 @@ modal deploy modal_app.py
 python deploy_modal.py
 ```
 
+Modal secrets in use: `strike-tips-secrets`, `strike-tips-api-key`,
+`strike-tips-search`, `cloudflare-mcp`, `supabase-strike-tips`
+(`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` + publishable — service key
+NEVER leaves Modal; see `docs/SUPABASE_LEDGER_AUTH.md`).
+
 ---
 
 ## 🚨 Troubleshooting

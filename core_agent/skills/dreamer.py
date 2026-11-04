@@ -180,7 +180,7 @@ async def _groq_insight(scenario: str, race: Dict, enriched: str = "") -> str:
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300, "temperature": 0.7},
+            json={"model": "openai/gpt-oss-20b", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300, "temperature": 0.7},
         )
         if resp.status_code != 200:
             logger.warning(f"Groq dream failed: status {resp.status_code}")

@@ -162,6 +162,42 @@ def test_single_bet_settles_win_and_loss(stub_brain_module):
     assert gov.settle_bet.call_args[1]["won"] is False
 
 
+def test_single_settles_from_structured_without_text_search(stub_brain_module):
+    """Structured day results beat DDGS text: Captain's Jet won R4 (source
+    spells it without the apostrophe), Cali Bullet ran 2nd in R1 — both
+    settle with zero text search (Sep-2026: nine Greyville singles sat
+    PENDING 29h+ while the results sat in the snapshot)."""
+    gov = MagicMock()
+    gov.get_open_bets.return_value = [
+        _bet(horse="Captain's Jet", race_number=4, track="greyville"),
+        _bet(horse="Cali Bullet", race_number=1, track="greyville"),
+    ]
+    races = [
+        {"title": "4 13:55 Greyville", "runners": [
+            {"name": "Captains Jet", "position": "1st"},
+            {"name": "Hearts On Fire", "position": "2nd"},
+        ]},
+        {"title": "1 12:07 Greyville", "runners": [
+            {"name": "Indignation", "position": "1st"},
+            {"name": "Cali Bullet", "position": "2nd"},
+        ]},
+    ]
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_exotic_leg_races",
+                      new=AsyncMock(return_value=races)), \
+         patch.object(ResultTracker, "_search_result",
+                      new=AsyncMock(side_effect=AssertionError(
+                          "text search must not run on structured proof"))) as mock_search, \
+         patch.object(ResultTracker, "_atr_placing",
+                      new=AsyncMock(return_value=None)):
+        settled = asyncio.run(tracker.check_and_settle_open_bets())
+    mock_search.assert_not_called()
+    by_horse = {r["horse"]: r for r in settled}
+    assert by_horse["Captain's Jet"]["won"] is True
+    assert by_horse["Cali Bullet"]["won"] is False
+    assert "1st was Indignation" in by_horse["Cali Bullet"]["notes"]
+
+
 def _bet_on(date_str, **kw):
     kw["date"] = date_str
     b = _bet(**kw)
@@ -451,6 +487,21 @@ def test_daily_report_for_explicit_date_and_aged_section(tmp_path):
     assert "Beta Two" in report_old  # its open line + aged section
 
 
+def test_scheduler_import_does_not_swap_stdout():
+    """Regression (Sep-2026): importing the scheduler swapped sys.stdout
+    for an emoji wrapper, pinning pytest's capture buffer — one scheduler
+    test then failed and every later test errored on the closed file.
+    The filter may only install at process entry (main())."""
+    pytest.importorskip("apscheduler")
+    import importlib
+
+    import core_agent.core.scheduler as sched_mod
+
+    before = sys.stdout
+    importlib.reload(sched_mod)
+    assert sys.stdout is before
+
+
 def test_scheduler_has_both_report_jobs():
     apscheduler = pytest.importorskip("apscheduler")
     from core_agent.core.scheduler import StrikeTipsScheduler
@@ -597,7 +648,9 @@ def test_stale_bets_excluded_from_exposure(tmp_path):
     assert gov.get_open_exposure() == pytest.approx(40.0)
     assert gov.get_open_exposure(include_stale=True) == pytest.approx(70.0)
 
-    # Unparseable dates fail open (counted).
+    # Unparseable dates fail open (counted). Re-bind to the live record: read
+    # paths now reload from disk, so the pre-reload object is a detached copy.
+    stale = next(b for b in gov._bets if b.bet_id == stale.bet_id)
     stale.date = "soon"
     gov._save_state()
     assert gov.get_open_exposure() == pytest.approx(70.0)
@@ -792,14 +845,24 @@ def test_exotic_layout_validation():
     out_of_range = _mk_play("JACKPOT 2", [7, 8, 9, 10])  # R10 on 9-race card
     wrong_count = _mk_play("PICK 6", [4, 5, 6])  # needs 6 legs
     dupe = _mk_play("JACKPOT 1", [4, 5, 6, 7])
-    unknown_family = _mk_play("QUARTET", [1, 2, 3])  # no canonical count: kept
+    unknown_family = _mk_play("QUARTET", [1, 2, 3])  # no canonical count: dropped (fail-closed)
     out = _validate_exotic_layout(
         [good_jp, out_of_range, wrong_count, dupe, unknown_family], 9
     )
     pools = [p["pool"] for p in out]
-    assert pools == ["JACKPOT 1", "QUARTET"]
+    assert pools == ["JACKPOT 1"]
     assert _validate_exotic_layout([], 9) == []
     assert _validate_exotic_layout([good_jp], 0) == [good_jp]  # unknown card: pass through
+
+    # AI/fallback pool CODES resolve through the canonical table —
+    # Sep-2026: 2-leg BI1 + 3-leg JP1 were recorded as tickets.
+    short_bi = _mk_play("BI1", [2, 3])
+    short_jp = _mk_play("JP1", [4, 5, 6])
+    good_bi = _mk_play("BI1", [1, 2, 3, 4, 5, 6])
+    good_p6 = _mk_play("P6", [3, 4, 5, 6, 7, 8])
+    good_pa = _mk_play("PA", [2, 3, 4, 5, 6, 7, 8])
+    out3 = _validate_exotic_layout([short_bi, short_jp, good_bi, good_p6, good_pa], 8)
+    assert [p["pool"] for p in out3] == ["BI1", "P6", "PA"]
 
     # Overlapping ranges across DIFFERENT pools are normal SA structure: kept.
     pa = _mk_play("PLACE ACCUMULATOR", [2, 3, 4, 5, 6, 7, 8])
@@ -877,3 +940,28 @@ def test_first_notification_goes_through():
     assert kwargs["won"] is True
     assert kwargs["returns"] == pytest.approx(35.0)
     assert kwargs["profit_loss"] == pytest.approx(25.0)
+
+
+def test_pre_race_guard_skips_future_off_time(tmp_path, monkeypatch):
+    """Oct-2026: Taking A Risk settled LOST hours before Vaal R7 ran.
+    A bet dated today whose off-time is still ahead must never settle."""
+    import json as _json
+    from datetime import date as _date
+    (tmp_path / "market_snapshot_latest.json").write_text(_json.dumps({
+        "events": {"e1": {
+            "course": "vaal", "raceNumber": 7, "bf_off_time": "23:59",
+            "runners": [{"name": "Taking A Risk"}],
+        }}
+    }))
+    import core_agent.skills.result_tracker as rt
+
+    class FakeGov:
+        data_dir = str(tmp_path)
+
+        def get_open_bets(self):
+            return []
+
+    tracker = rt.ResultTracker(bankroll_governor=FakeGov())
+    # direct helper check: off-time resolution finds the future race
+    off = rt._find_race_time(str(tmp_path), "vaal", 7, _date.today().isoformat())
+    assert off == "23:59"

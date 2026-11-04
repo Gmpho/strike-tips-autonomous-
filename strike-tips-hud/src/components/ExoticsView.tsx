@@ -3,6 +3,9 @@ import { Ticket, Coins, Trophy, Calendar, Activity, Loader2, Star } from 'lucide
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../hooks/useHUD';
 import { apiFetch } from '../lib/api-fetch';
+import { betStatus, isRefunded } from '../lib/bet-status';
+import { CAMPAIGNS, markSeen } from '../lib/campaigns';
+import { PromoCard } from './promos/PromoCard';
 
 interface CombinationSelection {
   race: number;
@@ -25,6 +28,8 @@ interface ExoticPlay {
   official?: Record<string, number[]>;
   /** ISO event date (YYYY-MM-DD). Boards persist per day until raceday. */
   event_date?: string;
+  /** SA | UK | IRE | INTL — tags the meeting's racing jurisdiction. */
+  jurisdiction?: string;
 }
 
 function sourceChip(source?: string): { label: string; cls: string } {
@@ -82,6 +87,10 @@ function groupPlaysByDay(plays: ExoticPlay[]): DayGroup[] {
   return [...map.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
+// Live board jurisdictions. "INTL" is an international card whose country the
+// TAB manifest did not name — shown rather than silently dropped.
+const JURISDICTION_FILTER = ["SA", "UK", "IRE", "INTL"];
+
 export const ExoticsView: React.FC = () => {
   const { betHistory } = useHUD();
   const [activePlays, setActivePlays] = useState<ExoticPlay[]>([]);
@@ -95,7 +104,8 @@ export const ExoticsView: React.FC = () => {
         const res = await apiFetch('/api/racing/exotics');
         if (res.ok && active) {
           const data = await res.json();
-          setActivePlays(data || []);
+          const filtered = data?.filter((play: ExoticPlay) => JURISDICTION_FILTER.includes(play.jurisdiction ?? "SA")) || [];
+          setActivePlays(filtered);
         }
       } catch (err) {
         console.error('Failed to fetch exotics:', err);
@@ -112,9 +122,29 @@ export const ExoticsView: React.FC = () => {
   // Filter historical exotic bets from global ledger
   const exoticHistory = betHistory.filter(b => b.confidence === 'EXOTIC');
 
+  // First-visit intro: shown until pools render, then marked seen forever.
+  const [showIntro, setShowIntro] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('strike_promo_seen')?.includes('pools-viewed');
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (activePlays.length > 0 && showIntro) {
+      markSeen('pools-viewed');
+      setShowIntro(false);
+    }
+  }, [activePlays.length, showIntro]);
+
   // Calculate Exotic stats
-  const totalStaked = exoticHistory.reduce((sum, b) => sum + b.stake, 0);
-  const totalPayout = exoticHistory.reduce((sum, b) => sum + (b.payout || 0), 0);
+  // Refunded tickets (VOID/EXPIRED) are not staked money: the stake came
+  // back. Counting them in both sides inflates turnover and drags ROI toward
+  // zero, which read as "the exotics are bleeding" while 110 tickets were
+  // simply voids.
+  const settledHistory = exoticHistory.filter((b) => !isRefunded(b));
+  const totalStaked = settledHistory.reduce((sum, b) => sum + b.stake, 0);
+  const totalPayout = settledHistory.reduce((sum, b) => sum + (b.payout || 0), 0);
   const totalPnL = totalPayout - totalStaked;
   const exoticRoi = totalStaked > 0 ? (totalPnL / totalStaked) * 100 : 0;
 
@@ -135,7 +165,21 @@ export const ExoticsView: React.FC = () => {
           <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
             Multi-Leg Permutation & Coverage Analysis
           </p>
+          <p className="text-[10px] sm:text-[11px] text-theme-secondary mt-2 max-w-3xl leading-relaxed normal-case tracking-normal font-medium">
+            <span className="text-amber-300 font-bold">#Banker / #Saver</span> ={' '}
+            <span className="text-purple-300 font-bold">your AI ticket</span> — permutations,
+            cost &amp; settlement are built from these alone.{' '}
+            <span className="text-emerald-300 font-bold">TAB official</span> is TAB&apos;s
+            printed pick from the racecard PDF, shown for{' '}
+            <span className="text-theme-primary font-bold">comparison only</span>.
+          </p>
         </div>
+
+      {/* First-visit intro: dismisses itself once pools render. */}
+      {showIntro && (() => {
+        const c = CAMPAIGNS.find((x) => x.id === 'exotics-intro');
+        return c ? <PromoCard campaign={c} compact onAction={() => { markSeen('pools-viewed'); setShowIntro(false); }} /> : null;
+      })()}
 
         {/* Tab Controls */}
         <div className="flex border border-theme p-1 rounded-2xl bg-theme-panel shrink-0">
@@ -209,10 +253,19 @@ export const ExoticsView: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                       {group.plays.map((play, index) => {
-                  const permutations = play.estimated_combinations || (play.combinations || []).reduce(
+                  // Cost must be derived from the SAME figure it is labelled
+                  // with. Backend `estimated_combinations` and the blueprint
+                  // product disagreed for some pools (Oct-2026), so the card
+                  // showed e.g. "12 permutations / R18.00" — two answers to one
+                  // question. The blueprint is the ticket, so it wins; the
+                  // backend estimate is only a fallback when legs are absent.
+                  const blueprintCombos = (play.combinations || []).reduce(
                     (acc, c) => acc * (1 + (Array.isArray(c.savers) ? c.savers.length : 0)),
                     1
                   );
+                  const permutations = (play.combinations || []).length > 0
+                    ? blueprintCombos
+                    : (play.estimated_combinations || 0);
                   const estCost = permutations * 1.20; // Suggested R1.20 unit cost
                   return (
                     <motion.div
@@ -254,7 +307,9 @@ export const ExoticsView: React.FC = () => {
                           <div className="text-right">
                             <div className="text-[9px] text-theme-secondary font-black">EST. DIVIDEND</div>
                             <div className="text-xl font-black text-emerald-400 tabular leading-none mt-1">
-                              R{play.estimated_dividend?.toLocaleString() || '0'}
+                              {typeof play.estimated_dividend === 'number' && play.estimated_dividend > 0
+                                ? `R${play.estimated_dividend.toLocaleString()}`
+                                : '—'}
                             </div>
                           </div>
                         </div>
@@ -273,7 +328,7 @@ export const ExoticsView: React.FC = () => {
                                 <div className="flex items-center gap-3">
                                 <div className="text-[10px] font-black text-purple-400 w-12 shrink-0">LEG {idx + 1}</div>
                                 <div className="text-[9px] text-slate-500 uppercase shrink-0 font-bold">
-                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ''}
+                                  RACE {combo.race}{typeof combo.distance_m === 'number' && combo.distance_m > 0 ? ` · ${combo.distance_m}m` : ' · —'}
                                 </div>
                                 <div className="flex flex-wrap gap-1.5 flex-1 items-center">
                                   {/* Banker */}
@@ -295,6 +350,7 @@ export const ExoticsView: React.FC = () => {
                                     <span className="text-[11px] font-black text-emerald-300 tabular">
                                       {official.join(' · ')}
                                     </span>
+                                    <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">reference only — not in ticket</span>
                                   </div>
                                 )}
                               </div>
@@ -394,18 +450,28 @@ export const ExoticsView: React.FC = () => {
                           <td className="py-3 px-2 text-purple-300">{bet.horse}</td>
                           <td className="py-3 px-2 text-right tabular">R{bet.stake.toFixed(2)}</td>
                           <td className="py-3 px-2 text-right tabular text-emerald-400">
-                            {bet.settled && bet.won ? `R${bet.payout?.toFixed(2)}` : '-'}
+                            {betStatus(bet) === 'WON' ? `R${(bet.payout ?? 0).toFixed(2)}` : '-'}
                           </td>
                           <td className="py-3 px-2 text-center">
-                            <span className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase ${
-                              bet.settled 
-                                ? bet.won 
-                                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' 
-                                  : 'border-red-500/30 text-red-400 bg-red-500/10'
-                                : 'border-amber-500/30 text-amber-400 bg-amber-500/10'
-                            }`}>
-                              {bet.settled ? bet.won ? 'WON' : 'LOST' : 'OPEN'}
-                            </span>
+                            {(() => {
+                              // VOID/EXPIRED are terminal refunds, not open
+                              // money — they used to render as "OPEN" forever.
+                              const st = betStatus(bet);
+                              const label = st === 'PENDING' ? 'OPEN' : st;
+                              const cls =
+                                st === 'WON'
+                                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                                  : st === 'LOST'
+                                    ? 'border-red-500/30 text-red-400 bg-red-500/10'
+                                    : st === 'VOID' || st === 'EXPIRED'
+                                      ? 'border-slate-500/30 text-slate-400 bg-slate-500/10'
+                                      : 'border-amber-500/30 text-amber-400 bg-amber-500/10';
+                              return (
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase ${cls}`}>
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}

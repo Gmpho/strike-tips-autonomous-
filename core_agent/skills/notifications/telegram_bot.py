@@ -16,6 +16,134 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("telegram-notifier")
 
+# Chats that blocked the bot (Telegram 403). Kept on the data volume so one
+# dead recipient can never fail a whole broadcast again (Sep-2026: a single
+# blocked subscriber kept every digest in "retry forever" and the user saw
+# the same 20 alerts every cycle).
+QUARANTINE_FILENAME = "telegram_blocked.json"
+# Backstop TTL (Oct-2026): a quarantine is a spam guard, not a life sentence.
+# Proof-of-life (any inbound message / successful link) clears immediately;
+# anything older than this expires on read.
+QUARANTINE_TTL_SECS = 7 * 24 * 3600
+
+
+def _quarantine_path() -> Optional[str]:
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        return str(DATA_DIR / QUARANTINE_FILENAME)
+    except Exception:
+        return None
+
+
+def _quarantined_ids() -> set:
+    path = _quarantine_path()
+    if not path:
+        return set()
+    try:
+        import json
+        import time
+
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return set()
+        now = time.time()
+        live = set()
+        expired = []
+        for k, v in data.items():
+            ts = float((v or {}).get("ts", 0)) if isinstance(v, dict) else 0
+            if ts and now - ts > QUARANTINE_TTL_SECS:
+                expired.append(k)
+            else:
+                live.add(str(k))
+        if expired:
+            try:
+                for k in expired:
+                    data.pop(k, None)
+                with open(f"{path}.tmp", "w") as f:
+                    json.dump(data, f)
+                os.replace(f"{path}.tmp", path)
+            except Exception:
+                pass
+            logger.info("Telegram quarantine TTL-expired chats released: %s", expired)
+        return live
+    except Exception:
+        return set()
+
+
+def _quarantine_chat(chat_id: str, reason: str) -> None:
+    path = _quarantine_path()
+    if not path:
+        return
+    try:
+        import json
+        import time
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+        data[str(chat_id)] = {"reason": reason, "ts": time.time()}
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+        logger.warning(
+            "Telegram chat %s quarantined (%s) — skipped in future broadcasts", chat_id, reason
+        )
+        try:
+            from core_agent.core.telemetry import emit
+            emit("system", f"🔇 Telegram chat quarantined ({reason}) — broadcasts paused for it")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug("Quarantine persist failed: %s", e)
+
+
+def clear_quarantine(chat_id: str | int) -> bool:
+    """Remove a chat from quarantine. Returns True if it was listed.
+
+    Call on proof-of-life: any inbound message or successful passcode link
+    proves the chat receives, so broadcasts must resume. Also emits
+    telemetry so the release is visible, not silent.
+    """
+    path = _quarantine_path()
+    if not path:
+        return False
+    try:
+        import json
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return False
+        except Exception:
+            return False
+        key = str(chat_id)
+        if key not in data:
+            return False
+        reason = (data.get(key) or {}).get("reason", "?") if isinstance(data.get(key), dict) else "?"
+        data.pop(key, None)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+        logger.warning("Telegram chat %s released from quarantine (was: %s)", key, reason)
+        try:
+            from core_agent.core.telemetry import emit
+            emit("system", f"🔓 Telegram chat released from quarantine (was: {reason})")
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.debug("Quarantine release failed: %s", e)
+        return False
+
 
 def _get_whitelist_ids() -> set[int]:
     """Load the set of authorized chat_ids from whitelist.json on disk."""
@@ -97,7 +225,11 @@ class TelegramNotifier:
             )
             if response.status_code == 200:
                 return True
-            logger.warning("Telegram send to %s failed: %s", chat_id, response.text)
+            body = response.text or ""
+            if response.status_code == 403 and "blocked" in body.lower():
+                _quarantine_chat(str(chat_id), "blocked by user")
+            else:
+                logger.warning("Telegram send to %s failed: %s", chat_id, body[:200])
             return False
         except Exception as e:
             logger.error("Telegram error for %s: %s", chat_id, e)
@@ -166,15 +298,20 @@ class TelegramNotifier:
             "VALUE": "✅",
             "MARGINAL": "💛",
         }.get(confidence, "📊")
+        # Paper/analysis-only alerts (Europe stage 2: stake 0.00) must never
+        # wear Kelly sizing language — it implies money is moving.
+        paper = stake == 0.0
 
         text = (
             f"{confidence_emoji} <b>STRIKE TIPS - {confidence.replace('_', ' ')}</b>\n\n"
             f"📍 <b>{track.title()} - Race {race_number}</b> ({race_time})\n"
             f"🐎 <b>{horse}</b>\n"
             f"💰 Odds: {odds} | Edge: +{edge_percent:.1f}%\n"
-            f"💵 Advised Stake: R{stake:.2f}\n\n"
-            f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
-            f"⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
+            + (f"💵 Advised Stake: R{stake:.2f}\n\n"
+               if not paper else "📊 <i>Analysis only — not staked.</i>\n\n")
+            + f"📝 <i>{_clip_reasoning(reasoning)}</i>\n\n"
+            + ("⚠️ Bet responsibly. Sized by Kelly × DSI (odds-capped)."
+               if not paper else "⚠️ Bet responsibly. Paper flag — no money moved.")
             + (f"\n<code>{ref}</code>" if ref else "")
         )
         await self.broadcast(text)
@@ -209,55 +346,111 @@ class TelegramNotifier:
         await self.broadcast(text)
         return True
 
-    async def broadcast(self, text: str, parse_mode: str = "HTML") -> None:
-        """Send to the admin + every authorized whitelisted user, chunking at 4000 chars."""
+    async def broadcast(self, text: str, parse_mode: str = "HTML") -> bool:
+        """Send to the admin + every authorized whitelisted user, chunking at 4000 chars.
+
+        Returns True only when every chunk reached every target. Digest
+        retry logic depends on this signal (Sep-2026: swallowed failures
+        marked alerts as delivered while nothing arrived).
+        """
         targets: list[str] = [self.chat_id]
         for cid in _get_whitelist_ids():
             sid = str(cid)
             if sid not in targets:
                 targets.append(sid)
-        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        quarantined = _quarantined_ids()
+        if quarantined:
+            skipped = [t for t in targets if t in quarantined]
+            if skipped:
+                logger.info("Broadcast skipping quarantined chats: %s", skipped)
+            targets = [t for t in targets if t not in quarantined]
+        try:
+            from core_agent.agent.telegram_format import _split_grapheme_safe
+
+            chunks = _split_grapheme_safe(text, 4000)
+        except Exception:
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        ok = True
         for t in targets:
             for chunk in chunks:
                 try:
-                    await self._send_to_chat(t, chunk, parse_mode)
-                except Exception:
-                    pass
+                    if not await self._send_to_chat(t, chunk, parse_mode):
+                        ok = False
+                except Exception as e:
+                    ok = False
+                    logger.warning("Telegram broadcast to %s failed: %s", t, e)
+        return ok
 
-    async def send_daily_tips(self, scan_results: Dict[str, List[Dict]]) -> bool:
+    async def send_daily_tips(self, scan_results: Dict[str, List[Dict]], title: str = "Daily Intelligence Report") -> bool:
         """Send a daily summary of all value bets found asynchronously"""
         total_value_bets = sum(
             len(r.get("value_bets", []))
             for races in scan_results.values()
-            for r in races
+            for r in (races or [])
+            if isinstance(r, dict)
         )
 
-        lines = [f"🏇 <b>STRIKE TIPS - Daily Intelligence Report</b>\n"]
+        lines = [f"🏇 <b>STRIKE TIPS - {title}</b>\n"]
         lines.append(f"📊 Found <b>{total_value_bets}</b> value bet(s)\n")
 
         for track, races in scan_results.items():
+            races = [r for r in (races or []) if isinstance(r, dict)]
             vb_count = sum(len(r.get("value_bets", [])) for r in races)
+            # Oct-2026: every scanned meeting is listed with its status. A
+            # meeting whose AI analysis silently failed (provider quota
+            # exhausted → empty responses) used to vanish from the digest
+            # entirely, indistinguishable from "no value today" — the Europe
+            # digest showed 1 of 5 meetings while the other 4 returned nothing.
             if vb_count > 0:
                 lines.append(f"\n📍 <b>{track.title()}</b> — {vb_count} selections")
-                for race in races:
-                    insight = race.get("ai_insight", "")
-                    if insight:
-                        lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
-                    for vb in race.get("value_bets", [])[:2]:
-                        horse_name = (
-                            vb.get("horse")
-                            or vb.get("name")
-                            or vb.get("horse_name")
-                            or "Unknown"
-                        )
+            elif any(str(r.get("ai_insight") or "").strip() for r in races):
+                lines.append(f"\n📍 <b>{track.title()}</b> — no value found")
+            else:
+                lines.append(f"\n📍 <b>{track.title()}</b> — ⚠️ analysis unavailable")
+            for race in races:
+                insight = race.get("ai_insight", "")
+                # LLM sometimes returns a JSON blob instead of prose —
+                # extract the summary so raw JSON never reaches Telegram.
+                # Oct-2026: also arrives code-fenced (```json ... ```) or
+                # as an already-parsed dict (Greyville R8 went out raw).
+                if isinstance(insight, dict):
+                    insight = insight.get("summary", "") or ""
+                if isinstance(insight, str):
+                    _s = insight.strip()
+                    if _s.startswith("```"):
+                        import re as _re
+                        _s = _re.sub(r"^```(?:json)?\s*", "", _s)
+                        _s = _re.sub(r"\s*```$", "", _s).strip()
+                    if "{" in _s:
                         try:
-                            edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
-                        except (ValueError, TypeError):
-                            edge = 0.0
-                        lines.append(
-                            f"  R{race['race_number']}: {horse_name} @ {vb.get('odds_decimal', '?')} "
-                            f"(+{edge:.1f}%)"
-                        )
+                            import json as _json
+                            _sub = _s[_s.find("{"): _s.rfind("}") + 1]
+                            _parsed = _json.loads(_sub)
+                            if isinstance(_parsed, dict):
+                                _s = _parsed.get("summary", "") or ""
+                        except Exception:
+                            pass
+                    insight = _s
+                if insight:
+                    lines.append(f"  R{race['race_number']}: 💡 {insight[:150]}")
+                for vb in race.get("value_bets", [])[:2]:
+                    horse_name = (
+                        vb.get("horse")
+                        or vb.get("name")
+                        or vb.get("horse_name")
+                        or "Unknown"
+                    )
+                    try:
+                        edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                    except (ValueError, TypeError):
+                        edge = 0.0
+                    if 0 < edge < 1:
+                        edge *= 100
+                    badge = "🔥" if edge >= 15.0 else "✅" if edge >= 8.0 else "💛"
+                    lines.append(
+                        f"  R{race['race_number']}: {badge} {horse_name} @ {vb.get('odds_decimal', '?')} "
+                        f"(+{edge:.1f}%)"
+                    )
 
         lines.append("\n⚠️ Always bet responsibly.")
         await self.broadcast("\n".join(lines))
@@ -275,7 +468,7 @@ class TelegramNotifier:
                 f"  🏆 <b>{pool}</b> — {len(legs)} legs, {len(combos)} combo(s)"
             )
             if legs:
-                lines.append(f"    Legs: {', '.join(legs[:3])}")
+                lines.append(f"    Legs: R{', R'.join(str(r) for r in legs)}")
             if est_div:
                 lines.append(f"    Est. Dividend: R{est_div}")
         await self.broadcast("\n".join(lines))

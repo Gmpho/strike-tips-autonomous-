@@ -43,8 +43,8 @@ class RaceCard:
     track: str
     race_number: int
     race_time: str
-    distance: int  # metres
-    track_condition: str  # Good, Soft, Heavy, etc.
+    distance: Optional[int] = None  # metres; None when the source gives none — never a placeholder
+    track_condition: str = "Good"  # Good, Soft, Heavy, etc.
     runners: List[Runner] = field(default_factory=list)
     race_class: Optional[str] = None
     prize_money: Optional[float] = None

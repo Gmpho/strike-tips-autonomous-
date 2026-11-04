@@ -27,8 +27,21 @@ import io
 import sys
 
 
+_emoji_filter_installed = False
+
+
 def setup_emoji_filter():
-    """Setup to replace ASCII tags with emojis in stdout."""
+    """Swap sys.stdout for an emoji-rewriting wrapper (process entry only).
+
+    Must NEVER run at import time: the wrapper pins the current stdout
+    buffer, so importing this module under pytest permanently redirects
+    later tests at a closed capture file (Sep-2026: one scheduler test
+    failed and ~150 later tests errored after it). Call from main().
+    Idempotent — repeat calls are no-ops.
+    """
+    global _emoji_filter_installed
+    if _emoji_filter_installed:
+        return
 
     class EmojiFilter(io.TextIOWrapper):
         def __init__(self, buffer):
@@ -69,26 +82,36 @@ def setup_emoji_filter():
                 text = text.replace(tag, emoji)
             super().write(text)
 
-    sys.stdout = EmojiFilter(sys.stdout.buffer)
-
-
-try:
-    setup_emoji_filter()
-except:
-    pass
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        return  # non-console stdout (captured/redirected) — leave it alone
+    sys.stdout = EmojiFilter(buffer)
+    _emoji_filter_installed = True
 
 
 class StrikeTipsScheduler:
-    def __init__(self, scan_time: str = "11:00", data_dir: str = "./data"):
-        self.scan_time = scan_time
+    def __init__(self, scan_time: str = None, data_dir: str = "./data"):
+        # SCAN_TIME env staggers the heavy daily AI scan per side (Oct-2026:
+        # docker and Modal both fired it at 11:00 — twin Groq stampedes and
+        # twin digests. Modal keeps the 11:00 default; docker sets 10:30).
+        self.scan_time = scan_time or os.getenv("SCAN_TIME", "11:00")
         self.data_dir = data_dir
         self.strike = None
         self.running = False
         self._shutdown = Event()
         self.scheduler = None
+        # Single-owner map (Oct-2026): local + cloud both run this file, so
+        # every job would fire twice. SCHEDULER_DISABLE (comma job ids)
+        # opts a side out; unset = today's behavior (Modal side untouched).
+        # Intentionally dual-homed (idempotent, guarded): check_results.
+        self._disabled = {
+            j.strip()
+            for j in os.getenv("SCHEDULER_DISABLE", "").split(",")
+            if j.strip()
+        }
 
         # Parse scan_time (format "HH:MM" in SAST)
-        hour, minute = map(int, scan_time.split(":"))
+        hour, minute = map(int, self.scan_time.split(":"))
 
         # APScheduler with SAST timezone
         jobstores = {"default": MemoryJobStore()}
@@ -103,54 +126,68 @@ class StrikeTipsScheduler:
         )
 
         # Schedule jobs in SAST
-        self.scheduler.add_job(
+        self._add(
             self.daily_scan_job,
             CronTrigger(hour=hour, minute=minute, timezone="Africa/Johannesburg"),
-            id="daily_scan",
-            replace_existing=True,
+            "daily_scan",
         )
-        self.scheduler.add_job(
+        # Europe wave (Oct-2026, docker method): UK/IRE manifest scan at
+        # 12:30 SAST — mirrors the Modal piggyback so docker covers it when
+        # Modal is quiet. Digest-only + paper alerts, same as Modal path.
+        self._add(
+            self.europe_scan_job,
+            CronTrigger(hour=12, minute=30, timezone="Africa/Johannesburg"),
+            "europe_scan",
+        )
+        self._add(
             self.run_daily_grounding_job,
             CronTrigger(hour=6, minute=0, timezone="Africa/Johannesburg"),
-            id="daily_grounding",
-            replace_existing=True,
+            "daily_grounding",
         )
-        self.scheduler.add_job(
+        # Ledger reconciliation (Oct-2026 hardening, fix 5): JSON vs Postgres
+        # drift check 06:30 daily. Telegram alert on drift; silence on match.
+        self._add(
+            self.reconcile_ledger_job,
+            CronTrigger(hour=6, minute=30, timezone="Africa/Johannesburg"),
+            "reconcile_ledger",
+        )
+        self._add(
             self.pre_warm_tomorrow_job,
             CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
-            id="pre_warm_tomorrow",
-            replace_existing=True,
+            "pre_warm_tomorrow",
         )
-        self.scheduler.add_job(
+        self._add(
             self.continuous_scan_job,
             IntervalTrigger(minutes=15, timezone="Africa/Johannesburg"),
-            id="continuous_scan",
-            replace_existing=True,
+            "continuous_scan",
         )
-        self.scheduler.add_job(
+        self._add(
             self.check_race_results_job,
             IntervalTrigger(minutes=5, timezone="Africa/Johannesburg"),
-            id="check_results",
-            replace_existing=True,
+            "check_results",
         )
-        self.scheduler.add_job(
+        self._add(
             self._end_of_day_report,
             CronTrigger(hour=20, minute=0, timezone="Africa/Johannesburg"),
-            id="end_of_day_report",
-            replace_existing=True,
+            "end_of_day_report",
         )
-        self.scheduler.add_job(
+        self._add(
             self._morning_report,
             CronTrigger(hour=7, minute=0, timezone="Africa/Johannesburg"),
-            id="morning_report",
-            replace_existing=True,
+            "morning_report",
         )
-        self.scheduler.add_job(
+        self._add(
             self.update_learning_job,
             CronTrigger(hour=21, minute=0, timezone="Africa/Johannesburg"),
-            id="update_learning",
-            replace_existing=True,
+            "update_learning",
         )
+
+    def _add(self, job, trigger, job_id):
+        """Register a job unless opted out via SCHEDULER_DISABLE."""
+        if job_id in self._disabled:
+            print(f"[SKIP] Job '{job_id}' disabled by SCHEDULER_DISABLE")
+            return
+        self.scheduler.add_job(job, trigger, id=job_id, replace_existing=True)
 
     def run_daily_grounding_job(self):
         """Syncs all track PDFs into memory via strike_tips.py."""
@@ -204,6 +241,43 @@ class StrikeTipsScheduler:
         self.strike = StrikeTips(data_dir=self.data_dir)
         try:
             return await self.strike.run_daily_scan()
+        finally:
+            await self.strike.close()
+
+    def europe_scan_job(self):
+        # Single-owner: the Modal heartbeat owns the daily Europe scan and
+        # stamps /app/data/.europe_scan_date. Stand down if it already ran
+        # today (prevents double scans + double digests on lucky container
+        # days). Docker keeps its SCHEDULER_DISABLE=europe_scan line too.
+        try:
+            import datetime as _dt
+            try:
+                from zoneinfo import ZoneInfo as _ZI
+                _tz = _ZI("Africa/Johannesburg")
+            except Exception:
+                _tz = None
+            _today = (_dt.datetime.now(_tz) if _tz else _dt.datetime.now()).date().isoformat()
+            with open(os.path.join(self.data_dir, ".europe_scan_date")) as _f:
+                if (_f.read() or "").strip() == _today:
+                    print(f"[SKIP] Europe scan already ran {_today} (heartbeat)")
+                    return
+        except Exception:
+            pass
+        print(
+            f"\n{'=' * 60}\n[TIME] Europe scan starting at {datetime.now().strftime('%H:%M')}\n{'='*60}"
+        )
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(self._europe_scan_async())
+            print(f"[OK] Europe scan done: {result.get('total_value_bets', 0)} flags")
+        except Exception as e:
+            print(f"[ERR] Europe scan failed: {e}")
+
+    async def _europe_scan_async(self):
+        self.strike = StrikeTips(data_dir=self.data_dir)
+        try:
+            return await self.strike.run_region_scan(["UK", "IRE"])
         finally:
             await self.strike.close()
 
@@ -296,10 +370,14 @@ class StrikeTipsScheduler:
             return
 
         # 2. Save latest market snapshot to file (for HUD dashboard)
-        snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
+        #    MUST go through write_market_snapshot: a raw dump here wiped the
+        #    monitor's pruning and re-served finished races for hours
+        #    (Sep-2026: 58 live ↔ 126-race morning card oscillation).
         try:
-            with open(snapshot_file, "w") as f:
-                json.dump(snapshot, f, indent=2, default=str)
+            from core_agent.core.snapshot_writer import write_market_snapshot
+
+            saved = write_market_snapshot(snapshot, source="scheduler_scan")
+            print(f"[SCAN] Saved market snapshot ({len(saved.get('events', {}))} live races)")
         except Exception as e:
             print(f"[WARN] Failed to save market snapshot: {e}")
 
@@ -512,6 +590,45 @@ class StrikeTipsScheduler:
                 print(f"[ERR] Continuous scan rescan failed for {track}: {e}")
         print("[SCAN] Continuous scan job complete.")
 
+    def reconcile_ledger_job(self):
+        """Daily JSON-vs-Postgres drift check (Oct-2026 hardening, fix 5).
+
+        Skips quietly without RECONCILE_USER_ID or Supabase env. Telegram
+        alert only on drift; matches stay in logs.
+        """
+        import os as _os
+        user_id = _os.getenv("RECONCILE_USER_ID", "")
+        if not user_id:
+            print("[RECONCILE] skipped (RECONCILE_USER_ID not set)")
+            return
+        try:
+            from core_agent.db.compare import compare_ledger
+            from core_agent.config.paths import DATA_DIR
+            result = compare_ledger(user_id, str(DATA_DIR))
+            if result["match"]:
+                print("[OK] Ledger reconcile MATCH")
+                return
+            print(f"[WARN] Ledger drift: {result['notes']}")
+            try:
+                from core_agent.core.strike_brain import brain
+                if brain and brain.strike and brain.strike.telegram:
+                    import asyncio as _aio
+                    _msg = ("⚠️ <b>Ledger drift detected</b>\n" +
+                            "\n".join(f"• {n}" for n in result["notes"]))
+                    try:
+                        _loop = _aio.get_running_loop()
+                    except RuntimeError:
+                        _loop = None
+                    if _loop:
+                        _loop.create_task(
+                            brain.strike.telegram.broadcast(_msg))
+                    else:
+                        _aio.run(brain.strike.telegram.broadcast(_msg))
+            except Exception as e:
+                print(f"[ERR] Drift alert failed: {e}")
+        except Exception as e:
+            print(f"[ERR] Reconcile failed: {e}")
+
     def update_learning_job(self):
         """Trigger AdaptiveAnalyzer to learn from today's results and update form insights."""
         try:
@@ -622,6 +739,7 @@ def main():
     parser = argparse.ArgumentParser(description="Strike Tips Scheduler")
     parser.add_argument("command", choices=["start", "scan"])
     args = parser.parse_args()
+    setup_emoji_filter()
     if args.command == "start":
         StrikeTipsScheduler().start()
     elif args.command == "scan":

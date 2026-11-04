@@ -234,16 +234,46 @@ def _snapshot_non_runners(data_dir, today_iso: str) -> set:
     return out
 
 
-# TAB Daily Tipping Sheet prints exact pool ranges per meeting, e.g.
-# "Bipot (1-6)", "PA (2-8)", "Pick 6 (3-8)", "Jackpot 1 (4-7)".
+def _slim_race_for_prompt(r, track: str) -> dict:
+    """Minimal race card for LLM value prompts (see prompt-diet note at call site)."""
+    _slim_runners = []
+    for _sr in (r.runners or [])[:14]:
+        if isinstance(_sr, dict):
+            _nm = _sr.get("horse_name") or _sr.get("name")
+            _od = _sr.get("odds_decimal") or _sr.get("odds")
+            _fm = _sr.get("form") or _sr.get("last_5_runs")
+            _jk = _sr.get("jockey")
+            _tr = _sr.get("trainer")
+        else:
+            _nm = getattr(_sr, "horse_name", None)
+            _od = getattr(_sr, "odds_decimal", None)
+            _fm = getattr(_sr, "form", None) or getattr(_sr, "last_5_runs", None)
+            _jk = getattr(_sr, "jockey", None)
+            _tr = getattr(_sr, "trainer", None)
+        _slim_runners.append({
+            "horse": _nm, "odds": _od, "form": _fm,
+            "jockey": _jk, "trainer": _tr,
+        })
+    return {
+        "track": getattr(r, "track", track),
+        "race_number": getattr(r, "race_number", 0),
+        "distance": getattr(r, "distance", None),
+        "condition": getattr(r, "track_condition", None),
+        "runners": _slim_runners,
+    }
+
+
+# TAB prints pool ranges in two notations: the Daily Tipping Sheet writes
+# "Bipot (1-6)" / "PA (2-8)", while the Computaform "Best Bets & Perms"
+# page writes "BIPOT (RACES 1 - 6)" / "P/A (RACES 2 - 8)".
 # (pool label, leg count, code prefix)
 _TIPS_POOL_RES = (
-    (r"\bBIPOT\s*\((\d+)\s*-\s*(\d+)\)", 6, "BI1"),
-    (r"\bPA\s*\((\d+)\s*-\s*(\d+)\)", 7, "PA"),
-    (r"PICK\s*6\s*\((\d+)\s*-\s*(\d+)\)", 6, "P6"),
-    (r"PICK\s*3\s*\((\d+)\s*-\s*(\d+)\)", 3, "P3"),
-    (r"JACKPOT\s*1?\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP1"),
-    (r"JACKPOT\s*2\s*\((\d+)\s*-\s*(\d+)\)", 4, "JP2"),
+    (r"\bBIPOT\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 6, "BI1"),
+    (r"\bP\s*/?\s*A\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 7, "PA"),
+    (r"PICK\s*6\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 6, "P6"),
+    (r"PICK\s*3\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 3, "P3"),
+    (r"JACKPOT\s*1?\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 4, "JP1"),
+    (r"JACKPOT\s*2\s*\((?:\s*RACES\s*)?(\d+)\s*-\s*(\d+)\)", 4, "JP2"),
 )
 
 
@@ -276,16 +306,111 @@ def _tips_meeting_section(raw_text: str, track: str) -> str:
     return "\n".join(section)
 
 
+def _fields_meeting_name(raw_text: str) -> str:
+    """Meeting name from a Computaform "Best Bets & Perms" page.
+
+    The page's pool blocks sit directly above a
+    "BEST BETS & PERMS   by <tipster>" line followed by the meeting line,
+    e.g. "Tab Fairview Polytrack, Friday 16 October 2026" or
+    "Hollywoodbets Greyville Polytrack, Friday 16 October 2026". Each
+    harvested Fields PDF covers a single meeting, so this name identifies
+    every pool block in the document.
+    """
+    lines = str(raw_text or "").splitlines()
+    for i, ln in enumerate(lines):
+        if "BEST BETS" in ln.upper() and "PERM" in ln.upper():
+            for nxt in lines[i + 1 : i + 4]:
+                s = re.sub(r"^Tab\s+", "", nxt.strip()).split(",")[0].strip()
+                if len(s) >= 3:
+                    return s
+            break
+    return ""
+
+
+def _tips_scan_blob(raw_text: str, track: str) -> str:
+    """Text region to scan for pool blocks.
+
+    The Daily Tipping Sheet is multi-meeting, so its track section is used
+    when it actually carries pool headers. A Computaform Fields PDF is
+    single-meeting: its "section" is just the first race header, so when no
+    pool header is present the whole document is scanned — but only when the
+    document's one meeting matches the requested track (the racecourse legend
+    lists every SA track, so a bare substring check would mis-match).
+    """
+    blob = _tips_meeting_section(raw_text, track)
+    if blob and any(
+        re.search(pat, blob, re.IGNORECASE) for pat, _, _ in _TIPS_POOL_RES
+    ):
+        return blob
+    meeting = _fields_meeting_name(raw_text)
+    if meeting:
+        mt, wt = _norm_text(meeting), _norm_text(track)
+        if wt and (mt == wt or wt in mt or mt in wt):
+            return str(raw_text or "")
+    return blob
+
+
+def _parse_pool_legs(
+    lines: List[str], j: int, first: int, last: int
+) -> "tuple[Dict[int, List[int]], int]":
+    """Parse one pool block's per-leg selections starting at line index j.
+
+    Handles both TAB layouts:
+      * Computaform Fields page — explicit "LEG n" markers with picks on their
+        own lines ("LEG 2\\n1\\n2\\n4\\n8").
+      * Daily Tipping Sheet — one comma-separated number line per leg, in order
+        ("1, 7, 9, 10").
+    Returns ({race_number: [cloth, ...]}, next_line_index). An optional
+    leading cost line ("R256") is skipped.
+    """
+    legs: Dict[int, List[int]] = {}
+    if j < len(lines) and re.fullmatch(
+        r"R\s?[\d\s.,]+", lines[j].strip(), re.IGNORECASE
+    ):
+        j += 1
+    if j < len(lines) and re.fullmatch(r"LEG\s*\d+", lines[j].strip(), re.IGNORECASE):
+        cur: Optional[int] = None
+        while j < len(lines):
+            s = lines[j].strip()
+            m_leg = re.fullmatch(r"LEG\s*(\d+)", s, re.IGNORECASE)
+            if m_leg:
+                cur = first + int(m_leg.group(1)) - 1
+                legs.setdefault(cur, [])
+                j += 1
+                continue
+            if cur is None or not re.fullmatch(r"[\d,\s]+", s):
+                break
+            nums = [int(x) for x in re.findall(r"\d+", s)]
+            if not nums:
+                break
+            legs[cur].extend(nums)
+            j += 1
+        return {k: v for k, v in legs.items() if v}, j
+    for rn in range(first, last + 1):
+        if j >= len(lines):
+            break
+        s = lines[j].strip()
+        if not re.fullmatch(r"[\d,\s]+", s):
+            break
+        nums = [int(x) for x in re.findall(r"\d+", s)]
+        if not nums:
+            break
+        legs[rn] = nums
+        j += 1
+    return legs, j
+
+
 def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
-    """Exact pool start races from the TAB Daily Tipping Sheet text.
+    """Exact pool start races from the TAB tips text.
 
     Scopes to the track's meeting section (headers are bare caps names like
-    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL).
+    DURBANVILLE; sections end at the next meeting header or INTERNATIONAL),
+    or to the whole document for a single-meeting Computaform Fields page.
     Returns {"BI1": 1, "PA": 2, ...}. Entries whose range length disagrees
     with the pool's leg count are ignored ( OCR/parse noise guard).
     """
     out: Dict[str, int] = {}
-    blob = _tips_meeting_section(raw_text, track)
+    blob = _tips_scan_blob(raw_text, track)
     if not blob:
         return out
     for pat, legs, code in _TIPS_POOL_RES:
@@ -301,50 +426,36 @@ def _tips_pool_starts(raw_text: str, track: str) -> Dict[str, int]:
 def _tips_official_picks(raw_text: str, track: str) -> Dict[str, Dict[int, List[int]]]:
     """TAB official per-leg selections (cloth numbers) per pool.
 
-    Parses pool blocks like "Bipot (2-7)\\nR480\\n1, 7, 9, 10\\n1, 9\\n..."
-    where each following number-line maps to consecutive leg races. Returns
-    {pool_code: {race_number: [cloth, ...]}}. Numbers-only lines only —
-    anything with letters ends the block ( OCR/noise guard).
+    Parses pool blocks in either TAB layout — the Daily Tipping Sheet's
+    "Bipot (2-7)\\nR480\\n1, 7, 9, 10\\n1, 9\\n..." (one comma-number line per
+    leg) and the Computaform "Best Bets & Perms" page's
+    "JACKPOT 1 (RACES 4 - 7)\\nR216\\nLEG 1\\n1\\n2\\n3\\n..." (explicit LEG
+    markers). Returns {pool_code: {race_number: [cloth, ...]}}.
     """
     out: Dict[str, Dict[int, List[int]]] = {}
-    blob = _tips_meeting_section(raw_text, track)
+    blob = _tips_scan_blob(raw_text, track)
     if not blob:
         return out
     lines = blob.splitlines()
     i = 0
     while i < len(lines):
         header = None
-        for pat, legs, code in _TIPS_POOL_RES:
+        for pat, n_legs, code in _TIPS_POOL_RES:
             m = re.search(pat, lines[i], re.IGNORECASE)
             if m:
                 groups = [int(g) for g in m.groups()]
                 first, last = groups[-2], groups[-1]
-                if last - first + 1 == legs:
+                if last - first + 1 == n_legs:
                     header = (code, first, last)
                 break
         if header is None:
             i += 1
             continue
         code, first, last = header
-        legs: Dict[int, List[int]] = {}
-        j = i + 1
-        # Skip the cost line (R480) if present.
-        if j < len(lines) and re.fullmatch(r"R\s?[\d\s.,]+", lines[j].strip(), re.IGNORECASE):
-            j += 1
-        for rn in range(first, last + 1):
-            if j >= len(lines):
-                break
-            s = lines[j].strip()
-            if not re.fullmatch(r"[\d,\s]+", s):
-                break
-            nums = [int(x) for x in re.findall(r"\d+", s)]
-            if not nums:
-                break
-            legs[rn] = nums
-            j += 1
-        if legs:
-            out[code] = legs
-            i = j  # j sits on the first non-number line (next header/time)
+        leg_map, j = _parse_pool_legs(lines, i + 1, first, last)
+        if leg_map:
+            out[code] = leg_map
+            i = j  # j sits on the first non-pick line (next header/time)
         else:
             i += 1  # advance one line so a following header is still scanned
     return out
@@ -533,10 +644,126 @@ def _play_has_no_nrs(play: Dict, nr_names: Dict[tuple, set]) -> bool:
     return True
 
 
+def _order_names_by_live_odds(names: List[str], track_name: str,
+                              snap_odds: Optional[Dict] = None) -> List[str]:
+    """Favourite-first ordering using the live snapshot (odds monitor).
+
+    The deterministic fallback otherwise anchors legs on card order, which
+    can disagree with the market — and the balance guard then (correctly)
+    kills long tickets as all-outsider (Oct-2026: Greyville PA + P6 died
+    this way). Unknown-odds names keep relative order at the back and
+    never count against the play.
+    """
+    if not snap_odds:
+        return list(names)
+    track = _norm_text(track_name or "")
+    pool: Dict[str, float] = {}
+    for k, v in snap_odds.items():
+        if isinstance(v, dict) and track and (track in k or k in track):
+            pool.update(v)
+
+    def _odd(n: str) -> float:
+        o = pool.get(_norm_text(n or ""))
+        return o if isinstance(o, (int, float)) and o > 0 else float("inf")
+
+    if all(_odd(n) == float("inf") for n in names):
+        return list(names)
+    return sorted(names, key=_odd)  # stable: unknowns keep card order
+
+
+def _deterministic_single_race_plays(quals: List[tuple], track_name: str,
+                                    snap_odds: Optional[Dict] = None,
+                                    total_races: int = 0) -> List[Dict]:
+    """No-LLM single-race tickets (Oct-2026: Groq 429s left the board with
+    zero EXA/TRI/QUA). Banker = live favourite, savers = next shortest —
+    honest anchors the balance guard accepts."""
+    _DIVS = {"QUARTET": 600.0, "TRIFECTA": 350.0, "EXACTA": 150.0}
+    plays: List[Dict] = []
+    for rn, names, pools in quals:
+        ordered = _order_names_by_live_odds(names, track_name, snap_odds)
+        if len(ordered) < 4:
+            continue
+        pick = None
+        if "Quartet" in pools and len(ordered) >= 12:
+            pick = ("QUARTET", ordered[1:4])
+        elif "Trifecta" in pools:
+            pick = ("TRIFECTA", ordered[1:4])
+        elif "Exacta" in pools:
+            pick = ("EXACTA", ordered[1:3])
+        if not pick:
+            continue
+        pool, savers = pick
+        plays.append({
+            "pool": pool,
+            "legs": [rn],
+            "combinations": [{"race": rn, "banker": ordered[0], "savers": savers}],
+            "estimated_combinations": 1 + len(savers),
+            "estimated_dividend": _DIVS[pool],
+            "reasoning": "Deterministic favourite-anchored ticket (LLM top-up unavailable).",
+            "_track": track_name,
+            "source": "deterministic",
+        })
+    # One PICK 3 on the biggest-field consecutive triple.
+    _nums = sorted({q[0] for q in quals if isinstance(q[0], int)})
+    _by_num = {q[0]: q for q in quals if isinstance(q[0], int)}
+    best = None
+    for i in range(len(_nums) - 2):
+        triple = _nums[i:i + 3]
+        if triple[1] == triple[0] + 1 and triple[2] == triple[0] + 2:
+            size = sum(len(_by_num[r][1]) for r in triple)
+            if best is None or size > best[0]:
+                best = (size, triple)
+    if best:
+        _, triple = best
+        combos = []
+        for r in triple:
+            ordered = _order_names_by_live_odds(_by_num[r][1], track_name, snap_odds)
+            combos.append({"race": r, "banker": ordered[0], "savers": ordered[1:3]})
+        plays.append({
+            "pool": "PICK 3",
+            "legs": list(triple),
+            "combinations": combos,
+            "estimated_combinations": 3 * 3 * 3,
+            "estimated_dividend": 800.0,
+            "reasoning": "Deterministic readable-triple ticket (LLM top-up unavailable).",
+            "_track": track_name,
+            "source": "deterministic",
+        })
+    if plays:
+        print(f"[EXOTIC] Deterministic single-race fallback: {len(plays)} plays "
+              f"({[p.get('pool') for p in plays]})")
+    return _validate_exotic_layout(plays, total_races) if total_races else plays
+
+
 # Canonical SA pool sizes: Bipot 6, Jackpot 4, Pick 6 six, Place Accumulator 7.
 _POOL_LEG_COUNTS = (
     ("BIPOT", 6), ("JACKPOT", 4), ("PICK 6", 6), ("PLACE ACCUMULATOR", 7),
+    # Single-race pools (Oct-2026 textbook): legs == [race], one entry.
+    ("TRIFECTA", 1), ("QUARTET", 1), ("EXACTA", 1),
+    # Pick 3: three consecutive races.
+    ("PICK 3", 3),
 )
+
+
+# Canonical pooled dividend estimates for single-race pool families. Mirrors
+# the deterministic blueprint's _DIVS so AI and fallback tickets quote the
+# same ballpark. Multi-leg pools scale with leg count (450 x legs).
+_POOL_SINGLE_DIVS = {"QUARTET": 600.0, "TRIFECTA": 350.0, "EXACTA": 150.0}
+
+
+def _pool_estimate_dividend(pool, legs=None) -> float:
+    """Canonical dividend estimate for a play when the model omits one.
+
+    A missing estimated_dividend must never become the 2.0 sentinel
+    (Oct-2026: two live tickets carried odds=2.0 and a bogus
+    potential_return). Single-race pools use their family constant;
+    multi-leg pools scale with leg count, matching the blueprint.
+    """
+    name = str(pool or "").upper()
+    for code, div in _POOL_SINGLE_DIVS.items():
+        if code in name:
+            return float(div)
+    return 450.0 * max(1, len(legs or []))
 
 
 def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
@@ -546,7 +773,12 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
       the whole pool: a ticket with phantom legs is worse than no ticket.
     - Wrong leg counts for the pool family are dropped (BI 6 / JP 4 /
       P6 6 / PA 7).
-    - Identical (pool, legs) duplicates keep the first occurrence only.
+    - A declared leg with no combination is dropped (incomplete ticket —
+      unscorable even if the leg count is right).
+    - Identical (pool, legs, bankers) duplicates keep the first occurrence
+      only. Same pool+legs with different bankers are both kept here (a later
+      scan may pick better bankers) but the governor's one-ticket-per-pool-per-
+      day guard skips the second at placement, so only the first goes live.
     Overlapping ranges across DIFFERENT pools (PA containing P6 legs) are
     normal SA structure and are kept.
     """
@@ -563,10 +795,37 @@ def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
             continue
         pool_name = str(p.get("pool", "")).upper()
         expected = next((n for code, n in _POOL_LEG_COUNTS if code in pool_name), None)
-        if expected is not None and len(legs) != expected:
+        if expected is None:
+            # AI/fallback pool codes (BI1, JP2, P6, PA) never contain the
+            # full family name — resolve via the canonical code table
+            # (Sep-2026: 2-leg "BI1" and 3-leg "JP1" sailed through and
+            # were recorded as tickets).
+            try:
+                from core_agent.skills.exotics.builder import POOL_LEG_COUNTS as _CODES
+                _prefix = next((c for c in _CODES if pool_name.startswith(c)), None)
+                expected = _CODES.get(_prefix) if _prefix else None
+            except Exception:
+                expected = None
+        if expected is None:
+            print(f"[EXOTIC] Dropped '{p.get('pool')}': unknown pool family")
+            continue
+        if len(legs) != expected:
             print(f"[EXOTIC] Dropped '{p.get('pool')}': {len(legs)} legs, {expected} required")
             continue
-        key = (pool_name, tuple(legs))
+        # Every declared leg must carry a combination. The AI routinely
+        # returns the right leg count but omits a leg's selections
+        # (Oct-2026: JACKPOT 4-7 with only leg 4, PICK 6 3-8 with only
+        # 3-7 recorded and bet). A ticket missing a leg can never win its
+        # pool, so it is dropped rather than carded. Plays with no
+        # combinations at all are left to the placement guard.
+        _combos = p.get("combinations") or []
+        if _combos:
+            covered = {c.get("race") for c in _combos if isinstance(c, dict)}
+            missing = [r for r in legs if r not in covered]
+            if missing:
+                print(f"[EXOTIC] Dropped '{p.get('pool')}': legs {missing} have no selection (incomplete ticket)")
+                continue
+        key = _exotic_card_key(p)
         if key in seen:
             print(f"[EXOTIC] Dropped duplicate '{p.get('pool')}' legs {legs}")
             continue
@@ -613,10 +872,61 @@ def _read_exotic_history(data_dir: str) -> List[Dict]:
     return flat
 
 
+def _exotic_pool_key(pool: Dict) -> tuple:
+    """Canonical merge key for one exotic play: (family, legs).
+
+    Families collapse AI label variants ("JP1", "Jackpot 1", "JACKPOT")
+    so a rescan replaces the same pool instead of duplicating it —
+    while pools the new scan lacks (e.g. 05:00 exactas missing from a
+    09:30 rescan) survive on the board instead of being wiped.
+    """
+    name = str(pool.get("pool", "")).upper()
+    if name.startswith("JP") or "JACKPOT" in name:
+        fam = "JACKPOT"
+    elif name.startswith("BI") or "BIPOT" in name:
+        fam = "BIPOT"
+    elif name in ("P6",) or "PICK 6" in name:
+        fam = "PICK 6"
+    elif name in ("PA",) or "PLACE" in name or "ACCUMULATOR" in name:
+        fam = "PA"
+    elif name in ("P3",) or "PICK 3" in name:
+        fam = "PICK 3"
+    else:
+        fam = name
+    try:
+        legs = tuple(pool.get("legs") or [])
+    except TypeError:
+        legs = ()
+    return (fam, legs)
+
+
+def _exotic_card_key(pool: Dict) -> tuple:
+    """Board card key: (family, legs, bankers).
+
+    Same pool+legs with DIFFERENT bankers are different cards — Oct-2026:
+    the 05:00 AI Bipot (R12k estimate) was overwritten on the board by the
+    09:30 fallback Bipot (R2.7k) while BOTH bets stayed open, hiding a live
+    ticket from users. Same bankers still merge (rescan refresh).
+    """
+    fam, legs = _exotic_pool_key(pool)
+    bankers = []
+    for c in (pool.get("combinations") or []):
+        if not isinstance(c, dict):
+            continue
+        b = c.get("banker")
+        bankers.append(
+            str(b.get("name") if isinstance(b, dict) else (b or ""))
+        )
+    return (fam, legs, tuple(bankers))
+
+
 def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> List[Dict]:
     """Merge one scan's plays into the multi-day history and return the flat board.
 
-    - Entries keyed by (event_date, track): a rescan REPLACES that day/track.
+    - Entries keyed by (event_date, track, pool family, legs): a rescan
+      REPLACES the same pools but KEEPS pools the new scan lacks (Oct-2026:
+      a 09:30 rescan without exactas wiped the 05:00 scan's EXA/TRI off the
+      board while the ledger bets stayed open).
     - Past-dated entries pruned (events over).
     - An empty scan never reaches here (caller serves history instead), so a
       dry scan can no longer wipe Saturday's future board.
@@ -643,18 +953,27 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
             continue
         by_track.setdefault(str(p.get("_track", "unknown")), []).append(p)
     for track, pools in by_track.items():
-        history = [
-            e for e in history
-            if not (
+        old_pools: List[Dict] = []
+        kept_history = []
+        for e in history:
+            if (
                 isinstance(e, dict)
                 and str(e.get("event_date", "")) == str(event_date)
                 and str(e.get("track", "")) == track
-            )
-        ]
+            ):
+                old_pools.extend(
+                    p for p in (e.get("pools") or []) if isinstance(p, dict)
+                )
+            else:
+                kept_history.append(e)
+        history = kept_history
+        merged_by_key = {_exotic_card_key(p): p for p in old_pools}
+        for p in pools:
+            merged_by_key[_exotic_card_key(p)] = p
         history.append({
             "event_date": str(event_date),
             "track": track,
-            "pools": pools,
+            "pools": list(merged_by_key.values()),
             "created_at": now_iso,
         })
     history = [
@@ -894,8 +1213,15 @@ class StrikeTips:
                     "Race distance is UNKNOWN — do not state any distance. "
                 )
                 _bf_ctx = _bf_lines.get(int(r.race_number or 0), "")
+                # Prompt diet (Sep-2026: full asdict cards with 12-field
+                # Betfair enrichment hit 9-14k tokens/call vs Groq's 8k TPM
+                # ceiling → 413/429 spam + Gemini-fallback spend). The model
+                # prices from name/odds/form/jockey/trainer — long prose
+                # fields (verdict/comments/pedigree/owner) stay on the HUD,
+                # out of the prompt. Slim card ≈ 60-70% smaller.
+                _slim_race = _slim_race_for_prompt(r, track)
                 prompt = (
-                    f"Analyze this single race for value: {json.dumps(asdict(r))}. "
+                    f"Analyze this single race for value: {json.dumps(_slim_race)}. "
                     f"Context: {track} Race {r.race_number}. {_dist_hint}"
                     + (_bf_ctx + " " if _bf_ctx else "") +
                     "Return ONLY valid JSON. Each value_bet MUST include these fields: "
@@ -1059,9 +1385,11 @@ class StrikeTips:
             self._processing_tracks.remove(track_key)
             # We keep track_data_cache for the duration of the track session
 
-    def _validate_value_bets(self, value_bets: List[Dict], valid_horses: List[str]) -> List[Dict]:
+    def _validate_value_bets(self, value_bets: List[Dict], valid_horses: List[str], max_per_race: int = 3) -> List[Dict]:
         """Cross-reference AI-generated value bets against actual scraped runners.
-        Filters out hallucinated horse names using fuzzy matching."""
+        Filters out hallucinated horse names using fuzzy matching.
+        Caps at max_per_race top-edge selections (Oct-2026: uncapped lists put
+        8 singles on one race — the whole field. At most 3 per race)."""
         validated = []
         for vb in value_bets:
             horse = vb.get("horse") or vb.get("name") or vb.get("horse_name") or ""
@@ -1077,6 +1405,17 @@ class StrikeTips:
                 validated.append(vb)
             else:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
+        def _edge(vb):
+            try:
+                e = float(vb.get("edge_percent") or vb.get("edge") or 0)
+            except (ValueError, TypeError):
+                e = 0.0
+            return e * 100 if 0 < e < 1 else e
+        validated.sort(key=_edge, reverse=True)
+        if len(validated) > max_per_race:
+            print(f"[CAP] Race capped at {max_per_race} selections "
+                  f"({len(validated) - max_per_race} lowest-edge dropped)")
+            validated = validated[:max_per_race]
         return validated
 
     async def _enrich_runners_from_pdf(
@@ -1173,7 +1512,7 @@ class StrikeTips:
             logger.warning("[PDF] Runner enrichment failed: %s", e)
             return 0
 
-    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "", nr_names: Optional[Dict[tuple, set]] = None) -> List[Dict]:
+    async def _analyze_exotic_pools(self, all_results: Dict, pdf_races: Dict, tips_text: str = "", nr_names: Optional[Dict[tuple, set]] = None, snap_odds: Optional[Dict] = None) -> List[Dict]:
         """Extract pool structure from PDF leg_info and run AI exotic analysis."""
         import re
         nr_names = nr_names or {}
@@ -1214,15 +1553,17 @@ class StrikeTips:
         total_races = len(track_races)
         from_pdf = bool(pool_starts)
 
-        if not pool_starts:
-            if total_races >= 10:
-                pool_starts = {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
-            elif total_races in (8, 9):
-                pool_starts = {"BI1": 2, "PA": 2, "P6": 3, "JP1": 4, "JP2": 6 if total_races >= 9 else 5}
-            elif total_races >= 6:
-                pool_starts = {"BI1": 1, "P6": 1, "JP1": 3}
-            else:
-                pool_starts = {"JP1": 1}
+        from core_agent.skills.exotics.builder import convention_pool_starts
+        # Single shared TAB-standard table (PDF/TAB-sheet ranges win
+        # when present) — kept in builder so both exotic paths agree.
+        # Gap-fill (Oct-2026): Computaform leg_info routinely omits PA, so
+        # an all-or-nothing fallback meant no PA ticket all day. Missing
+        # families are backfilled from convention; declared starts are
+        # never overridden.
+        for _code, _start in convention_pool_starts(total_races).items():
+            if _code not in pool_starts:
+                pool_starts[_code] = _start
+                print(f"[EXOTIC] Gap-filled missing pool {_code} starts R{_start} (convention)")
 
         # 2. Build full-card context from Betway data
         card_sections = []
@@ -1257,6 +1598,12 @@ class StrikeTips:
             + "\n".join(card_sections)
             + f"\n\nPOOL LAYOUT: {pool_summary}\n\n"
             + "YOUR TASK: Generate exotic pool combinations for each declared pool. "
+            + "Build EVERY declared pool in POOL LAYOUT above — Bipot, PA "
+            + "(Place Accumulator), Pick 6, and ALL Jackpots. Omitting a "
+            + "declared pool is a failure; a missing PA is the classic miss. "
+            + "EXACT LEG COUNTS (any other count is invalid and discarded): "
+            + "BIPOT 6 legs, PA 7 legs, PICK 6 six legs, JACKPOT 4 legs, "
+            + "PICK 3 three consecutive races, single-race pools 1 leg. "
             + "For each leg, pick 2 to 4 selections, strongest first: one banker "
             + "plus up to 3 savers, chosen on horse quality, form, and "
             + "trainer/jockey strength. Build like a professional strategist, "
@@ -1267,6 +1614,18 @@ class StrikeTips:
             + "non-runners — never select them in any leg. Short legs (clear standout) take fewer "
             + "selections, open handicaps take more — like a strategist sizing "
             + "a real permutation ticket, never the full field. "
+            + "DOCTRINE (hard rules): "
+            + "(1) A ticket dies in its thinnest leg — give the MURKIEST leg "
+            + "(biggest competitive field, weakest read) one extra saver before "
+            + "widening any other leg. "
+            + "(2) Any horse flagged as value in the analysis MUST appear on "
+            + "the ticket, displacing the weakest saver if needed. "
+            + "SINGLE-RACE POOLS (Oct-2026 textbook): also construct where the "
+            + "field qualifies — 12+ runners: QUARTET (box the chaos or float "
+            + "1-2 bankers); 8-13 runners with a confident winner: TRIFECTA "
+            + "Multi (banker 1st + 3-4 for 2nd/3rd); two-horse duels: EXACTA. "
+            + "One PICK 3 on the most readable consecutive triple. Skip "
+            + "single-race pools on small/uncompetitive fields. "
             + "Return ONLY valid JSON with this exact structure: "
             + '{"exotic_plays": [{"pool": "PICK 6", "legs": [4,5,6,7,8,9], '
             + '"combinations": [{"race": 4, "banker": "Horse 1", "savers": ["Horse 2", "Horse 3"]}], '
@@ -1281,21 +1640,46 @@ class StrikeTips:
             raw = None
 
             if groq_key:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": "llama-3.3-70b-versatile",
-                            "messages": [{"role": "user", "content": card_context}],
-                            "temperature": 0.2,
-                            "max_tokens": 1200,
-                            "response_format": {"type": "json_object"},
-                        },
-                    )
-                    if resp.status_code == 200:
+                # 120s: an 8-race card in + up to 2500 tokens out cannot fit
+                # in 15s (Oct-2026: every exotic call timed out, silently
+                # falling back to PDF-only boards all day).
+                _payload = {
+                    "model": "openai/gpt-oss-120b",
+                    "messages": [{"role": "user", "content": card_context}],
+                    "temperature": 0.2,
+                    # 2500: the doctrine + single-race pools roughly
+                    # doubled output size (Oct-2026: 1200 truncated the
+                    # JSON, silently dropping every new pool type).
+                    "max_tokens": 2500,
+                    "response_format": {"type": "json_object"},
+                }
+                _headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+                resp = None
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    for _attempt in (1, 2):
+                        try:
+                            resp = await client.post(
+                                "https://api.groq.com/openai/v1/chat/completions",
+                                headers=_headers, json=_payload,
+                            )
+                        except Exception as _e:
+                            print(f"[EXOTIC] Groq attempt {_attempt} transport failed: {_e}")
+                            await asyncio.sleep(5 * _attempt)
+                            continue
+                        if resp.status_code == 200:
+                            break
+                        print(f"[EXOTIC] Groq attempt {_attempt} HTTP {resp.status_code}")
+                        await asyncio.sleep(5 * _attempt)
+                    else:
+                        resp = None
+                    if resp is not None and resp.status_code == 200:
                         data_json = resp.json()
                         raw = data_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    elif resp is not None:
+                        print(f"[EXOTIC] Groq gave up (HTTP {resp.status_code}) — trying Gemini fallback")
+
+            if not raw:
+                raw = await self._gemini_exotic_fallback(card_context)
 
             if raw:
                 clean = raw.replace("```json", "").replace("```", "").strip()
@@ -1331,7 +1715,20 @@ class StrikeTips:
                 if valid_plays:
                     valid_plays = _validate_exotic_layout(valid_plays, total_races)
                 if valid_plays:
-                    print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s)")
+                    print(f"[EXOTIC] AI returned {len(valid_plays)} valid exotic play(s): "
+                          f"{[p.get('pool') for p in valid_plays]}")
+                    # Single-race top-up (Oct-2026): the main call demonstrably
+                    # ignores single-race instructions (model compliance). A
+                    # second FOCUSED call per qualifying race gets them built.
+                    try:
+                        from core_agent.skills.exotics.builder import race_suitability
+                        _single = await self._analyze_single_race_pools(
+                            groq_key, track_races, track_name, snap_odds)
+                        for _sp in _single:
+                            _sp["_track"] = track_name
+                        valid_plays.extend(_single)
+                    except Exception as _se:
+                        print(f"[EXOTIC] Single-race top-up skipped: {_se}")
                     return valid_plays
         except Exception as e:
             print(f"[EXOTIC] AI exotic analysis skipped/failed: {e}")
@@ -1377,6 +1774,10 @@ class StrikeTips:
                     _ordered = [_get_name(_i) for _i in range(len(r_runners))]
                     _ordered = [_nm for _nm in _ordered
                                 if _nm and _norm_text(_nm) not in _leg_nrs]
+                    # Favourite-first: live snapshot odds beat card order so
+                    # the balance guard sees honestly-anchored tickets.
+                    _ordered = _order_names_by_live_odds(
+                        _ordered, track_name, snap_odds)
 
                     def _get_name(idx):
                         return _ordered[idx] if idx < len(_ordered) else None
@@ -1429,6 +1830,116 @@ class StrikeTips:
         except Exception as e:
             print(f"[EXOTIC] Fallback exotic generation error: {e}")
             return []
+
+    async def _analyze_single_race_pools(
+        self, groq_key: str, track_races: List[Dict], track_name: str,
+        snap_odds: Optional[Dict] = None,
+    ) -> List[Dict]:
+        """Focused single-race exotic call (Oct-2026): Quartet/Trifecta/
+        Exacta/Pick-3 per qualifying race. The main call demonstrably ignores
+        single-race instructions, so they get their own compact prompt.
+        When the LLM call fails (scan-rush 429s), deterministic
+        favourite-anchored tickets are built instead of returning nothing."""
+        from core_agent.skills.exotics.builder import race_suitability
+
+        def _names(runners):
+            out = []
+            for r in runners or []:
+                n = (r if isinstance(r, str) else getattr(r, "horse_name", None)
+                     or ((r.get("horse_name") or r.get("name")) if isinstance(r, dict) else str(r)))
+                if n and "NR -" not in str(n):
+                    out.append(str(n))
+            return out
+
+        quals = []
+        for race in track_races or []:
+            if not isinstance(race, dict):
+                continue
+            names = _names(race.get("runners", []))
+            if len(names) < 4:
+                continue
+            suit = race_suitability({"runners": [{"name": n} for n in names]})
+            if suit:
+                quals.append((race.get("race_number", "?"), names, sorted(suit.keys())))
+        if not quals:
+            return []
+        total = max([int(r) for q in quals for r in [q[0]] if str(r).isdigit()] + [0])
+        lines = [f"Race {rn} ({len(names)} runners): {', '.join(names[:16])} | pools: {', '.join(pools)}"
+                 for rn, names, pools in quals]
+        prompt = (
+            "Build SINGLE-RACE exotic tickets for these races. "
+            "Quartet = 1st-4th exact (box/float in big fields); "
+            "Trifecta = 1st-3rd exact (banker 1st + others for 2nd/3rd); "
+            "Exacta = 1st-2nd exact (duels); "
+            "Pick 3 = winners of 3 consecutive listed races. "
+            "One banker + savers per ticket, NRs excluded (none listed). "
+            "Return ONLY valid JSON: {\"exotic_plays\": [{\"pool\": \"TRIFECTA\", "
+            "\"legs\": [7], \"combinations\": [{\"race\": 7, \"banker\": \"Horse\", "
+            "\"savers\": [\"H2\", \"H3\"]}], \"estimated_dividend\": 500.0, "
+            "\"reasoning\": \"...\"}]}\n\n"
+            + "\n".join(lines)
+        )
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                    json={"model": "openai/gpt-oss-120b",
+                          "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.2, "max_tokens": 1500,
+                          "response_format": {"type": "json_object"}},
+                )
+                if resp.status_code != 200:
+                    print(f"[EXOTIC] Single-race call HTTP {resp.status_code}")
+                    return _deterministic_single_race_plays(
+                        quals, track_name, snap_odds, max(total, 1))
+                raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                clean = raw.replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean[clean.find("{"):clean.rfind("}") + 1])
+                plays = data.get("exotic_plays", []) or []
+                valid = _validate_exotic_layout(plays, max(total, 1))
+                print(f"[EXOTIC] Single-race top-up: {len(valid)} plays "
+                      f"({[p.get('pool') for p in valid]})")
+                return valid
+        except Exception as e:
+            print(f"[EXOTIC] Single-race top-up failed: {e}")
+            return _deterministic_single_race_plays(
+                quals, track_name, snap_odds, max(total, 1))
+
+    async def _gemini_exotic_fallback(self, card_context: str) -> Optional[str]:
+        """Gemini fallback when Groq gives up (Oct-2026: scan-rush 429s).
+        Same prompt, gemini-2.5-flash (existing chain ID), JSON MIME mode.
+        Returns raw content or None."""
+        import httpx
+
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    "gemini-2.5-flash:generateContent?key=" + gemini_key,
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": card_context}]}],
+                          "generationConfig": {"temperature": 0.2,
+                                               "maxOutputTokens": 2500,
+                                               "responseMimeType": "application/json"}},
+                )
+                if resp.status_code != 200:
+                    print(f"[EXOTIC] Gemini fallback HTTP {resp.status_code}")
+                    return None
+                data = resp.json()
+                parts = (data.get("candidates", [{}])[0].get("content", {})
+                         .get("parts", []))
+                text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                if text:
+                    print("[EXOTIC] Gemini fallback produced content")
+                return text or None
+        except Exception as e:
+            print(f"[EXOTIC] Gemini fallback failed: {e}")
+            return None
 
     def _convert_race_data(self, scraped_race: ScrapedRace) -> tuple:
         """
@@ -1576,10 +2087,12 @@ class StrikeTips:
             actual_stake = getattr(bet, "stake", stake)
             print(f"[OK] Bet recorded: {horse} @ {odds} for R{actual_stake:.2f}")
 
-            # Notify
+            # Notify (paper bets are labelled — Oct-2026: unlabeled PAPER
+            # tickets celebrated as real money on alive night).
             if self.telegram:
+                _paper_tag = " 📝PAPER" if getattr(bet, "is_paper", False) else ""
                 _fire_async(self.telegram.send_message(
-                    f"[NOTE] <b>Bet Placed</b>\n\n"
+                    f"[NOTE] <b>Bet Placed{_paper_tag}</b>\n\n"
                     f"🐎 {horse}\n"
                     f"[LOC] {track} R{race_number}\n"
                     f"💰 Odds: {odds} | Stake: R{actual_stake:.2f}\n"
@@ -1612,9 +2125,15 @@ class StrikeTips:
 
             print(f"[OK] Bet settled: {bet.horse} - {'Won' if won else 'Lost'}")
 
-            # Notify
+            # Notify (dedupe-shared with the monitor sweep: without the
+            # mark_notified guard every result posts twice, once with and
+            # once without the settle ref — Sep-2026 dupes).
             if self.telegram:
-                _fire_async(self.telegram.send_bet_result(
+                _notify = True
+                if hasattr(self.bankroll, "mark_notified"):
+                    _notify = self.bankroll.mark_notified(bet_id, won)
+                if _notify:
+                    _fire_async(self.telegram.send_bet_result(
                     horse=bet.horse,
                     track=bet.track,
                     race_number=bet.race_number,
@@ -1648,6 +2167,7 @@ class StrikeTips:
     async def run_daily_scan(
         self, tracks: Optional[List[str]] = None,
         progress_callback: Optional[callable] = None,
+        source: Optional[str] = None,
     ) -> Dict:
         """
         Run daily scan for all tracks and SAVE to memory for RAG grounding.
@@ -1655,6 +2175,18 @@ class StrikeTips:
         falls back to legacy scrape_and_analyze_track otherwise.
         """
         tracks = tracks or list(TRACKS.keys())
+
+        # (i) source tag (Oct-2026): which scheduled job placed a ticket, so
+        # "the daily scan picked X, the value scan picked Y" is answerable
+        # from the ledger. Both Modal crons run the same CLI command, so the
+        # two automatic paths are told apart by start hour (05:00 vs 09:30),
+        # which matches the two real callers. Explicit `source` wins.
+        if source is None:
+            from datetime import timezone as _tz, timedelta as _td
+            source = (
+                "daily" if datetime.now(_tz(_td(hours=2))).hour < 8 else "value"
+            )
+        _scan_source = source
 
         from core_agent.core.correlation import bind as _bind_cid, new_id as _new_cid, tag as _tag
 
@@ -1805,6 +2337,7 @@ class StrikeTips:
                         {_tname: _traces}, pdf_races,
                         tips_text=_tips_text,
                         nr_names=_nr_names,
+                        snap_odds=_snap_odds,
                     )
                 except Exception as e:
                     print(f"[ERR] Exotic analysis failed for {_tname}: {e}")
@@ -1825,6 +2358,25 @@ class StrikeTips:
             exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
             exotic_plays = [p for p in exotic_plays if _play_has_balance(p, _snap_odds)]
             exotic_plays = [p for p in exotic_plays if _play_has_no_nrs(p, _nr_names)]
+            # Normalise fields the model routinely omits so AI and blueprint
+            # tickets render identically on the board and in the ledger
+            # (Oct-2026: AI tickets showed "· —" for distance and odds=2.0).
+            # This is the choke point for BOTH exotics_latest.json and the
+            # auto-bet placement below.
+            for _p in exotic_plays:
+                _pd = _p.get("estimated_dividend")
+                if not isinstance(_pd, (int, float)) or _pd <= 0:
+                    _p["estimated_dividend"] = _pool_estimate_dividend(
+                        _p.get("pool"), _p.get("legs"))
+                _tinfo = all_results.get(_p.get("_track"), []) or []
+                for _c in (_p.get("combinations") or []):
+                    if not isinstance(_c, dict) or _c.get("distance_m"):
+                        continue
+                    _ri = next((r for r in _tinfo
+                                if isinstance(r, dict) and r.get("race_number") == _c.get("race")), None)
+                    _rd = (_ri or {}).get("distance")
+                    if _rd:
+                        _c["distance_m"] = _rd
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
                 if self.telegram:
@@ -1966,13 +2518,15 @@ class StrikeTips:
 
         # Save raw Betway snapshot for the HUD dashboard (reuse the gate
         # fetch when fresh so the scan costs one snapshot, not two).
+        # Goes through write_market_snapshot: the raw dump used to overwrite
+        # the monitor's pruned card with every finished race of the morning.
         try:
             snapshot = _snapshot_for_gates if _snapshot_for_gates.get("events") else await self.betway.get_snapshot_format()
             if snapshot.get("events"):
-                snapshot_file = os.path.join(self.data_dir, "market_snapshot_latest.json")
-                with open(snapshot_file, "w") as f:
-                    json.dump(snapshot, f, indent=2, default=str)
-                print(f"[OK] Saved market snapshot ({len(snapshot['events'])} events)")
+                from core_agent.core.snapshot_writer import write_market_snapshot
+
+                saved = write_market_snapshot(snapshot, source="daily_scan")
+                print(f"[OK] Saved market snapshot ({len(saved.get('events', {}))} live events)")
         except Exception as e:
             print(f"[WARN] Could not save market snapshot: {e}")
 
@@ -2057,11 +2611,53 @@ class StrikeTips:
                     # Auto-bet exotic plays
                     if exotic_plays:
                         ticket_cost = float(settings.get("exotic_ticket_cost", 1.2))
+
+                        def _meeting_started(_track: str, _legs: list) -> bool:
+                            """True when any leg of this pool has already run.
+
+                            Supersede safety (Oct-2026): replacing an earlier
+                            ticket after its races have started could void a
+                            winner that simply has not settled yet. Unreadable
+                            off time => assume started, so we never supersede.
+                            """
+                            from datetime import timezone, timedelta
+                            from core_agent.core.adaptive_odds_monitor import (
+                                _parse_race_off_time,
+                            )
+                            _sast = timezone(timedelta(hours=2))
+                            _now = datetime.now(_sast)
+                            _races = all_results.get(_track) or []
+                            _want = {int(x) for x in _legs if str(x).isdigit()}
+                            _seen = False
+                            for _r in _races:
+                                try:
+                                    _rn = int(_r.get("race_number"))
+                                except (TypeError, ValueError):
+                                    continue
+                                if _rn not in _want:
+                                    continue
+                                _raw = (
+                                    _r.get("race_time") or _r.get("time")
+                                    or _r.get("start_time") or ""
+                                )
+                                _off = (
+                                    _parse_race_off_time(str(_raw), _now)
+                                    if _raw else None
+                                )
+                                if _off is None:
+                                    return True
+                                _seen = True
+                                if _off <= _now:
+                                    return True
+                            return False if _seen else True
+
                         for play in exotic_plays:
                             pool = play.get("pool", "UNKNOWN")
                             legs = play.get("legs", [])
                             combos = play.get("combinations", [])
-                            estimated_div = play.get("estimated_dividend", 2.0)
+                            estimated_div = play.get("estimated_dividend")
+                            if not isinstance(estimated_div, (int, float)) or estimated_div <= 0:
+                                estimated_div = _pool_estimate_dividend(play.get("pool"), legs)
                             play_track = play.get("_track", list(all_results.keys())[0])
                             if not combos:
                                 continue
@@ -2072,9 +2668,25 @@ class StrikeTips:
                                 combinations=combos,
                                 ticket_cost=ticket_cost,
                                 estimated_dividend=estimated_div,
+                                supersede=not _meeting_started(play_track, legs),
+                                source=_scan_source,
                             )
                             if bet:
                                 exotic_bets_placed += 1
+
+                    # Visibility: one telemetry line per scan so Live Ops shows
+                    # WHY nothing was placed (Sep-2026: silent 0-single days).
+                    try:
+                        from core_agent.core.telemetry import emit
+                        emit(
+                            "governor",
+                            f"🎯 Auto-bet: {auto_bets_placed} single(s) + {exotic_bets_placed} exotic(s) "
+                            f"| skipped edge {auto_skipped['edge']}, odds {auto_skipped['odds']}, "
+                            f"governor/dupe {auto_skipped['governor']}, budget {auto_skipped.get('budget', 0)}, "
+                            f"no-horse {auto_skipped['no_horse']}",
+                        )
+                    except Exception:
+                        pass
 
                     if auto_bets_placed or exotic_bets_placed or any(auto_skipped.values()):
                         msg = f"🤖 <b>Daily Scan Auto-Bets</b>\n\n"
@@ -2107,6 +2719,127 @@ class StrikeTips:
             "tracks_scanned": len(tracks),
             "total_value_bets": total_value_bets,
             "auto_bets_placed": auto_bets_placed,
+            "results": all_results,
+        }
+
+    async def run_region_scan(
+        self,
+        regions: List[str],
+        progress_callback: Optional[callable] = None,
+        min_edge: float = 5.0,
+        max_per_race: int = 2,
+    ) -> Dict:
+        """Region scan (Oct-2026 international work): today's TAB-manifest
+        meetings for the given regions (e.g. ["UK", "IRE"]) — never a
+        brute-force sweep. Stage 2: Europe digest + individual value alerts
+        (same Telegram format/gates as SA, stake shown 0.00 paper). NO
+        auto-bets, NO placement, NO memory writes (SA RAG stays clean).
+
+        Quality gates: value flags below min_edge are dropped and each race
+        keeps only its top max_per_race flags — uncalibrated international
+        edges over-flag otherwise (Oct-2026: 135 flags on 5 meetings).
+        """
+        from core_agent.skills.parsers.tab_content import (
+            fetch_manifest,
+            meetings_for_regions,
+        )
+
+        print("\n" + "=" * 60)
+        print("STRIKE TIPS - Regional Scan: " + ",".join(regions))
+        print("=" * 60)
+        manifest = await fetch_manifest()
+        meetings = meetings_for_regions(manifest, regions)
+        print(f"[REGION] {len(meetings)} manifest meetings for {regions}")
+        all_results: Dict[str, List[Dict]] = {}
+        for i, m in enumerate(meetings):
+            name = m["meeting"]
+            try:
+                races = await self.scrape_and_analyze_track(name)
+                # Quality gate: floor + top-N per race (uncalibrated edges).
+                for race in races or []:
+                    if not isinstance(race, dict):
+                        continue
+                    vbs = race.get("value_bets", []) or []
+                    kept = []
+                    for vb in vbs:
+                        try:
+                            _e = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                        except (ValueError, TypeError):
+                            continue
+                        if 0 < _e < 1:
+                            _e *= 100
+                        if _e >= min_edge:
+                            kept.append(vb)
+                    kept.sort(key=lambda vb: float(
+                        vb.get("edge_percent") or vb.get("edge") or 0),
+                        reverse=True)
+                    race["value_bets"] = kept[:max_per_race]
+                # Oct-2026: always record the meeting, even when the scrape
+                # returns nothing. Omitting it here meant a totally-failed
+                # meeting (provider quota → empty response) never reached the
+                # digest at all — the Europe report showed 1 of 5 meetings.
+                all_results[name] = races or []
+                if progress_callback:
+                    await progress_callback(name, i + 1, len(meetings))
+            except Exception as e:
+                print(f"[ERR] Region scan {name}: {e}")
+                all_results[name] = []
+        total_value_bets = sum(
+            len(r.get("value_bets", []))
+            for races in all_results.values()
+            for r in races if isinstance(r, dict)
+        )
+        print(f"\n[OK] Region scan complete! {total_value_bets} value bets, "
+              f"{len(all_results)} meetings")
+        if self.telegram:
+            try:
+                await self.telegram.send_daily_tips(
+                    all_results, title="Europe Intelligence Report")
+            except Exception as e:
+                print(f"[ERR] Europe report send failed: {e}")
+            # Stage 2 (Oct-2026): individual value alerts, NO staking.
+            # Same gates as SA (telegramEnabled, priority_only edge>=15),
+            # stake shown as 0.00 paper — never placed, never recorded.
+            try:
+                _sp = os.path.join(self.data_dir, "settings.json")
+                _te, _po = True, False
+                if os.path.exists(_sp):
+                    with open(_sp) as _f:
+                        _s = json.load(_f)
+                    _te = _s.get("telegramEnabled", True)
+                    _po = _s.get("valueBetAlerts", False)
+                if _te:
+                    for _track, _races in all_results.items():
+                        for _race in _races:
+                            if not isinstance(_race, dict):
+                                continue
+                            for _vb in _race.get("value_bets", []) or []:
+                                _horse = _vb.get("horse") or ""
+                                if not _horse:
+                                    continue
+                                _edge = float(_vb.get("edge_percent") or _vb.get("edge") or 0)
+                                if 0 < _edge < 1:
+                                    _edge *= 100
+                                if _po and _edge < 15.0:
+                                    continue
+                                _odds = float(_vb.get("odds_decimal") or _vb.get("odds") or 2.0)
+                                _conf = "STRONG_VALUE" if _edge >= 15.0 else "VALUE" if _edge >= 8.0 else "MARGINAL"
+                                await self.telegram.send_value_bet(
+                                    horse=_horse, track=_track,
+                                    race_number=_race.get("race_number", 0),
+                                    race_time=_race.get("race_time", "TBD"),
+                                    odds=_odds, edge_percent=_edge, stake=0.0,
+                                    confidence=_conf,
+                                    reasoning=(_vb.get("reasoning") or "Europe value flag (analysis only — not staked)."),
+                                    ref=f"EUR-{_track[:3].upper()}",
+                                )
+            except Exception as e:
+                print(f"[ERR] Europe individual alerts failed: {e}")
+        return {
+            "date": date.today().isoformat(),
+            "regions": regions,
+            "meetings_scanned": len(all_results),
+            "total_value_bets": total_value_bets,
             "results": all_results,
         }
 
@@ -2224,6 +2957,7 @@ async def main_async():
         help="Command to run",
     )
     parser.add_argument("--track", "-t", help="Track name (for track command)")
+    parser.add_argument("--region", help="Region filter for scan (e.g. UK,IRE) — manifest-only meetings")
     parser.add_argument("--date", "-d", help="Date (YYYY-MM-DD)")
     parser.add_argument("--horse", help="Horse name (for bet command)")
     parser.add_argument("--race", "-r", type=int, help="Race number")
@@ -2243,7 +2977,11 @@ async def main_async():
 
     try:
         if args.command == "scan":
-            result = await strike.run_daily_scan()
+            if getattr(args, "region", None):
+                regions = [r.strip().upper() for r in args.region.split(",") if r.strip()]
+                result = await strike.run_region_scan(regions)
+            else:
+                result = await strike.run_daily_scan()
             print(json.dumps(result, indent=2, default=str))
 
         elif args.command == "track":

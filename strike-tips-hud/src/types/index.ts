@@ -53,16 +53,18 @@ export interface RaceEvent {
 }
 
 export interface BankrollState {
-  /** Active betting bank: paperBalance when paperMode, else realBalance. */
-  balance: number;
+  /** Active betting bank: paperBalance when paperMode, else realBalance.
+   *  null until the governor has seeded state (no fake defaults). */
+  balance: number | null;
   dailyLimit: number;
   dailyLoss: number;
   maxStake: number;
   totalExposure: number;
   paperMode?: boolean;
-  paperBalance?: number;
-  /** Real-funds ledger (untouched while paperMode is on). */
-  realBalance?: number;
+  /** Paper simulation ledger; null until seeded (JSON null, not fake default). */
+  paperBalance?: number | null;
+  /** Real-funds ledger (untouched while paperMode is on); null until seeded. */
+  realBalance?: number | null;
 }
 
 export interface LearningState {
@@ -72,6 +74,12 @@ export interface LearningState {
   accuracy: number;
   roiByTrack?: Record<string, number>;
   roiByOddsRange?: Record<string, any>;
+  /** Ledger-derived per-track detail (sample + recency gated). */
+  trackStats?: Record<string, TrackStat>;
+  bestTrack?: RankedTrack | null;
+  worstTrack?: RankedTrack | null;
+  minSample?: number;
+  recencyDays?: number;
 }
 
 export interface HealingEvent {
@@ -121,6 +129,33 @@ export interface BetStats {
   stakeTotal: number;
   payoutTotal: number;
   roi: number;
+  /** Ledger buckets (Oct-2026: VOID/EXPIRED are refunds, not pending). */
+  settledBets?: number;
+  pendingBets?: number;
+  voidBets?: number;
+  expiredBets?: number;
+  settlementRate?: number;
+  allStakeTotal?: number;
+  avgStake?: number;
+  /** Gross returns / lost stakes; null when nothing has lost yet. */
+  profitFactor?: number | null;
+  /** Disclosure only: expired tickets counted as losses. */
+  roiIncludingExpired?: number;
+}
+
+export interface TrackStat {
+  roi: number;
+  n: number;
+  wins: number;
+  staked: number;
+  returned: number;
+  lastSeen: string | null;
+  daysSince: number | null;
+  eligible: boolean;
+}
+
+export interface RankedTrack extends TrackStat {
+  name: string;
 }
 
 export interface MarketMover {
@@ -130,12 +165,18 @@ export interface MarketMover {
   current_odds: string;
   first_show: string;
   movement: string;
+  /** ATR meeting region (Oct-2026 scraper repair). Absent on old snapshots. */
+  region?: string;
 }
 
 export interface Predictor {
   horse: string;
   raw: string;
   prediction: string;
+  /** ATR meeting context (Oct-2026 scraper repair). Absent on old snapshots. */
+  course?: string;
+  region?: string;
+  time?: string;
 }
 
 export interface NewsItem {
@@ -176,6 +217,12 @@ export interface HUDState {
   events: Record<string, RaceEvent>;
   bankroll: BankrollState | null;
   betHistory: BetRecord[];
+  /** Full ledger size; betHistory may hold a paint-fast window (?limit). */
+  betHistoryTotal: number;
+  /** User expanded past the window — polls must keep fetching full. */
+  betHistoryFull: boolean;
+  /** A history fetch has resolved at least once (vs still loading). */
+  betHistoryReady: boolean;
   betStats: BetStats | null;
   logs: string[];
   alerts: any[];
@@ -201,5 +248,9 @@ export interface HUDState {
   results: ResultRace[];
   news: NewsItem[];
   telemetry: TelemetryEvent[];
+  /** Epoch ms of the last successful market-snapshot download. The odds
+   *  monitor writes the card every 5 min; the HUD shows races as "synced"
+   *  relative to this so a stalled feed is visible, not assumed live. */
+  lastSyncTs: number;
   lastUpdate: number;
 }

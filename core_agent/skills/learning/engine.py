@@ -69,6 +69,83 @@ class LearningEngine:
         except Exception as e:
             logger.warning(f"Could not save learning stats: {e}")
 
+    def refresh_from_ledger(self, force: bool = False) -> bool:
+        """Rebuild real segment stats from bet_history.json.
+
+        The auto-settler (result_tracker) never called record_result, so this
+        file froze in mid-Oct while the ledger kept settling (incl. exotics).
+        Rebuilding from the ledger fixes history, not just future bets, and
+        needs no settlement-code changes. Dream priors are preserved; only
+        real bet counts are recomputed. Throttled by ledger mtime.
+        """
+        ledger = os.path.join(self.data_dir, "bet_history.json")
+        try:
+            ledger_mtime = os.path.getmtime(ledger)
+        except OSError:
+            return False
+
+        if not force and getattr(self, "_ledger_mtime", None) == ledger_mtime:
+            return False
+        self._ledger_mtime = ledger_mtime
+
+        try:
+            with open(ledger) as f:
+                rows = json.load(f)
+        except Exception as e:
+            logger.warning(f"[LEARN] Ledger refresh skipped: {e}")
+            return False
+        if not isinstance(rows, list):
+            return False
+
+        # Keep dream-only segments (and their priors) intact.
+        rebuilt: Dict[str, Dict] = {
+            key: {"dream_bets": stats.get("dream_bets", 0), "dream_wins": stats.get("dream_wins", 0)}
+            for key, stats in self._stats.items()
+            if stats.get("dream_bets")
+        }
+
+        recorded = 0
+        for bet in rows:
+            if str(bet.get("status") or "").upper() not in ("WON", "LOST"):
+                continue
+            track = str(bet.get("track") or "").strip().lower()
+            if len(track) < 4:
+                continue
+            try:
+                odds = float(bet.get("odds") or 0.0)
+                stake = float(bet.get("stake") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if odds <= 0 or stake <= 0:
+                continue
+            distance = bet.get("distance")
+            try:
+                distance = int(distance) if distance else None
+            except (TypeError, ValueError):
+                distance = None
+
+            key = self._get_segment_key(track, distance, odds)
+            stats = rebuilt.setdefault(
+                key, {"bets": 0, "wins": 0, "total_staked": 0.0, "total_returned": 0.0}
+            )
+            stats.setdefault("bets", 0)
+            stats.setdefault("wins", 0)
+            stats.setdefault("total_staked", 0.0)
+            stats.setdefault("total_returned", 0.0)
+            stats["bets"] += 1
+            stats["total_staked"] += stake
+            stats["total_returned"] += float(
+                bet.get("payout") if bet.get("payout") is not None else bet.get("actual_return") or 0.0
+            )
+            if str(bet.get("status") or "").upper() == "WON":
+                stats["wins"] += 1
+            recorded += 1
+
+        self._stats = rebuilt
+        self._save()
+        logger.info(f"[LEARN] Rebuilt segment stats from ledger: {recorded} settled bets")
+        return True
+
     def _get_segment_key(self, track: str, distance: Optional[int], odds: float) -> str:
         """Build a segment key for grouping bets"""
         dist_bucket = "any"

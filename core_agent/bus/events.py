@@ -40,6 +40,9 @@ class InboundMessage:
     session_key_override: str | None = None
     user_id: int | None = None
     model: str | None = None
+    # HUD green Search toggle (api_pkg/openai.py). False = skip ambient web
+    # search on card turns. Explicit "search the web" turns always search.
+    search_grounding: bool = True
 
 
 @dataclass

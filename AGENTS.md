@@ -20,6 +20,42 @@ Archived changes (2026-08-31): `add-betfair-form-data` (Betfair SA gear + days-s
 
 ---
 
+## Merge Protection Rules (mandatory for every agent, every change)
+
+Added Sep-2026 after a refactor commit silently deleted two weeks of
+settlement/HUD fixes, 160+ tests, and the entire Pages AI layer, then
+shipped green — and crash-looped prod. These rules exist so it never
+repeats:
+
+1. **Never rewrite history on shared branches.** No force-push, no squash-merging
+   another agent's commits away. One commit per logical change, pushed normally.
+2. **Work from current `origin/master`.** `git pull` before branching. A change
+   rebased onto a stale base that deletes others' files is treated as damage,
+   not a refactor — however clean its message reads.
+3. **No net-negative diffs without sign-off.** If your diff deletes more tested
+   lines than it adds (functions, specs, tests), stop and ask the user first.
+   Deleting a test to make the suite green is forbidden — fix the code.
+4. **Docker-green suite before merge.** `docker exec strike-bot-new python -m
+   pytest core_agent/tests/ -q` must pass fully (host runs lack fastapi and
+   hide failures — local green means nothing). Plus `npm run build` for HUD
+   changes. Paste both results in your final message.
+5. **Protected paths — touch only with explicit user approval:**
+   - `core_agent/skills/result_tracker.py` (settlement math — money moves here)
+   - `core_agent/skills/bankroll_manager/governor.py` (ledger — money rests here)
+   - `core_agent/api_pkg/__init__.py` (web lifespan — a fork-bomb here kills prod)
+   - `core_agent/core/modal_app.py` (crons, volumes, timeouts)
+   - `strike-tips-hud/functions/` (prod API routes — deleting one 404s prod)
+   - `strike-tips-hud/vercel.json` (must never exist — see `docs/DEPLOY.md`)
+   - `*.test.ts` / `core_agent/tests/` (coverage only grows)
+6. **Live model IDs come from the provider docs, not memory.** Groq retires and
+   enterprise-gates IDs aggressively — verify at console.groq.com/docs/models
+   before adding any model string. A 404ing model must fail with the friendly
+   `MODEL_UNAVAILABLE` message, never silently.
+7. **Deploys are the user's call.** Modal / Pages / Worker deploys only on
+   explicit request. Default: commit + push, report verification, stop.
+
+---
+
 ## Project Overview
 
 **South African Horse Racing Intelligence System — 3-Layer Architecture**
@@ -104,11 +140,8 @@ npm run dev
 # Production build
 npm run build
 
-# Deploy to Vercel (preview)
-vercel
-
-# Deploy to Vercel (production, fresh build)
-vercel deploy --prod -y --force
+# Deploy to Pages (production)
+npx wrangler pages deploy dist --project-name strike-tips-hud
 ```
 
 ---
@@ -256,7 +289,7 @@ cloudflare_mcp_edge/              # Cloudflare Worker (always-free edge)
 ├── package.json                  # @modelcontextprotocol/sdk v1.29.0
 └── wrangler.jsonc                # D1 + KV bindings
 
-strike-tips-hud/                  # Vite + React frontend (Vercel)
+strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
 ├── src/
 │   ├── app/                      # UI components
 │   └── lib/                      # API utilities
@@ -293,10 +326,10 @@ Cloudflare handles all compute-light operations at zero cost:
 
 ### OKF Knowledge Bundle
 
-12 curated markdown files about SA horse racing, compiled to TypeScript at build time:
-- 7 tracks with real data (Kenilworth 1881, Durbanville 1922, etc.)
+15 curated markdown files about SA horse racing, compiled to TypeScript at build time:
+- 7 tracks with real data + punter rules (Kenilworth 1881, Durbanville 1922, etc.)
 - Going/conditions guide
-- Value betting + Kelly Criterion strategies
+- Value betting + Kelly Criterion strategies + exotics textbook (pools, construction, Friday-night case study)
 - Search ranks by keyword match (10× title/tags, 5× body, + per-occurrence)
 
 ---
@@ -527,7 +560,7 @@ pytest core_agent/tests/test_analyzer.py -v
 7. **OKF Compiles at Build Time**: Run `node scripts/build-knowledge.js` before `wrangler deploy` (auto-runs via `predeploy`)
 8. **MCP Stateless Transport**: `WebStandardStreamableHTTPServerTransport` with `sessionIdGenerator: undefined` — fresh transport per request, required for Workers
 9. **Middleware Routes API**: `strike-tips-hud/middleware.ts` decides Cloudflare vs Modal per path — Cloudflare for knowledge/odds/form, Modal for AI/analysis
-10. **Fresh Vercel Builds**: Use `vercel deploy --prod -y --force` to bypass build cache
+10. **Fresh Pages Deploys**: Local `npm run build` reads `strike-tips-hud/.env`, then `npx wrangler pages deploy dist --project-name strike-tips-hud` — Vercel URL kept paused as fallback only
 
 ---
 

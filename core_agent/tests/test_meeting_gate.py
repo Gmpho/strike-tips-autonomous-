@@ -152,3 +152,87 @@ def test_snapshot_distances_today_only(tmp_path):
     (tmp_path / "market_snapshot_latest.json").write_text(json.dumps(snap))
     out = _snapshot_distances(str(tmp_path), "2026-09-17")
     assert out == {("vaal", 2): 1600}
+
+
+def _fields_page(meeting: str = "Fairview Polytrack") -> str:
+    """Compact replica of a Computaform "Best Bets & Perms" Fields page.
+
+    Oct-2026: "Daily Tips" (Tips/TIPPINGSHEET@date.pdf) 404s and PDF discovery
+    falls back to this Computaform page, which writes pool ranges as
+    "BIPOT (RACES 1 - 6)" with explicit LEG markers — the notation the old
+    Tipping-Sheet parser never matched, so no ticket ever carried the TAB
+    official picks.
+    """
+    return (
+        "COMPUTAFORM RATINGS\n"
+        "BIPOT (RACES 1 - 6)\nR256\n"
+        "LEG 1\n6\n"
+        "LEG 2\n1\n2\n4\n8\n"
+        "LEG 3\n2\n"
+        "LEG 4\n1\n3\n5\n6\n"
+        "LEG 5\n2\n3\n5\n8\n"
+        "LEG 6\n2\n4\n7\n8\n"
+        "P/A (RACES 2 - 8)\nR243\n"
+        "LEG 1\n1\n2\n4\n"
+        "LEG 2\n1\n"
+        "LEG 3\n3\n"
+        "LEG 4\n3\n5\n6\n"
+        "LEG 5\n2\n3\n8\n"
+        "LEG 6\n2\n7\n8\n"
+        "LEG 7\n1\n4\n5\n"
+        "PICK 6 (RACES 3 - 8)\nR1296\n"
+        "LEG 1\n2\n"
+        "LEG 2\n1\n2\n3\n4\n5\n6\n"
+        "LEG 3\n2\n3\n5\n8\n10\n11\n"
+        "LEG 4\n2\n3\n4\n7\n8\n9\n"
+        "LEG 5\n3\n"
+        "LEG 6\n1\n2\n4\n5\n6\n7\n"
+        "COMPUTAFORM\n"
+        "BEST BETS & PERMS   by Trevor Reid\n"
+        f"Tab {meeting}, Friday 16 October 2026\n"
+    )
+
+
+def test_tips_official_picks_fields_page():
+    from core_agent.core.strike_tips import _tips_official_picks
+
+    off = _tips_official_picks(_fields_page(), "fairview")
+    assert set(off) == {"BI1", "PA", "P6"}
+    assert off["BI1"] == {1: [6], 2: [1, 2, 4, 8], 3: [2], 4: [1, 3, 5, 6],
+                          5: [2, 3, 5, 8], 6: [2, 4, 7, 8]}
+    assert off["PA"] == {2: [1, 2, 4], 3: [1], 4: [3], 5: [3, 5, 6],
+                         6: [2, 3, 8], 7: [2, 7, 8], 8: [1, 4, 5]}
+    assert off["P6"] == {3: [2], 4: [1, 2, 3, 4, 5, 6],
+                         5: [2, 3, 5, 8, 10, 11], 6: [2, 3, 4, 7, 8, 9],
+                         7: [3], 8: [1, 2, 4, 5, 6, 7]}
+
+
+def test_tips_official_picks_scoped_to_meeting():
+    from core_agent.core.strike_tips import _tips_official_picks
+
+    # A Fairview page must not leak its picks onto a Greyville play.
+    assert _tips_official_picks(_fields_page("Fairview Polytrack"), "greyville") == {}
+    # Sponsored meeting names still match the bare track key.
+    grey = _tips_official_picks(
+        _fields_page("Hollywoodbets Greyville Polytrack"), "greyville")
+    assert grey["BI1"][1] == [6]
+
+
+def test_tips_pool_starts_fields_page():
+    from core_agent.core.strike_tips import _tips_pool_starts
+
+    assert _tips_pool_starts(_fields_page(), "fairview") == {
+        "BI1": 1, "PA": 2, "P6": 3}
+
+
+def test_tips_official_picks_legacy_tipping_sheet():
+    from core_agent.core.strike_tips import _tips_official_picks
+
+    # Multi-meeting Tipping Sheet notation ("Bipot (2-7)" + comma lines)
+    # must keep working alongside the Fields-page format.
+    text = ("DURBANVILLE\nBipot (2-7)\nR480\n"
+            "1, 7, 9, 10\n1, 9\n3\n2, 8\n5\n6, 11\n"
+            "INTERNATIONAL\n")
+    off = _tips_official_picks(text, "durbanville")
+    assert off["BI1"] == {2: [1, 7, 9, 10], 3: [1, 9], 4: [3],
+                          5: [2, 8], 6: [5], 7: [6, 11]}

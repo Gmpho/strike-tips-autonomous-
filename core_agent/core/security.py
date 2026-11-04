@@ -25,10 +25,18 @@ SAFE_PATHS = {
     "/api/legal/responsible",
     "/api/legal/",
     "/api/monitoring/stream",
+    "/api/monitoring/snapshot-hash",
+    "/api/monitoring/snapshot",
+    "/v1/health",
     "/api/racing/exotics",
     "/api/news",
     "/api/news/images",
     "/api/telemetry",
+    "/api/telegram/bot-name",
+    "/api/telegram/link-code",
+    "/api/telegram/link-status",
+    "/api/telegram/unlink",
+    "/api/telegram/test",
 }
 
 

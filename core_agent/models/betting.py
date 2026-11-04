@@ -18,6 +18,9 @@ class BetRecord(BaseModel):
     payout: Optional[float] = None
     status: Optional[str] = None
     notes: Optional[str] = None
+    # Ledger identity (Oct-2026): analytics must scope to the active
+    # ledger — without this the HUD mixes paper + real universes.
+    is_paper: Optional[bool] = None
 
     class Config:
         populate_by_name = True

@@ -11,21 +11,31 @@ import uuid
 import fcntl
 import time
 from dataclasses import dataclass, asdict, field
+
+from core_agent.config.settings import BankrollConfig
 from datetime import date, datetime
 from typing import List, Optional, Dict, Generator
 from contextlib import contextmanager
 
 def _load_paper_settings(data_dir: str) -> dict:
-    """Read paper_mode and paper_balance from settings.json"""
+    """Read paper_mode and paper_balance from settings.json.
+
+    Missing keys fall back to ``BankrollConfig.total_bankroll`` (the single
+    sanctioned starting-bank constant) instead of scattered 1000.0 literals.
+    """
+    default_start = float(BankrollConfig.total_bankroll)
     path = os.path.join(data_dir, "settings.json")
     if os.path.exists(path):
         try:
             with open(path) as f:
                 s = json.load(f)
-            return {"paper_mode": s.get("paper_mode", False), "paper_balance": s.get("paper_balance", 1000.0)}
+            return {
+                "paper_mode": bool(s.get("paper_mode", False)),
+                "paper_balance": float(s.get("paper_balance", default_start)),
+            }
         except Exception:
             pass
-    return {"paper_mode": False, "paper_balance": 1000.0}
+    return {"paper_mode": False, "paper_balance": default_start}
 
 
 logger = logging.getLogger("bankroll-governor")
@@ -155,6 +165,11 @@ class BankrollGovernor:
     MIN_EDGE_PERCENT: float = 5.0
     KELLY_FRACTION: float = 0.5
     MAX_EXOTIC_COST: float = 200.0  # Max R200 per exotic pool ticket
+    # DSI evidence discipline (Oct-2026 hardening): Beta(2,8) smoothing prior
+    # + minimum dream count before the stress index may scale stakes.
+    DSI_PRIOR_NEG: float = 2.0
+    DSI_PRIOR_POS: float = 8.0
+    MIN_DSI_DREAMS: int = 6
 
     def __init__(self, data_dir: str = "./data", starting_bankroll: float = 1000.0):
         self.data_dir = os.path.abspath(data_dir)
@@ -166,6 +181,10 @@ class BankrollGovernor:
 
         self._bets: List[BetRecord] = []
         self._starting_bankroll = starting_bankroll
+        # Fail-closed ledger flag (Oct-2026 hardening): a malformed file must
+        # never be overwritten by its empty in-memory interpretation. Set by
+        # _load_state, honored by _save_state. Repair = restore from backup.
+        self._state_corrupt = False
         self._load_state(starting_bankroll)
 
     # ─── Persistence ────────────────────────────────────────────────────────
@@ -187,6 +206,10 @@ class BankrollGovernor:
             
             # Reload state to ensure we have the absolute latest from disk
             self._load_state(self._starting_bankroll)
+            # State is fresh for the whole transaction; a nested read-path
+            # refresh must NOT reload mid-flight or it would drop mutations
+            # made before the read (see refresh_from_disk).
+            self._in_tx = True
             
             yield
             
@@ -194,11 +217,22 @@ class BankrollGovernor:
             self._save_state()
             
         finally:
+            self._in_tx = False
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             lock_fd.close()
 
     def _load_state(self, starting_bankroll: float):
-        """Load persisted bankroll state"""
+        """Load persisted bankroll state.
+
+        Missing keys or a corrupt file seed from ``starting_bankroll`` (the
+        sanctioned starting-bank constant) — no scattered hardcoded defaults.
+        A corrupt file ALSO sets _state_corrupt so _save_state refuses to
+        persist the empty interpretation over good data (Oct-2026: one bad
+        byte + one rejected bet rewrote history as []).
+        The flag reflects the LAST load: a successful reload clears it, so
+        repairing the file + any new operation recovers without a restart.
+        """
+        self._state_corrupt = False
         if os.path.exists(self._state_file):
             try:
                 with open(self._state_file) as f:
@@ -206,18 +240,19 @@ class BankrollGovernor:
                 self.current_bankroll = state.get("current_bankroll", starting_bankroll)
                 self.peak_bankroll = state.get("peak_bankroll", starting_bankroll)
                 self.total_profit_loss = state.get("total_profit_loss", 0.0)
-                self.paper_balance = state.get("paper_balance", 1000.0)
+                self.paper_balance = state.get("paper_balance", starting_bankroll)
             except Exception as e:
-                logger.warning(f"Could not load bankroll state: {e}")
+                logger.error(f"REFUSING corrupt bankroll state file (repair from backup): {e}")
                 self.current_bankroll = starting_bankroll
                 self.peak_bankroll = starting_bankroll
                 self.total_profit_loss = 0.0
-                self.paper_balance = 1000.0
+                self.paper_balance = starting_bankroll
+                self._state_corrupt = True
         else:
             self.current_bankroll = starting_bankroll
             self.peak_bankroll = starting_bankroll
             self.total_profit_loss = 0.0
-            self.paper_balance = 1000.0
+            self.paper_balance = starting_bankroll
 
         if os.path.exists(self._bets_file):
             try:
@@ -225,11 +260,17 @@ class BankrollGovernor:
                     raw_bets = json.load(f)
                 self._bets = [BetRecord(**b) for b in raw_bets]
             except Exception as e:
-                logger.warning(f"Could not load bet history: {e}")
+                logger.error(f"REFUSING corrupt bet history file (repair from backup): {e}")
                 self._bets = []
+                self._state_corrupt = True
 
     def _save_state(self):
         """Persist bankroll state and bet history atomically"""
+        if getattr(self, "_state_corrupt", False):
+            # Fail-closed: a malformed read must never be written back over
+            # good data. Repair = restore the JSON from backup, then restart.
+            logger.error("REFUSING to save: ledger files flagged corrupt — restore from backup")
+            return
         try:
             # 1. Save bankroll_state.json atomically
             state_data = {
@@ -268,6 +309,38 @@ class BankrollGovernor:
             (self.peak_bankroll - self.current_bankroll) / self.peak_bankroll
         ) * 100.0
 
+    def refresh_from_disk(self, force: bool = False) -> None:
+        """Reload ledger state another container/process may have written.
+
+        Warm web containers keep the snapshot taken in ``__init__``. A scan (or
+        settlement) running in a *different* Modal container records bets this
+        process never sees, so read paths — exposure, today's stats, account
+        summary — reported stale numbers until the container recycled (Oct-2026:
+        /bankroll showed R9.60 exposure vs the real R342.60 after the morning
+        scan). Writes already reload under the file lock; this brings reads to
+        parity. Reload is mtime-guarded so a quiet ledger costs one stat() per
+        call after the volume-sync throttle.
+        """
+        try:
+            from core_agent.core.volume_sync import sync_volume
+
+            sync_volume(max_age_secs=15)
+        except Exception:
+            pass
+        if getattr(self, "_in_tx", False):
+            # Inside a write transaction the state was reloaded under the file
+            # lock already; reloading again here could discard in-memory
+            # mutations made earlier in the same transaction.
+            return
+        try:
+            mtime = os.path.getmtime(self._bets_file)
+        except OSError:
+            mtime = 0.0
+        if not force and mtime == getattr(self, "_bets_mtime", None):
+            return
+        self._load_state(self._starting_bankroll)
+        self._bets_mtime = mtime
+
     def get_open_exposure(self, include_stale: bool = False) -> float:
         """Total stake of currently open/pending bets.
 
@@ -277,6 +350,7 @@ class BankrollGovernor:
         governor (daily-limit wall) so no new bet could ever be placed.
         Pass include_stale=True for the gross accounting figure.
         """
+        self.refresh_from_disk()
         try:
             from core_agent.skills.result_tracker import MAX_SETTLE_AGE_DAYS
         except Exception:
@@ -450,12 +524,23 @@ class BankrollGovernor:
                     if results:
                         total_dreams = len(results)
                         neg_dreams = sum(
-                            1 for r in results 
+                            1 for r in results
                             if r.get("metadata", {}).get("probability_shift", 0.0) < 0.0
                         )
-                        dsi = neg_dreams / total_dreams if total_dreams > 0 else 0.0
-                        
-                        if dsi < 0.20:
+                        # Bayesian smoothing (Oct-2026 hardening): raw neg/total
+                        # with n=3 swings on a single dream. Beta(2,8) prior
+                        # centers low evidence near 20% (the no-action zone);
+                        # below MIN_DSI_DREAMS the read is labeled heuristic and
+                        # never scales stakes, whatever it says.
+                        dsi = ((neg_dreams + self.DSI_PRIOR_NEG)
+                               / (total_dreams + self.DSI_PRIOR_NEG + self.DSI_PRIOR_POS))
+                        if total_dreams < self.MIN_DSI_DREAMS:
+                            logger.info(
+                                f"[GOVERNOR] DSI heuristic ({total_dreams} dreams < "
+                                f"min {self.MIN_DSI_DREAMS}) — no scaling"
+                            )
+                            _cache_dsi(track, race_number, dsi, 1.0)
+                        elif dsi < 0.20:
                             dsi_scale = 1.0
                             _cache_dsi(track, race_number, dsi, dsi_scale)
                         elif dsi <= 0.50:
@@ -549,11 +634,14 @@ class BankrollGovernor:
                     logger.warning(f"Bet blocked by governor: {reason}")
                     return None
 
-            # Idempotency: same horse/track/race/date already pending (daily +
+            # Idempotency: same horse/track/race/date already recorded (daily +
             # value + midday scans all place) → don't stack duplicate tickets.
+            # Settled twins count too (Oct-2026): a re-run replaying a bet whose
+            # first copy already settled was appending a fresh PENDING duplicate
+            # that then sat forever. VOID/EXPIRED still permit a re-placement.
             for existing in self._bets:
                 if (
-                    existing.status == "PENDING"
+                    existing.status in ("PENDING", "WON", "LOST")
                     and existing.date == date.today().isoformat()
                     and str(existing.track).lower() == str(track).lower()
                     and existing.race_number == race_number
@@ -566,7 +654,12 @@ class BankrollGovernor:
                     return None
 
             now = datetime.now()
-            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}"
+            # Unique IDs (Oct-2026): same-second same-prefix bets shared one
+            # bet_id (e.g. two TRIFECTAs at 07:35:05) — settle/void/cancel
+            # all hit the first match, the rest became IMMORTAL (never
+            # settleable). Race number disambiguates; true dupes are still
+            # skipped by the guards above.
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{horse[:3].upper()}_R{race_number}"
 
             bet = BetRecord(
                 bet_id=bet_id,
@@ -605,6 +698,8 @@ class BankrollGovernor:
         combinations: List[Dict],
         ticket_cost: float,
         estimated_dividend: float,
+        supersede: bool = False,
+        source: str = "",
     ) -> Optional[BetRecord]:
         """Record an exotic pool bet (Pick 6, Jackpot, Bipot, etc.)"""
         total_cost = len(combinations) * ticket_cost
@@ -622,19 +717,77 @@ class BankrollGovernor:
                     logger.warning(f"Exotic bet blocked by governor: {reason}")
                     return None
 
-            # Idempotency: same pool/legs/date already pending → skip.
+            # One ticket per pool per day (Oct-2026 user policy): the 05:00
+            # daily scan and the 09:30 value scan each build their own exotic
+            # play, so the same pool was placed twice with different bankers —
+            # double exposure with both tickets live. Identity is now
+            # (date, track, pool family, legs); selections/bankers are NOT part
+            # of the key, so the first placement of a pool wins and any later
+            # scan skips it. This supersedes the earlier "different bankers =
+            # different ticket" rule, which let a rescan with better bankers
+            # supersede a stale ticket but also let both tickets stay live.
+            # Pool labels are canonicalized first ("P6" vs "PICK 6" placed
+            # the same ticket twice). VOID tickets are not in the status set,
+            # so a corrected ticket can still be placed after a void.
+            def _fam(p: str) -> str:
+                u = str(p or "").upper()
+                if u.startswith("JP") or "JACKPOT" in u:
+                    return "JACKPOT"
+                if u.startswith("BI") or "BIPOT" in u:
+                    return "BIPOT"
+                if u in ("P6",) or "PICK 6" in u:
+                    return "PICK 6"
+                if u in ("PA",) or "PLACE" in u:
+                    return "PA"
+                if u in ("P3",) or "PICK 3" in u:
+                    return "PICK 3"
+                return u
             today_iso = date.today().isoformat()
             leg_key = "-".join(str(r) for r in pool_legs)
             for existing in self._bets:
                 if (
-                    existing.status == "PENDING"
+                    existing.status in ("PENDING", "WON", "LOST")
                     and existing.date == today_iso
                     and str(existing.track).lower() == str(track).lower()
-                    and str(existing.horse) == f"{pool_type}:{leg_key}"
+                    and _fam(str(existing.horse).split(":")[0])
+                    == _fam(pool_type)
+                    and str(existing.horse).endswith(f":{leg_key}")
                 ):
+                    # Supersede (Oct-2026 user policy). A later scan of the
+                    # same pool may replace an earlier *unsettled* ticket: on
+                    # 2026-10-16 Fairview the 05:00 daily scan's Bipot/PA lost
+                    # while the 09:30 value scan's won, and first-wins threw
+                    # the winners away (R3,328 paper). Never touch a settled
+                    # ticket — money is final — and never cross the paper/real
+                    # boundary. The caller only sets `supersede` while the
+                    # meeting has not started, so a winner still awaiting
+                    # settlement can never be voided here.
+                    if (
+                        supersede
+                        and existing.status == "PENDING"
+                        and existing.is_paper == is_paper
+                    ):
+                        # Terminal VOID (not void_settlement, which returns the
+                        # ticket to PENDING): VOID is outside the dupe key set,
+                        # so the pool is freed for the replacement.
+                        existing.status = "VOID"
+                        _tag = f"VOID (superseded by {source or 'rescan'})"
+                        existing.notes = (
+                            f"{existing.notes} | {_tag}" if existing.notes else _tag
+                        )
+                        if existing.is_paper:
+                            self.paper_balance += existing.stake
+                        else:
+                            self.current_bankroll += existing.stake
+                            self.total_profit_loss += existing.stake
+                        logger.info(
+                            f"Superseding exotic {existing.bet_id} with fresher "
+                            f"{pool_type} {leg_key} @ {track} ({source or 'rescan'})"
+                        )
+                        continue
                     logger.info(
-                        f"Duplicate exotic skipped: {pool_type} {leg_key} @ {track} "
-                        f"(already open as {existing.bet_id})"
+                        f"One-per-pool-per-day: exotic skipped {pool_type} {leg_key} "
+                        f"@ {track} (already placed as {existing.bet_id})"
                     )
                     return None
 
@@ -643,7 +796,11 @@ class BankrollGovernor:
             combo_desc = ";".join(
                 f"R{c.get('race','?')}#{c.get('banker','?')}" for c in combinations[:3]
             )
-            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}"
+            # Unique IDs (Oct-2026): same-second same-pool bets shared one
+            # bet_id and all but the first became unsettleable ghosts.
+            # Race number disambiguates; true dupes still skip above.
+            first_leg = pool_legs[0] if pool_legs else 0
+            bet_id = f"{now.strftime('%Y%m%d%H%M%S')}_{pool_type[:3]}_R{first_leg}"
 
             bet = BetRecord(
                 bet_id=bet_id,
@@ -663,6 +820,7 @@ class BankrollGovernor:
                     "pool_legs": pool_legs,
                     "combinations": combinations,
                     "ticket_cost": ticket_cost,
+                    "source": source,
                 }),
                 distance=None,
                 is_paper=is_paper,
@@ -681,10 +839,37 @@ class BankrollGovernor:
             )
             return bet
 
+    def _find_bet(self, bet_id: str):
+        """Locate a bet by id, preferring the live row over settled twins.
+
+        bet_history can hold duplicate ids (pre-Oct-2026 same-second collisions
+        left a settled copy plus an immortal PENDING copy). A plain next()
+        match returns whichever row sits first — often the settled twin — so
+        settle/void/cancel/expire would no-op on the wrong row, leave the live
+        ticket unreachable, or resurrect a fossil. Rank: PENDING, then
+        WON/LOST (a real settlement), then VOID, then EXPIRED/other. Ties keep
+        file order.
+        """
+        matches = [b for b in self._bets if b.bet_id == bet_id]
+        if not matches:
+            return None
+
+        def _rank(b):
+            status = getattr(b, "status", None)
+            if status == "PENDING":
+                return 0
+            if status in ("WON", "LOST"):
+                return 1
+            if status == "VOID":
+                return 2
+            return 3
+
+        return min(matches, key=_rank)
+
     def settle_exotic_bet(self, bet_id: str, pool_return: float, notes: str = "") -> bool:
         """Settle an exotic pool bet with its actual pool dividend return."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Exotic bet not found: {bet_id}")
                 return False
@@ -702,7 +887,26 @@ class BankrollGovernor:
 
             bet.profit_loss = (bet.actual_return or 0.0) - bet.stake
             if notes:
-                existing = json.loads(bet.notes) if bet.notes else {}
+                try:
+                    existing = json.loads(bet.notes) if bet.notes else {}
+                except (ValueError, TypeError):
+                    existing = {}
+                if not isinstance(existing, dict) or "pool_type" not in existing:
+                    # Tagged notes ("{ticket json} | VOID (...)") fail a
+                    # whole-string parse — recover the leading ticket object
+                    # instead of replacing it with a settlement-only stub
+                    # (Oct-2026: that orphaned combos and left voided
+                    # tickets permanently unsettleable).
+                    try:
+                        _raw = str(bet.notes or "")
+                        existing = json.loads(_raw[: _raw.rfind("}") + 1]) \
+                            if "{" in _raw else {}
+                    except (ValueError, TypeError):
+                        existing = {}
+                if not isinstance(existing, dict):
+                    # Void/retry tags ("... | VOID (...)") are appended as
+                    # plain text; nest them so notes stay valid JSON.
+                    existing = {"prior_notes": bet.notes} if bet.notes else {}
                 existing["settlement_notes"] = notes
                 bet.notes = json.dumps(existing)
 
@@ -727,7 +931,7 @@ class BankrollGovernor:
     def settle_bet(self, bet_id: str, won: bool, notes: str = "", placed: Optional[str] = None) -> bool:
         """Settle a pending bet with a result (Atomic)"""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Bet not found: {bet_id}")
                 return False
@@ -770,6 +974,25 @@ class BankrollGovernor:
             )
             return True
 
+    def annotate_notes(self, bet_id: str, fragment: str) -> bool:
+        """Append an audit fragment to a bet's notes (no ledger movement).
+
+        Used by the shadow-line sweep (Oct-2026) to record what a
+        superseded ticket would have paid without altering its VOID status
+        or any balance. Returns True when the note was appended.
+        """
+        if not fragment:
+            return False
+        with self._atomic_transaction():
+            bet = self._find_bet(bet_id)
+            if bet is None:
+                return False
+            prior = str(bet.notes or "")
+            if fragment in prior:
+                return False
+            bet.notes = f"{prior} | {fragment}" if prior else fragment
+        return True
+
     def mark_notified(self, bet_id: str, won: bool) -> bool:
         """Persistent settle-notification dedupe (cross-process safe).
 
@@ -809,7 +1032,7 @@ class BankrollGovernor:
         impact beyond the refund. Idempotent: already-VOID/settled bets
         are left alone (settled ones need void_settlement instead)."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Cancel failed, bet not found: {bet_id}")
                 return False
@@ -842,7 +1065,7 @@ class BankrollGovernor:
         clears it from the open book so backlogs can't pile up forever.
         Idempotent."""
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 return False
             if bet.status != "PENDING":
@@ -866,7 +1089,7 @@ class BankrollGovernor:
           it; void-WON subtracts the credited dividend.
         """
         with self._atomic_transaction():
-            bet = next((b for b in self._bets if b.bet_id == bet_id), None)
+            bet = self._find_bet(bet_id)
             if not bet:
                 logger.warning(f"Void failed, bet not found: {bet_id}")
                 return False
@@ -914,6 +1137,7 @@ class BankrollGovernor:
 
     def get_today_stats(self) -> DailyStats:
         """Get statistics for today"""
+        self.refresh_from_disk()
         today = date.today().isoformat()
         today_bets = [b for b in self._bets if b.date == today]
         stats = DailyStats(date=today)

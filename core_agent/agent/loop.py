@@ -4,6 +4,7 @@ import logging
 from core_agent.bus.queue import MessageBus
 from core_agent.bus.events import InboundMessage, OutboundMessage, TurnState
 from core_agent.agent.session import SessionManager, Session
+from core_agent.agent.model_menu import render_menu, resolve_choice
 from core_agent.agent.context import ContextBuilder
 from core_agent.agent.runner import AgentRunner
 from core_agent.agent.providers.task_router import TaskRouter
@@ -41,11 +42,20 @@ class AgentLoop:
                     state = TurnState.BUILD
 
             elif state == TurnState.BUILD:
+                from core_agent.agent.context import table_mode_request as _mode_req
+                _toggle = _mode_req(msg.content)
+                if _toggle:
+                    session.metadata["table_mode"] = _toggle
                 context = await self.context_builder.build(
-                    msg.session_key, msg.content, session.history, None
+                    msg.session_key, msg.content, session.history, None,
+                    table_mode=session.metadata.get("table_mode", "compact"),
+                    web_search=getattr(msg, "search_grounding", True),
                 )
                 messages = [
-                    {"role": "system", "content": build_system_prompt()},
+                    # Pass the user turn so the card-intent gate can withhold
+                    # the race card on casual/identity turns (Sep-2026), and
+                    # the channel so Telegram turns get SOUL.md voice.
+                    {"role": "system", "content": build_system_prompt(user_message=msg.content, channel=msg.channel)},
                     *session.history,
                     {"role": "user", "content": context},
                 ]
@@ -103,6 +113,30 @@ class AgentLoop:
         response_content = ""
 
         if cmd == "/start" or cmd == "/help":
+            # Passcode link (polling path mirrors the Modal webhook):
+            # /start ST-12345 binds this chat to the minting HUD account.
+            if cmd == "/start" and len(parts) > 1 and parts[1].upper().startswith("ST-"):
+                from core_agent.core.telegram_gate import (
+                    parse_start_code,
+                    redeem_and_authorize,
+                )
+                _code = parse_start_code(msg.content)
+                _linked = redeem_and_authorize(_code, msg.chat_id, None) if _code else False
+                if _linked:
+                    response_content = (
+                        "✅ *Telegram linked!*\n\nThis chat now receives alerts for your account. "
+                        "Open Settings → Telegram Alerts to verify."
+                    )
+                else:
+                    response_content = (
+                        "⚠️ *That code didn't work.*\n\nCodes are single-use and expire after 15 minutes. "
+                        "Generate a fresh one in HUD Settings → Telegram Alerts → Refresh Code."
+                    )
+                await self.bus.publish_outbound(OutboundMessage(
+                    session_key=msg.session_key, channel=msg.channel, chat_id=msg.chat_id,
+                    content=response_content, done=True,
+                ))
+                return
             response_content = (
                 "🏇 *Strike Tips Agent*\n\n"
                 "I'm your AI Racing Data Analyst. Just chat with me or use commands:\n\n"
@@ -120,30 +154,22 @@ class AgentLoop:
 
         elif cmd == "/model":
             current_model = session.metadata.get("preferred_model") or "auto"
-            
+
             if not args:
-                response_content = (
-                    "🧠 *Select active model*\n"
-                    "To switch model, reply with `/model <name>`:\n\n"
-                    "• `/model auto` — ⚡ Auto Router (optimal)\n"
-                    "• `/model groq` — ☁️ Groq Llama 70B\n"
-                    "• `/model gemini` — ☁️ Gemini Flash\n\n"
-                    f"Current selection: *{current_model}*"
-                )
+                response_content = render_menu(current_model)
             else:
-                choice = args[0].lower()
-                mapping = {
-                    "auto": "auto",
-                    "groq": "groq",
-                    "gemini": "gemini"
-                }
-                
-                mapped = mapping.get(choice)
+                mapped = resolve_choice(args[0])
                 if mapped:
                     session.metadata["preferred_model"] = mapped
-                    response_content = f"✅ Active model switched to *{mapped}*. Subsequent requests in this session will use this model."
+                    response_content = (
+                        f"✅ Active model switched to *{mapped}*. "
+                        "Subsequent requests in this session will use this model."
+                    )
                 else:
-                    response_content = f"❌ Unknown model: *{choice}*. Type `/model` to see the list of valid models."
+                    response_content = (
+                        f"❌ Unknown model: *{args[0]}*. "
+                        "Type `/model` to see the list of valid models."
+                    )
 
         elif cmd == "/status":
             if not brain.strike:
@@ -167,17 +193,34 @@ class AgentLoop:
             elif getattr(brain, "_scanning", False):
                 response_content = "🔄 Scan already in progress — please wait."
             else:
+                # `/scan europe` (uk/ire) runs the Europe wave only; plain
+                # `/scan` runs the full SA daily scan (Oct-2026: /scan
+                # europe used to silently scan SA instead).
+                _regions = None
+                _argtext = " ".join(args).lower() if args else ""
+                if _argtext and any(
+                    w in _argtext for w in ("europe", "europe", "uk", "ire", "eu")
+                ):
+                    _regions = ["UK", "IRE"]
                 brain._scanning = True
-                async def _run_scan_bg():
+
+                async def _run_scan_bg(regions=_regions):
                     try:
-                        await brain.strike.run_daily_scan()
+                        if regions:
+                            await brain.strike.run_region_scan(regions)
+                        else:
+                            await brain.strike.run_daily_scan()
                     except Exception as e:
                         logger.error("Scan command error: %s", e)
                     finally:
                         brain._scanning = False
-                
+
                 asyncio.create_task(_run_scan_bg())
-                response_content = "🚀 Starting today's full racing scan in background..."
+                response_content = (
+                    "🚀 Starting Europe (UK/IRE) scan in background..."
+                    if _regions
+                    else "🚀 Starting today's full racing scan in background..."
+                )
 
         elif cmd == "/dream":
             import re

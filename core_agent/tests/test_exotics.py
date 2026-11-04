@@ -5,6 +5,7 @@ from core_agent.skills.exotics import (
     get_jockey_trainer_multiplier,
     compute_win_probability,
     build_exotics_blueprint,
+    convention_pool_starts,
 )
 from core_agent.tools.maf_tool_registry import analyze_full_race_card
 
@@ -97,6 +98,25 @@ def test_pool_detection_exceeds_races():
     assert "JP2" not in starts
 
 
+def test_convention_pool_starts_per_card_size():
+    """Single TAB-standard table (Sep-2026: 8-race Greyville carded Bipot
+    R2-7; TAB runs R1-6 on 8-race cards)."""
+    assert convention_pool_starts(8) == {"BI1": 1, "PA": 2, "P6": 3, "JP1": 4, "JP2": 5}
+    assert convention_pool_starts(9) == {"BI1": 2, "PA": 3, "P6": 4, "JP1": 5, "JP2": 6}
+    assert convention_pool_starts(10) == {"BI1": 2, "PA": 3, "P6": 4, "JP1": 4, "JP2": 7}
+    assert convention_pool_starts(6) == {"BI1": 1, "P6": 1, "JP1": 3}
+    assert convention_pool_starts(5) == {"JP1": 1}
+
+
+def test_blueprint_fallback_uses_convention_starts():
+    """8 tag-less races fall back to Bipot R1 (not R2)."""
+    races = [{"number": i, "runners": [{"number": 1, "name": f"H{i}", "weight": 58, "jockey": "", "trainer": "", "form": "111", "prob": 0.3}], "pools": [], "header": f"Race {i}"} for i in range(1, 9)]
+    _, starts = build_exotics_blueprint(races)
+    assert starts["BI1"] == 1
+    assert starts["PA"] == 2
+    assert starts["JP2"] == 5
+
+
 @pytest.mark.asyncio
 async def test_analyze_full_race_card():
     card = """
@@ -124,3 +144,118 @@ def test_empty_form_empty_return():
     """Edge case: empty form should not crash."""
     prob = compute_win_probability("", 58.0, "", "", 10)
     assert 0.01 <= prob <= 0.75
+
+
+def test_validate_value_bets_caps_per_race():
+    """Oct-2026: uncapped lists put 8 singles on one race. Top-3 by edge."""
+    from core_agent.core.strike_tips import StrikeTips
+    s = StrikeTips.__new__(StrikeTips)
+    vbs = [{"horse": f"H{i}", "edge_percent": float(50 - i * 5)} for i in range(8)]
+    horses = [f"H{i}" for i in range(8)]
+    out = s._validate_value_bets(vbs, horses)
+    assert [v["horse"] for v in out] == ["H0", "H1", "H2"]
+    # hallucinations still rejected
+    out2 = s._validate_value_bets([{"horse": "Ghost", "edge_percent": 99.0}], horses)
+    assert out2 == []
+
+
+def test_validate_single_race_pools():
+    """Oct-2026: TRIFECTA/QUARTET/EXACTA (1 leg) and PICK 3 (3 legs) survive layout validation."""
+    from core_agent.core.strike_tips import _validate_exotic_layout
+    plays = [
+        {"pool": "TRIFECTA", "legs": [7]},
+        {"pool": "QUARTET", "legs": [6]},
+        {"pool": "EXACTA", "legs": [4]},
+        {"pool": "PICK 3", "legs": [5, 6, 7]},
+        {"pool": "QUARTET", "legs": [6, 7]},  # wrong count -> dropped
+        {"pool": "MYSTERY", "legs": [1]},  # unknown family -> dropped
+    ]
+    out = _validate_exotic_layout(plays, 8)
+    assert sorted(p["pool"] for p in out) == ["EXACTA", "PICK 3", "QUARTET", "TRIFECTA"]
+
+
+@pytest.mark.asyncio
+async def test_single_race_topup_parses():
+    """Focused single-race call returns validated Quartet/Trifecta plays."""
+    from core_agent.core.strike_tips import StrikeTips
+    import json as _json
+
+    payload = {"exotic_plays": [
+        {"pool": "QUARTET", "legs": [7],
+         "combinations": [{"race": 7, "banker": "A", "savers": ["B", "C", "D"]}],
+         "estimated_dividend": 900.0, "reasoning": "box chaos"},
+        {"pool": "TRIFECTA", "legs": [6],
+         "combinations": [{"race": 6, "banker": "M", "savers": ["N", "O"]}],
+         "estimated_dividend": 400.0, "reasoning": "banker multi"},
+    ]}
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": _json.dumps(payload)}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    import httpx
+    import pytest as _pt
+    monkeypatch = _pt.MonkeyPatch()
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    try:
+        s = StrikeTips.__new__(StrikeTips)
+        races = [
+            {"race_number": 7, "runners": [{"name": n} for n in
+             ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]]},
+            {"race_number": 6, "runners": [{"name": n} for n in
+             ["M", "N", "O", "P", "Q", "R", "S", "T"]]},
+        ]
+        out = await s._analyze_single_race_pools("key", races, "vaal")
+    finally:
+        monkeypatch.undo()
+    assert sorted(p["pool"] for p in out) == ["QUARTET", "TRIFECTA"]
+
+
+def test_validate_drops_incomplete_combinations():
+    """Oct-2026: AI returned the right leg count but omitted a leg's
+    selections. Those tickets were carded and bet even though they can never
+    win their pool. A partial fill must now be dropped."""
+    from core_agent.core.strike_tips import _validate_exotic_layout
+    plays = [
+        # JACKPOT 4-7 with only leg 4 populated -> dropped
+        {"pool": "JACKPOT 1", "legs": [4, 5, 6, 7],
+         "combinations": [{"race": 4, "banker": "Casperita", "savers": ["Queen Amina"]}]},
+        # PICK 6 3-8 with only legs 3-7 populated -> dropped
+        {"pool": "PICK 6", "legs": [3, 4, 5, 6, 7, 8],
+         "combinations": [{"race": r, "banker": f"H{r}", "savers": []} for r in range(3, 8)]},
+        # Fully populated PICK 6 (all 6 legs) -> kept
+        {"pool": "PICK 6", "legs": [3, 4, 5, 6, 7, 8],
+         "combinations": [{"race": r, "banker": f"K{r}", "savers": []} for r in range(3, 9)]},
+    ]
+    out = _validate_exotic_layout(plays, 8)
+    assert len(out) == 1
+    assert out[0]["pool"] == "PICK 6"
+    assert [c["race"] for c in out[0]["combinations"]] == [3, 4, 5, 6, 7, 8]
+
+
+def test_pool_estimate_dividend_never_sentinel():
+    """A missing estimate must scale with the pool family/leg count and never
+    fall back to the 2.0 sentinel that produced a bogus potential_return."""
+    from core_agent.core.strike_tips import _pool_estimate_dividend
+    assert _pool_estimate_dividend("EXACTA", [4]) == 150.0
+    assert _pool_estimate_dividend("TRIFECTA", [7]) == 350.0
+    assert _pool_estimate_dividend("QUARTET", [6]) == 600.0
+    assert _pool_estimate_dividend("BIPOT 1", [2, 3, 4, 5, 6, 7]) == 2700.0
+    assert _pool_estimate_dividend("JACKPOT 1", [4, 5, 6, 7]) == 1800.0
+    assert _pool_estimate_dividend("PICK 6", [3, 4, 5, 6, 7, 8]) == 2700.0
+    assert _pool_estimate_dividend(None, None) == 450.0

@@ -25,6 +25,8 @@ const MODAL_KEYLESS_EXACT = new Set([
   '/api/agent/health', '/api/agent/tools', '/api/agent/models',
   '/api/agent/history',
   '/api/monitoring/stream',
+  '/api/monitoring/snapshot-hash', '/api/monitoring/snapshot',
+  '/v1/health',
   '/api/racing/exotics',
   '/api/news', '/api/news/images',
   '/api/telemetry',
