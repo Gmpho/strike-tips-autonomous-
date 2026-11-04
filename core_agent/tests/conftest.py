@@ -50,3 +50,29 @@ except ImportError:
         _httpx.TimeoutException = Exception
         _httpx.ConnectError = Exception
         sys.modules["httpx"] = _httpx
+
+
+import os  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_search_cache(tmp_path_factory):
+    """Keep the durable search cache out of the repo's data dir.
+
+    ``search_service`` memoises query answers on disk (6h, 20 min for empty
+    results) so repeated monitor queries cost nothing across cron containers.
+    That is correct in production and poisonous in tests: mocked answers used
+    to land in ``data/search_cache.json``, so the *next* suite run served
+    "https://a.com/1" from disk instead of calling Tavily, and the provider
+    tests failed on nothing but run order.
+    """
+    scratch = tmp_path_factory.mktemp("search-cache") / "search_cache.json"
+    os.environ["SEARCH_CACHE_PATH"] = str(scratch)
+    import core_agent.skills.search_service as _ss
+
+    _ss._cache.clear()
+    yield
+    os.environ.pop("SEARCH_CACHE_PATH", None)
+    _ss._cache.clear()

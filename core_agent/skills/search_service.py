@@ -75,6 +75,16 @@ _cache: Dict[str, tuple] = {}
 
 
 def _cache_path() -> str:
+    """Where the durable cache lives: ``SEARCH_CACHE_PATH``, else the data dir.
+
+    The override exists so tests can point it at a scratch file. Without it the
+    suite wrote mocked answers ("https://a.com/1") into the repo's data dir and
+    a second run served them back from disk instead of calling the provider,
+    which is both order-dependent and a lie about provider behaviour.
+    """
+    override = os.environ.get("SEARCH_CACHE_PATH")
+    if override:
+        return override
     try:
         from core_agent.config.paths import DATA_DIR
         return str(DATA_DIR / "search_cache.json")
