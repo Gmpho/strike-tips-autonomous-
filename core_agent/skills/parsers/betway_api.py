@@ -14,15 +14,27 @@ class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
 
     async def fetch_racing_data(self) -> Dict[str, Any]:
-        """Fetch raw racing data from Betway's TrackRacing (TAB) API."""
-        client = get_async_client(timeout=90.0, resolve_hosts={"www.betway.co.za"})
+        """Fetch raw racing data from Betway's TrackRacing (TAB) API.
+
+        Betway's bot management rejects the rotating ``SCRAPER_PROXIES`` pool
+        (403 on every attempt, proven in the 2026-11-04 logs while the same
+        request succeeded direct) but accepts direct curl_cffi impersonation,
+        so this source bypasses the proxy pool. A fresh session per attempt
+        gives a clean cookie jar and a new browser fingerprint, which is what
+        clears the probabilistic 403.
+        """
         bw_headers = {
             "Referer": "https://www.betway.co.za/sport/horse-racing",
             "Origin": "https://www.betway.co.za",
         }
-        backoff = [5, 15, 30]
-        for attempt in range(3):
+        backoff = [3, 8, 20, 30]
+        for attempt in range(4):
             try:
+                client = get_async_client(
+                    timeout=90.0,
+                    no_proxy=True,
+                    resolve_hosts={"www.betway.co.za"},
+                )
                 daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
                 daily_resp = await client.get(daily_url, headers=bw_headers)
                 daily_resp.raise_for_status()
@@ -61,7 +73,7 @@ class BetwayAPI:
                 return {"status": "success", "details": events_details}
             except Exception as e:
                 logger.info(f"Betway fetch attempt {attempt+1} failed (retrying): {e}")
-                await asyncio.sleep(backoff[attempt])
+                await asyncio.sleep(backoff[attempt] + random.uniform(0, 2))
         return {"status": "error", "error": "Max retries reached"}
 
     async def _fetch_event_safe(self, client, eid, reg_name, league, sem=None) -> Optional[Dict]:
@@ -91,10 +103,17 @@ class BetwayAPI:
         return sum(1 for r in runners if isinstance(r.get("odds"), (int, float)) and r["odds"] > 0)
 
     async def get_snapshot_format(self) -> Dict[str, Any]:
-        """Returns racing data in the flat 'market_snapshot' format used by the HUD and AlertEngine."""
+        """Returns racing data in the flat 'market_snapshot' format used by the HUD and AlertEngine.
+
+        ``fetch_ok`` distinguishes "the feed answered with an empty card"
+        (dark day) from "the feed failed" (403/timeout). The cron's meeting
+        gate needs that difference: an outage must never be cached as a dark
+        day, or the monitor stands down and the card never comes back.
+        """
         raw = await self.fetch_racing_data()
         if raw.get("status") == "error":
-            return {"events": {}, "count": 0}
+            return {"events": {}, "count": 0, "fetch_ok": False,
+                    "fetch_error": str(raw.get("error", "unknown"))[:200]}
 
         events = {}
         for det in raw.get("details", []):
@@ -253,7 +272,7 @@ class BetwayAPI:
             except Exception as e:
                 logger.error(f"Error parsing event {det.get('eventId', '?')}: {e}")
 
-        return {"events": events, "count": len(events)}
+        return {"events": events, "count": len(events), "fetch_ok": True}
 
     async def get_races(self) -> List[ScrapedRace]:
         """Legacy compatibility wrapper for ScrapedRace objects."""

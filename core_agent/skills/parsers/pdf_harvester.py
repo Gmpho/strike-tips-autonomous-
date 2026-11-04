@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import json
+import time
 import httpx
 import io
 import fitz
@@ -11,6 +12,9 @@ from bs4 import BeautifulSoup
 from core_agent.skills.parsers.pdf_discovery import PDFDiscoveryService
 
 logger = logging.getLogger("pdf-harvester")
+
+# How long a "no PDF today" answer is trusted (see get_latest_racing_intelligence).
+_MISS_TTL_SECS = 90 * 60
 
 
 class PDFHarvester:
@@ -51,6 +55,21 @@ class PDFHarvester:
             with open(cache_file) as f:
                 return {**json.load(f), "cached": True}
 
+        # Negative cache: tracks with no meeting today (Vaal / Scottsville /
+        # Durbanville on 2026-11-04) 404 on every probe, and the 15-min
+        # continuous scan re-probed them all day. Remember "no PDF" briefly —
+        # long enough to stop the hammering, short enough that a late upload
+        # still gets picked up.
+        miss_file = os.path.join(self.cache_dir, f"{cache_key}.missing")
+        try:
+            if os.path.exists(miss_file) and (
+                time.time() - os.path.getmtime(miss_file) < _MISS_TTL_SECS
+            ):
+                logger.debug(f"[PDF] {track}: known missing today (cached)")
+                return {**self._stub_intelligence(track, today), "missing_cached": True}
+        except OSError:
+            pass
+
         # Check ChromaDB before hitting Azure
         memory_result = await self._check_memory_cache(track, today, intelligence_type)
         if memory_result:
@@ -90,6 +109,14 @@ class PDFHarvester:
         except Exception as e:
             logger.error(f"Download failed for {track}: {e}")
 
+        # Remember the miss so the 15-min scan stops re-probing an
+        # uploading-nothing track (see the negative-cache read at the top).
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            with open(miss_file, "w") as f:
+                f.write(today)
+        except OSError:
+            pass
         return self._stub_intelligence(track, today)
 
     async def _parse_pdf_bytes(

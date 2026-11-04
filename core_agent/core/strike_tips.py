@@ -513,8 +513,16 @@ def _drop_meetings_not_running_today(
 def _play_matches_snapshot(play: Dict, snapshot_horses: Dict[str, set]) -> bool:
     """Phantom-meeting guard: at least half the leg bankers must run at the
     play's track in today's snapshot. A Thursday card stamped as today fails
-    here even if every upstream gate missed it."""
+    here even if every upstream gate missed it.
+
+    Non-SA cards (UK/IRE, added Oct-2026) have no Betway coverage at all, so
+    absent coverage there means "not the snapshot's job", never "phantom
+    meeting" — dropping them would silently delete every international ticket.
+    """
     import difflib as _difflib
+
+    if str(play.get("jurisdiction") or "SA").upper() != "SA":
+        return True
 
     track = _norm_text(play.get("_track", ""))
     pool = set()
@@ -764,6 +772,59 @@ def _pool_estimate_dividend(pool, legs=None) -> float:
         if code in name:
             return float(div)
     return 450.0 * max(1, len(legs or []))
+
+
+def _finalise_exotic_plays(
+    plays: List[Dict],
+    all_results: Dict,
+    snapshot_horses: Dict[str, set],
+    snapshot_odds: Dict[str, Dict[str, float]],
+    nr_names: Dict[tuple, set],
+) -> List[Dict]:
+    """Single choke point that gates, stamps and normalises exotic plays.
+
+    Shared by the board file (exotics_latest.json) and auto-bet placement so
+    both render identically (Oct-2026: AI tickets showed "· —" for distance
+    and odds=2.0). Applies, in order: cloth-number drop, phantom-meeting,
+    balance and scratched-horse guards; defaults jurisdiction to SA; fills a
+    missing estimated_dividend from the canonical estimate; and backfills
+    ``distance_m`` on each combination from the race card.
+    """
+    out: List[Dict] = []
+    for play in plays or []:
+        if not isinstance(play, dict):
+            continue
+        play.setdefault("jurisdiction", "SA")
+        if not _play_has_real_names(play):
+            print(f"[EXOTIC] AI play '{play.get('pool')}' dropped: "
+                  "cloth-number selections, no horse names")
+            continue
+        if not _play_matches_snapshot(play, snapshot_horses):
+            continue
+        if not _play_has_balance(play, snapshot_odds):
+            continue
+        if not _play_has_no_nrs(play, nr_names):
+            continue
+        dividend = play.get("estimated_dividend")
+        if not isinstance(dividend, (int, float)) or dividend <= 0:
+            play["estimated_dividend"] = _pool_estimate_dividend(
+                play.get("pool"), play.get("legs")
+            )
+        races = all_results.get(play.get("_track"), []) or []
+        for combo in play.get("combinations") or []:
+            if not isinstance(combo, dict) or combo.get("distance_m"):
+                continue
+            race_no = combo.get("race")
+            info = next(
+                (r for r in races
+                 if isinstance(r, dict) and r.get("race_number") == race_no),
+                None,
+            )
+            distance = (info or {}).get("distance")
+            if distance:
+                combo["distance_m"] = distance
+        out.append(play)
+    return out
 
 
 def _validate_exotic_layout(plays: List[Dict], total_races: int) -> List[Dict]:
@@ -2355,28 +2416,11 @@ class StrikeTips:
                 except Exception as e:
                     print(f"[WARN] Official picks attach skipped: {e}")
                 exotic_plays.extend(_plays or [])
-            exotic_plays = [p for p in exotic_plays if _play_matches_snapshot(p, _snap_horses)]
-            exotic_plays = [p for p in exotic_plays if _play_has_balance(p, _snap_odds)]
-            exotic_plays = [p for p in exotic_plays if _play_has_no_nrs(p, _nr_names)]
-            # Normalise fields the model routinely omits so AI and blueprint
-            # tickets render identically on the board and in the ledger
-            # (Oct-2026: AI tickets showed "· —" for distance and odds=2.0).
-            # This is the choke point for BOTH exotics_latest.json and the
-            # auto-bet placement below.
-            for _p in exotic_plays:
-                _pd = _p.get("estimated_dividend")
-                if not isinstance(_pd, (int, float)) or _pd <= 0:
-                    _p["estimated_dividend"] = _pool_estimate_dividend(
-                        _p.get("pool"), _p.get("legs"))
-                _tinfo = all_results.get(_p.get("_track"), []) or []
-                for _c in (_p.get("combinations") or []):
-                    if not isinstance(_c, dict) or _c.get("distance_m"):
-                        continue
-                    _ri = next((r for r in _tinfo
-                                if isinstance(r, dict) and r.get("race_number") == _c.get("race")), None)
-                    _rd = (_ri or {}).get("distance")
-                    if _rd:
-                        _c["distance_m"] = _rd
+            # Single choke point for BOTH exotics_latest.json and the auto-bet
+            # placement below (guards, jurisdiction, dividend, distance).
+            exotic_plays = _finalise_exotic_plays(
+                exotic_plays, all_results, _snap_horses, _snap_odds, _nr_names
+            )
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")
                 if self.telegram:

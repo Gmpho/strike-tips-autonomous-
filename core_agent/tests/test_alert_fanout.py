@@ -85,7 +85,7 @@ def test_gate_dict_is_bounded():
     assert len(mon._last_alert_by_key) <= 2001
 
 
-def test_digester_reports_suppressed_counts():
+def test_digester_reports_suppressed_counts(tmp_path):
     """A thin digest must explain cooldown suppressions instead of hiding them."""
     import core_agent.core.alert_digester as ad
     from core_agent.core.alert_digester import AlertDigester
@@ -96,7 +96,11 @@ def test_digester_reports_suppressed_counts():
         async def broadcast(self, text, parse_mode="HTML"):
             sent.append(text)
 
-    dig = AlertDigester(FakeNotifier(), interval=300)
+    # Hermetic queue: the real data dir keeps a 6h resend registry, so a
+    # second run of this exact payload used to be deduped and "not flush".
+    dig = AlertDigester(
+        FakeNotifier(), interval=300, queue_path=str(tmp_path / "queue.jsonl")
+    )
     dig.note_suppressed({"race_cooldown_prevents": 7, "cooldown_prevents": 3})
 
     async def run():

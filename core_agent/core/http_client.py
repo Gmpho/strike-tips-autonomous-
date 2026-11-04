@@ -61,7 +61,8 @@ def _resolve_hosts_curl_opts(hosts: set[str]) -> dict:
 
 def _build_session(async_mode: bool, timeout: float = REQUEST_TIMEOUT, **kwargs):
     pm = get_proxy_manager()
-    proxy = pm.get_proxy()
+    no_proxy = kwargs.pop("no_proxy", False)
+    proxy = None if no_proxy else pm.get_proxy()
     proxies = {"https": proxy, "http": proxy} if proxy else None
     impersonate = pm.get_impersonate()
 

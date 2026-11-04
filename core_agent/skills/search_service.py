@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from core_agent.core.http_client import get_async_client
 
@@ -65,7 +65,67 @@ _DAILY_CAP = 40
 # Query-result cache: identical questions (monitor re-asks, chat repeats)
 # cost zero for 6h.
 _CACHE_TTL_SECS = 6 * 3600
+# Empty answers are cached too, but briefly: the monitor re-asks the same
+# "Race N result winner" query every 5 minutes for hours, and each fresh
+# cron container used to lose the in-process cache and re-hammer Brave /
+# Google / DDG / Yandex / Mojeek until they answered 429 (2026-11-04: 38
+# identical queries in 24h across 7 engines).
+_EMPTY_CACHE_TTL_SECS = 20 * 60
 _cache: Dict[str, tuple] = {}
+
+
+def _cache_path() -> str:
+    try:
+        from core_agent.config.paths import DATA_DIR
+        return str(DATA_DIR / "search_cache.json")
+    except Exception:
+        return "/tmp/opencode-search-cache.json"
+
+
+def _disk_cache_load() -> Dict[str, list]:
+    """{key: [ts, results, provider]} from the volume (survives cron churn)."""
+    try:
+        with open(_cache_path()) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if isinstance(v, list) and len(v) == 3}
+    except Exception:
+        pass
+    return {}
+
+
+def _disk_cache_store(key: str, entry: tuple) -> None:
+    try:
+        data = _disk_cache_load()
+        now = datetime.now(timezone.utc).timestamp()
+        # Drop anything older than the 6h ceiling so the file cannot grow.
+        data = {k: v for k, v in data.items() if now - float(v[0] or 0) < _CACHE_TTL_SECS}
+        data[key] = [entry[0], entry[1], entry[2]]
+        with open(_cache_path(), "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _cache_lookup(key: str, now: float) -> Optional[tuple]:
+    hit = _cache.get(key)
+    if not hit:
+        disk = _disk_cache_load().get(key)
+        if disk:
+            hit = (float(disk[0]), disk[1], disk[2])
+            _cache[key] = hit
+    if not hit:
+        return None
+    ttl = _EMPTY_CACHE_TTL_SECS if not hit[1] else _CACHE_TTL_SECS
+    if now - float(hit[0]) < ttl:
+        return hit
+    return None
+
+
+def _cache_put(key: str, now: float, results: List[Dict], provider: str) -> None:
+    entry = (now, results, provider)
+    _cache[key] = entry
+    _disk_cache_store(key, entry)
 
 
 def _budget_path() -> str:
@@ -190,8 +250,8 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     import time as _now
 
     cache_key = f"{query.strip().lower()}|{limit}"
-    hit = _cache.get(cache_key)
-    if hit and _now.time() - hit[0] < _CACHE_TTL_SECS:
+    hit = _cache_lookup(cache_key, _now.time())
+    if hit:
         logger.debug(f"[SEARCH] cache hit: '{query[:40]}'")
         return {"results": hit[1], "provider": hit[2]}
     results: List[Dict] = []
@@ -218,7 +278,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     if results:
         provider = "tavily"
         logger.info(f"[SEARCH] Tavily: {len(results)} results")
-        _cache[cache_key] = (_now.time(), results, provider)
+        _cache_put(cache_key, _now.time(), results, provider)
         _emit("Tavily", len(results))
         return {"results": results, "provider": provider}
 
@@ -231,7 +291,7 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
     if results:
         provider = "exa"
         logger.info(f"[SEARCH] Exa: {len(results)} results")
-        _cache[cache_key] = (_now.time(), results, provider)
+        _cache_put(cache_key, _now.time(), results, provider)
         _emit("Exa", len(results))
         return {"results": results, "provider": provider}
     ddgs_items = []
@@ -322,6 +382,12 @@ async def search_racing(query: str, limit: int = 5) -> Dict:
 
     if not results:
         logger.info(f"[SEARCH] Empty for '{query[:60]}' (no results published yet)")
+
+    # Cache the outcome either way. An empty answer is cached briefly so the
+    # monitor's 5-min repeat of the same query costs nothing across containers
+    # (2026-11-04: 38 identical "Race 8 result winner" queries, 429 from
+    # Brave/Google/DDG/Yandex/Mojeek).
+    _cache_put(cache_key, _now.time(), results[:limit], provider)
 
     _emit(provider if provider != "none" else "DDGS/SA-fallback", len(results))
 

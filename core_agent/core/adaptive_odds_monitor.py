@@ -110,6 +110,45 @@ BF_ENTRY_TTL_SECS = 6 * 60 * 60
 # which a MONITOR_STALL healing event is recorded (cron stalled or missed).
 MONITOR_STALL_SECS = 15 * 60
 
+# Deadline for the whole upstream fetch phase (Betway + Racing-Odds +
+# Betfair). Oct-2026 odds freeze: ``state = await bw_task`` had no deadline and
+# curl_cffi could keep one socket open forever, so the cycle blocked with no
+# snapshot write until Modal killed the container at 900s on every tick.
+# Must stay below the 900s cron timeout to leave room for the write, the ATR
+# refresh and the alert flush that follow the fetch.
+SOURCE_PHASE_TIMEOUT_SECS = 480
+
+
+async def _collect_sources(
+    pending: Dict[str, "asyncio.Task"],
+    timeout: float = SOURCE_PHASE_TIMEOUT_SECS,
+) -> Dict[str, Any]:
+    """Await every upstream source under one overall deadline.
+
+    Returns ``{name: value}`` for sources that answered and ``{name: None}``
+    for sources that failed or overran. Unfinished tasks are cancelled and
+    awaited so a stuck curl_cffi socket cannot outlive the fetch phase. A
+    source that legitimately reports zero events keeps its value, so callers
+    can still tell "no racing today" from "no answer".
+    """
+    if not pending:
+        return {}
+    done, not_done = await asyncio.wait(set(pending.values()), timeout=timeout)
+    results: Dict[str, Any] = {}
+    for name, task in pending.items():
+        if task in done:
+            if task.cancelled():
+                results[name] = None
+                continue
+            exc = task.exception()
+            results[name] = None if exc is not None else task.result()
+        else:
+            task.cancel()
+            results[name] = None
+    if not_done:
+        await asyncio.gather(*not_done, return_exceptions=True)
+    return results
+
 
 def _sast_to_utc(off_time: Optional[datetime]) -> Optional[datetime]:
     """Convert a SAST wall-clock datetime to the container's UTC frame (-2h).
@@ -1011,15 +1050,14 @@ class AdaptiveOddsMonitor:
             bw_task = asyncio.create_task(self.betway.get_snapshot_format())
             ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
             bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
-            state = await bw_task
-            try:
-                ro_snapshot = await ro_task
-            except Exception:
-                ro_snapshot = {"events": {}, "count": 0}
-            try:
-                bf_snapshot = await bf_task
-            except Exception:
-                bf_snapshot = {"events": {}, "count": 0}
+            sources = await _collect_sources(
+                {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task},
+                timeout=SOURCE_PHASE_TIMEOUT_SECS,
+            )
+            betway_state = sources["betway"]
+            state = betway_state if isinstance(betway_state, dict) else {"events": {}, "count": 0}
+            ro_snapshot = sources["racing_odds"] or {"events": {}, "count": 0}
+            bf_snapshot = sources["betfair"] or {"events": {}, "count": 0}
             _merge_ro_into(state, ro_snapshot)
             _merge_bf_into(state, bf_snapshot)
             active = {
@@ -1031,6 +1069,12 @@ class AdaptiveOddsMonitor:
             if not state["events"]:
                 state = _recover_empty_snapshot(state)
             state["count"] = len(state["events"])
+            # Provenance for the cron's meeting gate: "no events" from a failed
+            # fetch must never be cached as a dark day (2026-11-04: Betway 403
+            # emptied the card, the gate read it as a dark day and stood down).
+            state["fetch_ok"] = bool(
+                isinstance(betway_state, dict) and betway_state.get("fetch_ok", True)
+            )
             state["timestamp"] = datetime.now().isoformat()
             active_ids = list(state["events"].keys())
             _merge_daily_scan_into(state)
@@ -1161,16 +1205,18 @@ class AdaptiveOddsMonitor:
                 bw_task = asyncio.create_task(self.betway.get_snapshot_format())
                 ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
                 bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
-                state = await bw_task
-                try:
-                    ro_snapshot = await ro_task
-                except Exception:
+                sources = await _collect_sources(
+                    {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task},
+                    timeout=SOURCE_PHASE_TIMEOUT_SECS,
+                )
+                betway_state = sources["betway"]
+                state = betway_state if isinstance(betway_state, dict) else {"events": {}, "count": 0}
+                ro_snapshot = sources["racing_odds"]
+                if ro_snapshot is None:
                     ro_snapshot = {"events": {}, "count": 0}
                     logger.debug("Racing-Odds snapshot failed, skipping merge")
-
-                try:
-                    bf_snapshot = await bf_task
-                except Exception:
+                bf_snapshot = sources["betfair"]
+                if bf_snapshot is None:
                     bf_snapshot = {"events": {}, "count": 0}
                     logger.debug("Betfair SA form fetch failed, skipping merge")
 
@@ -1192,6 +1238,9 @@ class AdaptiveOddsMonitor:
                 if not state["events"]:
                     state = _recover_empty_snapshot(state)
                 state["count"] = len(state["events"])
+                state["fetch_ok"] = bool(
+                    isinstance(betway_state, dict) and betway_state.get("fetch_ok", True)
+                )
                 state["timestamp"] = datetime.now().isoformat()
                 active_ids = list(state["events"].keys())
                 active_count = len(active_ids)

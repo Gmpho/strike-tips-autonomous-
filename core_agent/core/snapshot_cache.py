@@ -59,19 +59,33 @@ _news_cache: List[Any] = []
 _last_news_mtime: float = 0.0
 
 
+# A truthy-but-empty cache ("events": {}) used to short-circuit here forever,
+# so a card the monitor pruned to zero was served until the process restarted.
+# Re-read the file when it is newer than our copy, at most this often.
+_EMPTY_REREAD_MIN_SECS = 30.0
+_empty_reread_at: float = 0.0
+
+
 def get_snapshot() -> Dict[str, Any]:
-    if _snapshot:
+    global _empty_reread_at
+    if _snapshot and _snapshot.get("events"):
         return _snapshot
     try:
         if os.path.exists(MARKET_SNAPSHOT_PATH):
-            with open(MARKET_SNAPSHOT_PATH) as f:
-                data = json.load(f)
-            set_snapshot(
-                data,
-                source="disk-startup",
-                written_at=os.path.getmtime(MARKET_SNAPSHOT_PATH),
-            )
-            return _snapshot
+            mtime = os.path.getmtime(MARKET_SNAPSHOT_PATH)
+            now = time.time()
+            disk_is_newer = mtime > _snapshot_written_at
+            due = (now - _empty_reread_at) >= _EMPTY_REREAD_MIN_SECS
+            if disk_is_newer or (not _snapshot and due):
+                _empty_reread_at = now
+                with open(MARKET_SNAPSHOT_PATH) as f:
+                    data = json.load(f)
+                set_snapshot(
+                    data,
+                    source="disk-refresh",
+                    written_at=mtime,
+                )
+                return _snapshot
     except Exception as e:
         logger.debug("Snapshot disk fallback failed: %s", e)
     return _snapshot or {"events": {}}

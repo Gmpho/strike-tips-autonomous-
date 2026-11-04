@@ -74,6 +74,8 @@ class ScrapedRace:
     runners: List[ScrapedRunner] = field(default_factory=list)
     race_class: Optional[str] = None
     prize_money: Optional[float] = None
+    bet_types: List[str] = field(default_factory=list)
+    jurisdiction: str = "SA"
 
 
 def _parse_distance_m(*candidates) -> Optional[int]:
