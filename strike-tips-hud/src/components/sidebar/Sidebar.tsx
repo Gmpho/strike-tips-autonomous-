@@ -2,7 +2,8 @@ import React from 'react';
 import { 
   LayoutDashboard, BrainCircuit, Wallet, Settings, Terminal, 
   BarChart3, ShieldCheck, Activity, Sparkles, ChevronLeft, ChevronRight,
-  TrendingUp, Flag, Ticket, Newspaper, Radar, Radio, Zap
+  TrendingUp, Flag, Ticket, Newspaper, Radar, Radio, Zap, Trophy, Target,
+  User
 } from 'lucide-react';
 import { AgentStatus } from './AgentStatus';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
@@ -96,6 +97,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { icon: TrendingUp, label: 'Market Movers', id: 'market-movers' },
     { icon: Sparkles, label: 'Predictor', id: 'predictor' },
     { icon: Flag, label: 'Results', id: 'results' },
+    { icon: Trophy, label: 'Leaderboard', id: 'leaderboard' },
+    { icon: Target, label: 'Picks', id: 'picks' },
+    { icon: User, label: 'My Profile', id: 'profile' },
   ];
 
   return (

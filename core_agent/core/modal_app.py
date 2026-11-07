@@ -822,6 +822,45 @@ async def run_odds_monitor():
         await _asyncio3.wait_for(_settle_tick(), timeout=240)
     except Exception as _e:
         logger.debug("piggyback settle wrapper skipped: %s", _e)
+    # League settlement piggyback (Nov-2026): settle open league picks from
+    # confirmed results WITHOUT touching result_tracker/governor. Fully
+    # guarded — never fails the monitor cycle; partial progress persists.
+    try:
+        import asyncio as _asyncio4
+
+        async def _league_settle_tick() -> None:
+            try:
+                # League picks live in league_picks.jsonl on the volume — the
+                # Supabase league_* tables were never populated, so the first
+                # version of this piggyback read empty tables and settled
+                # nothing (Nov-2026: every pick stayed "pending" forever).
+                import datetime as _dt
+
+                from core_agent.skills.league.settlement import settle_open_picks
+                stats = settle_open_picks(
+                    "/app/data",
+                    now_iso=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+                )
+                if stats.get("settled"):
+                    # Modal volumes only become visible to the API container
+                    # after commit() — without this, freshly settled picks
+                    # stay "pending" until this container happens to die.
+                    try:
+                        data_volume.commit()
+                    except Exception as _ce:
+                        logger.debug("league settle commit skipped: %s", _ce)
+                    logger.info("League settle pass: %s", stats)
+                else:
+                    logger.debug(
+                        "League settle pass: nothing to settle (%s pending)",
+                        stats.get("pending"),
+                    )
+            except Exception as _e:
+                logger.debug("league piggyback settle skipped: %s", _e)
+
+        await _asyncio4.wait_for(_league_settle_tick(), timeout=120)
+    except Exception as _e:
+        logger.debug("league piggyback wrapper skipped: %s", _e)
     # Europe heartbeat (Oct-2026): the in-app 12:30 fire dies with container
     # churn (missed entirely on quiet days), so the daily Europe scan rides
     # this cron instead. Volume-stamped once-per-day gate, fire-and-forget

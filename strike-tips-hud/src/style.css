@@ -108,6 +108,74 @@ html.light .legal-page .hover\:text-white:hover { color: rgba(15,23,42,1) !impor
 html.light .legal-page .hover\:text-white\/80:hover { color: rgba(15,23,42,0.8) !important; }
 html.light .legal-page .bg-white\/3 { background-color: rgba(0,0,0,0.03) !important; }
 html.light .legal-page .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.03) !important; }
+
+/* Light mode: league + picks views (scoped) */
+html.light .league-view .text-white { color: #0f172a !important; }
+html.light .league-view .text-slate-300 { color: #334155 !important; }
+html.light .league-view .text-slate-400 { color: #475569 !important; }
+html.light .league-view .text-slate-500 { color: #64748b !important; }
+html.light .league-view .text-yellow-400 { color: #a16207 !important; }
+html.light .league-view .text-purple-400 { color: #7c3aed !important; }
+html.light .league-view .text-amber-400 { color: #b45309 !important; }
+html.light .league-view .text-red-400 { color: #dc2626 !important; }
+html.light .league-view .bg-slate-900 { background-color: #ffffff !important; }
+html.light .league-view .bg-slate-900\/40 { background-color: rgba(0,0,0,0.03) !important; }
+html.light .league-view .bg-slate-900\/60 { background-color: rgba(0,0,0,0.04) !important; }
+html.light .league-view .bg-slate-800 { background-color: #ffffff !important; }
+html.light .league-view .bg-slate-800\/40 { background-color: rgba(0,0,0,0.03) !important; }
+html.light .league-view .bg-slate-800\/60 { background-color: rgba(0,0,0,0.04) !important; }
+html.light .league-view .bg-slate-700 { background-color: #f1f5f9 !important; }
+html.light .league-view .bg-slate-700\/40 { background-color: rgba(0,0,0,0.04) !important; }
+html.light .league-view .border-slate-700 { border-color: rgba(15,23,42,0.1) !important; }
+html.light .league-view .border-slate-700\/60 { border-color: rgba(15,23,42,0.08) !important; }
+html.light .league-view .hover\:bg-slate-700\/40:hover { background-color: rgba(0,0,0,0.04) !important; }
+html.light .league-view .bg-purple-600 { background-color: #7c3aed !important; }
+html.light .league-view .hover\:bg-purple-500:hover { background-color: #6d28d9 !important; }
+
+/* Table headers and stat cards used a dark gradient — where the strike-rate %
+   and column labels live. Flipping the two gradient stops covers both the
+   Tailwind v4 variable form and any explicit background-image. */
+html.light .league-view .from-slate-800 { --tw-gradient-from: #f1f5f9 !important; }
+html.light .league-view .to-slate-900 { --tw-gradient-to: #e2e8f0 !important; }
+html.light .league-view thead.bg-gradient-to-r,
+html.light .league-view thead { background-image: linear-gradient(to right, #f1f5f9, #e2e8f0) !important; }
+
+/* Remaining text tints used by the league views. */
+html.light .league-view .text-slate-200 { color: #1e293b !important; }
+html.light .league-view .text-slate-600 { color: #475569 !important; }
+html.light .league-view .text-emerald-400 { color: #047857 !important; }
+html.light .league-view .text-cyan-400 { color: #0e7490 !important; }
+html.light .league-view .hover\:text-white:hover { color: #0f172a !important; }
+
+/* Tinted fills (pick rows, badges, crowd bars, chips). */
+html.light .league-view .bg-yellow-500\/10 { background-color: rgba(202,138,4,0.10) !important; }
+html.light .league-view .bg-yellow-500\/15 { background-color: rgba(202,138,4,0.14) !important; }
+html.light .league-view .bg-yellow-500\/20 { background-color: rgba(202,138,4,0.18) !important; }
+html.light .league-view .bg-yellow-500\/60 { background-color: rgba(202,138,4,0.60) !important; }
+html.light .league-view .bg-amber-500\/15 { background-color: rgba(180,83,9,0.14) !important; }
+html.light .league-view .bg-emerald-500\/15 { background-color: rgba(4,120,87,0.12) !important; }
+html.light .league-view .bg-slate-600\/30 { background-color: rgba(15,23,42,0.08) !important; }
+html.light .league-view .bg-slate-700\/30 { background-color: rgba(15,23,42,0.06) !important; }
+html.light .league-view .bg-slate-800\/50 { background-color: rgba(15,23,42,0.04) !important; }
+html.light .league-view .bg-white\/5 { background-color: rgba(15,23,42,0.04) !important; }
+html.light .league-view .bg-white\/10 { background-color: rgba(15,23,42,0.06) !important; }
+html.light .league-view .border-yellow-500\/30 { border-color: rgba(202,138,4,0.45) !important; }
+html.light .league-view .border-yellow-400 { border-color: #a16207 !important; }
+html.light .league-view .hover\:bg-slate-700\/30:hover { background-color: rgba(15,23,42,0.05) !important; }
+html.light .league-view .hover\:bg-slate-800\/40:hover { background-color: rgba(15,23,42,0.03) !important; }
+
+/* Solid accent buttons keep white ink: dark labels on purple read as mud. */
+html.light .league-view .bg-purple-600.text-white,
+html.light .league-view .bg-emerald-500.text-white,
+html.light .league-view .bg-gradient-to-br .text-white { color: #ffffff !important; }
+
+/* Guest banner sits above every public view, so it can't be scoped. */
+html.light .guest-banner { border-color: rgba(124,58,237,0.3) !important; background-color: rgba(124,58,237,0.07) !important; }
+html.light .guest-banner .text-white\/80 { color: #334155 !important; }
+html.light .guest-banner .text-white { color: #ffffff !important; }
+html.light .guest-banner .bg-purple-600 { background-color: #7c3aed !important; }
+
+
 html.light .legal-page .hover\:bg-white\/3:hover { background-color: rgba(0,0,0,0.03) !important; }
 html.light .legal-page .border-white\/\[0\.08\] { border-color: rgba(0,0,0,0.08) !important; }
 html.light .legal-page .text-amber-300 { color: #b45309 !important; }

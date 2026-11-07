@@ -79,3 +79,44 @@ def test_fetch_records_failure_on_empty(flag, monkeypatch):
         assert api._fetch("/predictor") is None
 
     assert atr.atr_circuit_open() is True
+
+
+def test_throttled_browser_tier_does_not_trip_breaker(flag, monkeypatch):
+    """A miss while our own ≤1/hour throttle skipped the only working tier is
+    self-inflicted, not the host blocking us — it must not accrue failures.
+
+    Nov-2026: cheap 403s plus throttle skips tripped a 6h breaker every
+    afternoon, freezing ATR snapshots for the whole evening card.
+    """
+    def throttled(self, path):
+        self._self_throttled = True
+        return None
+
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", throttled)
+    api = atr.AtTheRacesAPI()
+
+    for _ in range(atr._BREAKER_FAILURE_THRESHOLD * 2):
+        assert api._fetch("/market-movers") is None
+
+    assert atr._breaker_failures == 0
+    assert atr.atr_circuit_open() is False
+
+
+def test_genuine_failure_after_throttle_miss_still_counts(flag, monkeypatch):
+    """The exemption must reset per fetch, not leak into the next attempt."""
+    responses = ["throttled", "genuine"]
+
+    def fake(self, path):
+        mode = responses.pop(0)
+        self._self_throttled = mode == "throttled"
+        assert self._self_throttled is (mode == "throttled")
+        return None
+
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", fake)
+    api = atr.AtTheRacesAPI()
+
+    api._fetch("/market-movers")
+    assert atr._breaker_failures == 0
+
+    api._fetch("/market-movers")
+    assert atr._breaker_failures == 1

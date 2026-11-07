@@ -230,6 +230,16 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
     "HUNTINGDON": {"track": "Huntingdon", "region": "UK"},
     "BHA": {"track": "Brighton", "region": "UK"},
     "BRIGHTON": {"track": "Brighton", "region": "UK"},
+    # ATR short codes seen on the movers feed (Nov-2026). Unmapped, they fell
+    # through the passthrough branch and the HUD displayed "Ain"/"Hex"/"Fon".
+    "AIN": {"track": "Aintree", "region": "UK"},
+    "AINTREE": {"track": "Aintree", "region": "UK"},
+    "HEX": {"track": "Hexham", "region": "UK"},
+    "HEXHAM": {"track": "Hexham", "region": "UK"},
+    "FON": {"track": "Fontwell", "region": "UK"},
+    "FONTWELL": {"track": "Fontwell", "region": "UK"},
+    "DUN": {"track": "Dundalk", "region": "Ireland"},
+    "DUNDALK": {"track": "Dundalk", "region": "Ireland"},
 }
 
 
@@ -246,6 +256,12 @@ def normalize_course(raw: str) -> Dict[str, str]:
                      "join", "menu", "account", "watch", "tips", "news",
                      "replay", "calendar")
     _TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,23}$")
+    # Meeting headers arrive as "Aintree 13:50"; the off-time is not part of
+    # the venue and the digit guard below would blank the whole course. On
+    # 2026-11-06 that cost 325 of 458 movers their course (the HUD then fell
+    # back to "Course unverified" for every one of them).
+    _OFF_TIME_RE = re.compile(r"\s+\d{1,2}[:.]\d{2}\s*$")
+    raw = _OFF_TIME_RE.sub("", (raw or "").strip()).strip()
     key = (raw or "").strip().upper()
     if not key:
         return {"track": "", "region": ""}
@@ -293,6 +309,13 @@ def _segment_by_headings(html: bytes) -> List[Tuple[str, str]]:
 
 class AtTheRacesAPI:
     BASE_URL = "https://www.attheraces.com"
+
+    # Set when the last tiered fetch failed only because our own browser
+    # throttle (≤1/hour) skipped the one tier that can clear Fastly. Such a
+    # miss is self-inflicted, not evidence the host is blocking us, so it must
+    # not count toward the circuit breaker (Nov-2026: the throttle plus cheap
+    # 403s tripped a 6h breaker every afternoon).
+    _self_throttled = False
 
     @staticmethod
     def _is_challenge_page(body: bytes) -> bool:
@@ -344,6 +367,11 @@ class AtTheRacesAPI:
         body = self._fetch_tiered(path)
         if body:
             _record_success()
+        elif getattr(self, "_self_throttled", False):
+            logger.debug(
+                "ATR %s missed while the browser tier was throttled — "
+                "not counting toward the circuit breaker", path,
+            )
         else:
             _record_failure(path)
         return body
@@ -358,6 +386,7 @@ class AtTheRacesAPI:
         tried. A 200 challenge shell (e.g. Fastly 3KB page) is NOT accepted.
         """
         url = f"{self.BASE_URL}{path}"
+        self._self_throttled = False
 
         # DNS pre-check — skip entirely if domain can't resolve (avoids noisy retries)
         import socket as _socket
@@ -405,6 +434,9 @@ class AtTheRacesAPI:
         # profile, and the second load (same cookies) returns the real page.
         if _STEALTH_AVAILABLE:
             if not self._stealth_allowed():
+                # Only this tier can pass Fastly. Skipping it is our throttle,
+                # not the host's block: record it so the breaker stays shut.
+                self._self_throttled = True
                 logger.debug("Stealth fetch throttled for %s (browser used <1h ago)", path)
             else:
                 import time as _time

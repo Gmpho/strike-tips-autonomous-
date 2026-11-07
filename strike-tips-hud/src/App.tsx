@@ -33,6 +33,9 @@ const SystemVitalsView = React.lazy(() => import('./components/sidebar/SystemVit
 const DreamingView = React.lazy(() => import('./components/sidebar/DreamingView').then(m => ({ default: m.DreamingView })));
 const MarketMoversView = React.lazy(() => import('./components/sidebar/MarketMoversView').then(m => ({ default: m.MarketMoversView })));
 const PredictorView = React.lazy(() => import('./components/sidebar/PredictorView').then(m => ({ default: m.PredictorView })));
+const LeaderboardView = React.lazy(() => import('./components/league/LeaderboardView').then(m => ({ default: m.LeaderboardView })));
+const PicksView = React.lazy(() => import('./components/league/PicksView').then(m => ({ default: m.PicksView })));
+const ProfileView = React.lazy(() => import('./components/league/ProfileView').then(m => ({ default: m.ProfileView })));
 const ResultsView = React.lazy(() => import('./components/sidebar/ResultsView').then(m => ({ default: m.ResultsView })));
 const NewsView = React.lazy(() => import('./components/sidebar/NewsView').then(m => ({ default: m.NewsView })));
 const TelemetryView = React.lazy(() => import('./components/sidebar/TelemetryView').then(m => ({ default: m.TelemetryView })));
@@ -59,10 +62,13 @@ const ViewFallback = () => (
 const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
 // Logged-out visitors may read support + legal pages (with a sign-in
 // banner); every other view gates to the landing page.
-const PUBLIC_VIEWS = [...LEGAL_VIEWS];
+const PUBLIC_VIEWS = [...LEGAL_VIEWS, 'leaderboard'];
 const VALID_VIEWS = [
   'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
   'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results', 'simulator',
+  'leaderboard',
+  'picks',
+  'profile',
   ...LEGAL_VIEWS
 ];
 
@@ -265,6 +271,12 @@ export const App: React.FC = () => {
         return <Suspense key="predictor-view" fallback={<ViewFallback />}><PredictorView /></Suspense>;
       case 'results':
         return <Suspense key="results-view" fallback={<ViewFallback />}><ResultsView /></Suspense>;
+      case 'leaderboard':
+        return <Suspense key="leaderboard-view" fallback={<ViewFallback />}><LeaderboardView /></Suspense>;
+      case 'picks':
+        return <Suspense key="picks-view" fallback={<ViewFallback />}><PicksView /></Suspense>;
+      case 'profile':
+        return <Suspense key="profile-view" fallback={<ViewFallback />}><ProfileView /></Suspense>;
       case 'simulator':
         return (
           <Suspense key="simulator-view" fallback={<ViewFallback />}>

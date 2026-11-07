@@ -9,11 +9,12 @@ import 'apexcharts/column';
 import 'apexcharts/donut';
 import 'apexcharts/heatmap';
 import 'apexcharts/line';
+import 'apexcharts/radialBar';
 import 'apexcharts/rangeArea';
 import type { ApexOptions } from 'apexcharts';
 
 interface ApexChartProps {
-  type: 'area' | 'bar' | 'column' | 'donut' | 'heatmap' | 'line' | 'rangeArea';
+  type: 'area' | 'bar' | 'column' | 'donut' | 'heatmap' | 'line' | 'radialBar' | 'rangeArea';
   series: ApexOptions['series'];
   options: ApexOptions;
   height?: number | string;

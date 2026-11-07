@@ -38,27 +38,46 @@ SHALL be enforced at the data layer so no client or API path can bypass it.
 
 ### Requirement: Published scoring formula
 
-Winning picks SHALL earn position points scaled by field size plus the
-winner's starting-price bonus, and a value index weighted by odds beaten
-(longer-odds winners earn a higher value index than shorter-odds winners,
-all else equal). Non-winning picks SHALL score zero. The scoring page SHALL
-publish the full formula with worked examples, and the published math SHALL
-match the settlement engine exactly.
+Top-4 finishing picks SHALL earn position points scaled by field size: 1st
+earns the field size plus the winner's starting-price bonus, 2nd earns half
+the field, 3rd a quarter, and 4th an eighth (each floored at one point). A
+value index SHALL weight winners by odds beaten (longer-odds winners earn a
+higher value index than shorter-odds winners, all else equal). Picks finishing
+5th or worse SHALL score zero. The scoring page SHALL publish the full formula
+with worked examples, and the published math SHALL match the settlement engine
+exactly.
 
 #### Scenario: Winner scores field plus bonus
 
 - **WHEN** a player's pick wins a 12-runner race
 - **THEN** the pick earns 12 position points plus the winner's starting-price bonus
 
+#### Scenario: Placed picks score a fraction of the field
+
+- **WHEN** a player's pick finishes 2nd, 3rd or 4th in a 12-runner race
+- **THEN** the pick earns 6, 3 and 2 points respectively
+
 #### Scenario: Loser scores zero
 
-- **WHEN** a player's pick finishes unplaced
+- **WHEN** a player's pick finishes 5th or worse
 - **THEN** the pick earns zero points but still counts as a settled tip
 
 #### Scenario: Longer odds earn higher value
 
 - **WHEN** two players each win one race, one at longer odds than the other
 - **THEN** the longer-odds winner receives the higher value index
+
+### Requirement: Wins and places are separate statistics
+
+A player's `wins` SHALL count first-place finishes only, while `places` SHALL
+count every scoring finish (1st–4th). Strike rate SHALL be wins divided by
+settled tips, and place rate SHALL be places divided by settled tips.
+Aggregates SHALL NEVER report a top-4 finish as a win.
+
+#### Scenario: A placed horse is not a win
+
+- **WHEN** a player has one winner and three placed horses from eight settled tips
+- **THEN** wins read 1, places read 4, and strike rate reads 12.5%
 
 ### Requirement: Leaderboard ranking and eligibility
 
@@ -85,11 +104,11 @@ tip in the last 7 days SHALL decay off the ranked board.
 
 ### Requirement: Player profiles show aggregates only
 
-Player profiles SHALL show performance aggregates (score, strike rate,
-achievements, finish-position distribution, recent form, favorite tracks,
-previous winners). No profile or endpoint SHALL expose another player's
-private data, stakes, or ledger entries. Display names SHALL be derived
-handles, never full account identities.
+Player profiles SHALL show performance aggregates (score, wins, places,
+strike rate, achievements, finish-position distribution, recent form,
+favorite tracks, previous winners). No profile or endpoint SHALL expose
+another player's private data, stakes, or ledger entries. Display names SHALL
+be derived handles, never full account identities.
 
 #### Scenario: No private data leaks
 
@@ -105,8 +124,8 @@ SHALL NOT alter any ledger balance.
 
 #### Scenario: Confirmed winner settles points
 
-- **WHEN** results confirm the winner of a locked race
-- **THEN** matching picks settle to points per the published formula and non-matching picks settle to zero
+- **WHEN** results confirm the finishing order of a locked race
+- **THEN** matching picks settle to points per the published formula and picks finishing outside the top four settle to zero
 
 #### Scenario: Unconfirmed race stays pending
 

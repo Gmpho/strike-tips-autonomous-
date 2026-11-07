@@ -29,6 +29,10 @@ SAFE_PATHS = {
     "/api/monitoring/snapshot-hash",
     "/api/monitoring/snapshot",
     "/v1/health",
+    # OpenAI-compatible clients probe GET /v1/models before their first chat
+    # call. It returns a static 6-line catalogue (no inference, no cost), and
+    # Pages already lists it in openPaths — without this the probe 401s.
+    "/v1/models",
     "/api/racing/exotics",
     "/api/news",
     "/api/news/images",
@@ -38,13 +42,26 @@ SAFE_PATHS = {
     "/api/telegram/link-status",
     "/api/telegram/unlink",
     "/api/telegram/test",
+    "/api/league/board",
+    "/api/league/formula",
+    "/api/league/races",
+    "/api/league/picks",
+    "/api/league/me",
 }
 
 
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path in SAFE_PATHS or path.startswith("/mcp"):
+    # League routes authenticate themselves with the punter's Supabase JWT
+    # (see routes/league.py). They must reach the app without the machine API
+    # key, otherwise a signed-in browser can never pick or set an avatar.
+    if (
+        path in SAFE_PATHS
+        or path.startswith("/mcp")
+        or path.startswith("/api/league/tipster/")
+        or path.startswith("/api/league/me")
+    ):
         return await call_next(request)
 
     # Fail-closed: everything outside SAFE_PATHS needs the key — /api/*,

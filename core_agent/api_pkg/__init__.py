@@ -16,6 +16,7 @@ from core_agent.routes import (
     legal,
     tts,
     telegram_link,
+    league,
 )
 from core_agent.core.mcp_server import mcp
 from core_agent.core.security import auth_middleware
@@ -302,6 +303,7 @@ app.include_router(monitoring.router)
 app.include_router(healing.router)
 app.include_router(dreaming.router)
 app.include_router(tasks.router)
+app.include_router(league.router)
 app.include_router(legal.router)
 app.include_router(tts.router)
 app.include_router(telegram_link.router)

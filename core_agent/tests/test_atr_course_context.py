@@ -15,6 +15,16 @@ from core_agent.skills.parsers.atr_enrich import (
 @pytest.mark.parametrize("raw,track,region", [
     ("Newcastle Results", "Newcastle", "UK"),
     ("Ntt 13:23", "Nottingham", "UK"),
+    # Meeting headers carry the off-time; the digits must not blank the venue.
+    ("Aintree 13:50", "Aintree", "UK"),
+    ("Hexham 13:00", "Hexham", "UK"),
+    ("Fontwell 12:50", "Fontwell", "UK"),
+    ("Dundalk 18:45", "Dundalk", "Ireland"),
+    # Short codes seen on the movers feed resolve to real venues now.
+    ("Ain", "Aintree", "UK"),
+    ("Hex", "Hexham", "UK"),
+    ("Fon", "Fontwell", "UK"),
+    ("Dun", "Dundalk", "Ireland"),
     ("G", "Greyville", "SA"),
     ("N", "Greyville Poly", "SA"),
     ("Y", "Flamingo Park (closed 2020)", "defunct"),

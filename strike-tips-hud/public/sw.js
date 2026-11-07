@@ -1,6 +1,29 @@
-const CACHE_VERSION = 'v2.8.2';
+const CACHE_VERSION = 'v2.11.0';
 const STATIC_CACHE = `strike-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `strike-dynamic-${CACHE_VERSION}`;
+
+// User-scoped endpoints must NEVER be written to Cache Storage.
+//
+// Cache Storage is keyed by URL only — it ignores the Authorization header.
+// Before v2.10.0 every /api/* GET was cached, so account A's picks stayed in
+// `strike-dynamic-*` and account B was served them on the same browser even
+// though the backend had correctly scoped the response to A (Nov-2026 bug:
+// "I must see their picks, not someone else's picks on my picks").
+// Anything that can vary per account is network-only: no cache, no fallback.
+const USER_SCOPED_PATHS = [
+  '/api/league/me',
+  '/api/betting',
+  '/api/agent',
+  '/api/telegram',
+  '/api/monitoring',
+];
+
+function isUserScoped(request, url) {
+  if (request.headers.has('Authorization')) return true;
+  return USER_SCOPED_PATHS.some(
+    (p) => url.pathname === p || url.pathname.startsWith(`${p}/`)
+  );
+}
 
 // Core assets to pre-cache immediately on SW installation (App Shell)
 const APP_SHELL = [
@@ -15,14 +38,22 @@ const APP_SHELL = [
   '/logo.webp'
 ];
 
-// Install Event: Open static cache and store the App Shell
+// Install Event: Open static cache and store the App Shell.
+//
+// Deliberately NOT calling skipWaiting() here.
+//
+// v2.10.0 did, and it broke the update prompt: a worker that activates
+// immediately never enters the `waiting` state, so usePWA's `reg.waiting`
+// check was always null and `<UpdateToast>` never rendered — users sat on a
+// stale bundle with no way to refresh (Nov-2026: "I don't see the update
+// refresh button"). It also made the Refresh button inert, because by the
+// time you clicked it the `controllerchange` event had already fired.
+//
+// Now the new worker waits, the app shows the prompt, and the click posts
+// SKIP_WAITING (see the message handler below). A first install still takes
+// over immediately — there is no active worker to wait behind.
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing Strike Tips service worker...');
-  // Activate immediately: without this the new worker waits until every tab
-  // closes, and users sit on the old bundle indefinitely (Oct-2026: prod
-  // served a stale index-*.js for hours after deploy). Activate already
-  // purges old caches + clients.claim()s, so this is safe.
-  self.skipWaiting();
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
       console.log('[SW] Pre-caching application shell');
@@ -31,7 +62,6 @@ self.addEventListener('install', (event) => {
       });
     })
   );
-  // Don't skipWaiting here — let the app prompt the user first
 });
 
 // Limit total cache storage to 30 MB — evict oldest entries when exceeded
@@ -131,24 +161,31 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. API Requests Strategy: Network First with offline fallback
+  // 4. User-scoped reads (signed-in): straight to network, never cached.
+  //    Serving a cached one would leak another account's data on this device.
+  if (isUserScoped(request, url)) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // 5. API Requests Strategy: Network First with offline fallback
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirst(request));
     return;
   }
 
-  // 5. Skip caching large lazy-loaded Three.js chunk (dashboard needs internet anyway)
+  // 6. Skip caching large lazy-loaded Three.js chunk (dashboard needs internet anyway)
   if (url.pathname.match(/\/assets\/vendor-three-/)) {
     return;
   }
 
-  // 6. Small static assets (CSS, JS, Images, Fonts) Strategy: Cache First
+  // 7. Small static assets (CSS, JS, Images, Fonts) Strategy: Cache First
   if (url.pathname.match(/\.(css|js|png|jpg|jpeg|svg|webp|woff2?)$/) || url.pathname.includes('/assets/')) {
     event.respondWith(cacheFirst(request));
     return;
   }
 
-  // 6. Page navigation requests (HTML): Network First, falling back to cache or offline.html
+  // 8. Page navigation requests (HTML): Network First, falling back to cache or offline.html
   if (request.headers.get('Accept')?.includes('text/html')) {
     event.respondWith(networkFirst(request));
     return;
@@ -174,15 +211,22 @@ async function cacheFirst(request) {
 
 // Strategy: Network First, fallback to Cache, then fallback to offline.html
 async function networkFirst(request) {
+  // Hard guard: an authenticated response must never enter Cache Storage,
+  // because cache lookups match on URL and would hand it to the next account
+  // that signs in on this device.
+  const cacheable = !request.headers.has('Authorization');
   try {
     const response = await fetch(request);
     // Only cache successful standard responses
-    if (response && response.status === 200) {
+    if (cacheable && response && response.status === 200) {
       const cache = await caches.open(DYNAMIC_CACHE);
       cache.put(request, response.clone());
     }
     return response;
   } catch (err) {
+    if (!cacheable) {
+      return new Response('Offline — reconnect to load your account', { status: 503 });
+    }
     const cached = await caches.match(request);
     if (cached) return cached;
 
@@ -199,9 +243,10 @@ async function networkFirst(request) {
 // Strategy: Stale While Revalidate
 async function staleWhileRevalidate(request) {
   const cache = await caches.open(DYNAMIC_CACHE);
-  const cached = await cache.match(request);
+  const cacheable = !request.headers.has('Authorization');
+  const cached = cacheable ? await cache.match(request) : undefined;
   const fetchPromise = fetch(request).then((response) => {
-    if (response && response.status === 200) {
+    if (cacheable && response && response.status === 200) {
       cache.put(request, response.clone());
     }
     return response;
