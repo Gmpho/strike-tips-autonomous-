@@ -863,6 +863,10 @@ class AtTheRacesAPI:
             logger.warning("ATR predictor fetch timed out after 150s")
             return []
         if not html:
+            if getattr(self, "_self_throttled", False):
+                logger.debug("ATR predictor: browser tier throttled — no fetch attempted")
+            else:
+                logger.warning("ATR predictor: fetch returned no HTML (host blocked or empty)")
             return []
 
         sel = Selector(html, auto_save=True, adaptive=True)
@@ -894,4 +898,9 @@ class AtTheRacesAPI:
                     "region": header.get("region", ""),
                 })
 
+        if not predictions:
+            logger.warning(
+                "ATR predictor: page fetched (%d bytes) but 0 predictions parsed",
+                len(html or ""),
+            )
         return predictions

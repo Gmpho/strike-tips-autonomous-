@@ -140,6 +140,47 @@ async def get_predictor():
     return []
 
 
+@router.get("/racing/predictor/status")
+async def get_predictor_status():
+    """Diagnostic for the ATR predictor feed.
+
+    Returns last success / last attempt timestamps, the last failure reason (if
+    any), the prediction count, and a `stale` flag. The predictor feed used to
+    fail silently (empty scrape / timeout / throttle) and leave the snapshot
+    frozen with only a debug log; this endpoint makes that visible.
+    """
+    p = ATR_PREDICTOR_PATH
+    if not p.exists():
+        return {"exists": False, "count": 0, "last_success": None,
+                "last_attempt": None, "last_error": "snapshot missing",
+                "stale": True}
+    try:
+        data = json.loads(p.read_text())
+    except Exception as exc:
+        return {"exists": True, "count": 0, "last_success": None,
+                "last_attempt": None, "last_error": f"unreadable: {exc}",
+                "stale": True}
+    preds = data.get("predictions") or []
+    last_success = data.get("timestamp")
+    last_attempt = data.get("last_attempt") or last_success
+    last_error = data.get("last_error")
+    stale = True
+    if last_success:
+        try:
+            age = (datetime.now() - datetime.fromisoformat(last_success)).total_seconds()
+            stale = age > 3 * 3600
+        except Exception:
+            stale = True
+    return {
+        "exists": True,
+        "count": len(preds),
+        "last_success": last_success,
+        "last_attempt": last_attempt,
+        "last_error": last_error,
+        "stale": stale,
+    }
+
+
 @router.get("/racing/results")
 async def get_results():
     """Return latest race results from ATR disk snapshot."""

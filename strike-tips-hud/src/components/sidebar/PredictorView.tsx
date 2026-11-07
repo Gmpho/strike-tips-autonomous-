@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, Brain, ChevronDown, ChevronUp, Star, BookOpen, BarChart, Target, X, Maximize2, Copy, Zap, Globe, ShieldCheck, AlertTriangle, Flame } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
@@ -28,6 +28,17 @@ export const PredictorView: React.FC = () => {
   const predictions = Array.isArray(store.predictions) ? store.predictions : [];
   const meetingIndex = useHorseMeetingIndex(store.events);
   const [expandAll, setExpandAll] = useState(false);
+  const [predictorStatus, setPredictorStatus] = useState<{ last_success: string | null; last_error: string | null; stale: boolean; count: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => fetch('/api/racing/predictor/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!cancelled && d) setPredictorStatus(d); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
   const [selectedPrediction, setSelectedPrediction] = useState<Predictor | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
@@ -168,6 +179,21 @@ export const PredictorView: React.FC = () => {
             <div className="space-y-1.5">
               <p className="text-sm font-black text-theme-primary/60">No Predictions Available</p>
               <p className="text-xs text-theme-secondary leading-relaxed">
+      {predictorStatus && (predictorStatus.stale || predictorStatus.last_error) && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <div className="font-semibold">AI predictor is stale</div>
+            <div className="text-amber-200/80">
+              {predictorStatus.last_error
+                ? `Last fetch failed: ${predictorStatus.last_error}.`
+                : 'No successful fetch recorded yet.'}
+              {predictorStatus.last_success ? ` Last success: ${new Date(predictorStatus.last_success).toLocaleString()}.` : ''}
+              {' Retrying every 45 min.'}
+            </div>
+          </div>
+        </div>
+      )}
                 The AI predictor is analysing upcoming races. Predictions will appear here once processed.
               </p>
               <p className="text-[10px] text-theme-secondary/60 font-semibold mt-2">

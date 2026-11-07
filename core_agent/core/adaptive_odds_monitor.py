@@ -1109,22 +1109,63 @@ class AdaptiveOddsMonitor:
         if _atr_file_fresh(ATR_PREDICTOR_PATH):
             logger.debug("ATR predictor fresh — skipping predictor fetch")
         else:
+            # Predictor is the one ATR feed that historically failed silently:
+            # get_predictor() returns [] on timeout / empty scrape / throttle
+            # and the snapshot kept its stale `timestamp` forever. Record the
+            # attempt (and any failure reason) without clobbering the last good
+            # prediction set, so the HUD and /racing/predictor/status can show
+            # "stale + why" instead of an eternal "analysing...".
+            reason = None
+            predictions = None
             try:
                 predictions = await self.at_races.get_predictor()
-                if predictions:
-                    try:
-                        from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
-
-                        predictions = attach_snapshot_context(predictions, state.get("events", {}))
-                    except Exception:
-                        pass
-                    _atomic_write_json(ATR_PREDICTOR_PATH, {
-                        "predictions": predictions,
-                        "timestamp": datetime.now().isoformat(),
-                    })
-                    wrote = True
             except Exception as exc:
-                logger.debug("ATR predictor fetch skipped: %s", exc)
+                reason = f"exception: {exc}"
+                logger.warning("ATR predictor fetch raised: %s", exc)
+
+            if getattr(self.at_races, "_self_throttled", False):
+                throttled = True
+                reason = reason or "browser tier throttled (retry after cooldown)"
+            else:
+                throttled = False
+
+            # Read existing snapshot to preserve last-good predictions.
+            existing: dict = {}
+            try:
+                if Path(ATR_PREDICTOR_PATH).exists():
+                    existing = json.loads(Path(ATR_PREDICTOR_PATH).read_text())
+            except Exception:
+                existing = {}
+
+            now_iso = datetime.now().isoformat()
+            if predictions:
+                try:
+                    from core_agent.skills.parsers.atr_enrich import attach_snapshot_context
+
+                    predictions = attach_snapshot_context(predictions, state.get("events", {}))
+                except Exception:
+                    pass
+                payload = {
+                    "predictions": predictions,
+                    "timestamp": now_iso,          # last SUCCESS
+                    "last_attempt": now_iso,
+                    "last_error": None,
+                }
+                _atomic_write_json(ATR_PREDICTOR_PATH, payload)
+                wrote = True
+                logger.info("ATR predictor refreshed: %d predictions", len(predictions))
+            else:
+                if reason is None:
+                    reason = "empty scrape (0 predictions parsed)"
+                payload = {
+                    "predictions": existing.get("predictions", []),
+                    "timestamp": existing.get("timestamp"),   # last success unchanged
+                    "last_attempt": now_iso,
+                    "last_error": reason,
+                }
+                _atomic_write_json(ATR_PREDICTOR_PATH, payload)
+                wrote = True
+                logger.warning("ATR predictor fetch produced no data: %s", reason)
 
         if wrote:
             self._volume_commit()
