@@ -180,6 +180,9 @@ export interface Predictor {
   /** ISO day of the racecard the prediction belongs to (Nov-2026: the feed
    *  used to mix yesterday's "Recent Winners" digest into today's list). */
   date?: string;
+  /** "exacta" means `horse` is a readable "A / B" pair — ATR files both legs
+   *  in one cell and they must not be split into two invented picks. */
+  type?: 'single' | 'exacta';
 }
 
 export interface NewsItem {

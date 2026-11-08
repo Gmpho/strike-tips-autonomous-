@@ -183,6 +183,29 @@ def _clean_horse(name: str) -> str:
     return s.strip()
 
 
+def _split_runner_cell(text: str) -> List[str]:
+    """Clean horse names from a cell that holds one — or a pair — of runners.
+
+    Predicted-exacta tables pack both legs into the single horse cell: cloth,
+    name, forecast, then again. Read as one name that surfaced in the HUD as
+    "Impatient (4/1) (4) Galway Reel" (Nov-2026). Parenthesised pieces are
+    cloth numbers or prices, never names, so they drop out with _clean_horse.
+    """
+    raw = text or ""
+    # Some cells arrive as one text node, so break before each "(n) Name".
+    raw = re.sub(r"(?<=.)(?=\(\d+\)\s*[A-Za-z])", "\n", raw)
+    names: List[str] = []
+    for chunk in re.split(r"[\r\n]+", raw):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        cloth = re.match(r"^\(\d+\)\s*(.+)$", chunk)
+        name = _clean_horse(cloth.group(1) if cloth else chunk)
+        if name:
+            names.append(name)
+    return names
+
+
 def _racecard_parts(href: str) -> Tuple[str, str, str]:
     """``/racecard/Ffos-Las/08-November-2026/1240`` → ("Ffos Las", "2026-11-08", "12:40")."""
     m = _RACECARD_RE.search(href or "")
@@ -1327,9 +1350,13 @@ class AtTheRacesAPI:
 
                 venue = normalize_course(course_raw)
                 horse_raw = _text(cells[1])
-                horse = _clean_horse(horse_raw)
-                if not horse:
+                names = _split_runner_cell(horse_raw)
+                if not names:
                     continue
+                # An exacta legs-in-one-cell row stays ONE row: the pair is the
+                # prediction, so splitting it into two picks would invent picks
+                # ATR never made.
+                horse = " / ".join(names)
 
                 key = (horse.lower(), venue["track"].lower(), day, time)
                 if key in seen:
@@ -1338,6 +1365,7 @@ class AtTheRacesAPI:
                 predictions.append({
                     "horse": horse,
                     "raw": horse_raw,
+                    "type": "exacta" if len(names) > 1 else "single",
                     "prediction": _text(cells[2]) if len(cells) > 2 else "",
                     "course": venue["track"],
                     "region": venue["region"],

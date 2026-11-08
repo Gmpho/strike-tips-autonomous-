@@ -379,3 +379,61 @@ def test_predictor_strips_cloth_and_odds_from_the_horse_name():
     pytest.importorskip("scrapling")
     assert [r["horse"] for r in _predictions()] == ["Tune In A Box", "Impatient"]
 
+
+EXACTA_PAGE = b"""
+<html><body>
+<input type="text" name="race-nav-datepicker" id="race-nav-datepicker"
+       value="2026-11-08" readonly="readonly">
+
+<table>
+  <thead><tr><th>Race Details (Runners)</th><th>(Cloth) Horse Name (Forecast)</th>
+  <th>Predictor / Result</th></tr></thead>
+  <tbody>
+    <tr><td>6 15:37 Ffos Las (7)
+        <a href="/racecard/Ffos-Las/08-November-2026/1537/predictor?showfix=yes">Ffos Las</a></td>
+        <td>(2)
+            Impatient
+            (4/1)
+            (4)
+            Galway Reel
+            (15/8)</td>
+        <td>Predictor</td></tr>
+  </tbody>
+</table>
+</body></html>
+"""
+
+
+def test_predictor_exacta_pair_stays_one_readable_row():
+    """ATR files both exacta legs in one cell; the pair is the prediction.
+
+    Read as a single name it surfaced in the HUD as
+    "Impatient (4/1) (4) Galway Reel" (Nov-2026). It must not become two picks
+    either — ATR never tipped them individually.
+    """
+    pytest.importorskip("scrapling")
+    rows = _predictions(EXACTA_PAGE)
+
+    assert len(rows) == 1
+    assert rows[0]["horse"] == "Impatient / Galway Reel"
+    assert rows[0]["type"] == "exacta"
+    assert rows[0]["course"] == "Ffos Las"
+
+
+def test_predictor_single_runner_rows_are_typed_single():
+    pytest.importorskip("scrapling")
+    assert {r["type"] for r in _predictions()} == {"single"}
+
+
+def test_split_runner_cell_handles_the_shapes_atr_ships():
+    from core_agent.skills.parsers.attheraces_api import _split_runner_cell
+
+    assert _split_runner_cell("(5)\nTune In A Box\n(3/1)") == ["Tune In A Box"]
+    assert _split_runner_cell("(5) Tune In A Box (3/1)") == ["Tune In A Box"]
+    assert _split_runner_cell("(2)Impatient(4/1)(4)Galway Reel(15/8)") == [
+        "Impatient",
+        "Galway Reel",
+    ]
+    assert _split_runner_cell("") == []
+
+
