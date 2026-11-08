@@ -698,3 +698,61 @@ async def set_avatar(body: AvatarIn, authorization: Optional[str] = Header(None)
     profiles[uid] = {"mode": mode, "preset": preset if mode == "preset" else None}
     _save_profiles(profiles)
     return {"ok": True, "avatar": _resolve_avatar(uid, google_avatar), "has_google_avatar": bool(google_avatar)}
+
+
+class ResultRunnerIn(BaseModel):
+    name: str
+    position: Optional[int] = None
+    number: Optional[int] = None
+    odds_decimal: Optional[float] = None
+
+
+class RaceResultIn(BaseModel):
+    date: str
+    course: str
+    race_number: Any
+    runners: List[ResultRunnerIn]
+    source: Optional[str] = "operator"
+
+
+class IngestResultsIn(BaseModel):
+    races: List[RaceResultIn]
+
+
+@router.post("/ingest-results")
+async def ingest_results(body: IngestResultsIn):
+    """Operator / admin ingestion of confirmed race results into confirmed_results.jsonl.
+
+    Accepts official cards (finishing positions 1st-4th + SP odds). Idempotently
+    writes/updates confirmed_results.jsonl and triggers settlement of any open picks.
+    Protected by API key via auth_middleware.
+    """
+    from core_agent.skills.league.results_feed import append_confirmed_results
+    from core_agent.skills.league.settlement import settle_open_picks
+
+    races = []
+    for r in body.races:
+        runners = []
+        for runner in r.runners:
+            runners.append({
+                "number": runner.number or 0,
+                "name": str(runner.name).strip(),
+                "position": runner.position,
+                "odds_decimal": float(runner.odds_decimal) if runner.odds_decimal else None,
+            })
+        races.append({
+            "date": str(r.date)[:10],
+            "course": str(r.course).strip(),
+            "race_number": str(r.race_number).strip(),
+            "runners": runners,
+            "source": r.source or "operator",
+        })
+
+    written = append_confirmed_results(str(DATA_DIR), races)
+    settle_stats = settle_open_picks(str(DATA_DIR))
+    _commit_volume()
+    return {
+        "ok": True,
+        "races_ingested": written,
+        "settlement": settle_stats,
+    }
