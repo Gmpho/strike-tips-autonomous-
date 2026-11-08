@@ -4,6 +4,7 @@ import glob
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -764,6 +765,97 @@ def _atr_file_fresh(path, max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
         return False
 
 
+def _atr_result_key(race: Dict[str, Any]) -> tuple:
+    """Identity of one race inside a snapshot: (day, course, race number).
+
+    Days must be absolute. Relative labels ("yesterday") made merged entries
+    re-date themselves against the newest snapshot timestamp, so a card two
+    days old silently settled as yesterday's.
+    """
+    title = str(race.get("title") or "")
+    m = re.match(r"\s*(\d+)", title)
+    race_no = m.group(1) if m else str(race.get("time") or "")
+    return (
+        str(race.get("date") or "")[:10],
+        str(race.get("course") or "").strip().lower(),
+        race_no,
+    )
+
+
+def _atr_absolutize(results: List[Dict], snap_ts: Optional[str]) -> List[Dict]:
+    """Rewrite relative day labels ("yesterday") as absolute ISO dates.
+
+    Legacy snapshots stored the request label. Merged into a newer snapshot
+    those entries re-dated themselves against the new timestamp, so a card two
+    days old could settle as yesterday's. Resolve them against the timestamp of
+    the snapshot they were captured in, once, then never again.
+    """
+    from datetime import datetime as _dt
+
+    snap_day = None
+    if snap_ts:
+        try:
+            snap_day = _dt.fromisoformat(str(snap_ts).replace("Z", "+00:00")).date()
+        except Exception:
+            snap_day = None
+
+    out = []
+    for race in results or []:
+        if not isinstance(race, dict):
+            continue
+        day = str(race.get("date") or "").strip().lower()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}", day) and snap_day:
+            if day in ("today", ""):
+                race = {**race, "date": snap_day.isoformat()}
+            elif day in ("yesterday", "yday"):
+                race = {**race, "date": (snap_day - timedelta(days=1)).isoformat()}
+        out.append(race)
+    return out
+
+
+def _atr_snapshot_days(path) -> set:
+    """ISO days already captured in a results snapshot."""
+    try:
+        blob = json.loads(Path(path).read_text())
+    except Exception:
+        return set()
+    results = _atr_absolutize(blob.get("results") or [], blob.get("timestamp"))
+    days = set()
+    for race in results:
+        day = str(race.get("date") or "")[:10]
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+            days.add(day)
+    return days
+
+
+def _atr_yesterday_iso(now: Optional[datetime] = None) -> str:
+    return ((now or datetime.now()) - timedelta(days=1)).date().isoformat()
+
+
+def _atr_merge_results(existing: List[Dict], fresh: List[Dict], keep_days: int = 3) -> List[Dict]:
+    """Merge fresh races over the existing snapshot, newest wins, pruned by age.
+
+    Pruning keeps the file from growing forever (the page duplicates races and
+    the merge used to append them indefinitely).
+    """
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    for race in list(existing or []) + list(fresh or []):
+        if not isinstance(race, dict):
+            continue
+        merged[_atr_result_key(race)] = race
+
+    if not keep_days:
+        return list(merged.values())
+
+    cutoff = (datetime.now() - timedelta(days=keep_days)).date().isoformat()
+    kept = []
+    for key, race in merged.items():
+        day = key[0]
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", day) or day >= cutoff:
+            kept.append(race)
+    return kept
+
+
 def _atomic_write_json(path: str, data: any, indent: int = 2):
     """Write data to a JSON file atomically to prevent corruption on crash"""
     tmp_path = str(path) + ".tmp"
@@ -1074,14 +1166,37 @@ class AdaptiveOddsMonitor:
             logger.debug("ATR results fresh — skipping results fetch")
         else:
             results: List[Dict] = []
-            for day in ("yesterday", "today"):
+            # Order is load-bearing. Only the browser tier clears Fastly and it
+            # is allowed once per hour, so whichever page is fetched first gets
+            # the whole allowance. "today" is the page that changes during the
+            # card — fetching "yesterday" first is why the snapshot only ever
+            # held yesterday's races and evening results never appeared.
+            # Yesterday's card is immutable once captured, so it is fetched at
+            # most once a day.
+            days = ["today"]
+            if _atr_yesterday_iso() not in _atr_snapshot_days(ATR_RESULTS_PATH):
+                days.append("yesterday")
+            for day in days:
                 try:
                     results.extend(await self.at_races.get_results(day) or [])
                 except Exception as exc:
                     logger.debug("ATR %s results fetch skipped: %s", day, exc)
             if results:
+                existing_results: List[Dict] = []
+                old_ts = None
+                try:
+                    if Path(ATR_RESULTS_PATH).exists():
+                        blob = json.loads(Path(ATR_RESULTS_PATH).read_text())
+                        existing_results = blob.get("results") or []
+                        old_ts = blob.get("timestamp")
+                except Exception:
+                    existing_results = []
+                # Legacy snapshots carry "yesterday" labels; date them against
+                # the snapshot they came from before merging into this one.
+                existing_results = _atr_absolutize(existing_results, old_ts)
+                merged = _atr_merge_results(existing_results, results)
                 _atomic_write_json(ATR_RESULTS_PATH, {
-                    "results": results,
+                    "results": merged,
                     "timestamp": datetime.now().isoformat(),
                 })
                 wrote = True

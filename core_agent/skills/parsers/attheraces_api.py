@@ -338,12 +338,62 @@ class AtTheRacesAPI:
             return True
         return False
 
+    @staticmethod
+    def _page_date(html: bytes) -> Optional[str]:
+        """The ISO day the results page is actually showing, or None.
+
+        ATR embeds the selected day in a readonly datepicker input. Trusting it
+        beats guessing from the request label: ``/results`` in the morning can
+        still be rendered against the previous day's card, and a snapshot that
+        stamps the wrong day mis-settles picks (``settlement._atr_date``).
+        """
+        if not html:
+            return None
+        for field in (b"race-nav-datepicker", b"sidebar-racecards-datepicker"):
+            m = re.search(
+                rb'id="' + field + rb'"[^>]*value="(\d{4}-\d{2}-\d{2})"',
+                html,
+            )
+            if m:
+                try:
+                    return m.group(1).decode()
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    def _label_iso(day: Any) -> Optional[str]:
+        """Best-effort ISO day for a relative request label ("today"/"yesterday")."""
+        from datetime import date as _date, timedelta as _timedelta
+
+        s = str(day or "").strip().lower()
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+            return s
+        today = _date.today()
+        if s in ("today", ""):
+            return today.isoformat()
+        if s in ("yesterday", "yday"):
+            return (today - _timedelta(days=1)).isoformat()
+        return None
+
     # Minimum gap between headless-Chromium escalations. The browser solve is
     # expensive (~60s cold) and looks bot-like at 5-min cron cadence — it likely
     # got our egress IP rate-limited on 2026-09-03 (18h of challenge shells
     # right after Tier 1 was enabled). Throttle file lives on the data volume
     # so it is shared across cold containers.
     _STEALTH_MIN_GAP_SECS = 3600
+
+    # Fastly's proof-of-work needs wall-clock time to run before the body is
+    # captured. Without it StealthyFetcher snapshots the ~3KB noscript stub
+    # (Nov-2026: /results came back 3.1KB "solved" in 1.4s on every URL).
+    # 15s returns the real 800KB page; network_idle usually gets there in ~5s.
+    _STEALTH_WAIT_MS = 15000
+
+    # Per-process cache for the parsed results page. A populated page is good
+    # for five minutes; an empty one only for one, so a genuine retry is not
+    # blocked but a settlement loop cannot hammer the host.
+    _RESULTS_CACHE_TTL = 300
+    _RESULTS_CACHE_TTL_EMPTY = 60
 
     def _stealth_allowed(self) -> bool:
         try:
@@ -441,27 +491,49 @@ class AtTheRacesAPI:
             else:
                 import time as _time
                 for _attempt in range(2):
+                    # Attempt 1 waits for network idle (usually ~5s). Attempt 2
+                    # gives the Fastly proof-of-work a fixed 15s of wall clock —
+                    # the reload-with-cookies path that actually clears it.
+                    _extra = {"network_idle": True} if _attempt == 0 else {"wait": self._STEALTH_WAIT_MS}
                     try:
                         page = StealthyFetcher.fetch(
                             url,
                             headless=True,
                             solve_cloudflare=False,
                             user_data_dir=BROWSER_PROFILE,
-                            timeout=45000,
-                            disable_resources=True,
+                            timeout=90000,
+                            disable_resources=False,
                             retries=1,
-                            retry_delay=2,
+                            retry_delay=3,
+                            **_extra,
                         )
                         if page and page.status == 200 and not self._is_challenge_page(page.body):
                             return page.body
                         if page and page.status == 200:
                             logger.debug(
-                                "Stealth fetch attempt %d returned challenge shell for %s — reloading with cookies",
+                                "Stealth fetch attempt %d returned challenge shell for %s — retrying with a longer wait",
                                 _attempt + 1, path,
                             )
+                    except TypeError:
+                        # Older Scrapling without network_idle/wait kwargs.
+                        try:
+                            page = StealthyFetcher.fetch(
+                                url,
+                                headless=True,
+                                solve_cloudflare=False,
+                                user_data_dir=BROWSER_PROFILE,
+                                timeout=90000,
+                                disable_resources=False,
+                                retries=1,
+                                retry_delay=3,
+                            )
+                            if page and page.status == 200 and not self._is_challenge_page(page.body):
+                                return page.body
+                        except Exception as e:
+                            logger.debug("Stealth fetch fallback failed for %s: %s", path, e)
                     except Exception as e:
                         logger.debug("Stealth fetch attempt %d failed for %s: %s", _attempt + 1, path, e)
-                    _time.sleep(3)
+                    _time.sleep(4)
 
         # Breaker owns the operator-facing noise: it logs the trip once and then
         # goes quiet for the cooldown, so per-attempt warnings stay at debug.
@@ -554,9 +626,10 @@ class AtTheRacesAPI:
         launches Chromium + solves the Fastly challenge (~40-60s) before Tier 2/3
         get a turn. Worst case 2×150s (yesterday+today) still fits the 600s cron.
         """
+        results_path = "/results" if str(date or "").lower() in ("today", "") else f"/results/{date}"
         for attempt in range(3):
             try:
-                html = await asyncio.wait_for(asyncio.to_thread(self._fetch, f"/results/{date}"), timeout=150)
+                html = await asyncio.wait_for(asyncio.to_thread(self._fetch, results_path), timeout=150)
             except asyncio.TimeoutError:
                 logger.warning("ATR results fetch timed out after 150s: %s", date)
                 return []
@@ -570,13 +643,22 @@ class AtTheRacesAPI:
         if not html:
             return []
 
+        page_day = self._page_date(html) or self._label_iso(date)
         sel = Selector(html, auto_save=True, adaptive=True)
-        races = []
 
         meeting_divs = sel.css(".push--x-small")
         if not meeting_divs:
             logger.warning("No meeting containers (.push--x-small) found on ATR page (%d bytes)", len(html))
-            return races
+            return []
+
+        # The results page nests .push--x-small inside itself, so the same
+        # meeting is visited several times and every race is appended again
+        # (Nov-2026: 612 races for ~26 meetings, Doncaster alone 416). Key by
+        # (course, race number) and keep the richest parse.
+        by_race: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        courses_seen = set()
+        articles_seen = 0
+        unplaced = 0
 
         for meeting in meeting_divs:
             panel_header = meeting.css("a.panel-header h2", adaptive=True)
@@ -585,15 +667,19 @@ class AtTheRacesAPI:
             course = _text(panel_header[0]).replace("Results", "").strip()
             if not course:
                 continue
+            courses_seen.add(course.lower())
 
             for article in meeting.css("article.panel-content--medium", adaptive=True):
                 header_h3 = article.css("header h3", adaptive=True)
                 if not header_h3:
                     continue
+                articles_seen += 1
 
                 h3_text = _text(header_h3[0])
                 time_match = re.match(r"\d+\s+(\d{2}:\d{2})", h3_text)
                 race_time = time_match.group(1) if time_match else ""
+                num_match = re.match(r"\s*(\d+)", h3_text)
+                race_no = num_match.group(1) if num_match else race_time
 
                 runner_list = article.css(".list.list--divided.list--padded", adaptive=True)
                 runners = []
@@ -604,19 +690,36 @@ class AtTheRacesAPI:
                             if runner:
                                 runners.append(runner)
 
-                if runners:
-                    races.append({
+                if not runners:
+                    continue
+                # Only store races that actually ran. Before the off the same
+                # page lists the card with zero placings (Nov-2026: 135 cards,
+                # 0 positions at 05:18 UTC); writing those would fill the
+                # snapshot with unrun races and hide the real evening results.
+                if not any(str(r.get("position") or "").strip() for r in runners):
+                    unplaced += 1
+                    continue
+
+                key = (course.lower(), str(race_no))
+                prev = by_race.get(key)
+                if prev is None or len(runners) > len(prev["runners"]):
+                    by_race[key] = {
                         "course": course,
-                        "date": date,
+                        "date": page_day or date,
                         "time": race_time,
                         "title": h3_text,
                         "runners": runners,
-                    })
+                    }
 
+        races = list(by_race.values())
         logger.info(
-            "ATR results: %d races from %d meetings",
+            "ATR results: %d races from %d meetings (%d articles, %d unplaced, %d bytes, day=%s)",
             len(races),
-            len([m for m in meeting_divs if m.css("a.panel-header h2", adaptive=True)]),
+            len(courses_seen),
+            articles_seen,
+            unplaced,
+            len(html),
+            page_day or date,
         )
         return races
 
@@ -625,8 +728,24 @@ class AtTheRacesAPI:
 
         Handles name matching: 'greyville' matches 'Greyville (RSA)' on ATR.
         Returns race list with runners, each runner having 'position' and 'name'.
+
+        Cached per-process for a few minutes: callers settle bet-by-bet, and an
+        uncached implementation re-fetched the whole results page once per open
+        pick (Nov-2026: 32 page fetches inside two seconds, each burning the
+        shared hourly browser allowance).
         """
-        all_results = await self.get_results(date=date)
+        import time as _time
+
+        cache = getattr(self, "_results_cache", None)
+        if cache is None:
+            cache = self._results_cache = {}
+        hit = cache.get(date)
+        ttl = self._RESULTS_CACHE_TTL if (hit and hit[1]) else self._RESULTS_CACHE_TTL_EMPTY
+        if hit and (_time.time() - hit[0]) < ttl:
+            all_results = hit[1]
+        else:
+            all_results = await self.get_results(date=date)
+            cache[date] = (_time.time(), all_results)
         if not all_results:
             return []
 

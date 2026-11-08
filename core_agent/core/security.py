@@ -34,6 +34,7 @@ SAFE_PATHS = {
     # Pages already lists it in openPaths — without this the probe 401s.
     "/v1/models",
     "/api/racing/exotics",
+    "/api/racing/predictor/status",
     "/api/news",
     "/api/news/images",
     "/api/telemetry",

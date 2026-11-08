@@ -74,8 +74,11 @@ def test_only_stale_results_fetch_and_commit(harness, monkeypatch):
 
     asyncio.run(monitor._refresh_atr_feeds({"events": {}}))
 
-    # Results day-loop only: yesterday + today. Movers/predictor stay untouched.
-    assert atr.calls == [("results", "yesterday"), ("results", "today")]
+    # Results day-loop only: today first, then yesterday (no snapshot on disk
+    # yet). Movers/predictor stay untouched. The order is load-bearing: the
+    # browser allowance is ~1/hour, so "yesterday" first starved "today" and
+    # the HUD only ever showed yesterday's card (Nov-2026).
+    assert atr.calls == [("results", "today"), ("results", "yesterday")]
     assert state["writes"] == [mon.ATR_RESULTS_PATH]
     assert state["commits"] == 1
     # The mount must be refreshed before the gate is trusted.
