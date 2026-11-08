@@ -177,6 +177,9 @@ export interface Predictor {
   course?: string;
   region?: string;
   time?: string;
+  /** ISO day of the racecard the prediction belongs to (Nov-2026: the feed
+   *  used to mix yesterday's "Recent Winners" digest into today's list). */
+  date?: string;
 }
 
 export interface NewsItem {

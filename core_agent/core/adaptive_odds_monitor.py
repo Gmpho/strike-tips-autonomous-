@@ -1162,6 +1162,22 @@ class AdaptiveOddsMonitor:
             return
 
         wrote = False
+        # One hourly browser allowance funds every stale page this cycle.
+        # Without this the first stale feed (results) took the whole hour and
+        # movers/predictor starved for days.
+        try:
+            stale_pages = 0
+            if not _atr_file_fresh(ATR_RESULTS_PATH):
+                stale_pages += 1
+            if not _atr_file_fresh(ATR_MOVERS_PATH):
+                stale_pages += 1
+            if not _atr_file_fresh(ATR_PREDICTOR_PATH):
+                stale_pages += 1
+            if stale_pages:
+                self.at_races.open_stealth_burst(stale_pages)
+        except Exception as exc:
+            logger.debug("ATR stealth burst open skipped: %s", exc)
+
         if _atr_file_fresh(ATR_RESULTS_PATH):
             logger.debug("ATR results fresh — skipping results fetch")
         else:

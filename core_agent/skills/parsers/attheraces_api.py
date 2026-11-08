@@ -157,6 +157,69 @@ def _text(el) -> str:
     return el.get_all_text(strip=True) if el else ""
 
 
+# Fractional ("7/4"), whole ("5"), or "Evens" — the only shapes ATR puts in a
+# price column. Anything else ("", ">", "—") is a layout cell, not a price.
+_PRICE_RE = re.compile(r"^(?:\d{1,4}(?:/\d{1,3})?|[Ee]vs?|Even[s]?)$")
+_PERCENT_RE = re.compile(r"^\d+(?:\.\d+)?%$")
+# "/racecard/Ffos-Las/08-November-2026/1240" (also -predictor variants).
+_RACECARD_RE = re.compile(
+    r"/racecard/([^/\"'?#]+)/(\d{2}-[A-Za-z]+-\d{4})/(\d{2})(\d{2})", re.I
+)
+
+
+def _is_price(text: str) -> bool:
+    return bool(_PRICE_RE.match((text or "").strip()))
+
+
+def _clean_horse(name: str) -> str:
+    """Strip ATR's "(cloth) " prefix and any trailing "(forecast odds)".
+
+    Cells arrive as "(1) Tap Tap Shamie" / "(5) Tune In A Box (3/1)". The
+    HUD cross-references movers against live runners by name, so the cloth
+    number had to go or the join never matched (Nov-2026).
+    """
+    s = re.sub(r"^\(\d+\)\s*", "", (name or "").strip())
+    s = re.sub(r"\s*\((?:\d+(?:/\d+)?|[Ee]vs?)\)\s*$", "", s)
+    return s.strip()
+
+
+def _racecard_parts(href: str) -> Tuple[str, str, str]:
+    """``/racecard/Ffos-Las/08-November-2026/1240`` → ("Ffos Las", "2026-11-08", "12:40")."""
+    m = _RACECARD_RE.search(href or "")
+    if not m:
+        return "", "", ""
+    course = m.group(1).replace("-", " ").strip()
+    day = ""
+    try:
+        from datetime import datetime as _dt
+        day = _dt.strptime(m.group(2), "%d-%B-%Y").date().isoformat()
+    except Exception:
+        day = ""
+    return course, day, f"{m.group(3)}:{m.group(4)}"
+
+
+def _caption_venue(text: str) -> str:
+    """"Top 10 Steamers for Ffos Las" → "Ffos Las"; every other caption → ""."""
+    m = re.search(r"\bfor\s+(.+)$", (text or "").strip(), re.I)
+    return m.group(1).strip() if m else ""
+
+
+def _header_labels(table) -> List[str]:
+    """Lower-cased header texts of a table (thead th, else first row's th)."""
+    heads = []
+    try:
+        heads = table.css("thead th", adaptive=True) or []
+    except Exception:
+        heads = []
+    if not heads:
+        try:
+            rows = table.css("tr", adaptive=True) or []
+            heads = rows[0].css("th", adaptive=True) if rows else []
+        except Exception:
+            heads = []
+    return [re.sub(r"\s+", " ", _text(h)).strip().lower() for h in heads]
+
+
 # ATR course shorthand → canonical track + region. ATR groups its pages by
 # meeting but the course lives in group headers, not row cells — parsers that
 # read cells alone produce "Unknown Venue" (Oct-2026: 439/574 movers). SA
@@ -240,7 +303,94 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
     "FONTWELL": {"track": "Fontwell", "region": "UK"},
     "DUN": {"track": "Dundalk", "region": "Ireland"},
     "DUNDALK": {"track": "Dundalk", "region": "Ireland"},
+    # ATR meeting names as they appear in table captions ("Ffos Las") and in
+    # /racecard/<Course>/ hrefs. Most 3-letter codes ATR prints in row cells
+    # ("Naa 13:00") are derived from these by _code_prefix_index(); the ones
+    # that are legacy rather than prefix abbreviations ("Ffl" for Ffos Las)
+    # must be listed explicitly.
+    "FFL": {"track": "Ffos Las", "region": "UK"},
+    "FFOS LAS": {"track": "Ffos Las", "region": "UK"},
+    "NAAS": {"track": "Naas", "region": "Ireland"},
+    "SANDOWN": {"track": "Sandown", "region": "UK"},
+    "DONCASTER": {"track": "Doncaster", "region": "UK"},
+    "KELSO": {"track": "Kelso", "region": "UK"},
+    "UTTOXETER": {"track": "Uttoxeter", "region": "UK"},
+    "GOWRAN PARK": {"track": "Gowran Park", "region": "Ireland"},
+    "NEWMARKET": {"track": "Newmarket", "region": "UK"},
+    "NEWBURY": {"track": "Newbury", "region": "UK"},
+    "AYR": {"track": "Ayr", "region": "UK"},
+    "WARWICK": {"track": "Warwick", "region": "UK"},
+    "WETHERBY": {"track": "Wetherby", "region": "UK"},
+    "HAYDOCK": {"track": "Haydock", "region": "UK"},
+    "LINGFIELD": {"track": "Lingfield", "region": "UK"},
+    "CHEPSTOW": {"track": "Chepstow", "region": "UK"},
+    "EXETER": {"track": "Exeter", "region": "UK"},
+    "TAUNTON": {"track": "Taunton", "region": "UK"},
+    "WINCANTON": {"track": "Wincanton", "region": "UK"},
+    "MARKET RASEN": {"track": "Market Rasen", "region": "UK"},
+    "PLUMPTON": {"track": "Plumpton", "region": "UK"},
+    "CARTMEL": {"track": "Cartmel", "region": "UK"},
+    "WORCESTER": {"track": "Worcester", "region": "UK"},
+    "HEREFORD": {"track": "Hereford", "region": "UK"},
+    "LUDLOW": {"track": "Ludlow", "region": "UK"},
+    "EPSOM": {"track": "Epsom", "region": "UK"},
+    "WINDSOR": {"track": "Windsor", "region": "UK"},
+    "BEVERLEY": {"track": "Beverley", "region": "UK"},
+    "REDCAR": {"track": "Redcar", "region": "UK"},
+    "THIRSK": {"track": "Thirsk", "region": "UK"},
+    "RIPON": {"track": "Ripon", "region": "UK"},
+    "CHESTER": {"track": "Chester", "region": "UK"},
+    "MUSSELBURGH": {"track": "Musselburgh", "region": "UK"},
+    "PERTH": {"track": "Perth", "region": "UK"},
+    "SLIGO": {"track": "Sligo", "region": "Ireland"},
+    "BALLINROBE": {"track": "Ballinrobe", "region": "Ireland"},
+    "KILBEGGAN": {"track": "Kilbeggan", "region": "Ireland"},
+    "DOWNPATRICK": {"track": "Downpatrick", "region": "Ireland"},
+    "DOWN ROYAL": {"track": "Down Royal", "region": "Ireland"},
+    "NAVAN": {"track": "Navan", "region": "Ireland"},
 }
+
+# Built lazily from ATR_COURSE_MAP by _code_prefix_index().
+_CODE_PREFIX_INDEX: Optional[Dict[str, Dict[str, str]]] = None
+
+
+def _code_prefix_index() -> Dict[str, Dict[str, str]]:
+    """ATR meeting code → venue, derived from the full names in the map.
+
+    ATR abbreviates a meeting to the first three letters of its name, spaces
+    removed and title-cased: "Ffos Las" → "Ffl", "Gowran Park" → "Gow", and
+    the code arrives in row cells as "Ffl 12:50". An ambiguous prefix ("New"
+    is Newcastle, Newmarket and Newbury) maps to a blank venue rather than
+    guessing: the HUD says "Course unverified", which is honest, while a wrong
+    venue is not. Defunct tracks are excluded so a closed course never
+    reappears as live.
+    """
+    global _CODE_PREFIX_INDEX
+    if _CODE_PREFIX_INDEX is not None:
+        return _CODE_PREFIX_INDEX
+
+    buckets: Dict[str, set] = {}
+    regions: Dict[str, str] = {}
+    for key, val in ATR_COURSE_MAP.items():
+        if not isinstance(val, dict):
+            continue
+        track, region = val.get("track"), val.get("region", "")
+        if not track or region == "defunct":
+            continue
+        regions.setdefault(track, region)
+        compact = key.replace(" ", "")
+        if len(compact) > 3:
+            buckets.setdefault(compact[:3], set()).add(track)
+
+    index: Dict[str, Dict[str, str]] = {}
+    for prefix, tracks in buckets.items():
+        if len(tracks) == 1:
+            track = next(iter(tracks))
+            index[prefix] = {"track": track, "region": regions.get(track, "")}
+        else:
+            index[prefix] = {"track": "", "region": ""}
+    _CODE_PREFIX_INDEX = index
+    return index
 
 
 def normalize_course(raw: str) -> Dict[str, str]:
@@ -254,7 +404,12 @@ def normalize_course(raw: str) -> Dict[str, str]:
     """
     _POISON_WORDS = ("summary", "results", "predictor", "movers", "login",
                      "join", "menu", "account", "watch", "tips", "news",
-                     "replay", "calendar")
+                     "replay", "calendar",
+                     # ATR's predictor/movers section headings. "Recent
+                     # Winners" is a results digest, not a venue, yet it was
+                     # accepted as one for 26 of 49 predictions (Nov-2026).
+                     "winner", "steamer", "drifter", "britain", "ireland",
+                     "horses", "exacta")
     _TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,23}$")
     # Meeting headers arrive as "Aintree 13:50"; the off-time is not part of
     # the venue and the digit guard below would blank the whole course. On
@@ -269,6 +424,14 @@ def normalize_course(raw: str) -> Dict[str, str]:
     for token in (key, key.split()[0] if key.split() else ""):
         if token in ATR_COURSE_MAP:
             return dict(ATR_COURSE_MAP[token])
+    # ATR prints 3-letter meeting codes in row cells ("Ffl 12:50", "San
+    # 13:10"). They are prefixes of the venue name, so resolve them against
+    # the map instead of passing "Ffl" through to the HUD. An ambiguous code
+    # resolves to a blank venue — never a guess.
+    if len(key) == 3 and key.isalpha():
+        hit = _code_prefix_index().get(key)
+        if hit is not None:
+            return dict(hit)
     text = (raw or "").strip()
     lowered = text.lower()
     if (not any(w in lowered for w in _POISON_WORDS)
@@ -400,6 +563,18 @@ class AtTheRacesAPI:
             import time as _time
             from core_agent.config.paths import DATA_DIR
             flag = DATA_DIR / ".atr_stealth_last"
+
+            # The monitor opens a burst once per refresh cycle: several stale
+            # pages ride the one allowance instead of fighting over it. Without
+            # this the first stale feed (results) consumed the hour and movers
+            # and the predictor starved indefinitely.
+            if getattr(self, "_burst_left", 0) > 0:
+                self._burst_left -= 1
+                if not getattr(self, "_burst_flag_written", False):
+                    self._burst_flag_written = True
+                    flag.write_text(str(_time.time()))
+                return True
+
             if flag.exists():
                 last = float(flag.read_text().strip() or 0)
                 if _time.time() - last < self._STEALTH_MIN_GAP_SECS:
@@ -408,6 +583,17 @@ class AtTheRacesAPI:
             return True
         except Exception:
             return True
+
+    def open_stealth_burst(self, pages: int) -> None:
+        """Fund up to ``pages`` browser fetches from a single hourly allowance.
+
+        Called by the monitor with the number of stale ATR feeds in this cycle.
+        Counts as one allowance (the flag is stamped once), so sibling cycles
+        still throttle normally.
+        """
+        self._burst_left = max(0, int(pages))
+        self._burst_flag_written = False
+
 
     def _fetch(self, path: str) -> Optional[bytes]:
         """Fetch with the circuit breaker wrapped around the tiered fallback."""
@@ -822,12 +1008,73 @@ class AtTheRacesAPI:
                     return runner.get("position") or None
         return None
 
-    async def get_market_movers(self) -> List[Dict]:
-        """Scrape /market-movers via table rows — columns: Horse, Race, Last Price, 1st Show, Mov.
+    @staticmethod
+    def _caption(table) -> Tuple[str, str]:
+        """(caption text, first anchor href) for a table."""
+        try:
+            caps = table.css("caption", adaptive=True) or []
+        except Exception:
+            caps = []
+        if not caps:
+            return "", ""
+        cap = caps[0]
+        text = re.sub(r"\s+", " ", _text(cap)).strip()
+        href = ""
+        try:
+            links = cap.css("a", adaptive=True) or []
+            if links:
+                href = links[0].attrib.get("href", "") or ""
+        except Exception:
+            href = ""
+        return text, href
 
-        Meeting-group aware (Oct-2026): ATR groups tables under meeting headers,
-        so each table inherits its meeting's course; the cell race-string is
-        only a fallback. Previously 439/574 movers parsed empty course.
+    @staticmethod
+    def _mover_columns(table) -> Dict[str, Optional[int]]:
+        """Header label → cell index, or {} when this is not a movers table.
+
+        ATR ships two layouts on the same page:
+            summary  Horse Name | Race | First Price | ▸ | Last Price | Mov | Index
+            per-race Horse Name | First Price | ▸ | Last Price | Mov | Index | Swing
+        Reading fixed indexes made every per-race row emit current_odds ">"
+        with no course (Nov-2026: 196 of 266 movers). Locate by label instead.
+        """
+        labels = _header_labels(table)
+        if not labels:
+            return {}
+
+        def find(needle: str) -> Optional[int]:
+            for i, label in enumerate(labels):
+                if needle in label:
+                    return i
+            return None
+
+        horse, last = find("horse"), find("last price")
+        if horse is None or last is None:
+            return {}
+        return {
+            "horse": horse,
+            "first": find("first price"),
+            "last": last,
+            "mov": find("mov"),
+            "race": find("race"),
+        }
+
+    @staticmethod
+    def _cell(cells, idx: Optional[int]) -> str:
+        if idx is None or idx >= len(cells):
+            return ""
+        return _text(cells[idx])
+
+    async def get_market_movers(self) -> List[Dict]:
+        """Scrape /market-movers into one normalised row per mover.
+
+        Columns are located by header label (ATR alternates two layouts), the
+        venue comes from the table caption's /racecard/ href, the caption's
+        "for <Course>" suffix, or the "Race" cell's 3-letter code — in that
+        order. Rows without a real price are dropped: they are layout cells
+        from unrelated tables, and storing them produced 196 of 266 movers
+        with current_odds ">" and an empty course (Nov-2026), which the HUD
+        rendered as "Course unverified — confirm on ATR".
         """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/market-movers"), timeout=150)
@@ -838,48 +1085,83 @@ class AtTheRacesAPI:
             return []
 
         sel = Selector(html, auto_save=True, adaptive=True)
-        movers = []
+        movers: List[Dict] = []
+        seen: set = set()
+        dropped = 0
+        dupes = 0
+        tables_used = 0
+        courses: set = set()
 
-        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
-            header_course = normalize_course(meeting_title)
-            rows = table.css("tr", adaptive=True)
-            if len(rows) < 2:
+        for _title, table in self._iter_meeting_tables(sel, html=html):
+            cols = self._mover_columns(table)
+            if not cols:
                 continue
-            for row in rows[1:]:
-                cells = row.css("td", adaptive=True)
-                if len(cells) < 3:
-                    continue
-                horse = _text(cells[0])
-                race_str = _text(cells[1])
-                last_price = _text(cells[2])
-                first_show = _text(cells[3]) if len(cells) > 3 else ""
-                movement = _text(cells[4]) if len(cells) > 4 else ""
+            tables_used += 1
 
-                course = time = region = ""
-                if header_course.get("track"):
-                    course, region = header_course["track"], header_course["region"]
+            cap_text, cap_href = self._caption(table)
+            href_course, _href_day, href_time = _racecard_parts(cap_href)
+            head = normalize_course(href_course or _caption_venue(cap_text))
+
+            try:
+                rows = table.css("tbody tr", adaptive=True) or table.css("tr", adaptive=True)
+            except Exception:
+                rows = []
+            for row in rows:
+                try:
+                    if row.css("th", adaptive=True):
+                        continue  # header row
+                    cells = row.css("td", adaptive=True)
+                except Exception:
+                    continue
+                if len(cells) <= (cols["last"] or 0):
+                    continue
+
+                current_odds = self._cell(cells, cols["last"])
+                if not _is_price(current_odds):
+                    dropped += 1
+                    continue
+                horse = _clean_horse(self._cell(cells, cols["horse"]))
+                if not horse:
+                    continue
+
+                first_show = self._cell(cells, cols["first"])
+                movement = self._cell(cells, cols["mov"])
+                race_str = self._cell(cells, cols["race"])
+
+                course, region, time = head["track"], head["region"], href_time
                 if race_str:
-                    parts = race_str.strip().split()
+                    parts = race_str.split()
                     if len(parts) >= 2:
                         if not course:
-                            cell = normalize_course(parts[0])
-                            course, region = cell["track"], cell["region"]
-                        time = parts[1]
-                    elif len(parts) == 1 and not time:
-                        maybe_time = re.match(r"^(\d{1,2}:\d{2})$", parts[0])
-                        if maybe_time:
-                            time = maybe_time.group(1)
+                            venue = normalize_course(parts[0])
+                            course, region = venue["track"], venue["region"]
+                        time = time or parts[1]
 
+                key = (horse.lower(), course.lower(), time)
+                if key in seen:
+                    dupes += 1
+                    continue
+                seen.add(key)
+                if course:
+                    courses.add(course)
                 movers.append({
                     "horse": horse,
                     "course": course,
                     "region": region,
                     "time": time,
-                    "current_odds": last_price,
-                    "first_show": first_show,
-                    "movement": movement,
+                    "current_odds": current_odds,
+                    "first_show": first_show if _is_price(first_show) else "",
+                    "movement": movement if _PERCENT_RE.match(movement.strip()) else "",
                 })
 
+        logger.info(
+            "ATR movers: %d rows from %d tables (%d duplicates, %d rows without a price dropped), courses=%s",
+            len(movers),
+            tables_used,
+            dupes,
+            dropped,
+            sorted(courses)[:8] or ["<none>"],
+        )
         return movers
 
     def _iter_meeting_tables(self, sel, html: bytes | None = None) -> List[Tuple[str, Any]]:
@@ -970,11 +1252,27 @@ class AtTheRacesAPI:
             pass
         return out
 
-    async def get_predictor(self) -> List[Dict]:
-        """Scrape /predictor for AI predictions (table-based, meeting-aware).
+    @staticmethod
+    def _is_predictor_table(table) -> bool:
+        """True for ATR's predictor tables (shares the header with the digest).
 
-        Oct-2026: previously scraped zero meeting context — every prediction
-        was courseless. Tables now inherit their meeting header's course/time.
+        Both the shortlists and "Recent Winners" use
+        ``Race Details (Runners) | (Cloth) Horse Name (Forecast) | Predictor / Result``,
+        so shape alone does not separate today's card from yesterday's digest.
+        """
+        labels = _header_labels(table)
+        return (any("horse name" in l for l in labels)
+                and any("predictor" in l for l in labels))
+
+    async def get_predictor(self) -> List[Dict]:
+        """Scrape /predictor into one row per runner, with venue, day and time.
+
+        Everything needed lives in the first cell: ``1 12:40 Sandown (6)`` plus
+        a ``/racecard/Sandown/08-November-2026/1240`` href. The old parser read
+        the nearest ``<h3>`` instead, so 26 of 49 predictions were filed under
+        "Recent Winners", one had no course at all, and none had a time
+        (Nov-2026). Rows are also filtered to the page's own day, which drops
+        the Yesterday digest that shares the table shape.
         """
         try:
             html = await asyncio.wait_for(asyncio.to_thread(self._fetch, "/predictor"), timeout=150)
@@ -988,38 +1286,77 @@ class AtTheRacesAPI:
                 logger.warning("ATR predictor: fetch returned no HTML (host blocked or empty)")
             return []
 
+        page_day = self._page_date(html)
         sel = Selector(html, auto_save=True, adaptive=True)
-        predictions = []
+        predictions: List[Dict] = []
+        seen: set = set()
+        off_day = 0
+        tables_used = 0
 
-        for meeting_title, table in self._iter_meeting_tables(sel, html=html):
-            header = normalize_course(meeting_title)
-            rows = table.css("tr", adaptive=True)
-            if len(rows) < 2:
+        for _title, table in self._iter_meeting_tables(sel, html=html):
+            if not self._is_predictor_table(table):
                 continue
-            for row in rows[1:]:
-                cells = row.css("td", adaptive=True)
+            tables_used += 1
+            try:
+                rows = table.css("tbody tr", adaptive=True) or table.css("tr", adaptive=True)
+            except Exception:
+                rows = []
+            for row in rows:
+                try:
+                    if row.css("th", adaptive=True):
+                        continue  # header row
+                    cells = row.css("td", adaptive=True)
+                except Exception:
+                    continue
                 if len(cells) < 2:
                     continue
-                horse_raw = _text(cells[1]) if len(cells) > 1 else ""
-                prediction = _text(cells[2]) if len(cells) > 2 else ""
 
-                # Extract horse name from "(cloth) HorseName (odds)" format
-                horse_name = horse_raw
-                m = re.search(r"\)\s*(.+?)\s*\(", horse_raw)
-                if m:
-                    horse_name = m.group(1).strip()
+                href = ""
+                try:
+                    links = cells[0].css("a[href*='/racecard/']", adaptive=True) or []
+                    if links:
+                        href = links[0].attrib.get("href", "") or ""
+                except Exception:
+                    href = ""
+                course_raw, day, time = _racecard_parts(href)
+                if not course_raw:
+                    continue  # section heading row, not a prediction
+                if page_day and day and day != page_day:
+                    off_day += 1
+                    continue
 
+                venue = normalize_course(course_raw)
+                horse_raw = _text(cells[1])
+                horse = _clean_horse(horse_raw)
+                if not horse:
+                    continue
+
+                key = (horse.lower(), venue["track"].lower(), day, time)
+                if key in seen:
+                    continue
+                seen.add(key)
                 predictions.append({
-                    "horse": horse_name,
+                    "horse": horse,
                     "raw": horse_raw,
-                    "prediction": prediction,
-                    "course": header.get("track", ""),
-                    "region": header.get("region", ""),
+                    "prediction": _text(cells[2]) if len(cells) > 2 else "",
+                    "course": venue["track"],
+                    "region": venue["region"],
+                    "time": time,
+                    "date": day,
                 })
 
         if not predictions:
             logger.warning(
                 "ATR predictor: page fetched (%d bytes) but 0 predictions parsed",
                 len(html or ""),
+            )
+        else:
+            logger.info(
+                "ATR predictor: %d rows from %d tables (%d rows outside %s skipped), courses=%s",
+                len(predictions),
+                tables_used,
+                off_day,
+                page_day or "the page day",
+                sorted({p["course"] for p in predictions if p["course"]})[:8],
             )
         return predictions

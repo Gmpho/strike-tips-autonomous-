@@ -165,6 +165,10 @@ def test_settlement_reads_the_stamped_iso_date():
 class _FakeATR:
     def __init__(self):
         self.calls = []
+        self.bursts = []
+
+    def open_stealth_burst(self, pages):
+        self.bursts.append(pages)
 
     async def get_results(self, day):
         self.calls.append(day)
@@ -211,6 +215,30 @@ def test_today_is_fetched_before_yesterday(monitor):
     asyncio.run(m._refresh_atr_feeds({"events": {}}))
 
     assert atr_api.calls == ["today", "yesterday"]
+    # One allowance funded the whole stale-feed burst (results only here).
+    assert atr_api.bursts == [1]
+
+
+def test_stealth_burst_funds_one_allowance_for_several_pages(monkeypatch, tmp_path):
+    import time
+
+    from core_agent.config import paths as cfg_paths
+
+    monkeypatch.setattr(cfg_paths, "DATA_DIR", tmp_path)
+    api = atr.AtTheRacesAPI()
+
+    # No burst: the first call takes the allowance, the next is throttled.
+    assert api._stealth_allowed() is True
+    assert api._stealth_allowed() is False
+
+    # A burst spends the same (already used) allowance for every stale page.
+    api.open_stealth_burst(3)
+    assert [api._stealth_allowed() for _ in range(3)] == [True, True, True]
+    assert api._stealth_allowed() is False
+
+    # The burst stamped the flag once, so the hour is still consumed.
+    flag = tmp_path / ".atr_stealth_last"
+    assert time.time() - float(flag.read_text().strip()) < 5
 
 
 def test_yesterday_is_not_refetched_once_captured(monitor):

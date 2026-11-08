@@ -142,6 +142,8 @@ export const COURSE_FULL_NAMES: Record<string, string> = {
   Lis: 'Listowel Racecourse, County Kerry',
   Naas: 'Naas Racecourse, County Kildare',
   Naa: 'Naas Racecourse, County Kildare',
+  'Ffos Las': 'Ffos Las Racecourse, Carmarthenshire',
+  Ffl: 'Ffos Las Racecourse, Carmarthenshire',
   Navan: 'Navan Racecourse, County Meath',
   Nav: 'Navan Racecourse, County Meath',
   Punchestown: 'Punchestown Racecourse, County Kildare',

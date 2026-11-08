@@ -25,6 +25,19 @@ from core_agent.skills.parsers.atr_enrich import (
     ("Hex", "Hexham", "UK"),
     ("Fon", "Fontwell", "UK"),
     ("Dun", "Dundalk", "Ireland"),
+    # Nov-2026: these three were the only courses left on the live movers
+    # feed, and all three fell through to raw 3-letter codes, so the HUD
+    # rendered "Course unverified — confirm on ATR" for every mover.
+    ("Ffl", "Ffos Las", "UK"),
+    ("Ffos Las", "Ffos Las", "UK"),
+    ("Naa", "Naas", "Ireland"),
+    ("Naas (IRE)", "Naas", "Ireland"),
+    ("San", "Sandown", "UK"),
+    ("Don", "Doncaster", "UK"),
+    ("Kel", "Kelso", "UK"),
+    ("Utt", "Uttoxeter", "UK"),
+    ("Sou", "Southwell", "UK"),
+    ("Gow", "Gowran Park", "Ireland"),
     ("G", "Greyville", "SA"),
     ("N", "Greyville Poly", "SA"),
     ("Y", "Flamingo Park (closed 2020)", "defunct"),
@@ -41,6 +54,36 @@ def test_normalize_course(raw, track, region):
     got = normalize_course(raw)
     assert got["track"] == track
     assert got["region"] == region
+
+
+@pytest.mark.parametrize("raw", [
+    # ATR's predictor/movers section headings, not venues. "Recent Winners"
+    # claimed 26 of 49 predictions before the poison list covered it.
+    "Recent Winners",
+    "Today’s Top Horses",
+    "Today’s Top Exactas",
+    "Top 10 Steamers - Great Britain & Ireland",
+    "Top 10 Drifters for Ffos Las",
+])
+def test_section_headings_are_never_venues(raw):
+    """A wrong venue is worse than a blank one — always."""
+    assert normalize_course(raw)["track"] == ""
+
+
+def test_ambiguous_codes_never_guess():
+    """"New" is Newcastle, Newmarket and Newbury — a guess labels the wrong
+    meeting, so the code resolves to a blank venue instead."""
+    assert normalize_course("New")["track"] == ""
+
+
+@pytest.mark.parametrize("code,track", [
+    ("Sco", "Scottsville"),
+    ("Ken", "Kenilworth"),
+    ("Tur", "Turffontein"),
+    ("Vaa", "Vaal"),
+])
+def test_single_venue_prefixes_resolve(code, track):
+    assert normalize_course(code)["track"] == track
 
 
 def test_defunct_never_resolves_live():
@@ -154,3 +197,185 @@ def test_segment_by_headings_pairs_tables():
     assert seg[0][0] == "Kempton"
     assert seg[1][0] == "Southwell"
     assert "<table>" in seg[0][1]
+
+
+# ── Nov-2026: movers/predictor shipped rows with no venue ──────────────────
+#
+# ATR serves /market-movers as TWO table shapes on the same page:
+#   summary   Horse Name | Race | First Price | ▸ | Last Price | Mov | ATR Index
+#   per-race  Horse Name | First Price | ▸ | Last Price | Mov | ATR Index | Swing
+# plus a "Top 10 Steamers - Great Britain & Ireland" digest and a cookie table.
+# The old parser assumed the summary shape and read fixed cell indexes, so
+# every per-race row emitted current_odds ">" and an empty course — 196 of 266
+# rows — and the HUD printed "Course unverified — confirm on ATR".
+
+MOVERS_PAGE = b"""
+<html><body>
+<table><tr><td>Registers a unique ID to keep statistics of what videos
+from YouTube the user has seen</td></tr></table>
+
+<table>
+  <caption>Top 10 Steamers - Great Britain &amp; Ireland</caption>
+  <thead><tr><th>Horse Name</th><th>Race</th><th>First Price</th><th></th>
+  <th>Last Price</th><th>Mov</th><th>ATR Index</th></tr></thead>
+  <tbody>
+    <tr><td>(1) Tap Tap Shamie</td><td>Ffl 12:50</td><td>7/4</td><td>&gt;</td>
+        <td>10/11</td><td>48%</td><td>1535</td></tr>
+    <tr><td>(4) Love Me Tender</td><td>Naa 13:00</td><td>10/11</td><td>&gt;</td>
+        <td>4/6</td><td>26.37%</td><td>722</td></tr>
+  </tbody>
+</table>
+
+<table>
+  <caption><a href="/racecard/Ffos-Las/08-November-2026/1250">12:50 Blackmores
+  Build Novices' Hurdle (GBB Race)</a></caption>
+  <thead><tr><th>Horse Name</th><th>First Price</th><th></th><th>Last Price</th>
+  <th>Mov</th><th>ATR Index</th><th>Graphical Swing</th></tr></thead>
+  <tbody>
+    <tr><td>(1) Tap Tap Shamie</td><td>7/4</td><td>&gt;</td><td>10/11</td>
+        <td>48%</td><td>1535</td><td></td></tr>
+    <tr><td>(4) Ink Black Heart</td><td>5/2</td><td>&gt;</td><td>11/4</td>
+        <td>10%</td><td>171</td><td></td></tr>
+  </tbody>
+</table>
+
+<table>
+  <caption><a href="/racecard/Sandown/08-November-2026/1310">13:10
+  Oddschecker Maiden Hurdle (GBB Race)</a></caption>
+  <thead><tr><th>Horse Name</th><th>First Price</th><th></th><th>Last Price</th>
+  <th>Mov</th><th>ATR Index</th><th>Graphical Swing</th></tr></thead>
+  <tbody>
+    <tr><td>(3) Kaylan</td><td>5/1</td><td>&gt;</td><td>7/2</td>
+        <td>30%</td><td>900</td><td></td></tr>
+  </tbody>
+</table>
+</body></html>
+"""
+
+
+def _movers(page=MOVERS_PAGE):
+    from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+
+    api = AtTheRacesAPI()
+    api._fetch = lambda path: page
+    import asyncio
+    return asyncio.run(api.get_market_movers())
+
+
+def test_movers_resolve_the_venue_for_every_row():
+    pytest.importorskip("scrapling")
+    rows = _movers()
+
+    assert rows, "no movers parsed"
+    assert all(r["course"] for r in rows), [r for r in rows if not r["course"]]
+    assert {r["course"] for r in rows} == {"Ffos Las", "Naas", "Sandown"}
+    assert {r["region"] for r in rows} == {"UK", "Ireland"}
+
+
+def test_movers_read_the_real_price_columns():
+    """current_odds is Last Price, first_show is First Price — not swapped."""
+    pytest.importorskip("scrapling")
+    by_horse = {r["horse"]: r for r in _movers()}
+
+    shamie = by_horse["Tap Tap Shamie"]
+    assert shamie["current_odds"] == "10/11"
+    assert shamie["first_show"] == "7/4"
+    assert shamie["movement"] == "48%"
+    assert shamie["time"] == "12:50" and shamie["course"] == "Ffos Las"
+
+    tender = by_horse["Love Me Tender"]
+    assert (tender["current_odds"], tender["first_show"]) == ("4/6", "10/11")
+    assert tender["course"] == "Naas" and tender["time"] == "13:00"
+
+
+def test_movers_drop_rows_without_a_price():
+    """A ">" arrow cell is layout, not a price; it must never become one."""
+    pytest.importorskip("scrapling")
+    rows = _movers()
+    assert all(r["current_odds"] not in ("", ">") for r in rows)
+
+
+def test_movers_strip_the_saddlecloth_prefix():
+    """The HUD joins movers to live runners by name, so "(1) " has to go."""
+    pytest.importorskip("scrapling")
+    assert not any(r["horse"].startswith("(") for r in _movers())
+
+
+def test_movers_dedupe_summary_against_per_race_tables():
+    """Tap Tap Shamie appears in both shapes; the list must show her once."""
+    pytest.importorskip("scrapling")
+    horses = [r["horse"] for r in _movers()]
+    assert len(horses) == len(set(horses))
+
+
+PREDICTOR_PAGE = b"""
+<html><body>
+<input type="text" name="race-nav-datepicker" id="race-nav-datepicker"
+       value="2026-11-08" readonly="readonly">
+
+<table>
+  <thead><tr><th>Race Details (Runners)</th><th>(Cloth) Horse Name (Forecast)</th>
+  <th>Predictor / Result</th></tr></thead>
+  <tbody>
+    <tr><td>1 12:40 Sandown (6)
+        <a href="/racecard/Sandown/08-November-2026/1240/predictor?showfix=yes">Sandown</a></td>
+        <td>(5) Tune In A Box (3/1)</td>
+        <td>Predictor Data Quality: 72.62% Percent Ahead: 24.67%</td></tr>
+    <tr><td>6 15:37 Ffos Las (7)
+        <a href="/racecard/Ffos-Las/08-November-2026/1537/predictor?showfix=yes">Ffos Las</a></td>
+        <td>(2) Impatient (4/1)</td>
+        <td>Predictor Data Quality: 75.07% Percent Ahead: 16.75%</td></tr>
+  </tbody>
+</table>
+
+<table>
+  <thead><tr><th>Race Details (Runners)</th><th>(Cloth) Horse Name (Forecast)</th>
+  <th>Predictor / Result</th></tr></thead>
+  <tbody>
+    <tr><td>Sunday 8th Nov 2026</td></tr>
+    <tr><td>Saturday 7th Nov 2026</td></tr>
+    <tr><td>6 17:00 Southwell (9)
+        <a href="/racecard/Southwell/07-November-2026/1700/predictor?showfix=yes">Southwell</a></td>
+        <td>(1) Go On My Son (4/1)</td>
+        <td>1st @ 4/6 Data Quality: 60.82%</td></tr>
+  </tbody>
+</table>
+</body></html>
+"""
+
+
+def _predictions(page=PREDICTOR_PAGE):
+    from core_agent.skills.parsers.attheraces_api import AtTheRacesAPI
+
+    api = AtTheRacesAPI()
+    api._fetch = lambda path: page
+    import asyncio
+    return asyncio.run(api.get_predictor())
+
+
+def test_predictor_course_comes_from_the_racecard_link():
+    """Not from the nearest <h3>: that filed 26 of 49 rows under "Recent Winners"."""
+    pytest.importorskip("scrapling")
+    rows = _predictions()
+
+    assert [(r["course"], r["time"]) for r in rows] == [
+        ("Sandown", "12:40"),
+        ("Ffos Las", "15:37"),
+    ]
+    assert all(r["region"] == "UK" for r in rows)
+
+
+def test_predictor_skips_yesterdays_digest():
+    """The Recent Winners table shares the header but is a results digest."""
+    pytest.importorskip("scrapling")
+    rows = _predictions()
+
+    assert "Recent Winners" not in {r["course"] for r in rows}
+    assert "Southwell" not in {r["course"] for r in rows}
+    assert {r["date"] for r in rows} == {"2026-11-08"}
+
+
+def test_predictor_strips_cloth_and_odds_from_the_horse_name():
+    pytest.importorskip("scrapling")
+    assert [r["horse"] for r in _predictions()] == ["Tune In A Box", "Impatient"]
+
