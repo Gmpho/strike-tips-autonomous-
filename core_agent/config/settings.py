@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 
 # Load environment variables from .env file
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
 @dataclass
