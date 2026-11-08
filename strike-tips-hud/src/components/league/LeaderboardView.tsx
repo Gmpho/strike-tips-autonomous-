@@ -8,6 +8,7 @@ import { apiFetch } from '../../lib/api-fetch';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useIsLight } from '../../hooks/useIsLight';
 import { Avatar, type AvatarDescriptor } from './Avatar';
+import { PicksHistoryTable } from './PicksHistoryTable';
 import { ApexChart } from '../analytics/ApexChart';
 import { apexBaseFor, APEX_ACCENT } from '../analytics/apex-theme';
 
@@ -508,30 +509,21 @@ export const LeaderboardView: React.FC = () => {
                             <td className="px-1 md:px-2 py-3 text-slate-500 text-xs text-center">{open ? '▲' : '▼'}</td>
                           </tr>
                           {open && (
-                            <tr className="bg-slate-900/40">
-                              <td colSpan={8} className="px-3 md:px-4 py-3 space-y-1.5">
+                            <tr className="bg-theme-secondary/20 border-t border-theme">
+                              <td colSpan={8} className="p-2 sm:p-4">
                                 {loadingPicks === r.entity_id && picks.length === 0 ? (
-                                  <p className="text-slate-500 text-xs">Loading picks…</p>
+                                  <div className="flex items-center justify-center py-6">
+                                    <div className="w-5 h-5 border-2 border-purple-500/20 border-t-purple-500 rounded-full animate-spin" />
+                                  </div>
                                 ) : picks.length === 0 ? (
-                                  <p className="text-slate-500 text-xs">No picks on record.</p>
+                                  <p className="text-theme-secondary/60 text-xs py-3 text-center">No picks on record.</p>
                                 ) : (
-                                  picks.map((pk, i) => (
-                                    <div key={i} className="flex items-center gap-2 text-xs">
-                                      <span className="text-slate-500 w-16 md:w-20 shrink-0">{pk.date ? String(pk.date).slice(0, 10) : '—'}</span>
-                                      <span className="text-slate-300 truncate flex-1 min-w-0">
-                                        {pk.course ? `${pk.course} R${pk.race_number}` : `Race ${pk.race_id}`}
-                                        {' · '}#{pk.runner_number} {pk.runner_name}
-                                      </span>
-                                      <span className="text-slate-400 w-10 text-right shrink-0">{pk.pick_odds}</span>
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                                        pk.settled
-                                          ? (pk.won ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-600/30 text-slate-400')
-                                          : 'bg-amber-500/15 text-amber-400'
-                                      }`}>
-                                        {pk.settled ? (pk.won ? `WON${pk.points ? ` +${pk.points}` : ''}` : 'LOST') : 'Pending'}
-                                      </span>
-                                    </div>
-                                  ))
+                                  <PicksHistoryTable
+                                    picks={picks}
+                                    title={`${r.handle}'s Picks`}
+                                    compact={true}
+                                    pageSize={8}
+                                  />
                                 )}
                               </td>
                             </tr>

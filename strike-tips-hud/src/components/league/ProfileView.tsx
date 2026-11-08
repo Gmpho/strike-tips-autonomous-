@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Camera, X, ImageOff, Target, History, Trophy,
+  Camera, X, ImageOff, Target, Trophy,
 } from 'lucide-react';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { useIsLight } from '../../hooks/useIsLight';
 import { apiFetch } from '../../lib/api-fetch';
 import { Avatar, PRESET_STYLES, type AvatarDescriptor } from './Avatar';
+import { PicksHistoryTable } from './PicksHistoryTable';
 import { ApexChart } from '../analytics/ApexChart';
 import { apexBaseFor, APEX_UP, APEX_DOWN, APEX_ACCENT } from '../analytics/apex-theme';
 
@@ -39,28 +40,6 @@ interface Me {
     strike_rate: number; place_rate: number; points: number;
     qualified: boolean; needed: number;
   };
-}
-
-const isoDay = (d: Date) => d.toLocaleDateString('en-CA');
-
-/** 1 → "1st" … 4 → "4th"; anything unknown keeps the plain WON wording. */
-function finishLabel(pos: number | null | undefined): string {
-  if (!pos || pos < 1 || pos > 4) return 'WON';
-  return ['1st', '2nd', '3rd', '4th'][pos - 1];
-}
-function pickDay(p: MePick): string {
-  if (p.date) return String(p.date).slice(0, 10);
-  if (p.off_iso) return String(p.off_iso).slice(0, 10);
-  return 'Unknown';
-}
-function dayLabel(key: string): string {
-  const today = new Date();
-  const yesterday = new Date(today.getTime() - 86_400_000);
-  if (key === isoDay(today)) return 'Today';
-  if (key === isoDay(yesterday)) return 'Yesterday';
-  const d = new Date(`${key}T12:00:00`);
-  if (isNaN(d.getTime())) return key;
-  return d.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 export const ProfileView: React.FC = () => {
@@ -111,15 +90,6 @@ export const ProfileView: React.FC = () => {
       setSavingAvatar(false);
     }
   };
-
-  const history = useMemo(() => {
-    const groups: Record<string, MePick[]> = {};
-    for (const p of me?.picks || []) {
-      const key = pickDay(p);
-      (groups[key] = groups[key] || []).push(p);
-    }
-    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [me]);
 
   if (!session?.access_token) {
     return (
@@ -295,39 +265,11 @@ export const ProfileView: React.FC = () => {
         )}
 
         {/* Pick history */}
-        <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4">
-          <h3 className="text-white font-bold text-sm mb-3 flex items-center gap-2">
-            <History className="w-4 h-4 text-slate-400" /> Your pick history
-          </h3>
-          {history.length === 0 ? (
-            <p className="text-slate-500 text-sm">No picks yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {history.map(([day, picks]) => (
-                <div key={day}>
-                  <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">{dayLabel(day)}</div>
-                  <div className="space-y-1">
-                    {picks.map((p, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 text-sm">
-                        <span className="text-white truncate">
-                          {p.course ? `${p.course} · R${p.race_number}` : `Race ${p.race_id}`}
-                          {' · '}#{p.runner_number} {p.runner_name || ''}
-                        </span>
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                          p.settled
-                            ? (p.won ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-600/30 text-slate-400')
-                            : 'bg-amber-500/15 text-amber-400'
-                        }`}>
-                          {p.settled ? (p.won ? `${finishLabel(p.finish_position)}${p.points ? ` +${p.points}` : ''}` : 'LOST') : 'Pending'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <PicksHistoryTable
+          picks={me?.picks || []}
+          title="Your Pick History"
+          pageSize={10}
+        />
       </div>
     </div>
   );
