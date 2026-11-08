@@ -201,6 +201,7 @@ def monitor(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "_volume_commit", lambda: None)
     monkeypatch.setattr(mon, "_atr_snapshot_fresh", lambda *a, **k: False)
     monkeypatch.setattr(mon, "_atr_file_fresh", lambda p, *a, **k: p != str(results_path))
+    monkeypatch.setattr(mon, "_atr_predictor_fresh", lambda *a, **k: True)
 
     writes = {}
     monkeypatch.setattr(

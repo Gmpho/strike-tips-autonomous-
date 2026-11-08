@@ -735,22 +735,6 @@ def _merge_daily_scan_into(state: dict):
 ATR_REFRESH_MIN_GAP_SECS = 45 * 60
 
 
-def _atr_snapshot_fresh(max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
-    """True when ALL three ATR snapshots were written within max_age_secs."""
-    import time as _time
-    try:
-        mtimes = [
-            Path(p).stat().st_mtime
-            for p in (ATR_RESULTS_PATH, ATR_MOVERS_PATH, ATR_PREDICTOR_PATH)
-            if Path(p).exists()
-        ]
-        if len(mtimes) < 3:
-            return False
-        return (_time.time() - min(mtimes)) < max_age_secs
-    except Exception:
-        return False
-
-
 def _atr_file_fresh(path, max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
     """True when a single ATR snapshot file was written within max_age_secs.
 
@@ -761,6 +745,53 @@ def _atr_file_fresh(path, max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
     try:
         p = Path(path)
         return p.exists() and (_time.time() - p.stat().st_mtime) < max_age_secs
+    except Exception:
+        return False
+
+
+def _atr_predictor_fresh(max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
+    """True when the predictor's last SUCCESS is within max_age_secs.
+
+    A failed predictor attempt still rewrites the snapshot — that is how the HUD
+    learns the reason — but keeps the previous `timestamp`. Judging the gate by
+    file mtime therefore read "fresh" after every failure and the feed was never
+    retried (Nov-2026: 18.8h stale with the file rewritten every cycle). The
+    payload's own timestamp is the only honest signal; mtime is the fallback for
+    legacy snapshots that have none.
+    """
+    from datetime import datetime as _dt
+
+    p = Path(ATR_PREDICTOR_PATH)
+    if not p.exists():
+        return False
+    try:
+        data = json.loads(p.read_text())
+    except Exception:
+        return False
+    ts = data.get("timestamp") if isinstance(data, dict) else None
+    if not ts:
+        return _atr_file_fresh(p, max_age_secs)
+    try:
+        when = _dt.fromisoformat(str(ts).replace("Z", "+00:00"))
+        now = _dt.now(when.tzinfo) if when.tzinfo else _dt.now()
+        return (now - when).total_seconds() < max_age_secs
+    except Exception:
+        return _atr_file_fresh(p, max_age_secs)
+
+
+def _atr_snapshot_fresh(max_age_secs: int = ATR_REFRESH_MIN_GAP_SECS) -> bool:
+    """True when ALL three ATR snapshots hold data younger than max_age_secs.
+
+    Predictor freshness comes from its last-success timestamp rather than mtime
+    (see _atr_predictor_fresh) — otherwise a rewritten failure record would make
+    the whole set look current and short-circuit the retry.
+    """
+    try:
+        if not _atr_file_fresh(ATR_RESULTS_PATH, max_age_secs):
+            return False
+        if not _atr_file_fresh(ATR_MOVERS_PATH, max_age_secs):
+            return False
+        return _atr_predictor_fresh(max_age_secs)
     except Exception:
         return False
 
@@ -1171,7 +1202,7 @@ class AdaptiveOddsMonitor:
                 stale_pages += 1
             if not _atr_file_fresh(ATR_MOVERS_PATH):
                 stale_pages += 1
-            if not _atr_file_fresh(ATR_PREDICTOR_PATH):
+            if not _atr_predictor_fresh():
                 stale_pages += 1
             if stale_pages:
                 self.at_races.open_stealth_burst(stale_pages)
@@ -1237,7 +1268,7 @@ class AdaptiveOddsMonitor:
             except Exception as exc:
                 logger.debug("ATR movers fetch skipped: %s", exc)
 
-        if _atr_file_fresh(ATR_PREDICTOR_PATH):
+        if _atr_predictor_fresh():
             logger.debug("ATR predictor fresh — skipping predictor fetch")
         else:
             # Predictor is the one ATR feed that historically failed silently:
