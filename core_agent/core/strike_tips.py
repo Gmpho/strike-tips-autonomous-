@@ -2933,6 +2933,185 @@ class StrikeTips:
             "results": all_results,
         }
 
+    def _build_uk_single_race_exotics(self, track: str, races: List[Dict]) -> List[Dict]:
+        """UK single-race exotics (Forecast/Tricast) for one meeting.
+
+        UK meetings do not carry SA's multi-leg tote pools (Bipot/PA/Pick 6),
+        but they do offer single-race Forecast (exacta) and Tricast (trifecta)
+        at essentially every meeting. Built deterministically from the card so
+        UK punters see something on the exotics tab instead of nothing. Marked
+        analysis-only (no money moves) until a real UK pool feed is wired.
+        """
+        plays: List[Dict] = []
+        if not races or len(races) < 2:
+            return plays
+        jur = _jurisdiction_for_track(track)
+
+        for race in races:
+            try:
+                rn_int = int(race.get("race_number"))
+            except (ValueError, TypeError):
+                continue
+            runners = [str(r) for r in (race.get("runners") or []) if r]
+            if len(runners) < 3:
+                continue
+            vbs = race.get("value_bets") or []
+            anchors = [vb.get("horse") for vb in vbs if isinstance(vb, dict) and vb.get("horse")]
+            banker = anchors[0] if anchors else runners[0]
+            savers = (anchors[1:3] if len(anchors) > 1 else runners[1:3])
+            if not savers:
+                savers = runners[1:3]
+
+            # Tricast (trifecta): banker 1st + 2 savers for 2nd/3rd.
+            plays.append({
+                "pool": "TRIFECTA",
+                "legs": [rn_int],
+                "combinations": [{"race": rn_int, "banker": banker, "savers": list(savers)}],
+                "estimated_combinations": 1 + len(savers),
+                "estimated_dividend": 350.0,
+                "reasoning": "UK single-race tricast (Forecast/Tricast) — analysis only.",
+                "_track": track,
+                "source": "uk-single-race",
+                "jurisdiction": jur,
+            })
+            # Forecast (exacta): banker + 1 saver.
+            plays.append({
+                "pool": "EXACTA",
+                "legs": [rn_int],
+                "combinations": [{"race": rn_int, "banker": banker, "savers": [savers[0]]}],
+                "estimated_combinations": 2,
+                "estimated_dividend": 150.0,
+                "reasoning": "UK single-race forecast (exacta) — analysis only.",
+                "_track": track,
+                "source": "uk-single-race",
+                "jurisdiction": jur,
+            })
+
+        # One Pick 3 on the first three consecutive races.
+        triple: List[int] = []
+        for race in races:
+            try:
+                triple.append(int(race.get("race_number")))
+            except (ValueError, TypeError):
+                pass
+            if len(triple) == 3:
+                break
+        if len(triple) == 3 and triple[1] == triple[0] + 1 and triple[2] == triple[1] + 1:
+            combos = []
+            for rn_int in triple:
+                race = next((r for r in races if int(r.get("race_number", 0) or 0) == rn_int), None)
+                runners = [str(r) for r in ((race or {}).get("runners") or []) if r]
+                banker = runners[0] if runners else "—"
+                combos.append({"race": rn_int, "banker": banker, "savers": runners[1:3]})
+            plays.append({
+                "pool": "PICK 3",
+                "legs": triple,
+                "combinations": combos,
+                "estimated_combinations": 3 * 3 * 3,
+                "estimated_dividend": 800.0,
+                "reasoning": "UK single-race Pick 3 — analysis only.",
+                "_track": track,
+                "source": "uk-single-race",
+                "jurisdiction": jur,
+            })
+        return plays
+
+    def _record_paper_bets_for_region(self, all_results: Dict) -> None:
+        """Append UK value bets to bet_history.json as paper rows (is_paper=True).
+
+        Makes UK tracks visible in analytics/region ROI without moving any
+        money and without touching the (protected) bankroll governor. Dedups by
+        (date, track, race, horse) so re-scans do not stack duplicates.
+        """
+        import json as _json
+        import os as _os
+        import uuid as _uuid
+        from datetime import date as _date
+        from datetime import datetime as _dt
+
+        path = _os.path.join(self.data_dir, "bet_history.json")
+        try:
+            if _os.path.exists(path):
+                with open(path) as f:
+                    bets = _json.load(f)
+            else:
+                bets = []
+        except Exception:
+            return
+        if not isinstance(bets, list):
+            return
+
+        existing = {
+            (str(b.get("date")), str(b.get("track")), int(b.get("race_number") or 0), str(b.get("horse")))
+            for b in bets
+            if isinstance(b, dict)
+        }
+        today = _date.today().isoformat()
+        added = 0
+        for track, races in (all_results or {}).items():
+            for race in (races or []):
+                if not isinstance(race, dict):
+                    continue
+                try:
+                    rn_int = int(race.get("race_number"))
+                except (ValueError, TypeError):
+                    rn_int = 0
+                for vb in (race.get("value_bets") or []):
+                    if not isinstance(vb, dict):
+                        continue
+                    horse = vb.get("horse") or ""
+                    if not horse:
+                        continue
+                    key = (today, str(track), rn_int, str(horse))
+                    if key in existing:
+                        continue
+                    try:
+                        odds = float(vb.get("odds_decimal") or vb.get("odds") or 0)
+                    except (ValueError, TypeError):
+                        odds = 0.0
+                    if odds <= 1.0:
+                        continue
+                    try:
+                        edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
+                    except (ValueError, TypeError):
+                        edge = 0.0
+                    if 0 < edge < 1:
+                        edge *= 100
+                    bets.append({
+                        "bet_id": str(_uuid.uuid4()),
+                        "timestamp": _dt.now().isoformat(),
+                        "date": today,
+                        "track": str(track),
+                        "race_number": rn_int,
+                        "horse": str(horse),
+                        "odds": odds,
+                        "stake": 0.0,
+                        "potential_return": 0.0,
+                        "status": "PENDING",
+                        "edge_percent": edge,
+                        "confidence": str(vb.get("confidence") or "VALUE"),
+                        "distance": race.get("distance"),
+                        "actual_return": None,
+                        "profit_loss": None,
+                        "notes": "UK paper value bet (analysis only)",
+                        "is_paper": True,
+                        "placed": None,
+                    })
+                    existing.add(key)
+                    added += 1
+        if not added:
+            return
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                _json.dump(bets, f, indent=2, default=str)
+                f.flush()
+                _os.fsync(f.fileno())
+            _os.replace(tmp, path)
+            print(f"[LEDGER] Recorded {added} UK paper bet(s) to bet_history.json")
+        except Exception as e:
+            print(f"[WARN] Failed to record UK paper bets: {e}")
+
     async def run_region_scan(
         self,
         regions: List[str],
@@ -3002,6 +3181,36 @@ class StrikeTips:
         )
         print(f"\n[OK] Region scan complete! {total_value_bets} value bets, "
               f"{len(all_results)} meetings")
+        # Record UK value bets as paper rows in the ledger so analytics and
+        # region ROI show UK tracks (labelled paper, no money moves). Approved
+        # by user; does not touch the governor or move any funds.
+        try:
+            self._record_paper_bets_for_region(all_results)
+        except Exception as e:
+            print(f"[WARN] UK paper bet recording failed: {e}")
+        # UK single-race exotics (Forecast/Tricast) — restore visibility on
+        # the exotics tab. Jurisdiction set per play; finalised through the
+        # same choke point so SA guards apply correctly (non-SA passes).
+        try:
+            exotic_plays: List[Dict] = []
+            for _track, _races in all_results.items():
+                if not _races:
+                    continue
+                exotic_plays.extend(self._build_uk_single_race_exotics(_track, _races))
+            if exotic_plays:
+                exotic_plays = _finalise_exotic_plays(
+                    exotic_plays, all_results, {}, {}, {}
+                )
+            if exotic_plays:
+                merged = _merge_exotic_history(
+                    self.data_dir, date.today().isoformat(), exotic_plays
+                )
+                exotic_file = os.path.join(self.data_dir, "exotics_latest.json")
+                with open(exotic_file, "w") as f:
+                    json.dump(merged, f, indent=2, default=str)
+                print(f"[EXOTIC] UK single-race: {len(exotic_plays)} play(s)")
+        except Exception as e:
+            print(f"[WARN] UK exotic build/save failed: {e}")
         if self.telegram:
             try:
                 await self.telegram.send_daily_tips(
