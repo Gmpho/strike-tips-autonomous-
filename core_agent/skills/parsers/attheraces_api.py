@@ -16,8 +16,13 @@ Integration:
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+import os
 import re
+import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 _SCRAPLING_AVAILABLE = False
@@ -642,12 +647,17 @@ class AtTheRacesAPI:
         self._burst_flag_written = False
 
 
-    def _fetch(self, path: str) -> Optional[bytes]:
-        """Fetch with the circuit breaker wrapped around the tiered fallback."""
+    def _fetch(self, path: str, allow_stealth: bool = True) -> Optional[bytes]:
+        """Fetch with the circuit breaker wrapped around the tiered fallback.
+
+        ``allow_stealth=False`` keeps enrichment off the throttled headless
+        tier: hundreds of per-race pages must never consume the hourly
+        browser allowance that feeds the /results page itself.
+        """
         if atr_circuit_open():
             logger.debug("ATR circuit breaker open — skipping %s", path)
             return None
-        body = self._fetch_tiered(path)
+        body = self._fetch_tiered(path, allow_stealth=allow_stealth)
         if body:
             _record_success()
         elif getattr(self, "_self_throttled", False):
@@ -659,7 +669,7 @@ class AtTheRacesAPI:
             _record_failure(path)
         return body
 
-    def _fetch_tiered(self, path: str) -> Optional[bytes]:
+    def _fetch_tiered(self, path: str, allow_stealth: bool = True) -> Optional[bytes]:
         """Fetch page with cheap-first tiered fallback: httpx → Fetcher → StealthyFetcher.
 
         Order matters: the 5-min cron hammers these URLs, so the lightweight
@@ -715,7 +725,9 @@ class AtTheRacesAPI:
         # just errors with "No Cloudflare challenge found". With plain JS enabled
         # the Fastly proof-of-work runs, sets its cookie in the persistent
         # profile, and the second load (same cookies) returns the real page.
-        if _STEALTH_AVAILABLE:
+        # Bulk enrichment (per-race full pages) passes allow_stealth=False so
+        # it never eats the hourly allowance.
+        if _STEALTH_AVAILABLE and allow_stealth:
             if not self._stealth_allowed():
                 # Only this tier can pass Fastly. Skipping it is our throttle,
                 # not the host's block: record it so the breaker stays shut.
@@ -852,6 +864,281 @@ class AtTheRacesAPI:
             "form": form,
         }
 
+    # ── Full-result pages (/racecard/<course>/<date>/<hhmm>) ────────────────
+    # The /results list truncates every race after the top 1–3 (verified live
+    # Nov-2026: 172 articles, 96 with three runners, 66 with two). Settlement
+    # scores 1st–4th, so a 4th-place pick was settled as a loss and punters
+    # lost earned points. The per-race page carries the whole card (every
+    # finisher, faller, non-runner, distance beaten, SP, saddle number).
+
+    _FULL_CACHE_FILE = "atr_full_results_cache.json"
+    _FULL_OK_TTL_SECS = 26 * 3600   # a complete card is immutable; revalidate daily
+    _FULL_RETRY_TTL_SECS = 20 * 60  # failed/incomplete: retry soon (late posts)
+    _FULL_CACHE_KEEP_DAYS = 7       # prune entries older than this
+    _ENRICH_DEADLINE_SECS = 75      # never let enrichment eat the cron budget
+    _ENRICH_WORKERS = 10
+    _FULL_DEPTH = 7                 # user: show at least first 7, full if possible
+
+    @staticmethod
+    def _full_cache_path() -> str:
+        try:
+            from core_agent.config.paths import DATA_DIR
+
+            return str(DATA_DIR / AtTheRacesAPI._FULL_CACHE_FILE)
+        except Exception:
+            import tempfile
+
+            return str(Path(tempfile.gettempdir()) / AtTheRacesAPI._FULL_CACHE_FILE)
+
+    def _full_cache_load(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            path = self._full_cache_path()
+            if Path(path).exists():
+                data = json.loads(Path(path).read_text())
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    def _full_cache_store(self, cache: Dict[str, Dict[str, Any]]) -> None:
+        try:
+            now = time.time()
+            cache = {
+                k: v for k, v in cache.items()
+                if not isinstance(v, dict) or now - float(v.get("fetched_at") or 0)
+                < self._FULL_CACHE_KEEP_DAYS * 86400
+            }
+            path = self._full_cache_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(cache, f, default=str)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except Exception as exc:
+            logger.debug("ATR full-result cache store skipped: %s", exc)
+
+    @staticmethod
+    def _summary_sig(runners: List[Dict]) -> str:
+        """Identity of what /results currently claims for a race.
+
+        Any change here (winner posted, 2nd/3rd added) invalidates the cached
+        full card, so late results and corrections self-heal on the next pass.
+        """
+        placed = [(r.get("name") or "", r.get("position") or "") for r in runners or []]
+        return hashlib.sha1(repr(placed).encode()).hexdigest()[:12]
+
+    def _full_cache_valid(
+        self, entry: Optional[Dict[str, Any]], sig: str, now_ts: float
+    ) -> bool:
+        if not isinstance(entry, dict) or entry.get("sig") != sig:
+            return False
+        try:
+            age = now_ts - float(entry.get("fetched_at"))
+        except (TypeError, ValueError):
+            return False
+        if age < 0:
+            return True
+        ttl = self._FULL_OK_TTL_SECS if entry.get("ok") else self._FULL_RETRY_TTL_SECS
+        return age < ttl
+
+    @staticmethod
+    def _parse_full_race(html: bytes) -> List[Dict[str, Any]]:
+        """Parse a /racecard full-result page into the whole finishing order.
+
+        Each ``.card-entry`` carries: position (``.card-cell--no-draw``:
+        1..N, "F", or empty for a non-runner), distance beaten
+        (``.card-cell--form``: "7", "2½", "nk"…), horse
+        (``.card-cell--horse``: "6. Lady Jetfire (IRE)"), SP
+        (``.card-cell--odds``: "5/6 Fav"), age/weight (first
+        ``.card-cell--stats``) and official rating (second).
+        """
+        if not html:
+            return []
+        sel = Selector(html, auto_save=True, adaptive=True)
+        out: List[Dict[str, Any]] = []
+        for entry in sel.css(".card-entry", adaptive=True) or []:
+            horse_cell = entry.css(".card-cell--horse", adaptive=True)
+            if not horse_cell:
+                continue
+            raw = " ".join(_text(horse_cell[0]).split())
+            if not raw:
+                continue
+            # "6. Lady Jetfire (IRE)" -> saddle number + clean name.
+            number = 0
+            m = re.match(r"^(\d+)\.\s*(.*)$", raw)
+            if m:
+                try:
+                    number = int(m.group(1))
+                except ValueError:
+                    number = 0
+                raw = m.group(2)
+            name = re.sub(r"\s*\([A-Za-z]{2,4}\)\s*$", "", raw).strip()
+            if not name:
+                continue
+
+            pos_cell = entry.css(".card-cell--no-draw", adaptive=True)
+            pos_raw = " ".join(_text(pos_cell[0]).split()) if pos_cell else ""
+            dist_cell = entry.css(".card-cell--form", adaptive=True)
+            distance = " ".join(_text(dist_cell[0]).split()) if dist_cell else ""
+            odds_cell = entry.css(".card-cell--odds", adaptive=True)
+            odds_text = " ".join(_text(odds_cell[0]).split()) if odds_cell else ""
+
+            body = " ".join(_text(entry).split())
+            non_runner = pos_raw == "" and (
+                "Non Runner" in body or "NonRunner" in body
+            )
+            position = ""
+            if pos_raw == "F":
+                position = "F"
+            elif pos_raw.isdigit():
+                n = int(pos_raw)
+                position = {1: "1st", 2: "2nd", 3: "3rd"}.get(n, f"{n}th")
+                if n >= 4:
+                    position = f"{n}th"
+
+            # SP: fractional ("5/6 Fav") or decimal ("2.50").
+            odds_dec: Optional[float] = None
+            fm = re.search(r"(\d+)\s*/\s*(\d+)", odds_text)
+            if fm:
+                try:
+                    odds_dec = round(int(fm.group(1)) / int(fm.group(2)) + 1, 2)
+                except (ValueError, ZeroDivisionError):
+                    odds_dec = None
+            if odds_dec is None:
+                dm = re.search(r"^(\d+\.\d+)", odds_text)
+                if dm:
+                    try:
+                        odds_dec = float(dm.group(1))
+                    except ValueError:
+                        odds_dec = None
+
+            stats = entry.css(".card-cell--stats", adaptive=True) or []
+            age = None
+            if stats:
+                first = " ".join(_text(stats[0]).split())
+                am = re.match(r"^(\d+)\b", first)
+                if am:
+                    age = int(am.group(1))
+
+            out.append({
+                "name": name,
+                "number": number,
+                "position": position,
+                "odds": odds_text,
+                "odds_decimal": odds_dec,
+                "distance_beaten": distance,
+                "age": age,
+                "non_runner": bool(non_runner),
+            })
+        # Only a card that actually ran counts. A racecard for an upcoming
+        # race lists entries with no positions — never store those.
+        if not any(r.get("position") == "1st" for r in out):
+            return []
+        return out
+
+    def get_full_result(self, full_url: str) -> List[Dict[str, Any]]:
+        """Fetch one /racecard page and return its whole finishing order.
+
+        Cheap tiers only (httpx → curl_cffi): per-race enrichment must never
+        consume the throttled headless-Chromium allowance. Returns [] on any
+        miss — callers keep the /results summary.
+        """
+        if not full_url:
+            return []
+        try:
+            html = self._fetch(full_url, allow_stealth=False)
+            if not html or len(html) < 10_000:
+                return []
+            return self._parse_full_race(html)
+        except Exception as exc:
+            logger.debug("ATR full result miss for %s: %s", full_url, exc)
+            return []
+
+    def _enrich_full_results(
+        self, races: List[Dict[str, Any]], cache: Optional[Dict[str, Any]] = None,
+         deadline: float = _ENRICH_DEADLINE_SECS,
+    ) -> int:
+        """Replace truncated summaries with full cards where ATR has them.
+
+        Cache-aware: a race whose /results signature is unchanged since its
+        full card was fetched (and still within TTL) is served from disk
+        without another page fetch, so refreshing the day costs one fetch per
+        race, not one per cycle.
+        """
+        import time as _time
+        from concurrent.futures import ThreadPoolExecutor
+
+        now_ts = _time.time()
+        cache = self._full_cache_load() if cache is None else cache
+
+        def _placed(r: Dict[str, Any]) -> int:
+            return sum(
+                1 for x in (r.get("runners") or [])
+                if str(x.get("position") or "").strip()
+            )
+
+        wanted = [
+            r for r in races
+            if r.get("full_url") and _placed(r) < self._FULL_DEPTH
+        ]
+        if not wanted:
+            return 0
+
+        def _resolve(r: Dict[str, Any]) -> Optional[List[Dict]]:
+            sig = self._summary_sig(r.get("runners") or [])
+            entry = cache.get(r["full_url"])
+            if self._full_cache_valid(entry, sig, now_ts):
+                cached = (entry or {}).get("runners")
+                return list(cached) if isinstance(cached, list) and cached else None
+            return None  # needs a fetch
+
+        enriched = 0
+        pending: List[Dict[str, Any]] = []
+        for r in wanted:
+            cached_runners = _resolve(r)
+            if cached_runners:
+                r["runners"] = cached_runners
+                r["full"] = True
+                enriched += 1
+            else:
+                pending.append(r)
+
+        if pending:
+            end = now_ts + deadline
+
+            def _fetch_one(r: Dict[str, Any]) -> tuple:
+                if _time.time() > end:
+                    return r, []
+                return r, self.get_full_result(r["full_url"])
+
+            with ThreadPoolExecutor(max_workers=self._ENRICH_WORKERS) as pool:
+                for r, full in pool.map(_fetch_one, pending):
+                    sig = self._summary_sig(r.get("runners") or [])
+                    ok = bool(full)
+                    cache[r["full_url"]] = {
+                        "runners": full if ok else [],
+                        "sig": sig,
+                        "ok": ok,
+                        "fetched_at": _time.time(),
+                    }
+                    if ok:
+                        # Full card is a superset of the summary for the same
+                        # race; a thin summary kept only when the fetch missed.
+                        if len(full) >= len(r.get("runners") or []):
+                            r["runners"] = full
+                        elif _placed({"runners": full}) > _placed(r):
+                            r["runners"] = full
+                        r["full"] = True
+                        enriched += 1
+            self._full_cache_store(cache)
+        logger.debug(
+            "ATR full-result enrichment: %d/%d races enriched (%d cache hits)",
+            enriched, len(wanted), enriched - len(pending),
+        )
+        return enriched
+
     async def get_results(self, date: str = "yesterday") -> List[Dict]:
         """Scrape race results via Scrapling with self-healing selectors + retry.
 
@@ -948,23 +1235,53 @@ class AtTheRacesAPI:
             key = (course.lower(), str(race_no))
             prev = by_race.get(key)
             if prev is None or len(runners) > len(prev["runners"]):
+                # Every article links to its full-result page
+                # (/racecard/<course>/<date>/<hhmm>) — that page carries the
+                # whole finishing order while /results truncates at 1st–3rd.
+                full_url = ""
+                try:
+                    link = article.css("header h3 a.post-text__t", adaptive=True)
+                    if not link:
+                        link = article.css(
+                            'header h3 a[href*="/racecard/"]', adaptive=True
+                        )
+                    if link:
+                        full_url = str(link[0].attrib.get("href") or "").strip()
+                        if full_url and not full_url.startswith("/"):
+                            full_url = "/" + full_url.lstrip("/")
+                except Exception:
+                    full_url = ""
                 by_race[key] = {
                     "course": course,
                     "date": page_day or date,
                     "time": race_time,
                     "title": h3_text,
                     "runners": runners,
+                    "full_url": full_url,
                 }
 
         races = list(by_race.values())
+        # Enrich truncated summaries with the full finishing order. Never
+        # raises: a failed enrichment keeps the summary (degrades to the old
+        # 1st–3rd behaviour for that race only).
+        try:
+            enriched = await asyncio.wait_for(
+                asyncio.to_thread(self._enrich_full_results, races),
+                timeout=self._ENRICH_DEADLINE_SECS + 30,
+            )
+        except Exception as exc:
+            logger.debug("ATR full-result enrichment skipped: %s", exc)
+            enriched = 0
         logger.info(
-            "ATR results: %d races from %d meetings (%d articles, %d unplaced, %d bytes, day=%s)",
+            "ATR results: %d races from %d meetings (%d articles, %d unplaced, "
+            "%d bytes, day=%s, %d enriched)",
             len(races),
             len(courses_seen),
             articles_seen,
             unplaced,
             len(html),
             page_day or date,
+            enriched,
         )
         return races
 

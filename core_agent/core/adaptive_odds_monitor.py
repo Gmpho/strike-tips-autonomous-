@@ -1003,7 +1003,13 @@ def _atr_merge_results(existing: List[Dict], fresh: List[Dict], keep_days: int =
     for race in list(existing or []) + list(fresh or []):
         if not isinstance(race, dict):
             continue
-        merged[_atr_result_key(race)] = race
+        key = _atr_result_key(race)
+        prev = merged.get(key)
+        # An enriched full card (whole finishing order) must survive a later
+        # thin /results summary for the same race — full is a superset of
+        # summary for a race that ran, so more runners always wins.
+        if prev is None or len(race.get("runners") or []) >= len(prev.get("runners") or []):
+            merged[key] = race
 
     if not keep_days:
         return list(merged.values())

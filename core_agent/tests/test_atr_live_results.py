@@ -358,3 +358,146 @@ def test_track_lookup_fetches_the_page_once():
 
     assert calls == ["yesterday"]
     assert len(first) == 1 and len(second) == 1
+
+
+# ── full-result pages (/racecard/…) ────────────────────────────────────────
+# /results truncates at 1st–3rd (live Nov-2026). The per-race page carries the
+# whole card; enrichment replaces summaries with it so 4th-place picks score.
+
+def _full_page(entries, ran=8):
+    rows = "".join(
+        '<div class="card-entry">'
+        f'<div class="card-cell card-cell--no-draw">{pos}</div>'
+        f'<div class="card-cell card-cell--form">{dist}</div>'
+        f'<div class="card-cell card-cell--horse card-cell--fill">{num}. {name} (GB)</div>'
+        f'<div class="card-cell card-cell--odds">{odds}</div>'
+        f'<div class="card-cell card-cell--stats">{age}</div>'
+        "</div>"
+        for pos, dist, num, name, odds, age in entries
+    )
+    filler = "<!-- " + ("x" * 12000) + " -->"
+    return f"<html><body>{rows}{filler}</body></html>".encode()
+
+
+def _article_linked(race_no, clock, horses, full="/racecard/Aintree/09-November-2026/1220"):
+    rows = "".join(
+        _runner(("1st", "2nd", "3rd")[i], name, odds)
+        for i, (name, odds) in enumerate(horses)
+    )
+    return (
+        '<article class="panel-content--medium">'
+        f'<header><h3>{race_no}\n{clock} - Some Handicap '
+        f'<a class="post-text__t" href="{full}">Full Result</a></h3></header>'
+        f'<div class="list list--divided list--padded">{rows}</div>'
+        "</article>"
+    )
+
+
+@needs_selector
+def test_full_race_parser_reads_the_whole_card():
+    html = _full_page([
+        ("1", "", 6, "Lady Jetfire", "5/6", "5 11-2"),
+        ("2", "7", 5, "Div Ine Glance", "14/1", "5 11-2"),
+        ("3", "2½", 11, "Who's That Lady", "20/1", "4 11-2"),
+        ("4", "9½", 1, "Afraidso", "16/1", "5 11-2"),
+        ("5", "7½", 3, "Betsy Bluesky", "50/1", "4 11-2"),
+        ("6", "nk", 8, "Lake Nagambie", "18/1", "4 11-2"),
+        ("F", "", 7, "Lady Scarphia", "10/1", "5 11-2"),
+        ("", "", 4, "Jackson Court", "Non Runner", "5 11-0"),
+    ])
+    runners = atr.AtTheRacesAPI._parse_full_race(html)
+
+    assert len(runners) == 8
+    by_name = {r["name"]: r for r in runners}
+    assert by_name["Lady Jetfire"]["position"] == "1st"
+    assert by_name["Lady Jetfire"]["number"] == 6
+    assert by_name["Lady Jetfire"]["odds_decimal"] == 1.83
+    assert by_name["Afraidso"]["position"] == "4th"
+    assert by_name["Afraidso"]["distance_beaten"] == "9½"
+    assert by_name["Lake Nagambie"]["position"] == "6th"
+    assert by_name["Lady Scarphia"]["position"] == "F"
+    assert by_name["Jackson Court"]["non_runner"] is True
+    assert by_name["Jackson Court"]["position"] == ""
+
+
+@needs_selector
+def test_full_race_parser_rejects_unrun_cards():
+    """A racecard for an upcoming race lists entries with no positions."""
+    html = _full_page([("", "", 1, "Alpha", "5/1", "4 11-0")])
+    assert atr.AtTheRacesAPI._parse_full_race(html) == []
+
+
+@needs_selector
+def test_enrichment_replaces_truncated_summary_and_caches(tmp_path, monkeypatch):
+    from core_agent.config import paths
+    monkeypatch.setattr(paths, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(atr, "AtTheRacesAPI", atr.AtTheRacesAPI)
+    import importlib
+    importlib.reload(atr)  # DATA_DIR is read lazily; reload is unnecessary but harmless
+    api = atr.AtTheRacesAPI()
+
+    summary = _page(_meeting("Aintree", _article_linked(1, "12:20", [("Alpha", "5/2"), ("Bravo", "4/1"), ("Charlie", "8/1")])))
+    full = _full_page([
+        ("1", "", 1, "Alpha", "5/2", "4 11-2"),
+        ("2", "2", 2, "Bravo", "4/1", "5 11-2"),
+        ("3", "1½", 3, "Charlie", "8/1", "5 11-2"),
+        ("4", "¾", 4, "Delta", "12/1", "6 11-2"),
+        ("5", "3", 5, "Echo", "20/1", "4 11-2"),
+        ("6", "5", 6, "Foxtrot", "25/1", "4 11-2"),
+        ("7", "9", 7, "Golf", "33/1", "4 11-2"),
+        ("8", "11", 8, "Hotel", "50/1", "4 11-2"),
+    ])
+    fetched = []
+
+    def fake_fetch(path, allow_stealth=True):
+        fetched.append(path)
+        if str(path).startswith("/racecard/"):
+            assert allow_stealth is False  # enrichment never burns the browser allowance
+            return full
+        return summary
+
+    api._fetch = fake_fetch
+    races = asyncio.run(api.get_results("today"))
+
+    assert len(races) == 1
+    race = races[0]
+    assert race["full"] is True
+    assert race["full_url"] == "/racecard/Aintree/09-November-2026/1220"
+    assert [r["name"] for r in race["runners"]] == [
+        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+    ]
+    assert race["runners"][3]["position"] == "4th"  # the 4th the summary dropped
+    assert len(fetched) == 2  # /results + one racecard page
+
+    # Second pass: the disk cache serves the full card without another fetch.
+    fetched.clear()
+    api2 = atr.AtTheRacesAPI()
+    api2._fetch = fake_fetch
+    races2 = asyncio.run(api2.get_results("today"))
+    assert races2[0]["runners"][3]["position"] == "4th"
+    assert "/racecard/Aintree/09-November-2026/1220" not in fetched
+
+
+@needs_selector
+def test_enrichment_keeps_summary_when_full_fetch_fails():
+    api = atr.AtTheRacesAPI()
+    summary = _page(_meeting("Aintree", _article_linked(1, "12:20", [("Alpha", "5/2")])))
+    api._fetch = lambda path, allow_stealth=True: summary
+
+    races = asyncio.run(api.get_results("today"))
+
+    assert len(races) == 1
+    assert [r["name"] for r in races[0]["runners"]] == ["Alpha"]
+    assert not races[0].get("full")
+
+
+@needs_selector
+def test_merge_keeps_the_fuller_record():
+    full = {"course": "Aintree", "date": DAY, "title": "1\n12:20 - Hurdle",
+            "runners": [{"name": f"H{i}", "position": f"{i}th"} for i in range(1, 9)]}
+    summary = {"course": "Aintree", "date": DAY, "title": "1\n12:20 - Hurdle",
+               "runners": [{"name": "H1", "position": "1st"}]}
+
+    merged = mon._atr_merge_results([full], [summary])
+    assert len(merged) == 1
+    assert len(merged[0]["runners"]) == 8  # thin summary must not clobber the full card

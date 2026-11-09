@@ -51,7 +51,7 @@ def test_fetch_skips_tiers_while_open(flag, monkeypatch):
     flag.write_text(str(time.time() + 600))
     calls = []
 
-    def boom(self, path):
+    def boom(self, path, allow_stealth=True):
         calls.append(path)
         return b"should-not-run"
 
@@ -63,7 +63,7 @@ def test_fetch_skips_tiers_while_open(flag, monkeypatch):
 
 
 def test_fetch_records_success_on_body(flag, monkeypatch):
-    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p: b"x" * 2000)
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p, allow_stealth=True: b"x" * 2000)
     api = atr.AtTheRacesAPI()
 
     assert api._fetch("/market-movers") == b"x" * 2000
@@ -72,7 +72,7 @@ def test_fetch_records_success_on_body(flag, monkeypatch):
 
 
 def test_fetch_records_failure_on_empty(flag, monkeypatch):
-    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p: None)
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p, allow_stealth=True: None)
     api = atr.AtTheRacesAPI()
 
     for _ in range(atr._BREAKER_FAILURE_THRESHOLD):
@@ -88,7 +88,7 @@ def test_throttled_browser_tier_does_not_trip_breaker(flag, monkeypatch):
     Nov-2026: cheap 403s plus throttle skips tripped a 6h breaker every
     afternoon, freezing ATR snapshots for the whole evening card.
     """
-    def throttled(self, path):
+    def throttled(self, path, allow_stealth=True):
         self._self_throttled = True
         return None
 
@@ -106,7 +106,7 @@ def test_genuine_failure_after_throttle_miss_still_counts(flag, monkeypatch):
     """The exemption must reset per fetch, not leak into the next attempt."""
     responses = ["throttled", "genuine"]
 
-    def fake(self, path):
+    def fake(self, path, allow_stealth=True):
         mode = responses.pop(0)
         self._self_throttled = mode == "throttled"
         assert self._self_throttled is (mode == "throttled")

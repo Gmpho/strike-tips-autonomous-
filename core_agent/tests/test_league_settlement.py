@@ -247,3 +247,82 @@ def test_atr_relative_date_needs_unknown_day_guard(tmp_path):
         {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
     ])], ts="")
     assert load_winner_details(str(tmp_path)) == {}
+
+
+# ── full finishing order (per-race /racecard pages) ────────────────────────
+# /results truncates at 1st–3rd, so a 4th-place pick was settled as a loss.
+# The full card carries 1st–N: 4th must score its floor points.
+
+def _atr_full_race(race_no, runners, course="Carlisle"):
+    return {
+        "course": course,
+        "date": "yesterday",
+        "time": "15:35",
+        "title": f"{race_no}\n15:35 - NH Flat Race",
+        "runners": runners,
+    }
+
+
+def test_atr_full_card_scores_a_fourth_place(tmp_path):
+    """The 4th that /results truncates must score, not settle as a loss."""
+    _write_atr(tmp_path, [_atr_full_race(7, [
+        {"name": "Lady Jetfire", "position": "1st", "odds_decimal": 1.83},
+        {"name": "Div Ine Glance", "position": "2nd", "odds_decimal": 15.0},
+        {"name": "Who's That Lady", "position": "3rd", "odds_decimal": 21.0},
+        {"name": "Afraidso", "position": "4th", "odds_decimal": 17.0},
+        {"name": "Betsy Bluesky", "position": "5th", "odds_decimal": 51.0},
+    ])])
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(race_id="17500001", course="Carlisle", race_number=7,
+              runner_name="Afraidso", pick_odds=16.0, field_size=11),
+    ])
+
+    stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["settled"] is True
+    assert row["won"] is True           # 4th is a scoring finish (top 4)
+    assert row["finish_position"] == 4
+    assert row["points"] >= 1           # missed points were the bug
+    assert stats == {"settled": 1, "won": 1, "pending": 0, "void": 0, "expired": 0}
+
+
+def test_atr_full_card_fifth_place_is_still_a_loss(tmp_path):
+    _write_atr(tmp_path, [_atr_full_race(7, [
+        {"name": "Lady Jetfire", "position": "1st", "odds_decimal": 1.83},
+        {"name": "Div Ine Glance", "position": "2nd", "odds_decimal": 15.0},
+        {"name": "Who's That Lady", "position": "3rd", "odds_decimal": 21.0},
+        {"name": "Afraidso", "position": "4th", "odds_decimal": 17.0},
+        {"name": "Betsy Bluesky", "position": "5th", "odds_decimal": 51.0},
+    ])])
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(race_id="17500002", course="Carlisle", race_number=7,
+              runner_name="Betsy Bluesky", pick_odds=50.0, field_size=11),
+    ])
+
+    settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["settled"] is True
+    assert row["won"] is False
+    assert row["finish_position"] == 5
+    assert row["points"] == 0
+
+
+def test_atr_non_runner_pick_voids_not_loses(tmp_path):
+    """A picked horse recorded as a non-runner refunds (void), never a loss."""
+    _write_atr(tmp_path, [_atr_full_race(7, [
+        {"name": "Lady Jetfire", "position": "1st", "odds_decimal": 1.83},
+        {"name": "Div Ine Glance", "position": "2nd", "odds_decimal": 15.0},
+        {"name": "Jackson Court", "position": "", "non_runner": True},
+    ])])
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(race_id="17500003", course="Carlisle", race_number=7,
+              runner_name="Jackson Court", pick_odds=10.0, field_size=11),
+    ])
+
+    stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["settled"] is True
+    assert row["void"] is True
+    assert row["void_reason"] == "non_runner"
+    assert row["won"] is False and row["points"] == 0
+    assert stats == {"settled": 0, "won": 0, "pending": 0, "void": 1, "expired": 0}

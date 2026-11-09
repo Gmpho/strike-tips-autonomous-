@@ -209,6 +209,7 @@ def load_winner_details(
                     "name": str(runner.get("name") or "").strip(),
                     "position": str(runner.get("position") or "").strip(),
                     "odds_decimal": runner.get("odds_decimal"),
+                    "non_runner": bool(runner.get("non_runner")),
                 })
                 if winner is None and str(runner.get("position") or "").strip().lower() in ("1st", "1", "won"):
                     winner = str(runner.get("name") or "").strip() or None
@@ -313,9 +314,12 @@ def settle_open_picks(
         # loss. We never guess: a race with no result stays pending.
         finish_pos = None
         placed_sp = None
+        nr_hit = False
         if runners:
             for ru in runners:
                 if names_match(p.get("runner_name"), ru.get("name")):
+                    if ru.get("non_runner"):
+                        nr_hit = True
                     finish_pos = _pos_to_int(ru.get("position"))
                     try:
                         placed_sp = float(ru.get("odds_decimal")) if ru.get("odds_decimal") else None
@@ -327,6 +331,23 @@ def settle_open_picks(
             # wins; a non-match is a loss — we have no position data there.
             if names_match(p.get("runner_name"), winner):
                 finish_pos = 1
+
+        if nr_hit:
+            # The horse never ran (non-runner on the full result card): the
+            # stake comes back. Same terminal state as a refunded race.
+            p["settled"] = True
+            p["void"] = True
+            p["void_reason"] = "non_runner"
+            p["won"] = False
+            p["placed"] = False
+            p["points"] = 0
+            p["finish_position"] = None
+            p["winner_name"] = winner
+            p["winner_sp"] = 0.0
+            p["settled_at"] = now_iso
+            changed = True
+            void_n += 1
+            continue
 
         scored = finish_pos is not None and 1 <= finish_pos <= 4
         if scored:
