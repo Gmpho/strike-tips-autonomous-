@@ -38,6 +38,15 @@ from core_agent.skills.parsers.atr_enrich import (
     ("Utt", "Uttoxeter", "UK"),
     ("Sou", "Southwell", "UK"),
     ("Gow", "Gowran Park", "Ireland"),
+    # Nov-2026: "Pun 13:30" survived to the HUD as a raw code because
+    # Punchestown was missing from the map. Same fix for the other regular
+    # UK/IRE meetings that can appear as 3-letter codes.
+    ("Pun", "Punchestown", "Ireland"),
+    ("Punchestown 14:38", "Punchestown", "Ireland"),
+    ("Car", "", ""),  # Carlisle vs Cartmel — ambiguous, must not guess
+    ("Cat", "Catterick", "UK"),
+    ("Cur", "Curragh", "Ireland"),
+    ("Leo", "Leopardstown", "Ireland"),
     ("G", "Greyville", "SA"),
     ("N", "Greyville Poly", "SA"),
     ("Y", "Flamingo Park (closed 2020)", "defunct"),

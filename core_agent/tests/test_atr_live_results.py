@@ -98,6 +98,42 @@ def test_nested_containers_do_not_duplicate_races():
 
 
 @needs_selector
+def test_outer_meeting_does_not_claim_foreign_articles():
+    """A nested container's articles include later meetings.
+
+    Nov-2026: the Doncaster container wrapped the whole page, so its
+    descendant articles included five foreign evening cards and Doncaster
+    showed 13 races. Attribution must follow document order, pairing each
+    article with the heading that actually precedes it.
+    """
+    domestic = "".join(
+        _article(n, f"1{n}:00", [("Alpha", "5/2")]) for n in range(1, 9)
+    )
+    foreign = (
+        _article(9, "21:14", [("Bravo", "7/2")])
+        + _article(10, "22:55", [("Charlie", "9/2")])
+    )
+    html = _page(
+        '<div class="push--x-small">'
+        '<a class="panel-header"><h2>Doncaster Results</h2></a>'
+        + domestic
+        + '<div class="push--x-small">'
+        '<a class="panel-header"><h2>Flemington (Australia) Results</h2></a>'
+        + foreign
+        + "</div></div>"
+    )
+
+    parsed = _parse(html)
+
+    by_course = {}
+    for race in parsed:
+        by_course.setdefault(race["course"], []).append(race["title"].split("\n")[0])
+    assert sorted(by_course["Doncaster"]) == [str(n) for n in range(1, 9)]
+    assert sorted(by_course["Flemington (Australia)"]) == ["10", "9"]
+    assert len(parsed) == 10
+
+
+@needs_selector
 def test_richest_parse_wins_when_a_race_repeats():
     thin = _article(1, "12:30", [("Alpha", "5/2")])
     full = _article(1, "12:30", [("Alpha", "5/2"), ("Bravo", "4/1"), ("Charlie", "8/1")])

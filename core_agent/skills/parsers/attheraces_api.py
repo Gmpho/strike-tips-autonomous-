@@ -371,6 +371,30 @@ ATR_COURSE_MAP: Dict[str, Dict[str, str]] = {
     "DOWNPATRICK": {"track": "Downpatrick", "region": "Ireland"},
     "DOWN ROYAL": {"track": "Down Royal", "region": "Ireland"},
     "NAVAN": {"track": "Navan", "region": "Ireland"},
+    # Nov-2026 gap: the movers feed printed "Pun 13:30" and the HUD showed the
+    # raw code because Punchestown was absent. Same class of miss for the other
+    # regular UK/IRE meetings below; their 3-letter codes then resolve through
+    # _code_prefix_index(). Ambiguous prefixes (New, Che, Car) still blank.
+    "CARLISLE": {"track": "Carlisle", "region": "UK"},
+    "YORK": {"track": "York", "region": "UK"},
+    "BATH": {"track": "Bath", "region": "UK"},
+    "GOODWOOD": {"track": "Goodwood", "region": "UK"},
+    "HAMILTON": {"track": "Hamilton", "region": "UK"},
+    "CATTERICK": {"track": "Catterick", "region": "UK"},
+    "CHELMSFORD CITY": {"track": "Chelmsford City", "region": "UK"},
+    "FAKENHAM": {"track": "Fakenham", "region": "UK"},
+    "NEWTON ABBOT": {"track": "Newton Abbot", "region": "UK"},
+    "SEDGEFIELD": {"track": "Sedgefield", "region": "UK"},
+    "BANGOR-ON-DEE": {"track": "Bangor-on-Dee", "region": "UK"},
+    "PUNCHESTOWN": {"track": "Punchestown", "region": "Ireland"},
+    "CORK": {"track": "Cork", "region": "Ireland"},
+    "CURRAGH": {"track": "Curragh", "region": "Ireland"},
+    "LEOPARDSTOWN": {"track": "Leopardstown", "region": "Ireland"},
+    "LIMERICK": {"track": "Limerick", "region": "Ireland"},
+    "LISTOWEL": {"track": "Listowel", "region": "Ireland"},
+    "TIPPERARY": {"track": "Tipperary", "region": "Ireland"},
+    "TRAMORE": {"track": "Tramore", "region": "Ireland"},
+    "WEXFORD": {"track": "Wexford", "region": "Ireland"},
 }
 
 # Built lazily from ATR_COURSE_MAP by _code_prefix_index().
@@ -860,65 +884,77 @@ class AtTheRacesAPI:
             logger.warning("No meeting containers (.push--x-small) found on ATR page (%d bytes)", len(html))
             return []
 
-        # The results page nests .push--x-small inside itself, so the same
-        # meeting is visited several times and every race is appended again
-        # (Nov-2026: 612 races for ~26 meetings, Doncaster alone 416). Key by
-        # (course, race number) and keep the richest parse.
+        # Walk every article and attribute it to the NEAREST `.push--x-small`
+        # ancestor, which is the meeting the race actually belongs to.
+        #
+        # The results page nests `.push--x-small` inside itself, so a
+        # container's `.css("article…")` also returns articles owned by LATER
+        # meetings. Reading containers directly both duplicated every race
+        # (Nov-2026: 612 races for ~26 meetings, Doncaster alone 416) and
+        # mis-attributed foreign races to the outer header (Doncaster claimed
+        # five evening cards at 21:14/22:55/23:25).
+        #
+        # Do NOT rely on a combined `h2, article` selector for ordering:
+        # scrapling groups multi-selector matches (all headings, then all
+        # articles) when the Selector is adaptive, which attributed every race
+        # to the last meeting (13 races, all "Las Piedras (Uruguay)").
         by_race: Dict[Tuple[str, str], Dict[str, Any]] = {}
         courses_seen = set()
         articles_seen = 0
         unplaced = 0
 
-        for meeting in meeting_divs:
-            panel_header = meeting.css("a.panel-header h2", adaptive=True)
-            if not panel_header:
-                continue
-            course = _text(panel_header[0]).replace("Results", "").strip()
+        for article in sel.css("article.panel-content--medium", adaptive=True) or []:
+            course = ""
+            for ancestor in article.iterancestors():
+                if "push--x-small" in (ancestor.attrib.get("class") or "").split():
+                    header = ancestor.css("a.panel-header h2", adaptive=True)
+                    if header:
+                        course = _text(header[0]).replace("Results", "").strip()
+                    break
             if not course:
                 continue
             courses_seen.add(course.lower())
 
-            for article in meeting.css("article.panel-content--medium", adaptive=True):
-                header_h3 = article.css("header h3", adaptive=True)
-                if not header_h3:
-                    continue
-                articles_seen += 1
+            header_h3 = article.css("header h3", adaptive=True)
+            if not header_h3:
+                continue
+            articles_seen += 1
 
-                h3_text = _text(header_h3[0])
-                time_match = re.match(r"\d+\s+(\d{2}:\d{2})", h3_text)
-                race_time = time_match.group(1) if time_match else ""
-                num_match = re.match(r"\s*(\d+)", h3_text)
-                race_no = num_match.group(1) if num_match else race_time
+            h3_text = _text(header_h3[0])
+            time_match = re.match(r"\d+\s+(\d{2}:\d{2})", h3_text)
+            race_time = time_match.group(1) if time_match else ""
+            num_match = re.match(r"\s*(\d+)", h3_text)
+            race_no = num_match.group(1) if num_match else race_time
 
-                runner_list = article.css(".list.list--divided.list--padded", adaptive=True)
-                runners = []
-                if runner_list:
-                    for row in runner_list[0].children:
-                        if row.tag == "div" and row.css("a.h7", adaptive=True):
-                            runner = self._parse_one_runner(row)
-                            if runner:
-                                runners.append(runner)
+            runner_list = article.css(".list.list--divided.list--padded", adaptive=True)
+            runners = []
+            if runner_list:
+                for row in runner_list[0].children:
+                    if row.tag == "div" and row.css("a.h7", adaptive=True):
+                        runner = self._parse_one_runner(row)
+                        if runner:
+                            runners.append(runner)
 
-                if not runners:
-                    continue
-                # Only store races that actually ran. Before the off the same
-                # page lists the card with zero placings (Nov-2026: 135 cards,
-                # 0 positions at 05:18 UTC); writing those would fill the
-                # snapshot with unrun races and hide the real evening results.
-                if not any(str(r.get("position") or "").strip() for r in runners):
-                    unplaced += 1
-                    continue
+            if not runners:
+                continue
+            # Only store races that actually ran. Before the off the same
+            # page lists the card with zero placings (Nov-2026: 135 cards,
+            # 0 positions at 05:18 UTC); writing those would fill the
+            # snapshot with unrun races and hide the real evening results.
+            if not any(str(r.get("position") or "").strip() for r in runners):
+                unplaced += 1
+                continue
 
-                key = (course.lower(), str(race_no))
-                prev = by_race.get(key)
-                if prev is None or len(runners) > len(prev["runners"]):
-                    by_race[key] = {
-                        "course": course,
-                        "date": page_day or date,
-                        "time": race_time,
-                        "title": h3_text,
-                        "runners": runners,
-                    }
+            key = (course.lower(), str(race_no))
+            prev = by_race.get(key)
+            if prev is None or len(runners) > len(prev["runners"]):
+                by_race[key] = {
+                    "course": course,
+                    "date": page_day or date,
+                    "time": race_time,
+                    "title": h3_text,
+                    "runners": runners,
+                }
 
         races = list(by_race.values())
         logger.info(
