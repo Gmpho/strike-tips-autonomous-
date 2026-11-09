@@ -65,18 +65,26 @@ def _norm_text(s) -> str:
 
 
 def _jurisdiction_for_track(track) -> str:
-    """Region code for an exotic play's meeting ("SA", "UK", "IRE", ...).
-
-    Uses the league's canonical track→region map so a ticket is gated exactly
-    like the picks on the same meeting. Unknown tracks stay "SA" — the
-    conservative default, because the SA guard is the stricter one.
+    """Region code for an exotic play's meeting, in the HUD's vocabulary
+    (SA / UK / IRE / INTL / ...). ``region_of`` collapses UK+Ireland into
+    "UK_IE", which the HUD filter does not recognise, so split it here.
     """
+    t = str(track or "").strip().lower()
+    _ire = {
+        "punchestown", "leopardstown", "curragh", "fairyhouse", "galway",
+        "naas", "tipperary", "clonmel", "dundalk", "wexford", "limerick",
+        "listowel", "tramore", "cork", "killarney", "roscommon", "ballinrobe",
+        "navan", "down royal", "downpatrick", "bellewstown",
+    }
     try:
         from core_agent.skills.league.regions import region_of
 
-        return str(region_of(str(track or "")) or "SA").upper()
+        code = str(region_of(str(track or "")) or "OTHER").upper()
     except Exception:
-        return "SA"
+        code = "OTHER"
+    if code == "UK_IE":
+        return "IRE" if t in _ire else "UK"
+    return code
 
 
 def _bf_form_index(data_dir: str, max_age_secs: int = 6 * 3600) -> Dict[tuple, List[Dict]]:
