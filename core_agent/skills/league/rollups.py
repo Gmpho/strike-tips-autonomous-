@@ -57,6 +57,7 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
     """
     groups: Dict[tuple, Dict[str, Any]] = defaultdict(lambda: {
         "settled": 0, "pending": 0, "wins": 0, "places": 0, "points": 0,
+        "void": 0,
         "winner_sp_sum": 0.0, "winner_sp_n": 0,
         "pick_odds_sum": 0.0, "pick_odds_n": 0,
         "weekly_points": 0,
@@ -91,6 +92,12 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
         # keeps a tipster who has only open picks on the community list.
         if not p.get("settled", True):
             g["pending"] += 1
+            continue
+        # Voided picks (refunded/abandoned race, or expired unverifiable) are
+        # neither wins nor losses. Counting them as settled deflated the
+        # strike rate with races the punter could never have won.
+        if p.get("void"):
+            g["void"] += 1
             continue
         g["settled"] += 1
         won = bool(p.get("won"))
@@ -155,6 +162,7 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
             "region": region,
             "settled": g["settled"],
             "pending": g["pending"],
+            "void": g["void"],
             "wins": g["wins"],
             "places": g["places"],
             "strike_rate": strike_rate(g["wins"], g["settled"]),

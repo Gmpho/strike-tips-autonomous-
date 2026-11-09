@@ -64,8 +64,10 @@ def _expand_bets_to_picks(bets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if b.get("is_paper"):
             continue
         status = (b.get("status") or "").upper()
-        settled = status in ("WON", "LOST", "VOID", "EXPIRED")
-        if not settled:
+        # Only a real result counts. VOID/EXPIRED bets had no outcome (refunded
+        # race, scratched runner, stale expiry) — including them as settled
+        # losses deflated every regional strike rate on the analytics board.
+        if status not in ("WON", "LOST"):
             continue
         won = status == "WON"
         track = b.get("track") or ""
@@ -332,6 +334,8 @@ async def tipster(slug: str):
     # finish distribution
     dist = {"1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "unplaced": 0}
     for p in raw:
+        if p.get("void"):
+            continue
         fp = p.get("finish_position")
         if fp == 1:
             dist["1st"] += 1
@@ -366,6 +370,8 @@ async def tipster(slug: str):
             "pick_odds": p.get("pick_odds"),
             "settled": bool(p.get("settled")),
             "won": bool(p.get("won")),
+            "void": bool(p.get("void")),
+            "void_reason": p.get("void_reason"),
             "placed": bool(p.get("placed")),
             "finish_position": p.get("finish_position"),
             "points": p.get("points", 0),

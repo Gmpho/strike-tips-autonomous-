@@ -94,8 +94,9 @@ def test_parse_finish_rejects_non_finishers():
 
 def test_parse_meeting_html_extracts_full_card():
     races = parse_meeting_html(_MEETING_HTML, "Greyville", "2026-11-06")
-    assert len(races) == 1  # the abandoned race is skipped, never guessed
+    assert len(races) == 2  # real race + the abandoned race, recorded as void
     race = races[0]
+    assert race["race_number"] == "1"
     assert race["race_number"] == "1"
     assert race["date"] == "2026-11-06"
     assert race["course"] == "Greyville"
@@ -115,17 +116,17 @@ def test_parse_meeting_html_extracts_full_card():
 
 def test_append_is_idempotent_and_latest_write_wins(tmp_path):
     races = parse_meeting_html(_MEETING_HTML, "Greyville", "2026-11-06")
-    assert append_confirmed_results(str(tmp_path), races) == 1
-    assert append_confirmed_results(str(tmp_path), races) == 1
+    assert append_confirmed_results(str(tmp_path), races) == 2
+    assert append_confirmed_results(str(tmp_path), races) == 2
 
     stored = load_confirmed_results(str(tmp_path))
-    assert len(stored) == 1  # replaced, not duplicated
+    assert len(stored) == 2  # real race + void race, replaced not duplicated
 
     corrected = json.loads(json.dumps(races))
     corrected[0]["runners"][0]["name"] = "Corrected Winner"
     append_confirmed_results(str(tmp_path), corrected)
     stored = load_confirmed_results(str(tmp_path))
-    assert len(stored) == 1
+    assert len(stored) == 2
     assert stored[0]["runners"][0]["name"] == "Corrected Winner"
 
 
@@ -157,7 +158,7 @@ def test_confirmed_card_beats_winner_only_archive(tmp_path):
     assert details[("2026-11-06", "greyville", "1")]["winner"] == "Eagle Has Landed"
 
     stats = settle_open_picks(str(tmp_path), now_iso="2026-11-07T04:00:00+00:00")
-    assert stats == {"settled": 1, "won": 1, "pending": 0}
+    assert stats == {"settled": 1, "won": 1, "pending": 0, "void": 0, "expired": 0}
 
     row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
     assert row["finish_position"] == 2

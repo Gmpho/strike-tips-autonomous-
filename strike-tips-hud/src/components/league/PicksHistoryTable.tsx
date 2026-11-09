@@ -13,6 +13,8 @@ export interface PickRowItem {
   off_iso?: string | null;
   settled?: boolean;
   won?: boolean;
+  void?: boolean;
+  void_reason?: string;
   finish_position?: number | null;
   points?: number;
   created_at?: string;
@@ -43,6 +45,15 @@ function formatDateLabel(dateStr?: string, offIso?: string | null): string {
 }
 
 function OutcomeBadge({ pick }: { pick: PickRowItem }) {
+  if (pick.void) {
+    // Refunded/abandoned race, or a pick that never resolved. Not a loss:
+    // it does not count toward the strike rate.
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-500/15 text-slate-300 border border-slate-500/30">
+        Void{pick.void_reason ? ` · ${pick.void_reason}` : ''}
+      </span>
+    );
+  }
   if (!pick.settled) {
     return (
       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
@@ -103,7 +114,7 @@ export const PicksHistoryTable: React.FC<PicksHistoryTableProps> = ({
   compact = false,
   pageSize = 10,
 }) => {
-  const [filter, setFilter] = useState<'all' | 'scored' | 'wins' | 'pending' | 'lost'>('all');
+  const [filter, setFilter] = useState<'all' | 'scored' | 'wins' | 'pending' | 'lost' | 'void'>('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
@@ -113,8 +124,11 @@ export const PicksHistoryTable: React.FC<PicksHistoryTableProps> = ({
     let scored = 0;
     let pending = 0;
     let lost = 0;
+    let voided = 0;
     for (const p of picks) {
-      if (!p.settled) {
+      if (p.void) {
+        voided++;
+      } else if (!p.settled) {
         pending++;
       } else if (p.won || (p.finish_position && p.finish_position <= 4)) {
         scored++;
@@ -123,7 +137,7 @@ export const PicksHistoryTable: React.FC<PicksHistoryTableProps> = ({
         lost++;
       }
     }
-    return { all: picks.length, scored, wins, pending, lost };
+    return { all: picks.length, scored, wins, pending, lost, voided };
   }, [picks]);
 
   // Filtered rows
@@ -131,6 +145,8 @@ export const PicksHistoryTable: React.FC<PicksHistoryTableProps> = ({
     const q = search.trim().toLowerCase();
     return picks.filter(p => {
       // Status filter
+      if (filter === 'void' && !p.void) return false;
+      if (filter !== 'void' && p.void) return false;
       if (filter === 'pending' && p.settled) return false;
       if (filter === 'lost' && (!p.settled || p.won || (p.finish_position && p.finish_position <= 4))) return false;
       if (filter === 'scored' && (!p.settled || (!p.won && (!p.finish_position || p.finish_position > 4)))) return false;
@@ -235,6 +251,18 @@ export const PicksHistoryTable: React.FC<PicksHistoryTableProps> = ({
           }`}>
           Unplaced ({counts.lost})
         </button>
+
+        {counts.voided > 0 && (
+          <button
+            onClick={() => { setFilter('void'); setPage(1); }}
+            className={`px-3 py-1 rounded-lg font-semibold transition-all whitespace-nowrap ${
+              filter === 'void'
+                ? 'bg-slate-500/20 text-slate-200 border border-slate-500/40 shadow-xs'
+                : 'text-theme-secondary/70 hover:text-theme-primary hover:bg-white/5 border border-transparent'
+            }`}>
+            Void ({counts.voided})
+          </button>
+        )}
       </div>
 
       {/* Main Table */}

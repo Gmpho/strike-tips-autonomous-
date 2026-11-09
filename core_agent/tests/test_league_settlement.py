@@ -80,7 +80,7 @@ def test_settle_open_picks_marks_win_with_points(tmp_path):
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
 
     stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T06:00:00+00:00")
-    assert stats == {"settled": 1, "won": 1, "pending": 0}
+    assert stats == {"settled": 1, "won": 1, "pending": 0, "void": 0, "expired": 0}
 
     row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
     assert row["settled"] is True
@@ -136,7 +136,7 @@ def test_settle_open_picks_never_resettles(tmp_path):
 def test_settle_open_picks_no_winners_file(tmp_path):
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
     stats = settle_open_picks(str(tmp_path))
-    assert stats == {"settled": 0, "won": 0, "pending": 1}
+    assert stats == {"settled": 0, "won": 0, "pending": 1, "void": 0, "expired": 0}
 
 
 # ── ATR result cards as a second winner source ──────────────────────────────
@@ -168,7 +168,7 @@ def test_atr_snapshot_settles_a_fourth_place(tmp_path):
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
 
     stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
-    assert stats == {"settled": 1, "won": 1, "pending": 0}
+    assert stats == {"settled": 1, "won": 1, "pending": 0, "void": 0, "expired": 0}
     row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
     assert row["won"] is True
     assert row["finish_position"] == 4
@@ -187,7 +187,7 @@ def test_atr_snapshot_fifth_place_is_a_loss(tmp_path):
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
 
     stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
-    assert stats == {"settled": 1, "won": 0, "pending": 0}
+    assert stats == {"settled": 1, "won": 0, "pending": 0, "void": 0, "expired": 0}
     row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
     assert row["won"] is False
     assert row["finish_position"] == 5
@@ -205,7 +205,7 @@ def test_atr_snapshot_provides_missing_winner(tmp_path):
 
     stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
     # A 2nd-place finish scores (top 4) under the league scoring rules.
-    assert stats == {"settled": 1, "won": 1, "pending": 0}
+    assert stats == {"settled": 1, "won": 1, "pending": 0, "void": 0, "expired": 0}
     row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
     assert row["settled"] is True
     assert row["won"] is True

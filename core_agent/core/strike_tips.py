@@ -64,6 +64,21 @@ def _norm_text(s) -> str:
     return "".join(c for c in str(s or "").lower() if c.isalnum())
 
 
+def _jurisdiction_for_track(track) -> str:
+    """Region code for an exotic play's meeting ("SA", "UK", "IRE", ...).
+
+    Uses the league's canonical track→region map so a ticket is gated exactly
+    like the picks on the same meeting. Unknown tracks stay "SA" — the
+    conservative default, because the SA guard is the stricter one.
+    """
+    try:
+        from core_agent.skills.league.regions import region_of
+
+        return str(region_of(str(track or "")) or "SA").upper()
+    except Exception:
+        return "SA"
+
+
 def _bf_form_index(data_dir: str, max_age_secs: int = 6 * 3600) -> Dict[tuple, List[Dict]]:
     """Betfair enriched runners keyed by (norm_course, race_number).
 
@@ -161,6 +176,121 @@ def _snapshot_distances(data_dir: str, today_iso: str) -> Dict[tuple, int]:
                 out[(_norm_text(ev.get("course", "")), rn)] = dm
     except Exception:
         pass
+    return out
+
+
+def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, float]]:
+    """{(norm_course, race_number): {norm_horse: decimal_odds}} for today.
+
+    SA PDF cards carry no prices, so the value prompt used to send ``odds:
+    null`` and the model invented a flat 5.0 for the whole field (Nov-2026:
+    17 Turffontein "value bets" all at 5.0). The merged market snapshot does
+    carry real Betway/Betfair prices — hydrate the card from it before the
+    prompt and re-anchor the model's edge afterwards. Only ``bf_event_date``
+    == today is trusted; a stale meeting must never price today's runners.
+    """
+    import json as _json
+    import os as _os
+
+    out: Dict[tuple, Dict[str, float]] = {}
+    try:
+        with open(_os.path.join(str(data_dir), "market_snapshot_latest.json")) as f:
+            snap = _json.load(f)
+    except Exception:
+        return out
+
+    for ev in (snap.get("events") or {}).values():
+        if not isinstance(ev, dict):
+            continue
+        if str(ev.get("bf_event_date", "") or "")[:10] != today_iso:
+            continue
+        try:
+            rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
+        except (ValueError, TypeError):
+            continue
+        if rn <= 0:
+            continue
+        course = _norm_text(ev.get("course", ""))
+        prices: Dict[str, float] = {}
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict) or r.get("non_runner"):
+                continue
+            name = _norm_text(r.get("name") or r.get("outcomeName") or "")
+            try:
+                odds = float(r.get("odds"))
+            except (ValueError, TypeError):
+                continue
+            if name and odds > 1.0:
+                prices[name] = odds
+        if prices:
+            out[(course, rn)] = prices
+    return out
+
+
+def _live_odds_for(prices: Dict[str, float], horse: Any) -> Optional[float]:
+    """Resolve one runner's live price from a normalised price map."""
+    import difflib as _difflib
+
+    key = _norm_text(horse)
+    if not key:
+        return None
+    if key in prices:
+        return prices[key]
+    close = _difflib.get_close_matches(key, list(prices), n=1, cutoff=0.72)
+    return prices[close[0]] if close else None
+
+
+def _apply_live_odds(value_bets: List[Dict], prices: Dict[str, float]) -> List[Dict]:
+    """Re-anchor AI value bets on the live market price.
+
+    The model is asked for an estimated win probability; the price must come
+    from the market, never from the model. Recomputed edge uses the model's
+    probability estimate and the real decimal odds, so a hallucinated 5.0 can
+    no longer manufacture a 7% edge. A selection with no live price is dropped
+    — an unpriceable runner is not a value bet.
+    """
+    if not prices:
+        return []
+    out: List[Dict] = []
+    for vb in value_bets or []:
+        if not isinstance(vb, dict):
+            continue
+        horse = vb.get("horse") or vb.get("name") or vb.get("horse_name") or ""
+        live = _live_odds_for(prices, horse)
+        if not live:
+            print(f"[ODDS] Dropped '{horse}': no live price on today's snapshot")
+            continue
+        try:
+            ai_odds = float(vb.get("odds_decimal") or vb.get("odds") or 0)
+        except (ValueError, TypeError):
+            ai_odds = 0.0
+        try:
+            est = vb.get("estimated_probability")
+            est = float(est) if est is not None else None
+        except (ValueError, TypeError):
+            est = None
+        if est is None and ai_odds > 1.0:
+            # Recover the model's implied estimate from its own edge/odds so
+            # the re-anchor changes only the price, not the reasoning.
+            try:
+                edge = float(vb.get("edge_percent") or vb.get("edge") or 0)
+            except (ValueError, TypeError):
+                edge = 0.0
+            if 0 < edge < 1:
+                edge *= 100
+            est = (1.0 / ai_odds) + (edge / 100.0)
+        if est is None:
+            est = 1.0 / live
+        est = min(max(float(est), 0.0), 0.95)
+        vb = dict(vb)
+        vb["horse"] = horse
+        vb["odds_decimal"] = live
+        vb["odds"] = live
+        vb["estimated_probability"] = round(est, 4)
+        vb["implied_probability"] = round(1.0 / live, 4)
+        vb["edge_percent"] = round((est - (1.0 / live)) * 100.0, 2)
+        vb["odds_source"] = "market"
+        out.append(vb)
     return out
 
 
@@ -794,7 +924,12 @@ def _finalise_exotic_plays(
     for play in plays or []:
         if not isinstance(play, dict):
             continue
-        play.setdefault("jurisdiction", "SA")
+        # Jurisdiction decides the phantom-meeting guard below. Defaulting
+        # every play to "SA" made the guard apply SA snapshot coverage to UK
+        # cards, which have no Betway coverage at all — so every UK ticket was
+        # silently dropped before it reached the board (Oct-2026 regression).
+        if not play.get("jurisdiction"):
+            play["jurisdiction"] = _jurisdiction_for_track(play.get("_track"))
         if not _play_has_real_names(play):
             print(f"[EXOTIC] AI play '{play.get('pool')}' dropped: "
                   "cloth-number selections, no horse names")
@@ -1241,6 +1376,28 @@ class StrikeTips:
             # The AI summarises this into reasoning instead of guessing.
             _bf_index = _bf_form_index(self.data_dir)
             _dist_index = _snapshot_distances(self.data_dir, today_iso)
+            _live_odds = _snapshot_live_odds(self.data_dir, today_iso)
+            if _live_odds:
+                _hydrated = 0
+                for _r in races:
+                    _prices = _live_odds.get(
+                        (_norm_text(track), int(_r.race_number or 0))
+                    ) or {}
+                    if not _prices:
+                        continue
+                    for _run in _r.runners or []:
+                        try:
+                            _have = float(getattr(_run, "odds_decimal", 0) or 0)
+                        except (ValueError, TypeError):
+                            _have = 0.0
+                        if _have > 1.0:
+                            continue
+                        _live = _live_odds_for(_prices, getattr(_run, "horse_name", ""))
+                        if _live:
+                            _run.odds_decimal = _live
+                            _hydrated += 1
+                if _hydrated:
+                    print(f"[ODDS] Hydrated {_hydrated} runner prices from the live snapshot for {track}")
             _bf_lines: Dict[int, str] = {}
             for _r in races:
                 _key = (_norm_text(track), int(_r.race_number or 0))
@@ -1425,6 +1582,19 @@ class StrikeTips:
                         "value_bets": [],
                     }
 
+                _vbs = self._validate_value_bets(
+                    insight.get("value_bets", []),
+                    [run.horse_name for run in r.runners],
+                )
+                # Re-anchor selection odds on the live market price. Only when
+                # this race actually has snapshot coverage: a race we cannot
+                # price must not have its selections silently deleted.
+                _prices = _live_odds.get(
+                    (_norm_text(track), int(r.race_number or 0))
+                ) or {}
+                if _prices:
+                    _vbs = _apply_live_odds(_vbs, _prices)
+
                 results.append(
                     {
                         "track": track,
@@ -1433,10 +1603,7 @@ class StrikeTips:
                         "distance": r.distance,
                         "condition": r.track_condition,
                         "runners": [run.horse_name for run in r.runners],
-                        "value_bets": self._validate_value_bets(
-                            insight.get("value_bets", []),
-                            [run.horse_name for run in r.runners],
-                        ),
+                        "value_bets": _vbs,
                         "ai_insight": insight.get("summary", analysis_result),
                     }
                 )
@@ -2866,7 +3033,17 @@ class StrikeTips:
                                     _edge *= 100
                                 if _po and _edge < 15.0:
                                     continue
-                                _odds = float(_vb.get("odds_decimal") or _vb.get("odds") or 2.0)
+                                try:
+                                    _odds = float(
+                                        _vb.get("odds_decimal") or _vb.get("odds") or 0
+                                    )
+                                except (ValueError, TypeError):
+                                    _odds = 0.0
+                                if _odds <= 1.0:
+                                    # Never alert a price we do not have. The
+                                    # old 2.0 sentinel invented a 50% implied
+                                    # chance and a fake edge.
+                                    continue
                                 _conf = "STRONG_VALUE" if _edge >= 15.0 else "VALUE" if _edge >= 8.0 else "MARGINAL"
                                 await self.telegram.send_value_bet(
                                     horse=_horse, track=_track,

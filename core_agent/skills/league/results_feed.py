@@ -118,6 +118,30 @@ def parse_meeting_html(
                 table = cand
                 break
         if table is None:
+            # A refunded / abandoned race publishes no result table at all.
+            # Without this branch the race vanished from the card entirely and
+            # every pick on it stayed pending forever (Nov-2026 Turffontein
+            # R9/R10, abandoned for heavy rain). Record the void explicitly so
+            # settlement can refund the pick instead of waiting for a winner
+            # that will never exist.
+            text = section.get_text(" ", strip=True).lower()
+            reason = None
+            if "race refunded" in text or re.search(r"\brefund", text):
+                reason = "refunded"
+            elif "abandoned" in text:
+                reason = "abandoned"
+            elif "void" in text:
+                reason = "void"
+            if reason:
+                races.append({
+                    "date": date,
+                    "course": course,
+                    "race_number": str(race_number),
+                    "runners": [],
+                    "void": True,
+                    "void_reason": reason,
+                    "source": "raceform",
+                })
             continue
 
         header_cells = [th.get_text(" ", strip=True).lower() for th in table.find_all("th")]
@@ -206,7 +230,11 @@ def append_confirmed_results(data_dir: str, races: Iterable[Dict[str, Any]]) -> 
         key = _result_key(race)
         if not all(key):
             continue
-        if not any(r.get("position") == 1 for r in race.get("runners") or []):
+        # A void race carries no winner by definition; the position check below
+        # would silently drop it and leave its picks pending forever.
+        if not race.get("void") and not any(
+            r.get("position") == 1 for r in race.get("runners") or []
+        ):
             continue
         by_key[key] = race
         added += 1

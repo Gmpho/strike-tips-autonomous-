@@ -863,6 +863,136 @@ def _atr_yesterday_iso(now: Optional[datetime] = None) -> str:
     return ((now or datetime.now()) - timedelta(days=1)).date().isoformat()
 
 
+# A racing day is not finished when the date rolls over. Meeting dates are
+# labels, not clocks: a US card labelled "8 Nov" still runs into 04:00 SAST on
+# the 9th. The old rule skipped "yesterday" the moment the day appeared in the
+# snapshot at all, so every evening card froze at whatever had finished by the
+# rollover (Nov-2026: 2026-11-08 stuck at Gulfstream R1-R3 + Churchill R1 and
+# 13 picks could never settle). Keep refetching a day while it is still growing
+# and stop once nothing new has landed for this long.
+ATR_CARD_QUIET_SECS = 6 * 3600
+
+
+def _atr_day_signature(races: List[Dict]) -> str:
+    """Fingerprint of one day's card: meetings, race numbers, result depth."""
+    import hashlib as _hashlib
+
+    rows = []
+    for race in races or []:
+        if not isinstance(race, dict):
+            continue
+        runners = race.get("runners") or []
+        placed = sum(
+            1 for r in runners
+            if isinstance(r, dict) and str(r.get("position") or "").strip()
+        )
+        rows.append(
+            f"{str(race.get('course') or '').strip().lower()}|"
+            f"{_atr_result_key(race)[2]}|{len(runners)}|{placed}"
+        )
+    return _hashlib.sha1("\n".join(sorted(rows)).encode()).hexdigest()
+
+
+def _atr_captured(path) -> Dict[str, Dict[str, Any]]:
+    """Per-day capture bookkeeping from a results snapshot.
+
+    Legacy snapshots have no ``captured`` map; their file mtime is the honest
+    "last time anything landed" for every day they hold.
+    """
+    try:
+        blob = json.loads(Path(path).read_text())
+    except Exception:
+        return {}
+    cap = blob.get("captured") if isinstance(blob, dict) else None
+    if isinstance(cap, dict) and cap:
+        return {str(k)[:10]: v for k, v in cap.items() if isinstance(v, dict)}
+
+    results = _atr_absolutize(blob.get("results") or [], blob.get("timestamp"))
+    try:
+        mtime = Path(path).stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    # A legacy snapshot cannot have grown after it was written, so its own
+    # timestamp is a tighter bound than mtime (which is "now" right after a
+    # deploy and would keep every old day alive for the full quiet window).
+    last = mtime
+    try:
+        last = datetime.fromisoformat(
+            str(blob.get("timestamp") or "").replace("Z", "+00:00")
+        ).timestamp()
+    except Exception:
+        pass
+    out: Dict[str, Dict[str, Any]] = {}
+    for race in results:
+        day = str(race.get("date") or "")[:10]
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+            continue
+        out.setdefault(day, {"races": 0, "last_grew_at": last})["races"] += 1
+    return out
+
+
+def _atr_update_capture(
+    previous: Dict[str, Dict[str, Any]],
+    merged: List[Dict],
+    now_ts: Optional[float] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Refresh the per-day capture map after a merge.
+
+    ``last_grew_at`` only moves when the day's card actually changed — a plain
+    re-fetch of an unchanged page must not keep a finished day alive forever.
+    """
+    import time as _time
+
+    now_ts = _time.time() if now_ts is None else now_ts
+    by_day: Dict[str, List[Dict]] = {}
+    for race in merged or []:
+        if not isinstance(race, dict):
+            continue
+        day = str(race.get("date") or "")[:10]
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+            by_day.setdefault(day, []).append(race)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for day, races in by_day.items():
+        sig = _atr_day_signature(races)
+        prev = previous.get(day) or {}
+        grew_at = prev.get("last_grew_at")
+        if prev.get("signature") != sig or not grew_at:
+            grew_at = now_ts
+        out[day] = {
+            "races": len(races),
+            "courses": sorted({str(r.get("course") or "").strip() for r in races if r.get("course")}),
+            "signature": sig,
+            "first_seen_at": prev.get("first_seen_at") or now_ts,
+            "last_grew_at": grew_at,
+        }
+    return out
+
+
+def _atr_day_needs_finishing(
+    path, day: str, now_ts: Optional[float] = None
+) -> bool:
+    """True while a day's card can still produce new results.
+
+    Never captured -> fetch. Captured but still growing (or grown within the
+    last ATR_CARD_QUIET_SECS) -> keep fetching, because late meetings on the
+    card are still running. Quiet for the whole window -> finished.
+    """
+    import time as _time
+
+    now_ts = _time.time() if now_ts is None else now_ts
+    cap = _atr_captured(path).get(str(day)[:10])
+    if not cap or not cap.get("races"):
+        return True
+    try:
+        last = float(cap.get("last_grew_at"))
+    except (TypeError, ValueError):
+        return True
+    if last > now_ts:  # clock skew — treat as "just grew"
+        return True
+    return (now_ts - last) < ATR_CARD_QUIET_SECS
+
+
 def _atr_merge_results(existing: List[Dict], fresh: List[Dict], keep_days: int = 3) -> List[Dict]:
     """Merge fresh races over the existing snapshot, newest wins, pruned by age.
 
@@ -1218,10 +1348,12 @@ class AdaptiveOddsMonitor:
             # the whole allowance. "today" is the page that changes during the
             # card — fetching "yesterday" first is why the snapshot only ever
             # held yesterday's races and evening results never appeared.
-            # Yesterday's card is immutable once captured, so it is fetched at
-            # most once a day.
             days = ["today"]
-            if _atr_yesterday_iso() not in _atr_snapshot_days(ATR_RESULTS_PATH):
+            # A day simply *present* is not a day *captured*. Evening meetings
+            # (US cards labelled 8 Nov run to 04:00 SAST on the 9th) keep
+            # finishing after ATR's "today" has rolled over, so "yesterday" is
+            # refetched until the card stops growing for ATR_CARD_QUIET_SECS.
+            if _atr_day_needs_finishing(ATR_RESULTS_PATH, _atr_yesterday_iso()):
                 days.append("yesterday")
             for day in days:
                 try:
@@ -1242,8 +1374,12 @@ class AdaptiveOddsMonitor:
                 # the snapshot they came from before merging into this one.
                 existing_results = _atr_absolutize(existing_results, old_ts)
                 merged = _atr_merge_results(existing_results, results)
+                captured = _atr_update_capture(
+                    _atr_captured(ATR_RESULTS_PATH), merged
+                )
                 _atomic_write_json(ATR_RESULTS_PATH, {
                     "results": merged,
+                    "captured": captured,
                     "timestamp": datetime.now().isoformat(),
                 })
                 wrote = True

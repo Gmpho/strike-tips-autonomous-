@@ -135,23 +135,38 @@ class RaceAnalyzer:
         Analyze a full race card using Polars for vectorized performance.
         """
         runners_data = []
+        skipped = 0
         for runner in race_card.runners:
-            if runner.horse_name in probability_estimates:
-                # Safety handler for Starting Price (SP) or non-numeric odds
-                try:
-                    safe_odds = (
-                        float(runner.odds_decimal) if runner.odds_decimal else 5.0
-                    )
-                except (ValueError, TypeError):
-                    safe_odds = 5.0
+            if runner.horse_name not in probability_estimates:
+                continue
+            # A runner with no price cannot be valued. The old 5.0 sentinel
+            # invented a 20% implied chance for every unpriced runner, so a
+            # PDF card with no odds produced a whole field of identical "5.0
+            # +7.0%" value bets (Nov-2026 Turffontein report, 17 selections).
+            # Skip instead: callers hydrate live odds before asking.
+            try:
+                safe_odds = float(runner.odds_decimal)
+            except (ValueError, TypeError):
+                safe_odds = 0.0
+            if safe_odds <= 1.0:
+                skipped += 1
+                continue
 
-                runners_data.append(
-                    {
-                        "name": runner.horse_name,
-                        "odds": safe_odds,
-                        "est_prob": probability_estimates[runner.horse_name],
-                    }
-                )
+            runners_data.append(
+                {
+                    "name": runner.horse_name,
+                    "odds": safe_odds,
+                    "est_prob": probability_estimates[runner.horse_name],
+                }
+            )
+
+        if skipped:
+            logger.warning(
+                "analyze_race: %d/%d runners had no usable odds and were skipped "
+                "(never priced at a fabricated 5.0)",
+                skipped,
+                len(race_card.runners),
+            )
 
         if not runners_data:
             return []

@@ -17,6 +17,11 @@ from .scoring import score_pick
 # "The Ghost" and "Ghost" resolve to the same runner.
 _STOPWORDS = {"the", "a", "an", "of", "and", "s", "saf", "aus", "gb"}
 
+# A pick with no result on record after this many days is voided as
+# unverifiable (never guessed). Bankroll already expires stale bets; the league
+# needs the same terminal state or those tips stay pending forever.
+PICK_EXPIRY_DAYS = 7
+
 
 def _read_jsonl(path: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -144,7 +149,18 @@ def load_winner_details(
             runners.append({"name": name, "position": position, "odds_decimal": odds})
             if position == 1 and winner is None:
                 winner, sp = name or None, odds
-        if track and race and date and winner:
+        if track and race and date and row.get("void"):
+            # Refunded / abandoned race: no winner exists and none ever will.
+            # Recorded explicitly so settlement can void the pick instead of
+            # leaving it pending against a result that cannot arrive.
+            idx[(date, track, race)] = {
+                "winner": None,
+                "void": True,
+                "void_reason": str(row.get("void_reason") or "refunded"),
+                "sp": None,
+                "runners": runners,
+            }
+        elif track and race and date and winner:
             idx[(date, track, race)] = {"winner": winner, "sp": sp, "runners": runners}
 
     for row in _read_jsonl(os.path.join(data_dir, "settled_winners.jsonl")):
@@ -223,12 +239,21 @@ def settle_open_picks(
     path = os.path.join(data_dir, picks_filename)
     rows = _read_jsonl(path)
     winners = load_winner_details(data_dir, now_iso)
-    if not rows or not winners:
-        return {"settled": 0, "won": 0, "pending": sum(1 for r in rows if not r.get("settled"))}
+    if not rows:
+        return {"settled": 0, "won": 0, "void": 0, "expired": 0, "pending": 0}
 
     settled_n = 0
     won_n = 0
+    void_n = 0
+    expired_n = 0
     changed = False
+    now_dt = None
+    if now_iso:
+        try:
+            now_dt = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+        except ValueError:
+            now_dt = None
+    now_dt = now_dt or datetime.now()
     for p in rows:
         if p.get("settled"):
             continue
@@ -238,7 +263,46 @@ def settle_open_picks(
             str(p.get("race_number") or "").strip(),
         )
         info = winners.get(key)
+        if info and info.get("void"):
+            # Refunded or abandoned race: the stake comes back, nothing is
+            # won, and the pick is excluded from the strike rate. Bankroll
+            # treats this as VOID; the league must not score it as a loss.
+            p["settled"] = True
+            p["void"] = True
+            p["void_reason"] = info.get("void_reason") or "refunded"
+            p["won"] = False
+            p["placed"] = False
+            p["points"] = 0
+            p["finish_position"] = None
+            p["winner_name"] = None
+            p["winner_sp"] = 0.0
+            p["settled_at"] = now_iso
+            changed = True
+            void_n += 1
+            continue
         if not info:
+            # Nothing on record. An unresolved pick must not sit pending
+            # forever; after the expiry window it is voided as unverifiable
+            # (never guessed as a win or a loss).
+            if PICK_EXPIRY_DAYS:
+                day = None
+                try:
+                    day = datetime.fromisoformat(str(p.get("date") or "")[:10])
+                except ValueError:
+                    day = None
+                if day is not None and (now_dt - day).days >= PICK_EXPIRY_DAYS:
+                    p["settled"] = True
+                    p["void"] = True
+                    p["void_reason"] = "expired"
+                    p["won"] = False
+                    p["placed"] = False
+                    p["points"] = 0
+                    p["finish_position"] = None
+                    p["winner_name"] = None
+                    p["winner_sp"] = 0.0
+                    p["settled_at"] = now_iso
+                    changed = True
+                    expired_n += 1
             continue
         winner = info["winner"]
         runners = info.get("runners") or []
@@ -302,6 +366,8 @@ def settle_open_picks(
     return {
         "settled": settled_n,
         "won": won_n,
+        "void": void_n,
+        "expired": expired_n,
         "pending": sum(1 for r in rows if not r.get("settled")),
     }
 
