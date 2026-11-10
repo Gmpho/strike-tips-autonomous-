@@ -479,16 +479,84 @@ async def formula():
 
 class PickIn(BaseModel):
     race_id: str
-    course: str
-    race_number: int
-    off_iso: str
+    course: Optional[str] = None
+    race_number: Optional[int] = None
+    # Off time is resolved server-side when the client cannot supply it.
+    # Betfair's date stamp on a race is intermittent, so the HUD sometimes
+    # received off_iso=null and every pick died on "Input should be a valid
+    # string" (Nov-2026) — the race was fine, the field was empty.
+    off_iso: Optional[str] = None
     runner_number: int
-    runner_name: str
-    odds: float
+    runner_name: Optional[str] = None
+    odds: float = 0.0
     region: Optional[str] = None
     # Field size at pick time. Settlement scores a win by field size, and the
     # market snapshot for yesterday's races is gone by the time we settle.
     field_size: Optional[int] = None
+
+
+def _snapshot_sast_day(snap: Dict[str, Any]) -> Optional[str]:
+    """The calendar day (SAST) the snapshot was written on.
+
+    ``timestamp`` is stamped in UTC by the snapshot writer; SA runs two hours
+    ahead, so a card written late at night still belongs to the next SA day.
+    """
+    raw = str((snap or {}).get("timestamp") or "")[:19]
+    if not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError:
+        return raw[:10] or None
+    return (stamp + timedelta(hours=2)).date().isoformat()
+
+
+def _race_event(snap: Dict[str, Any], race_id: str) -> Optional[Dict[str, Any]]:
+    """Find a race's event in the market snapshot by id."""
+    events = (snap or {}).get("events") or {}
+    if not isinstance(events, dict):
+        events = {}
+    ev = events.get(str(race_id))
+    if isinstance(ev, dict):
+        return ev
+    for candidate in events.values():
+        if isinstance(candidate, dict) and str(candidate.get("id")) == str(race_id):
+            return candidate
+    return None
+
+
+def _snapshot_off_iso(snap: Dict[str, Any], race_id: str) -> Optional[str]:
+    """Rebuild a race's off time from the market snapshot.
+
+    Betfair stamps ``bf_event_date``/``bf_off_time`` on the events it
+    matched, but that merge is intermittent: when it is missing the card
+    still carries the race clock, and the snapshot's own day completes the
+    timestamp. Without this a perfectly good card looked "no off time" and
+    no pick could be submitted against it.
+    """
+    ev = _race_event(snap, race_id)
+    if not isinstance(ev, dict):
+        return None
+    bf_date = str(ev.get("bf_event_date") or "")[:10]
+    bf_time = str(ev.get("bf_off_time") or "")
+    if bf_date and bf_time:
+        return f"{bf_date}T{bf_time}:00+02:00"
+    day = _snapshot_sast_day(snap)
+    clock = str(ev.get("t") or ev.get("st") or "")
+    if day and len(clock) >= 4 and clock[2] == ":":
+        return f"{day}T{clock}:00+02:00"
+    return None
+
+
+def _load_snapshot() -> Dict[str, Any]:
+    """The market snapshot as written by the odds monitor."""
+    path = os.path.join(str(DATA_DIR), "market_snapshot_latest.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 @router.post("/picks")
@@ -497,9 +565,23 @@ async def submit_pick(body: PickIn, authorization: Optional[str] = Header(None))
     if not uid:
         raise HTTPException(401, "Sign in to pick")
     handle = handle or (uid[:8] if uid else "player")
+    if not body.runner_name:
+        raise HTTPException(422, "That runner has no name — pick another")
+    # Off time: trust the client's, but fall back to the snapshot when the
+    # client had none (an intermittent Betfair date stamp, not a bad pick).
+    off_iso = body.off_iso
+    if not off_iso:
+        try:
+            off_iso = _snapshot_off_iso(_load_snapshot(), body.race_id)
+        except Exception:
+            off_iso = None
+    if not off_iso:
+        raise HTTPException(
+            422, "No off time for this race yet — try again in a minute"
+        )
     # lock check
     try:
-        off = datetime.fromisoformat(body.off_iso.replace("Z", "+00:00"))
+        off = datetime.fromisoformat(off_iso.replace("Z", "+00:00"))
     except Exception:
         raise HTTPException(400, "bad off_iso")
     if datetime.now(timezone.utc) >= off - timedelta(minutes=LOCK_MINUTES):
@@ -508,7 +590,8 @@ async def submit_pick(body: PickIn, authorization: Optional[str] = Header(None))
     for p in _load_user_picks():
         if p.get("user_id") == uid and p.get("race_id") == body.race_id:
             raise HTTPException(409, "already-picked")
-    region = body.region or region_of(body.course)
+    course = body.course or ""
+    region = body.region or region_of(course)
     row = {
         "entity_type": "player",
         "entity_id": uid,
@@ -523,9 +606,9 @@ async def submit_pick(body: PickIn, authorization: Optional[str] = Header(None))
         "pick_odds": float(body.odds or 0),
         "user_id": uid,
         "race_id": body.race_id,
-        "course": body.course,
+        "course": course,
         "race_number": body.race_number,
-        "off_iso": body.off_iso,
+        "off_iso": off_iso,
         "runner_number": body.runner_number,
         "runner_name": body.runner_name,
         "field_size": body.field_size,
@@ -585,6 +668,7 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
         })
 
     out = []
+    snap_day = _snapshot_sast_day(snap)
     for e in events or []:
         course = e.get("course") or ""
         r = region_of(course)
@@ -596,6 +680,13 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
         off_iso = None
         if e.get("bf_event_date") and e.get("bf_off_time"):
             off_iso = f"{e['bf_event_date']}T{e['bf_off_time']}:00+02:00"
+        elif snap_day:
+            # Betfair's date stamp is intermittent; the card's own clock plus
+            # the snapshot's day is enough. Without this the HUD got
+            # off_iso=null and no pick could be submitted (Nov-2026).
+            clock = str(e.get("t") or e.get("st") or "")
+            if len(clock) >= 4 and clock[2] == ":":
+                off_iso = f"{snap_day}T{clock}:00+02:00"
         out.append({
             "race_id": rid,
             "course": course,

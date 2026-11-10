@@ -199,12 +199,15 @@ export const PicksView: React.FC = () => {
           race_id: race.race_id,
           course: race.course,
           race_number: race.race_number,
-          off_iso: race.off_iso,
           runner_number: Number(runner.number),
           runner_name: runner.name,
           odds: Number(runner.odds) || 0,
           region: race.region,
           field_size: race.field_size,
+          // Off time can be missing from the card (the feed's date stamp is
+          // intermittent) — omit it and let the server rebuild it from the
+          // market snapshot instead of failing validation.
+          off_iso: race.off_iso || undefined,
         }),
       });
       if (r.ok) {
