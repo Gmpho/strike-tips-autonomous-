@@ -247,3 +247,60 @@ def test_fetch_meeting_accepts_the_matching_day(monkeypatch):
     assert len(races) == 2          # race 1 + the void race 2
     assert races[0]["date"] == "2026-11-08"
     assert races[1]["void"] is True
+
+
+# ── a meeting's card fills in race by race (Nov-2026) ───────────────────────
+# The backfill skipped a meeting as soon as ANY of its races was confirmed,
+# so Kenilworth (fetched at 13:07 for R1-R4) was never fetched again and
+# R5-R9 stayed pending forever. Granularity is per RACE, re-fetched on a
+# cooldown so an abandoned race cannot hammer Raceform every cycle.
+
+def _write_picks(tmp_path, picks):
+    import json as _json
+    with open(os.path.join(str(tmp_path), "league_picks.jsonl"), "w") as f:
+        for p in picks:
+            f.write(_json.dumps(p) + "\n")
+
+
+def test_pending_meetings_refetches_a_meeting_with_new_pending_races(tmp_path):
+    _write_picks(tmp_path, [
+        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=5),
+    ])
+    # R1-R4 are already confirmed for that meeting …
+    rows = [
+        {"date": "2026-11-10", "course": "Kenilworth", "race_number": str(r),
+         "runners": [{"name": "X", "position": 1}]}
+        for r in (1, 2, 3, 4)
+    ]
+    assert append_confirmed_results(str(tmp_path), rows) == 4
+
+    meetings = pending_meetings(str(tmp_path), days=3)
+    # … so the meeting still needs a fetch for R5.
+    assert ("2026-11-10", "Kenilworth") in meetings
+
+
+def test_pending_meetings_skips_a_meeting_whose_races_are_all_confirmed(tmp_path):
+    _write_picks(tmp_path, [
+        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=1),
+    ])
+    rows = [{"date": "2026-11-10", "course": "Kenilworth", "race_number": "1",
+             "runners": [{"name": "X", "position": 1}]}]
+    append_confirmed_results(str(tmp_path), rows)
+
+    assert ("2026-11-10", "Kenilworth") not in pending_meetings(str(tmp_path), days=3)
+
+
+def test_pending_meetings_respects_the_fetch_cooldown(tmp_path):
+    _write_picks(tmp_path, [
+        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=5),
+    ])
+    from core_agent.skills.league import results_feed
+
+    results_feed._mark_fetched(str(tmp_path), "2026-11-10", "Kenilworth")
+    assert ("2026-11-10", "Kenilworth") not in pending_meetings(
+        str(tmp_path), days=3
+    )
+    # Once the cooldown expires the meeting is fetched again.
+    assert ("2026-11-10", "Kenilworth") in pending_meetings(
+        str(tmp_path), days=3, cooldown_secs=0
+    )

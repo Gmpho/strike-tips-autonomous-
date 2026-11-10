@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import date as _date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -306,13 +307,60 @@ def append_confirmed_results(data_dir: str, races: Iterable[Dict[str, Any]]) -> 
 
 # ── backfill ─────────────────────────────────────────────────────────────────
 
+# How long a meeting is left alone after it was fetched. A card fills in
+# race by race as the meeting runs, so the meeting has to be re-fetched —
+# but an abandoned race never gets a result, and re-fetching it every cycle
+# would hammer Raceform forever.
+FETCH_COOLDOWN_SECS = 20 * 60
+_FETCH_MARKERS = "results_fetch_markers.json"
+
+
+def _fetch_markers(data_dir: str) -> Dict[str, float]:
+    path = os.path.join(data_dir, _FETCH_MARKERS)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return {str(k): float(v) for k, v in (data or {}).items()}
+    except Exception:
+        return {}
+
+
+def _mark_fetched(data_dir: str, day: str, course: str) -> None:
+    path = os.path.join(data_dir, _FETCH_MARKERS)
+    markers = _fetch_markers(data_dir)
+    markers[f"{day}|{_track_key(course)}"] = time.time()
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(markers, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.debug("fetch marker not written: %s", e)
+
+
 def pending_meetings(
-    data_dir: str, days: int = 3, today: Optional[_date] = None
+    data_dir: str, days: int = 3, today: Optional[_date] = None,
+    cooldown_secs: int = FETCH_COOLDOWN_SECS,
 ) -> List[tuple]:
-    """(date, course) pairs with picks still pending and a Raceform page."""
+    """(date, course) pairs with picks still pending and a Raceform page.
+
+    Granularity is PER RACE, not per meeting: a meeting's card fills in
+    race by race while the day runs, so a meeting that already has R1-R4
+    confirmed still needs a fetch for R5-R9 (Nov-2026: Kenilworth was
+    fetched once at 13:07 and the rest of the card never arrived — the
+    meeting was considered "already have" and every later race stayed
+    pending forever).
+
+    Re-fetches are rate-limited per meeting, so a race that will never have
+    a result (abandoned) cannot turn into a Raceform request every cycle.
+    """
     today = today or datetime.now().date()
     floor = today - timedelta(days=days)
-    have = {(_result_key(r)[0], _result_key(r)[1]) for r in load_confirmed_results(data_dir)}
+    have = {_result_key(r) for r in load_confirmed_results(data_dir)}
+    markers = _fetch_markers(data_dir)
+    now = time.time()
     out = set()
     for row in _read_jsonl(os.path.join(data_dir, "league_picks.jsonl")):
         if row.get("settled"):
@@ -328,8 +376,12 @@ def pending_meetings(
                 continue
         except ValueError:
             continue
-        if (day, _track_key(course)) in have:
-            continue
+        race = str(row.get("race_number") or "").strip()
+        if (day, _track_key(course), race) in have:
+            continue  # this race already has a confirmed card
+        last = markers.get(f"{day}|{_track_key(course)}")
+        if last and (now - last) < cooldown_secs:
+            continue  # fetched recently; wait before asking again
         out.add((day, course))
     return sorted(out)
 
@@ -347,6 +399,7 @@ def backfill_missing_results(
     for day, course in pending_meetings(data_dir, days=days, today=today)[:limit]:
         try:
             races = fetch_meeting(course, day)
+            _mark_fetched(data_dir, day, course)
             stats["meetings"] += 1
             stats["races"] += append_confirmed_results(data_dir, races)
         except Exception as exc:  # network, markup drift, rate limit
