@@ -189,6 +189,38 @@ class BankrollGovernor:
 
     # ─── Persistence ────────────────────────────────────────────────────────
 
+    # Opening the lock file is retried: on Modal's distributed volume
+    # (gcsfuse) a second container opening the same file for write can be
+    # refused for a moment.
+    _LOCK_OPEN_ATTEMPTS = 3
+    _LOCK_OPEN_DELAY_SECS = 1.0
+
+    def _open_lock_fd(self) -> int:
+        """Open the lock file for locking — never truncate it.
+
+        A lock file must never be written to. The old ``open(path, "w")``
+        truncated it on every transaction, and truncating a file another
+        container holds open on a distributed filesystem fails with EPERM
+        ("Operation not permitted") — the auto-settlement job then aborted
+        before it had touched a single record (Nov-2026: once in 24h, with
+        the only HTTP 500 of the day alongside it). Open read/write + create
+        and let flock do the excluding.
+
+        Still fails CLOSED: if the lock cannot be opened after a few tries
+        the transaction aborts rather than writing money records unlocked.
+        """
+        last_error: Optional[OSError] = None
+        for attempt in range(self._LOCK_OPEN_ATTEMPTS):
+            try:
+                return os.open(self._lock_file, os.O_RDWR | os.O_CREAT, 0o666)
+            except OSError as e:
+                last_error = e
+                if attempt + 1 < self._LOCK_OPEN_ATTEMPTS:
+                    time.sleep(self._LOCK_OPEN_DELAY_SECS)
+        raise OSError(
+            f"Could not open the bankroll lock {self._lock_file!r}: {last_error}"
+        ) from last_error
+
     @contextmanager
     def _atomic_transaction(self) -> Generator[None, None, None]:
         """
@@ -199,7 +231,7 @@ class BankrollGovernor:
         4. Save updated state back to disk
         5. Release lock
         """
-        lock_fd = open(self._lock_file, "w")
+        lock_fd = self._open_lock_fd()
         try:
             # Block until lock is acquired
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -219,7 +251,7 @@ class BankrollGovernor:
         finally:
             self._in_tx = False
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            lock_fd.close()
+            os.close(lock_fd)
 
     def _load_state(self, starting_bankroll: float):
         """Load persisted bankroll state.

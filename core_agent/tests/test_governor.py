@@ -457,3 +457,80 @@ def test_exotic_bet_rejects_implausible_track(temp_data_dir):
     ok = gov.record_exotic_bet(track="  Turffontein  ", **kwargs)
     assert ok is not None
     assert ok.track == "Turffontein"
+
+
+# ── lock file handling (Nov-2026) ──────────────────────────────────────────
+# The ledger padlock was opened with "w", which TRUNCATES the file before the
+# lock is taken. On Modal's distributed volume (gcsfuse) truncating a file
+# another container holds open fails with EPERM ("Operation not permitted") and
+# the auto-settlement job aborted before touching a record. A lock file must
+# never be written to — it is only locked.
+
+def test_lock_file_is_never_truncated(temp_data_dir):
+    """The padlock keeps its bytes: opening it must not rewrite it."""
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    lock_path = os.path.join(temp_data_dir, "bankroll.lock")
+    with open(lock_path, "w") as f:
+        f.write("untouched")
+
+    gov.record_bet(
+        track="Greyville", race_number=1, horse="Stormy",
+        odds=3.0, stake=50.0, edge_percent=10.0, confidence="HIGH",
+    )
+
+    with open(lock_path) as f:
+        assert f.read() == "untouched"
+
+
+def test_lock_file_is_created_when_missing(temp_data_dir):
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    lock_path = os.path.join(temp_data_dir, "bankroll.lock")
+    if os.path.exists(lock_path):
+        os.remove(lock_path)
+
+    gov.record_bet(
+        track="Greyville", race_number=1, horse="Stormy",
+        odds=3.0, stake=50.0, edge_percent=10.0, confidence="HIGH",
+    )
+
+    assert os.path.exists(lock_path)
+
+
+def test_lock_open_retries_then_fails_closed(temp_data_dir, monkeypatch):
+    """A lock we cannot open must abort the transaction, not skip it."""
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    calls = {"n": 0}
+
+    def _boom(path, flags, mode=0o666):
+        calls["n"] += 1
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "open", _boom)
+    monkeypatch.setattr("core_agent.skills.bankroll_manager.governor.time.sleep", lambda s: None)
+
+    with pytest.raises(OSError):
+        gov.record_bet(
+            track="Greyville", race_number=1, horse="Stormy",
+            odds=3.0, stake=50.0, edge_percent=10.0, confidence="HIGH",
+        )
+
+    assert calls["n"] == 3            # retried
+    assert gov.get_open_bets() == []  # nothing was placed
+    assert gov.current_bankroll == pytest.approx(1000.0)
+
+
+def test_lock_still_excludes_two_governors(temp_data_dir):
+    """Two governors on one ledger stay consistent (flock semantics kept)."""
+    a = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+    b = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    bet = a.record_bet(
+        track="Greyville", race_number=1, horse="Stormy",
+        odds=3.0, stake=50.0, edge_percent=10.0, confidence="HIGH",
+    )
+    assert bet is not None
+
+    # The second governor reloads the ledger under the same lock and sees it.
+    b.refresh_from_disk(force=True)
+    assert len(b.get_open_bets()) == 1
+    assert b.get_open_exposure() == pytest.approx(50.0)
