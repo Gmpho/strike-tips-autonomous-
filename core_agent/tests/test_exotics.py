@@ -159,6 +159,29 @@ def test_validate_value_bets_caps_per_race():
     assert out2 == []
 
 
+def test_validate_value_bets_accepts_case_and_apostrophe_differences():
+    """Nov-2026: the card spells runners in caps, the model in sentence case.
+
+    The old exact-match rejected them as "hallucinated" while printing the
+    very same name in its runner list, so valid picks were silently dropped.
+    """
+    from core_agent.core.strike_tips import StrikeTips
+    s = StrikeTips.__new__(StrikeTips)
+    horses = ["AYZAL", "SHE'S CHOSEN", "MUSIC OF THE NIGHT"]
+    out = s._validate_value_bets(
+        [
+            {"horse": "Ayzal", "edge_percent": 10.0},
+            {"horse": "She's Chosen", "edge_percent": 9.0},
+            {"horse": "Music of the Night", "edge_percent": 8.0},
+            {"horse": "Genuinely Missing", "edge_percent": 99.0},
+        ],
+        horses,
+    )
+    assert [v["horse"] for v in out] == [
+        "AYZAL", "SHE'S CHOSEN", "MUSIC OF THE NIGHT",
+    ]
+
+
 def test_validate_single_race_pools():
     """Oct-2026: TRIFECTA/QUARTET/EXACTA (1 leg) and PICK 3 (3 legs) survive layout validation."""
     from core_agent.core.strike_tips import _validate_exotic_layout

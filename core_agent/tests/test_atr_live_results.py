@@ -17,6 +17,7 @@ Nov-2026 outage pinned here:
 """
 import asyncio
 import json
+from datetime import date, timedelta
 
 import pytest
 
@@ -28,7 +29,11 @@ needs_selector = pytest.mark.skipif(
     reason="scrapling Selector unavailable (host lacks it; Docker/Modal runs this)",
 )
 
-DAY = "2026-11-08"
+# Date-relative on purpose: the snapshot merge prunes to a rolling window, so
+# an absolute fixture silently rots into a failure once the clock passes it
+# (Nov-2026: this file went red on the third day because DAY was pinned).
+DAY = (date.today() - timedelta(days=1)).isoformat()
+OLDER_DAY = (date.today() - timedelta(days=2)).isoformat()
 
 
 def _runner(position, name, odds):
@@ -293,18 +298,18 @@ def test_yesterday_is_not_refetched_once_captured(monitor):
 
 
 def test_merge_keeps_absolute_dates_and_dedupes():
-    old = {"course": "Aintree", "date": "2026-11-06", "title": "5\n17:00 - Hurdle",
+    old = {"course": "Aintree", "date": OLDER_DAY, "title": "5\n17:00 - Hurdle",
            "runners": [{"name": "Old", "position": "1st"}]}
-    fresh = {"course": "Aintree", "date": "2026-11-08", "title": "5\n17:00 - Hurdle",
+    fresh = {"course": "Aintree", "date": DAY, "title": "5\n17:00 - Hurdle",
              "runners": [{"name": "New", "position": "1st"}]}
-    same_race_corrected = {"course": "Aintree", "date": "2026-11-08", "title": "5\n17:00 - Hurdle",
+    same_race_corrected = {"course": "Aintree", "date": DAY, "title": "5\n17:00 - Hurdle",
                            "runners": [{"name": "New", "position": "1st"}, {"name": "Second", "position": "2nd"}]}
 
     merged = mon._atr_merge_results([old], [fresh, same_race_corrected])
 
     dates = sorted(r["date"] for r in merged)
-    assert dates == ["2026-11-06", "2026-11-08"]
-    corrected = next(r for r in merged if r["date"] == "2026-11-08")
+    assert dates == sorted([OLDER_DAY, DAY])
+    corrected = next(r for r in merged if r["date"] == DAY)
     assert len(corrected["runners"]) == 2
 
 

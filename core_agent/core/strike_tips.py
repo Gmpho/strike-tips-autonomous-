@@ -64,6 +64,22 @@ def _norm_text(s) -> str:
     return "".join(c for c in str(s or "").lower() if c.isalnum())
 
 
+def _norm_horse(s) -> str:
+    """Runner-name key that survives case, spacing and apostrophe style.
+
+    Feeds sometimes hand back ``SHE'S CHOSEN`` / ``She’s Chosen`` for the same
+    horse, and the value-bet validator compared them case-sensitively: the
+    AI's selection was then rejected as "hallucinated" while the name was
+    printed in its own runner list (Nov-2026: 20 valid picks dropped in one
+    morning scan). Spaces are kept so distinct names cannot collide.
+    """
+    text = str(s or "")
+    for curly in ("\u2019", "\u2018", "\u02bc", "`", "\u00b4"):
+        text = text.replace(curly, "'")
+    text = "".join(c if (c.isalnum() or c in "' ") else " " for c in text.lower())
+    return " ".join(text.split())
+
+
 def _jurisdiction_for_track(track) -> str:
     """Region code for an exotic play's meeting, in the HUD's vocabulary
     (SA / UK / IRE / INTL / ...). ``region_of`` collapses UK+Ireland into
@@ -194,11 +210,18 @@ def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, 
     null`` and the model invented a flat 5.0 for the whole field (Nov-2026:
     17 Turffontein "value bets" all at 5.0). The merged market snapshot does
     carry real Betway/Betfair prices — hydrate the card from it before the
-    prompt and re-anchor the model's edge afterwards. Only ``bf_event_date``
-    == today is trusted; a stale meeting must never price today's runners.
+    prompt and re-anchor the model's edge afterwards.
+
+    A race is trusted for today when Betfair stamped ``bf_event_date`` with
+    today. That stamp is intermittent, and when it is missing the card fell
+    back to the model's invented 5.0 for every runner (Nov-2026: the daily
+    report showed flat-5.0 fields for whole meetings). The snapshot's own
+    write date is the second proof: a snapshot written today, pruned to
+    unfinished races, is today's card.
     """
     import json as _json
     import os as _os
+    from datetime import datetime as _dt, timedelta as _td
 
     out: Dict[tuple, Dict[str, float]] = {}
     try:
@@ -207,10 +230,26 @@ def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, 
     except Exception:
         return out
 
+    # The writer stamps UTC; SA runs two hours ahead.
+    snap_day = ""
+    try:
+        raw = str(snap.get("timestamp") or "")[:19]
+        if raw:
+            snap_day = (_dt.fromisoformat(raw) + _td(hours=2)).date().isoformat()
+    except Exception:
+        snap_day = ""
+
     for ev in (snap.get("events") or {}).values():
         if not isinstance(ev, dict):
             continue
-        if str(ev.get("bf_event_date", "") or "")[:10] != today_iso:
+        if ev.get("isFinished"):
+            continue
+        bf_day = str(ev.get("bf_event_date", "") or "")[:10]
+        if bf_day:
+            if bf_day != today_iso:
+                continue
+        elif snap_day != today_iso:
+            # Stale card with no proof of today — never price today's runners.
             continue
         try:
             rn = int(ev.get("raceNumber", ev.get("race_number", -1)))
@@ -599,6 +638,42 @@ def _tips_official_picks(raw_text: str, track: str) -> Dict[str, Dict[int, List[
     return out
 
 
+async def _fresh_market_snapshot(betway) -> "tuple[Dict, bool]":
+    """Today's live card for the scan's gates and the HUD save.
+
+    The direct Betway call is the scan's own fetch and 403s for long stretches
+    from the Modal egress IP (Nov-2026: every SA track logged "No Betway data"
+    while the odds monitor kept pushing a perfectly good card to the volume).
+    An empty direct fetch therefore falls back to the monitor's snapshot
+    before it can be mistaken for "no meetings today" — that mistake killed
+    every exotic ticket through the phantom-meeting guard.
+
+    Returns ``(snapshot, reused_monitor_card)``. When the card came from the
+    monitor, the caller must not re-save it: restamping the monitor's data as
+    a "daily_scan" write would mask how old it really is.
+    """
+    snap: Dict = {}
+    try:
+        snap = await betway.get_snapshot_format() or {}
+    except Exception as e:
+        print(f"[GATE] Direct Betway snapshot failed: {e}")
+    if (snap.get("events") or {}):
+        return snap, False
+    try:
+        from core_agent.core.snapshot_cache import get_snapshot
+
+        cached = get_snapshot() or {}
+        if cached.get("events"):
+            print(f"[GATE] Direct Betway empty — using monitor snapshot "
+                  f"({len(cached['events'])} events, "
+                  f"source={cached.get('snapshot_source') or 'push'})")
+            return cached, True
+    except Exception as e:
+        print(f"[GATE] Monitor snapshot fallback failed: {e}")
+    print("[GATE] No market snapshot available — gates will fail open")
+    return snap, False
+
+
 async def _betfair_course_dates() -> Dict[str, set]:
     """Betfair courses mapped to their meeting dates (ISO).
 
@@ -648,6 +723,46 @@ def _drop_meetings_not_running_today(
     return kept
 
 
+def _drop_meetings_absent_from_card(
+    all_results: Dict, snapshot: Dict, today_iso: str
+) -> Dict:
+    """Second meeting gate: use the live card when Betfair is blocked.
+
+    Betfair's header fetch 403s in bursts, which leaves the date gate with
+    nothing to compare and lets TAB's placeholder cards through — the daily
+    report then analyses tracks that are not racing, every runner priced at
+    a flat 5.0 (Nov-2026). The odds monitor's card is independent evidence:
+    it only contains meetings trading right now.
+
+    Fails open unless the card actually covers today (at least one event
+    dated today) AND the whole card provably has no race at this track.
+    A track the card does not carry at all is kept — absence from one
+    source is not proof of a phantom meeting.
+    """
+    events = [e for e in (snapshot.get("events") or {}).values()
+              if isinstance(e, dict)]
+    if not events:
+        return all_results
+    dated_today = [
+        e for e in events
+        if str(e.get("bf_event_date") or "")[:10] == today_iso
+    ]
+    if not dated_today:
+        return all_results
+    card_courses = {_norm_text(e.get("course", "")) for e in events}
+    kept = {}
+    for track, races in all_results.items():
+        key = _norm_text(track)
+        covered = any(key and (key in c or c in key) for c in card_courses if c)
+        if races and not covered:
+            print(f"[GATE] Dropped {track}: absent from today's live card "
+                  f"({len(races)} placeholder races excluded)")
+            kept[track] = []
+            continue
+        kept[track] = races
+    return kept
+
+
 def _play_matches_snapshot(play: Dict, snapshot_horses: Dict[str, set]) -> bool:
     """Phantom-meeting guard: at least half the leg bankers must run at the
     play's track in today's snapshot. A Thursday card stamped as today fails
@@ -656,10 +771,21 @@ def _play_matches_snapshot(play: Dict, snapshot_horses: Dict[str, set]) -> bool:
     Non-SA cards (UK/IRE, added Oct-2026) have no Betway coverage at all, so
     absent coverage there means "not the snapshot's job", never "phantom
     meeting" — dropping them would silently delete every international ticket.
+
+    A COMPLETELY empty snapshot is not evidence either (Nov-2026: the direct
+    Betway feed 403'd for every SA track from the Modal egress IP, so this
+    guard deleted every valid ticket silently and the exotics board went
+    dark for days). No card at all fails open; a card that covers SA but
+    lacks this track still proves the meeting is phantom.
     """
     import difflib as _difflib
 
     if str(play.get("jurisdiction") or "SA").upper() != "SA":
+        return True
+
+    if not snapshot_horses:
+        print("[EXOTIC] Phantom guard skipped for '%s' @ %s: no market "
+              "snapshot to check against" % (play.get("pool"), play.get("_track")))
         return True
 
     track = _norm_text(play.get("_track", ""))
@@ -1625,19 +1751,28 @@ class StrikeTips:
         """Cross-reference AI-generated value bets against actual scraped runners.
         Filters out hallucinated horse names using fuzzy matching.
         Caps at max_per_race top-edge selections (Oct-2026: uncapped lists put
-        8 singles on one race — the whole field. At most 3 per race)."""
+        8 singles on one race — the whole field. At most 3 per race).
+
+        Matching is done on a case/punctuation-insensitive key so a card that
+        spells a runner in caps still accepts the model's sentence case — the
+        old exact match deleted every such pick as "hallucinated".
+        """
         validated = []
+        canonical = {}
+        for name in valid_horses or []:
+            canonical.setdefault(_norm_horse(name), name)
         for vb in value_bets:
             horse = vb.get("horse") or vb.get("name") or vb.get("horse_name") or ""
             if not horse:
                 continue
-            if horse in valid_horses:
-                vb["horse"] = horse
+            key = _norm_horse(horse)
+            if key in canonical:
+                vb["horse"] = canonical[key]
                 validated.append(vb)
                 continue
-            matches = difflib.get_close_matches(horse, valid_horses, n=1, cutoff=0.6)
+            matches = difflib.get_close_matches(key, list(canonical), n=1, cutoff=0.6)
             if matches:
-                vb["horse"] = matches[0]
+                vb["horse"] = canonical[matches[0]]
                 validated.append(vb)
             else:
                 print(f"[WARN] Rejected hallucinated horse '{horse}' — not in actual runners: {valid_horses}")
@@ -2515,25 +2650,39 @@ class StrikeTips:
                 print(f"[ERR] Error processing {track}: {e}")
                 all_results[track] = []
 
+        # Snapshot horse index (today's actual runners per course) for the
+        # exotic phantom-meeting guard below. Reused for the HUD save.
+        # Falls back to the odds monitor's pushed card when the direct
+        # Betway fetch is blocked — see _fresh_market_snapshot. Fetched
+        # BEFORE the meeting gates so they can use the card as well.
+        _snapshot_for_gates: Dict = {"events": {}}
+        _snapshot_from_cache = False
+        try:
+            _snapshot_for_gates, _snapshot_from_cache = (
+                await _fresh_market_snapshot(self.betway)
+            )
+        except Exception as e:
+            print(f"[GATE] Snapshot unavailable for exotic validation: {e}")
+
         # 2b. Future-meeting gate: TAB serves next-meeting cards early
         # (Thursday Vaal harvested on a Sunday) with placeholder times. Drop
         # any track Betfair proves isn't running today, before analysis,
-        # exotics, bets, or history can touch it.
+        # exotics, bets, or history can touch it. When Betfair is blocked
+        # (403) the live card proves it instead: a track missing from a card
+        # that otherwise covers today is not racing (Nov-2026: the report
+        # analysed six non-running SA tracks, all priced at a flat 5.0).
         try:
             _bf_dates = await _betfair_course_dates()
             all_results = _drop_meetings_not_running_today(
                 all_results, _bf_dates, date.today().isoformat()
             )
+            if not _bf_dates:
+                all_results = _drop_meetings_absent_from_card(
+                    all_results, _snapshot_for_gates, date.today().isoformat()
+                )
         except Exception as e:
             print(f"[GATE] Meeting gate failed open: {e}")
 
-        # Snapshot horse index (today's actual runners per course) for the
-        # exotic phantom-meeting guard below. Reused for the HUD save.
-        _snapshot_for_gates = {"events": {}}
-        try:
-            _snapshot_for_gates = await self.betway.get_snapshot_format() or {"events": {}}
-        except Exception as e:
-            print(f"[GATE] Snapshot unavailable for exotic validation: {e}")
         _snap_horses: Dict[str, set] = {}
         _snap_odds: Dict[str, Dict[str, float]] = {}
         _nr_names: Dict[tuple, set] = {}
@@ -2739,13 +2888,18 @@ class StrikeTips:
         # fetch when fresh so the scan costs one snapshot, not two).
         # Goes through write_market_snapshot: the raw dump used to overwrite
         # the monitor's pruned card with every finished race of the morning.
+        # When the gate used the monitor's own card there is nothing to save —
+        # rewriting it would restamp the monitor's data as a fresh scan.
         try:
-            snapshot = _snapshot_for_gates if _snapshot_for_gates.get("events") else await self.betway.get_snapshot_format()
-            if snapshot.get("events"):
+            snapshot = _snapshot_for_gates
+            if snapshot.get("events") and not _snapshot_from_cache:
                 from core_agent.core.snapshot_writer import write_market_snapshot
 
                 saved = write_market_snapshot(snapshot, source="daily_scan")
                 print(f"[OK] Saved market snapshot ({len(saved.get('events', {}))} live events)")
+            elif _snapshot_from_cache:
+                print("[GATE] Market snapshot left as the monitor wrote it "
+                      "(scan reused the pushed card)")
         except Exception as e:
             print(f"[WARN] Could not save market snapshot: {e}")
 
@@ -2941,7 +3095,9 @@ class StrikeTips:
             "results": all_results,
         }
 
-    def _build_uk_single_race_exotics(self, track: str, races: List[Dict]) -> List[Dict]:
+    def _build_uk_single_race_exotics(
+        self, track: str, races: List[Dict], jurisdiction: Optional[str] = None
+    ) -> List[Dict]:
         """UK single-race exotics (Forecast/Tricast) for one meeting.
 
         UK meetings do not carry SA's multi-leg tote pools (Bipot/PA/Pick 6),
@@ -2949,11 +3105,16 @@ class StrikeTips:
         at essentially every meeting. Built deterministically from the card so
         UK punters see something on the exotics tab instead of nothing. Marked
         analysis-only (no money moves) until a real UK pool feed is wired.
+
+        ``jurisdiction`` is the TAB manifest's own region for the meeting and
+        beats the track-name guess: tracks missing from the league's canonical
+        map resolve to "OTHER", which the HUD filter hides (Nov-2026:
+        Huntingdon and Catterick tickets were built but invisible).
         """
         plays: List[Dict] = []
         if not races or len(races) < 2:
             return plays
-        jur = _jurisdiction_for_track(track)
+        jur = (jurisdiction or _jurisdiction_for_track(track) or "UK").upper()
 
         for race in races:
             try:
@@ -3201,10 +3362,27 @@ class StrikeTips:
         # same choke point so SA guards apply correctly (non-SA passes).
         try:
             exotic_plays: List[Dict] = []
+            # The manifest knows each meeting's region for real; use it so a
+            # track absent from the league's canonical map cannot land on
+            # "OTHER" and vanish from the HUD's jurisdiction filter.
+            _region_by_track = {
+                str(m.get("meeting", "")).strip().lower(): str(
+                    m.get("region") or ""
+                ).upper()
+                for m in meetings
+            }
             for _track, _races in all_results.items():
                 if not _races:
                     continue
-                exotic_plays.extend(self._build_uk_single_race_exotics(_track, _races))
+                exotic_plays.extend(
+                    self._build_uk_single_race_exotics(
+                        _track,
+                        _races,
+                        jurisdiction=_region_by_track.get(
+                            str(_track).strip().lower()
+                        ),
+                    )
+                )
             if exotic_plays:
                 exotic_plays = _finalise_exotic_plays(
                     exotic_plays, all_results, {}, {}, {}

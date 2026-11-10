@@ -94,3 +94,47 @@ def test_finalise_drops_cloth_number_tickets():
     play["combinations"] = [{"race": 1, "banker": "3", "savers": []}]
     out = _finalise_exotic_plays([play], {}, _snapshot(), {}, {})
     assert out == []
+
+
+# ── jurisdiction vocabulary (Nov-2026) ─────────────────────────────────────
+# The UK_IE -> UK/IRE split was added for the HUD filter. Pin SA explicitly:
+# the split must never re-tag a South African meeting, because that would
+# hand SA tickets to the permissive non-SA branch of the phantom guard.
+
+def test_sa_tracks_stay_sa_after_the_uk_ie_split():
+    from core_agent.core.strike_tips import _jurisdiction_for_track
+
+    for track in ("Kenilworth", "Turffontein", "Vaal", "Fairview",
+                  "Scottsville", "Greyville", "Durbanville", "Clairwood"):
+        assert _jurisdiction_for_track(track) == "SA", track
+
+
+def test_uk_and_ire_tracks_split_in_the_hud_vocabulary():
+    from core_agent.core.strike_tips import _jurisdiction_for_track
+
+    assert _jurisdiction_for_track("Doncaster") == "UK"
+    assert _jurisdiction_for_track("Lingfield") == "UK"
+    # TAB serves these every week; both used to resolve to "OTHER" and were
+    # hidden by the HUD filter while their tickets sat in the file.
+    assert _jurisdiction_for_track("Huntingdon") == "UK"
+    assert _jurisdiction_for_track("Catterick") == "UK"
+    assert _jurisdiction_for_track("Fairyhouse") == "IRE"
+    assert _jurisdiction_for_track("Dundalk") == "IRE"
+
+
+def test_uk_builder_prefers_the_manifest_region_over_the_name_guess():
+    from core_agent.core.strike_tips import StrikeTips
+
+    races = [
+        {"race_number": 1, "runners": ["A", "B", "C", "D"],
+         "value_bets": [{"horse": "A"}, {"horse": "B"}, {"horse": "C"}]},
+        {"race_number": 2, "runners": ["E", "F", "G"],
+         "value_bets": [{"horse": "E"}]},
+        {"race_number": 3, "runners": ["H", "I", "J"],
+         "value_bets": [{"horse": "H"}]},
+    ]
+    plays = StrikeTips._build_uk_single_race_exotics(
+        None, "Somewhere New", races, jurisdiction="ire"
+    )
+    assert plays
+    assert {p["jurisdiction"] for p in plays} == {"IRE"}

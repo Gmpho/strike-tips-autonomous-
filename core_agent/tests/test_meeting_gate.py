@@ -3,6 +3,7 @@ harvested on Sunday went out as "turffontein" and took real stakes)."""
 import pytest
 
 from core_agent.core.strike_tips import (
+    _drop_meetings_absent_from_card,
     _drop_meetings_not_running_today,
     _norm_text,
     _play_matches_snapshot,
@@ -236,3 +237,90 @@ def test_tips_official_picks_legacy_tipping_sheet():
     off = _tips_official_picks(text, "durbanville")
     assert off["BI1"] == {2: [1, 7, 9, 10], 3: [1, 9], 4: [3],
                           5: [2, 8], 6: [5], 7: [6, 11]}
+
+
+# ── Nov-2026 regression: a blocked market feed must never delete the card ──
+# Betway 403'd from the Modal egress IP, so the scan's snapshot index was
+# empty. The phantom guard read that as "no meeting runs there" and dropped
+# every SA exotic ticket silently — the board stayed dark for days while the
+# odds monitor was pushing a perfectly good card to the volume.
+
+def test_phantom_guard_fails_open_without_any_snapshot():
+    play = _play("kenilworth", ["PEACH COBBLER", "TEQUILA TANGO"])
+    assert _play_matches_snapshot(play, {}) is True
+
+
+def _card(entries):
+    events = {}
+    for i, (course, date, odds) in enumerate(entries):
+        events[f"ev{i}"] = {
+            "course": course,
+            "bf_event_date": date,
+            "raceNumber": 1,
+            "runners": [{"name": "PEACH COBBLER", "odds": odds}],
+        }
+    return {"events": events}
+
+
+def test_card_gate_drops_tracks_absent_from_todays_card():
+    all_results = {"kenilworth": [{"race_number": 1}],
+                   "vaal": [{"race_number": 1}] * 8}
+    out = _drop_meetings_absent_from_card(
+        dict(all_results),
+        _card([("Kenilworth", "2026-11-10", 2.6)]),
+        "2026-11-10",
+    )
+    assert out["kenilworth"] == [{"race_number": 1}]
+    assert out["vaal"] == []
+
+
+def test_card_gate_fails_open_without_todays_dates():
+    all_results = {"vaal": [{"race_number": 1}]}
+    # Card present but nothing proven to be racing today -> keep everything.
+    out = _drop_meetings_absent_from_card(
+        dict(all_results), _card([("Kenilworth", "", 2.6)]), "2026-11-10")
+    assert out["vaal"] == [{"race_number": 1}]
+
+
+def test_card_gate_fails_open_on_empty_card():
+    all_results = {"vaal": [{"race_number": 1}]}
+    out = _drop_meetings_absent_from_card(dict(all_results), {"events": {}}, "2026-11-10")
+    assert out["vaal"] == [{"race_number": 1}]
+
+
+def test_scan_snapshot_falls_back_to_the_monitor_card():
+    import asyncio
+
+    from core_agent.core.strike_tips import _fresh_market_snapshot
+
+    class _BlockedBetway:
+        async def get_snapshot_format(self):
+            return {"events": {}, "fetch_ok": False}
+
+    card = _card([("Kenilworth", "2026-11-10", 2.6)])
+    import core_agent.core.snapshot_cache as cache
+
+    original = cache.get_snapshot
+    cache.get_snapshot = lambda: card
+    try:
+        snap, reused = asyncio.run(_fresh_market_snapshot(_BlockedBetway()))
+    finally:
+        cache.get_snapshot = original
+    assert reused is True
+    assert len(snap["events"]) == 1
+
+
+def test_scan_snapshot_prefers_the_direct_fetch():
+    import asyncio
+
+    from core_agent.core.strike_tips import _fresh_market_snapshot
+
+    live = _card([("Kenilworth", "2026-11-10", 2.6)])
+
+    class _LiveBetway:
+        async def get_snapshot_format(self):
+            return live
+
+    snap, reused = asyncio.run(_fresh_market_snapshot(_LiveBetway()))
+    assert reused is False
+    assert snap is live

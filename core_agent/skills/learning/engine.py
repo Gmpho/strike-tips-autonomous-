@@ -274,8 +274,11 @@ class LearningEngine:
             track = key.split(":")[0]
             if track not in track_stats:
                 track_stats[track] = {"staked": 0.0, "returned": 0.0}
-            track_stats[track]["staked"] += stats["total_staked"]
-            track_stats[track]["returned"] += stats["total_returned"]
+            # Legacy segment files predate these keys; a missing counter must
+            # read as zero, not kill the whole learning update with a
+            # KeyError (Nov-2026: "[ERR] Learning update failed: 'total_staked'").
+            track_stats[track]["staked"] += stats.get("total_staked", 0.0)
+            track_stats[track]["returned"] += stats.get("total_returned", 0.0)
 
         return {
             track: round((v["returned"] - v["staked"]) / v["staked"] * 100, 1)

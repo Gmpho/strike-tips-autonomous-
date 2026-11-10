@@ -16,6 +16,15 @@ _UK_IE = {
     "kempton", "newcastle", "wolverhampton", "yarmouth", "bath",
     "doncaster", "redcar", "uttoxeter", "nottingham", "chepstow", "wexford",
     "dundalk",
+    # Nov-2026: TAB serves these weekly but they were missing, so their
+    # tickets resolved to "OTHER" and the HUD's jurisdiction filter hid them.
+    "huntingdon", "catterick", "fakenham", "plumpton", "hereford", "exeter",
+    "taunton", "warwick", "ludlow", "sedgefield", "cartmel", "newbury",
+    "salisbury", "windsor", "brighton", "leicester", "ripon", "thirsk",
+    "hamilton", "ayr", "perth", "fontwell", "chelmsford", "towcester",
+    # Irish tracks from the same gap.
+    "down royal", "downpatrick", "bellewstown", "killarney", "roscommon",
+    "ballinrobe", "limerick", "tramore", "cork", "listowel", "navan",
 }
 _HK = {"sha tin", "shatin", "happy valley"}
 _JP = {"tokyo", "nakayama", "kyoto", "kanazawa", "mombetsu", "monbetsu",
