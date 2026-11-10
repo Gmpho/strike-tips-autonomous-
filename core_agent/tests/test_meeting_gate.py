@@ -250,7 +250,7 @@ def test_phantom_guard_fails_open_without_any_snapshot():
     assert _play_matches_snapshot(play, {}) is True
 
 
-def _card(entries):
+def _card(entries, timestamp="2026-11-10T06:00:00"):
     events = {}
     for i, (course, date, odds) in enumerate(entries):
         events[f"ev{i}"] = {
@@ -259,7 +259,7 @@ def _card(entries):
             "raceNumber": 1,
             "runners": [{"name": "PEACH COBBLER", "odds": odds}],
         }
-    return {"events": events}
+    return {"events": events, "timestamp": timestamp}
 
 
 def test_card_gate_drops_tracks_absent_from_todays_card():
@@ -274,11 +274,23 @@ def test_card_gate_drops_tracks_absent_from_todays_card():
     assert out["vaal"] == []
 
 
-def test_card_gate_fails_open_without_todays_dates():
+def test_card_gate_uses_the_snapshot_day_not_the_betfair_stamp():
+    """Betfair's per-race date stamp is intermittent; the card's own write
+    day is the proof that it is today's card."""
     all_results = {"vaal": [{"race_number": 1}]}
-    # Card present but nothing proven to be racing today -> keep everything.
     out = _drop_meetings_absent_from_card(
         dict(all_results), _card([("Kenilworth", "", 2.6)]), "2026-11-10")
+    assert out["vaal"] == []
+
+
+def test_card_gate_fails_open_on_a_stale_card():
+    """Yesterday's card is no proof about today."""
+    all_results = {"vaal": [{"race_number": 1}]}
+    out = _drop_meetings_absent_from_card(
+        dict(all_results),
+        _card([("Kenilworth", "2026-11-09", 2.6)], timestamp="2026-11-09T06:00:00"),
+        "2026-11-10",
+    )
     assert out["vaal"] == [{"race_number": 1}]
 
 

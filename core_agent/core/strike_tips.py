@@ -203,6 +203,30 @@ def _snapshot_distances(data_dir: str, today_iso: str) -> Dict[tuple, int]:
     return out
 
 
+def _snapshot_sast_day(snapshot: Dict) -> str:
+    """The calendar day (SAST) a market snapshot belongs to.
+
+    The writer stamps UTC; South Africa runs two hours ahead, so a card
+    written late at night still belongs to the next SA day. Returns "" when
+    the snapshot carries no usable stamp — callers then have no proof of
+    which day it is and must fail open.
+    """
+    import json as _json  # noqa: F401  (kept for symmetry with callers)
+    from datetime import datetime as _dt, timedelta as _td
+
+    raw = str((snapshot or {}).get("timestamp") or "")[:19]
+    if not raw:
+        return ""
+    try:
+        stamp = _dt.fromisoformat(raw)
+    except ValueError:
+        return raw[:10]
+    try:
+        return (stamp + _td(hours=2)).date().isoformat()
+    except Exception:
+        return ""
+
+
 def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, float]]:
     """{(norm_course, race_number): {norm_horse: decimal_odds}} for today.
 
@@ -221,7 +245,6 @@ def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, 
     """
     import json as _json
     import os as _os
-    from datetime import datetime as _dt, timedelta as _td
 
     out: Dict[tuple, Dict[str, float]] = {}
     try:
@@ -231,13 +254,7 @@ def _snapshot_live_odds(data_dir: str, today_iso: str) -> Dict[tuple, Dict[str, 
         return out
 
     # The writer stamps UTC; SA runs two hours ahead.
-    snap_day = ""
-    try:
-        raw = str(snap.get("timestamp") or "")[:19]
-        if raw:
-            snap_day = (_dt.fromisoformat(raw) + _td(hours=2)).date().isoformat()
-    except Exception:
-        snap_day = ""
+    snap_day = _snapshot_sast_day(snap)
 
     for ev in (snap.get("events") or {}).values():
         if not isinstance(ev, dict):
@@ -734,20 +751,16 @@ def _drop_meetings_absent_from_card(
     a flat 5.0 (Nov-2026). The odds monitor's card is independent evidence:
     it only contains meetings trading right now.
 
-    Fails open unless the card actually covers today (at least one event
-    dated today) AND the whole card provably has no race at this track.
-    A track the card does not carry at all is kept — absence from one
-    source is not proof of a phantom meeting.
+    Fails open unless the card is provably today's card (it was written
+    today, SAST) AND it carries races at all. A track the card does not
+    cover is not racing today.
     """
     events = [e for e in (snapshot.get("events") or {}).values()
               if isinstance(e, dict)]
     if not events:
         return all_results
-    dated_today = [
-        e for e in events
-        if str(e.get("bf_event_date") or "")[:10] == today_iso
-    ]
-    if not dated_today:
+    if _snapshot_sast_day(snapshot) != today_iso:
+        # Stale or undated card — no proof of today, so no evidence.
         return all_results
     card_courses = {_norm_text(e.get("course", "")) for e in events}
     kept = {}
