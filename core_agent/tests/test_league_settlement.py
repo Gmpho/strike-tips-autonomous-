@@ -326,3 +326,64 @@ def test_atr_non_runner_pick_voids_not_loses(tmp_path):
     assert row["void_reason"] == "non_runner"
     assert row["won"] is False and row["points"] == 0
     assert stats == {"settled": 0, "won": 0, "pending": 0, "void": 1, "expired": 0}
+
+
+# ── settlement pass must not die on one row (Nov-2026) ──────────────────────
+# The monitor piggyback calls settle_open_picks(now_iso=<aware UTC ISO>).
+# The expiry window compared that aware timestamp against a NAIVE pick date,
+# raised TypeError on the first pending pick with no result, and aborted the
+# whole pass BEFORE the write-back — so the leaderboard never moved and every
+# pick stayed "pending" forever. Nothing was logged above debug level.
+
+def test_settle_with_an_aware_now_iso_does_not_crash(tmp_path):
+    """An aware now_iso must not abort the pass (the piggyback's shape)."""
+    _write_jsonl(os.path.join(tmp_path, "settled_winners.jsonl"), [
+        {"date": "2026-11-08", "track": "carlisle", "race": "3", "winner": "Archive Horse"},
+    ])
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+    ])], ts="2026-11-08T18:00:00")
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        # Settleable pick (has a winner) …
+        _pick(race_id="17500010", course="Carlisle", race_number=3,
+              date="2026-11-08", runner_name="Archive Horse", pick_odds=5.0),
+        # … and one with NO result anywhere (the expiry comparison).
+        _pick(race_id="17500011", course="Turffontein", race_number=9,
+              date="2026-11-08", runner_name="No Result Horse", pick_odds=7.0),
+    ])
+
+    stats = settle_open_picks(
+        str(tmp_path), now_iso="2026-11-10T12:00:00+00:00"
+    )
+
+    assert stats["settled"] == 1          # the settleable one WAS settled
+    rows = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))
+    settled = [r for r in rows if r.get("settled")]
+    assert len(settled) == 1
+    assert settled[0]["runner_name"] == "Archive Horse"
+    # The unmatched pick is still pending (it expires after the window).
+    assert stats["pending"] == 1
+
+
+def test_settle_survives_a_broken_pick_row(tmp_path):
+    """One poisonous row must not cost the whole pass its settlements."""
+    _write_jsonl(os.path.join(tmp_path, "settled_winners.jsonl"), [
+        {"date": "2026-11-08", "track": "carlisle", "race": "3", "winner": "Archive Horse"},
+    ])
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+    ])], ts="2026-11-08T18:00:00")
+    rows = [
+        _pick(race_id="17500020", course="Carlisle", race_number=3,
+              date="2026-11-08", runner_name="Archive Horse", pick_odds=5.0),
+        # A row whose "date" cannot be parsed at all.
+        {"race_id": "17500021", "course": "Carlisle", "race_number": 4,
+         "runner_name": "Broken", "settled": False, "won": False, "points": 0},
+    ]
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), rows)
+
+    stats = settle_open_picks(str(tmp_path))
+
+    assert stats["settled"] == 1
+    out = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))
+    assert any(r.get("settled") for r in out)

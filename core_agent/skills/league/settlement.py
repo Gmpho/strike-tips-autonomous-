@@ -6,12 +6,15 @@ scheduler after the nightly sweep; never from inside result_tracker.
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from .scoring import score_pick
+
+logger = logging.getLogger("league-settlement")
 
 # Words that carry no identity in a horse's name — dropped before matching so
 # "The Ghost" and "Ghost" resolve to the same runner.
@@ -254,127 +257,143 @@ def settle_open_picks(
             now_dt = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
         except ValueError:
             now_dt = None
-    now_dt = now_dt or datetime.now()
+    if now_dt is None:
+        now_dt = datetime.now()
+    elif now_dt.tzinfo is not None:
+        # The expiry window compares against a calendar DATE, which is naive.
+        # An aware timestamp (the monitor piggyback passes UTC) cannot be
+        # subtracted from a naive date — it raised TypeError on the FIRST
+        # pending pick with no result and aborted the whole pass before the
+        # write-back, so the leaderboard never moved (Nov-2026: every league
+        # settlement pass had silently failed for days). Normalise to naive
+        # UTC so both sides of the subtraction agree.
+        now_dt = now_dt.astimezone(timezone.utc).replace(tzinfo=None)
     for p in rows:
         if p.get("settled"):
             continue
-        key = (
-            str(p.get("date") or "")[:10],
-            str(p.get("course") or "").strip().lower(),
-            str(p.get("race_number") or "").strip(),
-        )
-        info = winners.get(key)
-        if info and info.get("void"):
-            # Refunded or abandoned race: the stake comes back, nothing is
-            # won, and the pick is excluded from the strike rate. Bankroll
-            # treats this as VOID; the league must not score it as a loss.
-            p["settled"] = True
-            p["void"] = True
-            p["void_reason"] = info.get("void_reason") or "refunded"
-            p["won"] = False
-            p["placed"] = False
-            p["points"] = 0
-            p["finish_position"] = None
-            p["winner_name"] = None
-            p["winner_sp"] = 0.0
-            p["settled_at"] = now_iso
-            changed = True
-            void_n += 1
-            continue
-        if not info:
-            # Nothing on record. An unresolved pick must not sit pending
-            # forever; after the expiry window it is voided as unverifiable
-            # (never guessed as a win or a loss).
-            if PICK_EXPIRY_DAYS:
-                day = None
-                try:
-                    day = datetime.fromisoformat(str(p.get("date") or "")[:10])
-                except ValueError:
+        try:
+            key = (
+                str(p.get("date") or "")[:10],
+                str(p.get("course") or "").strip().lower(),
+                str(p.get("race_number") or "").strip(),
+            )
+            info = winners.get(key)
+            if info and info.get("void"):
+                # Refunded or abandoned race: the stake comes back, nothing is
+                # won, and the pick is excluded from the strike rate. Bankroll
+                # treats this as VOID; the league must not score it as a loss.
+                p["settled"] = True
+                p["void"] = True
+                p["void_reason"] = info.get("void_reason") or "refunded"
+                p["won"] = False
+                p["placed"] = False
+                p["points"] = 0
+                p["finish_position"] = None
+                p["winner_name"] = None
+                p["winner_sp"] = 0.0
+                p["settled_at"] = now_iso
+                changed = True
+                void_n += 1
+                continue
+            if not info:
+                # Nothing on record. An unresolved pick must not sit pending
+                # forever; after the expiry window it is voided as unverifiable
+                # (never guessed as a win or a loss).
+                if PICK_EXPIRY_DAYS:
                     day = None
-                if day is not None and (now_dt - day).days >= PICK_EXPIRY_DAYS:
-                    p["settled"] = True
-                    p["void"] = True
-                    p["void_reason"] = "expired"
-                    p["won"] = False
-                    p["placed"] = False
-                    p["points"] = 0
-                    p["finish_position"] = None
-                    p["winner_name"] = None
-                    p["winner_sp"] = 0.0
-                    p["settled_at"] = now_iso
-                    changed = True
-                    expired_n += 1
-            continue
-        winner = info["winner"]
-        runners = info.get("runners") or []
-        field_size = int(p.get("field_size") or 0)
-
-        # Resolve the picked horse's finish position. Top 4 (1st/2nd/3rd/4th)
-        # count as a scoring pick and earn scaled points; anything else is a
-        # loss. We never guess: a race with no result stays pending.
-        finish_pos = None
-        placed_sp = None
-        nr_hit = False
-        if runners:
-            for ru in runners:
-                if names_match(p.get("runner_name"), ru.get("name")):
-                    if ru.get("non_runner"):
-                        nr_hit = True
-                    finish_pos = _pos_to_int(ru.get("position"))
                     try:
-                        placed_sp = float(ru.get("odds_decimal")) if ru.get("odds_decimal") else None
-                    except (TypeError, ValueError):
-                        placed_sp = None
-                    break
-        else:
-            # Dated archive only records the winner (1st). A matching pick
-            # wins; a non-match is a loss — we have no position data there.
-            if names_match(p.get("runner_name"), winner):
-                finish_pos = 1
+                        day = datetime.fromisoformat(str(p.get("date") or "")[:10])
+                    except ValueError:
+                        day = None
+                    if day is not None and (now_dt - day).days >= PICK_EXPIRY_DAYS:
+                        p["settled"] = True
+                        p["void"] = True
+                        p["void_reason"] = "expired"
+                        p["won"] = False
+                        p["placed"] = False
+                        p["points"] = 0
+                        p["finish_position"] = None
+                        p["winner_name"] = None
+                        p["winner_sp"] = 0.0
+                        p["settled_at"] = now_iso
+                        changed = True
+                        expired_n += 1
+                continue
+            winner = info["winner"]
+            runners = info.get("runners") or []
+            field_size = int(p.get("field_size") or 0)
 
-        if nr_hit:
-            # The horse never ran (non-runner on the full result card): the
-            # stake comes back. Same terminal state as a refunded race.
+            # Resolve the picked horse's finish position. Top 4 (1st/2nd/3rd/4th)
+            # count as a scoring pick and earn scaled points; anything else is a
+            # loss. We never guess: a race with no result stays pending.
+            finish_pos = None
+            placed_sp = None
+            nr_hit = False
+            if runners:
+                for ru in runners:
+                    if names_match(p.get("runner_name"), ru.get("name")):
+                        if ru.get("non_runner"):
+                            nr_hit = True
+                        finish_pos = _pos_to_int(ru.get("position"))
+                        try:
+                            placed_sp = float(ru.get("odds_decimal")) if ru.get("odds_decimal") else None
+                        except (TypeError, ValueError):
+                            placed_sp = None
+                        break
+            else:
+                # Dated archive only records the winner (1st). A matching pick
+                # wins; a non-match is a loss — we have no position data there.
+                if names_match(p.get("runner_name"), winner):
+                    finish_pos = 1
+
+            if nr_hit:
+                # The horse never ran (non-runner on the full result card): the
+                # stake comes back. Same terminal state as a refunded race.
+                p["settled"] = True
+                p["void"] = True
+                p["void_reason"] = "non_runner"
+                p["won"] = False
+                p["placed"] = False
+                p["points"] = 0
+                p["finish_position"] = None
+                p["winner_name"] = winner
+                p["winner_sp"] = 0.0
+                p["settled_at"] = now_iso
+                changed = True
+                void_n += 1
+                continue
+
+            scored = finish_pos is not None and 1 <= finish_pos <= 4
+            if scored:
+                if finish_pos == 1:
+                    sp = info.get("sp")
+                    if sp is None:
+                        sp = float(p.get("pick_odds") or 0) or None
+                else:
+                    sp = placed_sp
+                pts = score_pick(field_size, finish_pos, float(p.get("pick_odds") or 0), sp)
+            else:
+                sp = None
+                pts = 0
+
             p["settled"] = True
-            p["void"] = True
-            p["void_reason"] = "non_runner"
-            p["won"] = False
-            p["placed"] = False
-            p["points"] = 0
-            p["finish_position"] = None
+            p["won"] = bool(scored)
+            p["placed"] = bool(scored)
+            p["finish_position"] = finish_pos
+            p["points"] = pts
             p["winner_name"] = winner
-            p["winner_sp"] = 0.0
+            p["winner_sp"] = float(sp or 0)
             p["settled_at"] = now_iso
             changed = True
-            void_n += 1
-            continue
+            settled_n += 1
+            if scored:
+                won_n += 1
 
-        scored = finish_pos is not None and 1 <= finish_pos <= 4
-        if scored:
-            if finish_pos == 1:
-                sp = info.get("sp")
-                if sp is None:
-                    sp = float(p.get("pick_odds") or 0) or None
-            else:
-                sp = placed_sp
-            pts = score_pick(field_size, finish_pos, float(p.get("pick_odds") or 0), sp)
-        else:
-            sp = None
-            pts = 0
-
-        p["settled"] = True
-        p["won"] = bool(scored)
-        p["placed"] = bool(scored)
-        p["finish_position"] = finish_pos
-        p["points"] = pts
-        p["winner_name"] = winner
-        p["winner_sp"] = float(sp or 0)
-        p["settled_at"] = now_iso
-        changed = True
-        settled_n += 1
-        if scored:
-            won_n += 1
-
+        except Exception as _e:  # one bad row must not kill the pass
+            logger.warning(
+                "League settle: pick skipped (%s): %s",
+                p.get("dedup_key") or p.get("race_id"), _e,
+            )
     if changed:
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
