@@ -591,11 +591,30 @@ def test_leg_races_merge_truncated_cache_with_raceform(stub_modules):
 
 
 # --- Raceform parsers (shape verified against live Sep-2026 pages) ------------
+# Raceform is server-rendered HTML now (Nov-2026): the embedded runner JSON
+# ("raceno"/"horsename"/"finish") is gone, so the page is read as tables.
 RF_HTML = """
-<div wire:snapshot="{&quot;racesid&quot;:137171,&quot;raceno&quot;:1,&quot;raceofftime&quot;:&quot;12:15&quot;,&quot;racedate&quot;:&quot;2026-09-22&quot;,&quot;trackname&quot;:&quot;Vaal&quot;}">
-{"raceno":1,"finish":0,"horsename":"God's Country","racename":"Maiden Plate","trackname":"Vaal"}
-{"raceno":1,"finish":2,"horsename":"Stilo Novo","racename":"Maiden Plate","trackname":"Vaal"}
-{"raceno":1,"finish":1,"horsename":"Berry Lancer","racename":"Maiden Plate","trackname":"Vaal"}
+<div class="winners-glance-head"><h2>Tuesday 22 September 2026</h2><span>9 races</span></div>
+<div class="winners-glance-list">
+  <a class="winners-glance-row" href="#race-1"><span class="wg-race">R1<small>12:15</small></span></a>
+</div>
+<div id="race-1" class="racecard-body">
+  <h3>Race 1 Maiden Plate</h3>
+  <table>
+    <thead><tr><th>AR</th><th>Finish</th><th>LBH</th><th>No</th><th>Horse</th>
+    <th>Draw</th><th>Mass</th><th>Jockey</th><th>Odds</th></tr></thead>
+    <tbody>
+      <tr><td>70</td><td></td><td>0.00</td><td>13</td>
+        <td><a href="/horses/220289">God's Country</a> 3 b f</td>
+        <td>(13)</td><td>59.0</td><td>C Habib</td><td>33/1</td></tr>
+      <tr><td>69</td><td>2</td><td>0.75</td><td>10</td>
+        <td><a href="/horses/220284">Stilo Novo</a> 4 b f</td>
+        <td>(10)</td><td>60.0</td><td>K de Melo</td><td>17/2</td></tr>
+      <tr><td>58</td><td>1</td><td>2.25</td><td>4</td>
+        <td><a href="/horses/221431">Berry Lancer</a> 5 b g</td>
+        <td>(4)</td><td>60.0</td><td>S Moodley</td><td>9/20</td></tr>
+    </tbody>
+  </table>
 </div>
 """
 
@@ -613,15 +632,24 @@ def test_parse_raceform_results_positions_and_titles():
     assert len(races) == 1
     race = races[0]
     # Title carries "N HH:MM" — the contract with _race_runners_by_number.
-    assert race["title"] == "1 12:15 Maiden Plate"
-    assert race["course"] == "Vaal"
+    assert race["title"] == "1 12:15"
+    assert race["course"].lower() == "vaal"
     assert race["date"] == "2026-09-22"
     runners = _race_runners_by_number(races, 1)
     assert runners is not None
     pos = {r["name"]: r["position"] for r in runners}
-    # Non-finisher (finish:0) gets no ordinal — it can satisfy no pool.
+    # A horse with no finish cell never ran: no ordinal, and it is flagged
+    # as a non-runner so settlement refunds it instead of scoring it lost.
     assert pos == {"God's Country": "", "Stilo Novo": "2nd", "Berry Lancer": "1st"}
+    nr = {r["name"]: r["non_runner"] for r in runners}
+    assert nr["God's Country"] is True
+    assert nr["Berry Lancer"] is False
     assert _race_runners_by_number(races, 9) is None
+
+
+def test_parse_raceform_results_rejects_another_day():
+    """Raceform serves the NEAREST meeting for a no-meeting URL (HTTP 200)."""
+    assert _parse_raceform_results(RF_HTML, "vaal", "2026-09-29") == []
 
 
 def test_parse_raceform_results_garbage_returns_empty():
@@ -659,10 +687,10 @@ def test_raceform_url_validation():
 # --- Wrong-day guard (Raceform serves nearest meeting on no-meeting dates) ----
 def test_raceform_page_date_detects_fallback():
     from core_agent.skills.result_tracker import _raceform_page_date
-    # RF_HTML serves exactly 2026-09-22.
+    # The meeting date now lives in the card header (the "racedate" JSON
+    # field is gone from the rendered page).
     assert _raceform_page_date(RF_HTML) == "2026-09-22"
-    # Ambiguous (two meetings' data on one page) or unreadable -> None.
-    assert _raceform_page_date(RF_HTML + RF_HTML.replace("2026-09-22", "2026-09-17")) is None
+    # Unreadable -> None.
     assert _raceform_page_date("<html>Client Challenge</html>") is None
     assert _raceform_page_date("") is None
 
@@ -903,3 +931,52 @@ def test_shadow_scoring_writes_no_settlement_diagnostics(
         assert live is None
         diag.assert_called_once()
         assert diag.call_args[0][1] == "unknown_legs"
+
+
+# --- rendered dividends, attributed to the race the pool settled in ----------
+# Raceform prints each pool's dividend inside the block of the race the pool
+# settles ("Jackpot 6/2/6/7 R2,889.60" in Race 8's block = legs R5-R8). The
+# race number plus the selections' leg count give the exact range, so a
+# ticket is only ever paid the dividend of the pool IT bought.
+
+RF_RENDERED = """
+<div class="winners-glance-head"><h2>Tuesday 10 November 2026</h2><span>9 races</span></div>
+<div class="winners-glance-list">
+  <a class="winners-glance-row" href="#race-7"><span class="wg-race">R7<small>16:05</small></span></a>
+  <a class="winners-glance-row" href="#race-8"><span class="wg-race">R8<small>16:40</small></span></a>
+</div>
+<div id="race-7" class="racecard-body"><h2>Race 7 MR 74 Handicap</h2>
+  Exacta 6/4 R26.60 Trifecta 6/4/3 R169.70 Quartet 6/4/3/5 R672.50
+  Pick 3 6/2/6 R1,315.80 Bipot 3,10,13,15,17/2,3,5,9,10,12,14,16/6,7,8/3,6/2,5/4,6 R654.20
+</div>
+<div id="race-8" class="racecard-body"><h2>Race 8 MR 73 Handicap</h2>
+  Exacta 7/4 R14.10 Quartet 7/4/6/8 R482.30
+  Jackpot 6/2/6/7 R2,889.60
+</div>
+"""
+
+
+def test_rendered_dividend_is_attributed_to_its_leg_range():
+    # Bipot: rendered in Race 7's block, 6 selections groups -> legs R2-R7.
+    assert _parse_raceform_dividend(RF_RENDERED, "BIPOT", [2, 3, 4, 5, 6, 7]) == 654.20
+    # Jackpot: Race 8's block, 4 groups -> legs R5-R8.
+    assert _parse_raceform_dividend(RF_RENDERED, "JACKPOT", [5, 6, 7, 8]) == 2889.60
+    # Single-race pools belong to the race they are rendered under.
+    assert _parse_raceform_dividend(RF_RENDERED, "EXACTA", [7]) == 26.60
+    assert _parse_raceform_dividend(RF_RENDERED, "EXACTA", [8]) == 14.10
+    assert _parse_raceform_dividend(RF_RENDERED, "QUARTET", [8]) == 482.30
+
+
+def test_rendered_dividend_never_crosses_pool_ranges():
+    """A range that was never offered must yield nothing, not another pool's."""
+    assert _parse_raceform_dividend(RF_RENDERED, "BIPOT", [3, 4, 5, 6, 7]) is None
+    assert _parse_raceform_dividend(RF_RENDERED, "JACKPOT", [6, 7, 8, 9]) is None
+    assert _parse_raceform_dividend(RF_RENDERED, "EXACTA", [9]) is None
+    assert _parse_raceform_dividend(RF_RENDERED, "PLACE ACCUMULATOR", [3, 4, 5, 6, 7, 8, 9]) is None
+
+
+def test_rendered_dividend_handles_thousands_separator():
+    """Raceform prints SA Rand with a comma for thousands (R2,889.60)."""
+    assert _parse_raceform_dividend(RF_RENDERED, "JACKPOT", [5, 6, 7, 8]) == 2889.60
+    # Pick 3 sits in Race 7's block with 3 selection groups -> legs R5-R7.
+    assert _parse_raceform_dividend(RF_RENDERED, "PICK 3", [5, 6, 7]) == 1315.80

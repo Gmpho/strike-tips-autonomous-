@@ -221,10 +221,18 @@ def _raceform_page_date(page: str) -> Optional[str]:
     dividend consumer must check this against the requested date — scoring a
     ticket against the fallback day is the exact wrong-day bug this source
     exists to fix. None = ambiguous (several dates) or unreadable.
+
+    Raceform no longer embeds the ``"racedate"`` JSON field (verified
+    Nov-2026: the key is absent from the live page) — the page is
+    server-rendered HTML now and the card header carries the meeting date.
     """
-    text = _rf_text(page)
-    dates = set(re.findall(r'"racedate":"(\d{4}-\d{2}-\d{2})"', text))
-    return dates.pop() if len(dates) == 1 else None
+    try:
+        from core_agent.skills.league.results_feed import meeting_date_from_html
+
+        return meeting_date_from_html(page)
+    except Exception as e:
+        logger.debug("Raceform page date unreadable: %s", e)
+        return None
 
 
 def _rf_float(raw) -> Optional[float]:
@@ -240,8 +248,107 @@ def _rf_float(raw) -> Optional[float]:
         return None
 
 
+def _rf_rendered_amount(raw) -> Optional[float]:
+    """Parse a rendered Rand amount ("R2,431.70", "R654.20", "R23.30").
+
+    Raceform prints SA Rand with a COMMA for thousands and a dot for cents
+    ("R2,431.70"). The JSON path's parser assumes a comma decimal separator,
+    so every four-figure dividend (quartets, jackpots, pick 6) became a
+    parse error and the ticket never found its payout.
+    """
+    s = str(raw or "").strip().replace(" ", "")
+    if not s:
+        return None
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        head, _, tail = s.rpartition(",")
+        s = f"{head.replace(',', '')}.{tail}" if len(tail) in (1, 2) else s.replace(",", "")
+    try:
+        val = float(s)
+    except ValueError:
+        return None
+    return val if val > 0 else None
+
+
 def _parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
     """Parse a Raceform archive page into ATR-shaped race dicts.
+
+    Raceform is server-rendered HTML now — the embedded runner JSON this
+    used to read (``"raceno"``/``"horsename"``/``"finish"``) is gone
+    (verified live Nov-2026: none of those keys appear in the page any
+    more), so every Raceform lookup silently returned zero races and the
+    bankroll never settled a South African ticket.
+
+    The league's table parser is the one that still reads the page, and it
+    carries the same information: every runner of every race with its
+    finishing position and SP. The output mirrors
+    AtTheRacesAPI.get_results() so ``_race_runners_by_number`` (which
+    matches titles like \"N HH:MM ...\") and the leg scorer work unchanged:
+        [{\"course\", \"date\", \"time\", \"title\", \"runners\": [{name, position}]}]
+    Returns [] when nothing parseable — callers treat that as no-evidence
+    (ticket stays PENDING), never as a result.
+    """
+    if not page:
+        return []
+    # Wrong-day guard: reject Raceform's silent nearest-meeting fallback —
+    # a no-meeting URL serves another day's card with HTTP 200.
+    if _raceform_page_date(page) != iso_date:
+        logger.info(
+            "[RACEFORM] %s %s: page serves another meeting (or none) — rejected",
+            track, iso_date,
+        )
+        return []
+    try:
+        from core_agent.skills.league.results_feed import parse_meeting_html
+
+        rows = parse_meeting_html(page, track, iso_date)
+    except Exception as e:
+        logger.info("[RACEFORM] %s %s: parse failed: %s", track, iso_date, e)
+        return []
+    races: List[Dict] = []
+    for row in rows:
+        try:
+            raceno = int(str(row.get("race_number") or 0))
+        except (TypeError, ValueError):
+            continue
+        if raceno <= 0:
+            continue
+        off = str(row.get("off_time") or "").strip()
+        runners: List[Dict] = []
+        for r in row.get("runners") or []:
+            name = str(r.get("name") or "").strip()
+            if not name:
+                continue
+            finish_raw = str(r.get("finish_raw") or "").strip().upper()
+            # A SCRATCHED horse never ran (the card leaves the finish cell
+            # empty). A faller ("F") or a pulled-up ("PU") DID run and
+            # simply has no finishing position — they must never be
+            # refunded as non-runners.
+            scratched = finish_raw in ("", "0", "NR", "SCR", "SCRATCHED")
+            runners.append({
+                "name": name,
+                "position": _finish_ordinal(r.get("position")) or "",
+                "non_runner": scratched,
+            })
+        if not runners:
+            continue
+        races.append({
+            "course": row.get("course") or str(track or "").title(),
+            "date": iso_date,
+            "time": off,
+            # Title MUST carry "N HH:MM" — _race_runners_by_number keys on it.
+            "title": f"{raceno} {off}".strip(),
+            "runners": runners,
+        })
+    return races
+
+
+def _legacy_parse_raceform_results(page: str, track: str, iso_date: str) -> List[Dict]:
+    """The pre-Nov-2026 JSON parser, kept for reference (dead markup).
 
     Raceform embeds flat JSON runner objects in the page:
         {\"raceno\":1,\"finish\":2,\"horsename\":\"...\",\"racename\":\"...\", ...}
@@ -381,19 +488,54 @@ def _parse_raceform_dividend(
             return val
         if nlegs and set(range(end - nlegs + 1, end + 1)) == legs_wanted:
             return val
-    if legs_wanted is not None:
+    if legs_wanted is None:
+        # No leg range requested: the first rendered row for the pool is the
+        # dividend (legacy behaviour).
+        stripped = re.sub(r"<[^>]+>", " ", text)
+        for m in re.finditer(
+            r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot|Exacta|Trifecta|"
+            r"Quartet|Double|Swinger)\s+([\d/,]+)\s+R\s*([\d.,]+)",
+            stripped,
+            flags=re.IGNORECASE,
+        ):
+            if _pool_key(m.group(1)) == want:
+                val = _rf_rendered_amount(m.group(3))
+                if val is not None:
+                    return val
+        if first is not None:
+            return first
         return None
-    if first is not None:
-        return first
-    # Rendered-row fallback: "Bipot 4,7/2,3,6/1,4,7 R53.50" in tag-stripped text.
+    # A leg range WAS requested: the rendered fallback attributes a dividend
+    # to the race the pool settled in — "Bipot 3,10/2,3/... R654.20" in
+    # Race 7's block (legs R2-R7), "Jackpot 6/2/6/7 R2,889.60" in Race 8's
+    # block (legs R5-R8). The race number attributes a single-race pool (the
+    # selections are HORSES there) and the selections' leg count attributes a
+    # multi-leg one — the same rules the JSON path used. A dividend whose
+    # range does not match the ticket is NEVER returned (the old code
+    # returned None here, so no exotic ticket ever found its payout).
     stripped = re.sub(r"<[^>]+>", " ", text)
-    for m in re.finditer(
-        r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot)\s+[\d/,]+\s+R\s*([\d.,]+)",
-        stripped,
-        flags=re.IGNORECASE,
-    ):
-        if _pool_key(m.group(1)) == want:
-            return _rf_float(m.group(2))
+    blocks = re.split(r"\bRace\s+(\d+)\b", stripped)
+    for _bi in range(1, len(blocks) - 1, 2):
+        try:
+            rn = int(blocks[_bi])
+        except ValueError:
+            continue
+        for m in re.finditer(
+            r"\b(Bipot|Place Accumulator|Pick 6|Pick 3|Jackpot|Exacta|Trifecta|"
+            r"Quartet|Double|Swinger)\s+([\d,/]+)\s+R\s*([\d.,]+)",
+            blocks[_bi + 1],
+            flags=re.IGNORECASE,
+        ):
+            if _pool_key(m.group(1)) != want:
+                continue
+            val = _rf_rendered_amount(m.group(3))
+            if val is None:
+                continue
+            if len(legs_wanted) == 1 and rn in legs_wanted:
+                return val
+            nlegs = m.group(2).count("/") + 1
+            if nlegs and set(range(rn - nlegs + 1, rn + 1)) == legs_wanted:
+                return val
     return None
 
 
