@@ -27,17 +27,31 @@ def _snap(tmp_path, events, timestamp="2026-11-10T06:30:00"):
 
 
 def test_off_iso_prefers_the_betfair_stamp():
+    """Betfair stamps the off-time in SAST wall clock — that is the instant."""
     snap = {"events": {"1": {"id": 1, "course": "Kenilworth", "t": "11:07",
-                             "bf_event_date": "2026-11-10", "bf_off_time": "11:07"}},
+                             "bf_event_date": "2026-11-10", "bf_off_time": "12:37"}},
             "timestamp": "2026-11-10T06:30:00"}
-    assert lg._snapshot_off_iso(snap, "1") == "2026-11-10T11:07:00+02:00"
+    assert lg._snapshot_off_iso(snap, "1") == "2026-11-10T12:37:00+02:00"
 
 
 def test_off_iso_falls_back_to_the_card_clock():
-    """No Betfair stamp, but the card knows its own race time."""
+    """No Betfair stamp, but the card knows its own race time.
+
+    The card clock is the raw UTC wall clock (Betway's epoch rendered in the
+    container's UTC frame), so a South African race must be shown two hours
+    LATER than the card string — reading it as SAST would lock every SA race
+    two hours before it starts.
+    """
     snap = {"events": {"1": {"id": 1, "course": "Kenilworth", "t": "11:07"}},
             "timestamp": "2026-11-10T06:30:00"}
-    assert lg._snapshot_off_iso(snap, "1") == "2026-11-10T11:07:00+02:00"
+    assert lg._snapshot_off_iso(snap, "1") == "2026-11-10T13:07:00+02:00"
+
+
+def test_off_iso_falls_back_to_local_time_for_a_uk_meeting():
+    """A UK race is shown in UK local time (UTC in winter), not SAST."""
+    snap = {"events": {"1": {"id": 1, "course": "Lingfield", "t": "12:50"}},
+            "timestamp": "2026-11-10T06:30:00"}
+    assert lg._snapshot_off_iso(snap, "1") == "2026-11-10T12:50:00+00:00"
 
 
 def test_snapshot_day_is_sast_not_utc():
@@ -70,7 +84,8 @@ def test_pick_without_off_iso_is_accepted(tmp_path, monkeypatch):
     with open(os.path.join(str(tmp_path), "picks.jsonl")) as f:
         row = json.loads(f.readline())
     # Server rebuilt the missing off time instead of rejecting the pick.
-    assert row["off_iso"] == "2026-11-10T23:30:00+02:00"
+    # The card clock is UTC (23:30) — in SAST that is 01:30 the next morning.
+    assert row["off_iso"] == "2026-11-11T01:30:00+02:00"
     assert row["runner_name"] == "Peach Cobbler"
 
 

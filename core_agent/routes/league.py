@@ -16,6 +16,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -511,6 +512,21 @@ def _snapshot_sast_day(snap: Dict[str, Any]) -> Optional[str]:
     return (stamp + timedelta(hours=2)).date().isoformat()
 
 
+def _snapshot_utc_day(snap: Dict[str, Any]) -> Optional[str]:
+    """The UTC calendar day a snapshot was written on.
+
+    The card's race clock (``t``) is a UTC wall clock, so the day anchor for
+    it is the snapshot's UTC date — not the SAST date.
+    """
+    raw = str((snap or {}).get("timestamp") or "")[:19]
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).date().isoformat()
+    except ValueError:
+        return raw[:10] or None
+
+
 def _race_event(snap: Dict[str, Any], race_id: str) -> Optional[Dict[str, Any]]:
     """Find a race's event in the market snapshot by id."""
     events = (snap or {}).get("events") or {}
@@ -525,6 +541,85 @@ def _race_event(snap: Dict[str, Any], race_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _meeting_tz(course: str):
+    """The timezone a meeting's off time is shown in.
+
+    SA races run on SAST (UTC+2, no DST). UK/Irish meetings run on their own
+    local time — which in winter equals UTC, so a UK race card that is
+    stamped in SAST would tell an Irish punter the wrong time by two hours.
+    """
+    from zoneinfo import ZoneInfo
+
+    region = region_of(str(course or ""))
+    if region == "SA":
+        return ZoneInfo("Africa/Johannesburg")
+    if region == "UK":
+        return ZoneInfo("Europe/London")
+    if region == "IRE":
+        return ZoneInfo("Europe/Dublin")
+    return ZoneInfo("UTC")
+
+
+def _parse_clock(value: str) -> Optional[tuple]:
+    """``"11:07"`` -> ``(11, 7)`` (tolerates "11:07:00")."""
+    parts = str(value or "").strip().split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _race_off_instant(
+    ev: Dict[str, Any], snap: Dict[str, Any]
+) -> Optional[datetime]:
+    """The exact off-time of a race as an aware UTC datetime.
+
+    Two sources, and they are NOT in the same frame:
+
+    * ``bf_off_time`` — Betfair's ``marketStartTime`` rendered in SAST wall
+      clock by the parser, with ``bf_event_date`` as the day anchor.
+    * ``t``/``st`` — the card's race clock, which is the raw UTC wall clock
+      (Betway's epoch rendered in the container's UTC frame). Reading it as
+      SAST would move every South African race two hours earlier — races
+      would lock two hours before they start (Nov-2026).
+    """
+    if not isinstance(ev, dict):
+        return None
+    bf_date = str(ev.get("bf_event_date") or "")[:10]
+    bf_clock = _parse_clock(ev.get("bf_off_time") or "")
+    if bf_date and bf_clock:
+        try:
+            sast = datetime.fromisoformat(f"{bf_date}T{bf_clock[0]:02d}:{bf_clock[1]:02d}:00")
+            return sast.replace(tzinfo=ZoneInfo("Africa/Johannesburg")).astimezone(
+                timezone.utc
+            )
+        except (TypeError, ValueError):
+            pass
+    card_clock = _parse_clock(ev.get("t") or ev.get("st") or "")
+    if not card_clock:
+        return None
+    day = _snapshot_utc_day(snap)
+    if not day:
+        return None
+    try:
+        base = datetime.fromisoformat(f"{day}T00:00:00")
+    except ValueError:
+        return None
+    utc_naive = base.replace(hour=card_clock[0], minute=card_clock[1])
+    # Tomorrow's card can already be published: a clock far in the future
+    # belongs to the next day (same 18h heuristic the feed parsers use).
+    if (utc_naive - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() > 18 * 3600:
+        utc_naive -= timedelta(days=1)
+    return utc_naive.replace(tzinfo=timezone.utc)
+
+
+def _off_iso_for(instant: datetime, course: str) -> str:
+    """Render an off-time in the meeting's own timezone."""
+    return instant.astimezone(_meeting_tz(course)).isoformat()
+
+
 def _snapshot_off_iso(snap: Dict[str, Any], race_id: str) -> Optional[str]:
     """Rebuild a race's off time from the market snapshot.
 
@@ -535,17 +630,10 @@ def _snapshot_off_iso(snap: Dict[str, Any], race_id: str) -> Optional[str]:
     no pick could be submitted against it.
     """
     ev = _race_event(snap, race_id)
-    if not isinstance(ev, dict):
+    instant = _race_off_instant(ev, snap)
+    if instant is None:
         return None
-    bf_date = str(ev.get("bf_event_date") or "")[:10]
-    bf_time = str(ev.get("bf_off_time") or "")
-    if bf_date and bf_time:
-        return f"{bf_date}T{bf_time}:00+02:00"
-    day = _snapshot_sast_day(snap)
-    clock = str(ev.get("t") or ev.get("st") or "")
-    if day and len(clock) >= 4 and clock[2] == ":":
-        return f"{day}T{clock}:00+02:00"
-    return None
+    return _off_iso_for(instant, str((ev or {}).get("course") or ""))
 
 
 def _load_snapshot() -> Dict[str, Any]:
@@ -584,6 +672,9 @@ async def submit_pick(body: PickIn, authorization: Optional[str] = Header(None))
         off = datetime.fromisoformat(off_iso.replace("Z", "+00:00"))
     except Exception:
         raise HTTPException(400, "bad off_iso")
+    if off.tzinfo is None:
+        # An old client can send a bare timestamp; the app's frame is SAST.
+        off = off.replace(tzinfo=ZoneInfo("Africa/Johannesburg"))
     if datetime.now(timezone.utc) >= off - timedelta(minutes=LOCK_MINUTES):
         raise HTTPException(409, "locked")
     # duplicate check (log scan)
@@ -668,25 +759,18 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
         })
 
     out = []
-    snap_day = _snapshot_sast_day(snap)
     for e in events or []:
         course = e.get("course") or ""
         r = region_of(course)
         if region and r != region:
             continue
         runners = [x for x in (e.get("runners") or []) if not x.get("non_runner")]
-        off = e.get("bf_off_time") or e.get("t")
         rid = str(e.get("id"))
-        off_iso = None
-        if e.get("bf_event_date") and e.get("bf_off_time"):
-            off_iso = f"{e['bf_event_date']}T{e['bf_off_time']}:00+02:00"
-        elif snap_day:
-            # Betfair's date stamp is intermittent; the card's own clock plus
-            # the snapshot's day is enough. Without this the HUD got
-            # off_iso=null and no pick could be submitted (Nov-2026).
-            clock = str(e.get("t") or e.get("st") or "")
-            if len(clock) >= 4 and clock[2] == ":":
-                off_iso = f"{snap_day}T{clock}:00+02:00"
+        # One resolver for both the display time and the pick lock, so the
+        # countdown a punter sees is the instant the lock uses.
+        instant = _race_off_instant(e, snap)
+        off_iso = _off_iso_for(instant, course) if instant else None
+        off = off_iso[11:16] if off_iso else (e.get("bf_off_time") or e.get("t"))
         out.append({
             "race_id": rid,
             "course": course,
