@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 from datetime import date as _date, datetime, timedelta
@@ -31,6 +32,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .regions import region_of
 from .settlement import _read_jsonl, _track_key
+
+logger = logging.getLogger("league-results-feed")
 
 RESULTS_FILENAME = "confirmed_results.jsonl"
 BASE_URL = "https://raceform.co.za/horse-racing-results"
@@ -182,8 +185,50 @@ def parse_meeting_html(
     return races
 
 
+_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12,
+}
+
+
+def meeting_date_from_html(html: str) -> Optional[str]:
+    """The meeting date Raceform actually displays (ISO), or None.
+
+    Raceform's results page heads the card with the meeting it is showing:
+    "Tuesday 10 November 2026" and the race count.
+    """
+    from bs4 import BeautifulSoup
+
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        head = soup.find(class_="winners-glance-head")
+        h2 = head.find("h2") if head else None
+        text = h2.get_text(" ", strip=True) if h2 else ""
+    except Exception:
+        return None
+    m = re.search(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", text)
+    if not m:
+        return None
+    day, month, year = m.groups()
+    mi = _MONTHS.get(month.strip().lower())
+    if not mi:
+        return None
+    try:
+        return f"{int(year):04d}-{mi:02d}-{int(day):02d}"
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_meeting(course: str, date: str, timeout: float = 25.0) -> List[Dict[str, Any]]:
-    """Download and parse one meeting. Raises on network failure."""
+    """Download and parse one meeting. Raises on network failure.
+
+    Raceform IGNORES the date in the URL and serves the LATEST meeting for
+    that course — asking for "kenilworth/2026-11-04" returns today's card
+    (Nov-2026). Stamping that card with the requested date would settle a
+    past pick against another day's runners, so the displayed meeting date
+    is checked first and a mismatch yields NO results at all.
+    """
     import httpx
 
     slug = _track_key(course).replace(" ", "-")
@@ -192,6 +237,13 @@ def fetch_meeting(course: str, date: str, timeout: float = 25.0) -> List[Dict[st
         url, headers={"User-Agent": _UA}, timeout=timeout, follow_redirects=True
     )
     resp.raise_for_status()
+    shown = meeting_date_from_html(resp.text)
+    if shown and shown != str(date)[:10]:
+        logger.warning(
+            "Raceform served %s %s for the %s request — refusing the card",
+            course, shown, date,
+        )
+        return []
     return parse_meeting_html(resp.text, course, date)
 
 

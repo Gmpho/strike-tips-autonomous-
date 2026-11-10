@@ -184,3 +184,66 @@ def test_confirmed_card_settles_unplaced_pick_as_loss(tmp_path):
     assert row["settled"] is True
     assert row["won"] is False
     assert row["points"] == 0
+
+
+# ── Raceform serves the LATEST meeting, not the date in the URL ─────────────
+# Asking for kenilworth/2026-11-04 returns TODAY's card. Stamping that card
+# with the requested date would settle a past pick against another day's
+# runners — a would-be winner scored as a loss. The displayed meeting date
+# is now checked before the card is accepted.
+
+_HEAD = """
+<div class="winners-glance-head">
+  <h2>{heading}</h2>
+  <span>{count} races &middot; Going: g </span>
+</div>
+"""
+
+
+def _html_with_head(heading):
+    return _HEAD.format(heading=heading, count=1) + _MEETING_HTML
+
+
+def test_meeting_date_is_read_from_the_page_head():
+    from core_agent.skills.league.results_feed import meeting_date_from_html
+
+    assert meeting_date_from_html(
+        _html_with_head("Tuesday 10 November 2026")
+    ) == "2026-11-10"
+    assert meeting_date_from_html(
+        _html_with_head("Sunday 8 November 2026")
+    ) == "2026-11-08"
+    assert meeting_date_from_html("<html><body>nothing</body></html>") is None
+
+
+def test_fetch_meeting_refuses_a_card_from_another_day(monkeypatch):
+    """A page showing a different meeting must yield NO results."""
+    from core_agent.skills.league import results_feed
+
+    class _Resp:
+        text = _html_with_head("Tuesday 10 November 2026")
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        "httpx.get", lambda *a, **k: _Resp()
+    )
+    races = results_feed.fetch_meeting("Kenilworth", "2026-11-04")
+    assert races == []
+
+
+def test_fetch_meeting_accepts_the_matching_day(monkeypatch):
+    from core_agent.skills.league import results_feed
+
+    class _Resp:
+        text = _html_with_head("Sunday 8 November 2026")
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr("httpx.get", lambda *a, **k: _Resp())
+    races = results_feed.fetch_meeting("Turffontein", "2026-11-08")
+    assert len(races) == 2          # race 1 + the void race 2
+    assert races[0]["date"] == "2026-11-08"
+    assert races[1]["void"] is True

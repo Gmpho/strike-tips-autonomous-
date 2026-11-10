@@ -792,7 +792,7 @@ async def run_odds_monitor():
             await _asyncio.wait_for(_piggyback(), timeout=500)
             logger.info("Odds monitor piggyback intelligence pass complete")
     except Exception as _piggy_err:
-        logger.debug("piggyback intelligence skipped: %s", _piggy_err)
+        logger.warning("piggyback intelligence skipped: %s", _piggy_err)
     # Settlement piggyback (Oct-2026): the in-app 5-min settler dies with
     # container churn (fresh scheduler every few minutes, zero executions),
     # so settlement rides this cron heartbeat instead. Fully guarded and
@@ -817,11 +817,11 @@ async def run_odds_monitor():
                     len(_settled or []),
                 )
             except Exception as _e:
-                logger.debug("piggyback settle skipped: %s", _e)
+                logger.warning("piggyback settle skipped: %s", _e)
 
         await _asyncio3.wait_for(_settle_tick(), timeout=240)
     except Exception as _e:
-        logger.debug("piggyback settle wrapper skipped: %s", _e)
+        logger.warning("piggyback settle wrapper failed: %s", _e)
     # League settlement piggyback (Nov-2026): settle open league picks from
     # confirmed results WITHOUT touching result_tracker/governor. Fully
     # guarded — never fails the monitor cycle; partial progress persists.
@@ -836,6 +836,26 @@ async def run_odds_monitor():
                 # nothing (Nov-2026: every pick stayed "pending" forever).
                 import datetime as _dt
 
+                # SA league picks need official cards (finishing positions +
+                # SP). ATR does not cover South African racing at all, so
+                # without this fetch every SA pick hangs until it expires
+                # (Nov-2026: Kenilworth and Turffontein picks pending for
+                # days). Raceform is the source; only meetings that still
+                # have pending picks are fetched, a couple per cycle, off
+                # the event loop so the monitor cycle is never blocked.
+                try:
+                    from core_agent.skills.league.results_feed import (
+                        backfill_missing_results,
+                    )
+
+                    _bf = await _asyncio4.to_thread(
+                        backfill_missing_results, "/app/data", 3, 2
+                    )
+                    if _bf.get("races") or _bf.get("errors"):
+                        logger.info("League results backfill: %s", _bf)
+                except Exception as _bf_e:
+                    logger.warning("League results backfill failed: %s", _bf_e)
+
                 from core_agent.skills.league.settlement import settle_open_picks
                 stats = settle_open_picks(
                     "/app/data",
@@ -848,19 +868,19 @@ async def run_odds_monitor():
                     try:
                         data_volume.commit()
                     except Exception as _ce:
-                        logger.debug("league settle commit skipped: %s", _ce)
+                        logger.warning("league settle commit failed: %s", _ce)
                     logger.info("League settle pass: %s", stats)
                 else:
-                    logger.debug(
+                    logger.info(
                         "League settle pass: nothing to settle (%s pending)",
                         stats.get("pending"),
                     )
             except Exception as _e:
-                logger.debug("league piggyback settle skipped: %s", _e)
+                logger.warning("league piggyback settle failed: %s", _e)
 
-        await _asyncio4.wait_for(_league_settle_tick(), timeout=120)
+        await _asyncio4.wait_for(_league_settle_tick(), timeout=180)
     except Exception as _e:
-        logger.debug("league piggyback wrapper skipped: %s", _e)
+        logger.warning("league piggyback wrapper failed: %s", _e)
     # Europe heartbeat (Oct-2026): the in-app 12:30 fire dies with container
     # churn (missed entirely on quiet days), so the daily Europe scan rides
     # this cron instead. Volume-stamped once-per-day gate, fire-and-forget
