@@ -24,6 +24,62 @@ logger = logging.getLogger("monitoring-routes")
 router = APIRouter(prefix="/api", tags=["monitoring"])
 
 
+def _course_key(name: Any) -> str:
+    """Course key that lines the two sources up: ATR says "Kenilworth (RSA)",
+    Raceform says "Kenilworth"."""
+    import re as _re
+
+    return _re.sub(r"\([^)]*\)", " ", str(name or "")).strip().lower()
+
+
+def _race_no(title: Any) -> str:
+    """Race number from an ATR-style title ("3 11:45 - ...")."""
+    import re as _re
+
+    m = _re.match(r"\s*(\d+)", str(title or ""))
+    return m.group(1) if m else ""
+
+
+def _merge_results_with_confirmed(atr_blob: Any) -> Any:
+    """Serve ATR's results together with the SA cards Raceform confirmed.
+
+    ATR covers South Africa only while its browser tier is allowed through,
+    and it is blocked for long stretches (Nov-2026: the results tab went
+    silent mid-meeting and the card froze at the races already run). The
+    Raceform cards are plain HTML, always work, and carry the full finishing
+    order plus SP — so the SA meeting is served from them, and the fuller
+    card wins for any race both sources have.
+    """
+    try:
+        from core_agent.skills.league.results_feed import confirmed_results_as_races
+
+        confirmed = confirmed_results_as_races(str(DATA_DIR))
+    except Exception as e:
+        logger.debug("confirmed results not merged: %s", e)
+        return atr_blob
+    if not confirmed:
+        return atr_blob
+    blob = atr_blob if isinstance(atr_blob, dict) else {}
+    races = list(blob.get("results") or [])
+    index = {
+        (str(r.get("date") or "")[:10], _course_key(r.get("course")),
+         _race_no(r.get("title"))): r
+        for r in races if isinstance(r, dict)
+    }
+    for r in confirmed:
+        key = (r.get("date", ""), _course_key(r.get("course")), _race_no(r.get("title")))
+        prev = index.get(key)
+        if prev is None:
+            index[key] = r
+            races.append(r)
+        elif len(r.get("runners") or []) > len(prev.get("runners") or []):
+            races[races.index(prev)] = r
+            index[key] = r
+    merged = dict(blob)
+    merged["results"] = races
+    return merged
+
+
 @router.get("/monitoring/stream")
 async def stream_snapshot(request: Request):
     """SSE endpoint — pushes snapshot + ATR updates the moment they change."""
@@ -198,7 +254,9 @@ async def get_monitoring_snapshot(request: Request):
     # (retiring SSE eliminates 24/7 billed executions per open tab).
     result["movers"] = _read_json_file(ATR_MOVERS_PATH)
     result["predictor"] = _read_json_file(ATR_PREDICTOR_PATH)
-    result["results"] = _read_json_file(ATR_RESULTS_PATH)
+    result["results"] = _merge_results_with_confirmed(
+        _read_json_file(ATR_RESULTS_PATH)
+    )
     # News: serve from in-memory cache (refreshed every 15s by
     # news_mtime_refresh_loop) — avoids a disk read per snapshot poll.
     try:

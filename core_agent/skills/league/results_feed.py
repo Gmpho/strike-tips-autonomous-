@@ -104,14 +104,15 @@ def parse_meeting_html(
 ) -> List[Dict[str, Any]]:
     """Parse one Raceform results page into confirmed race records.
 
-    Every record is ``{date, course, race_number, runners: [...]}`` where each
-    runner is ``{number, name, position, odds_decimal}``. Races whose result
-    table cannot be read are skipped, never approximated.
+    Every record is ``{date, course, race_number, off_time, runners: [...]}``
+    where each runner is ``{number, name, position, odds_decimal}``. Races
+    whose result table cannot be read are skipped, never approximated.
     """
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
     races: List[Dict[str, Any]] = []
+    off_times = _off_times_from_html(soup)
 
     for section in soup.find_all(id=re.compile(r"^race-\d+$")):
         race_number = section.get("id", "").split("-", 1)[1]
@@ -171,6 +172,10 @@ def parse_meeting_html(
                 "number": number,
                 "name": name,
                 "position": parse_finish(cells[col["finish"]].get_text(" ", strip=True)),
+                # The raw finish cell is kept so a consumer can tell a
+                # SCRATCHED horse (no finish, never ran) from a FALLER ("F",
+                # ran and did not finish) — both have no finishing position.
+                "finish_raw": cells[col["finish"]].get_text(" ", strip=True),
                 "odds_decimal": parse_odds(cells[col["odds"]].get_text(" ", strip=True)),
             })
 
@@ -179,11 +184,92 @@ def parse_meeting_html(
                 "date": date,
                 "course": course,
                 "race_number": str(race_number),
+                "off_time": off_times.get(str(race_number), ""),
                 "runners": runners,
                 "source": "raceform",
             })
 
     return races
+
+
+def _off_times_from_html(soup) -> Dict[str, str]:
+    """{race_number: "HH:MM"} from the meeting's winners-glance rows.
+
+    Raceform's card header lists every race with its off time ("R1 12:37").
+    The results tables themselves do not carry it, and the ATR-shaped title
+    ("N HH:MM ...") is how the settlement code keys a race number.
+    """
+    out: Dict[str, str] = {}
+    try:
+        for row in soup.select("a.winners-glance-row"):
+            href = row.get("href") or ""
+            m = re.search(r"#race-(\d+)", str(href))
+            if not m:
+                continue
+            small = row.select_one(".wg-race small")
+            clock = small.get_text(" ", strip=True) if small else ""
+            if clock and re.match(r"^\d{1,2}:\d{2}$", clock):
+                out[m.group(1)] = clock
+    except Exception as e:
+        logger.debug("off times not read: %s", e)
+    return out
+
+
+_ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
+
+
+def _ordinal(pos: Any) -> str:
+    """1 -> "1st", 4 -> "4th" (the shape ATR results use)."""
+    try:
+        n = int(pos)
+    except (TypeError, ValueError):
+        return str(pos or "")
+    if n <= 0:
+        return ""
+    if n in _ORDINALS:
+        return _ORDINALS[n]
+    return f"{n}th"
+
+
+def confirmed_results_as_races(data_dir: str) -> List[Dict[str, Any]]:
+    """The confirmed SA cards as ATR-shaped race records.
+
+    The HUD's results tab renders ATR records, and ATR covers SA only while
+    its browser tier is allowed through (it is blocked for long stretches).
+    Raceform's cards are server-rendered HTML and always work, so the SA
+    meeting is served from here: full finishing order plus SP for every race
+    of the day, even while ATR is challenged.
+    """
+    out: List[Dict[str, Any]] = []
+    for row in load_confirmed_results(data_dir):
+        race_no = str(row.get("race_number") or "").strip()
+        if not race_no:
+            continue
+        off = str(row.get("off_time") or "").strip()
+        runners = []
+        for r in row.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            name = str(r.get("name") or "").strip()
+            if not name:
+                continue
+            runners.append({
+                "name": name,
+                "position": _ordinal(r.get("position")),
+                "odds_decimal": r.get("odds_decimal"),
+                "form": "",
+            })
+        if not runners:
+            continue
+        out.append({
+            "course": str(row.get("course") or ""),
+            "date": str(row.get("date") or "")[:10],
+            "time": off,
+            "title": f"{race_no} {off}".strip(),
+            "runners": runners,
+            "source": "raceform",
+        })
+    return out
 
 
 _MONTHS = {

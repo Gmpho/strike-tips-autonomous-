@@ -304,3 +304,69 @@ def test_pending_meetings_respects_the_fetch_cooldown(tmp_path):
     assert ("2026-11-10", "Kenilworth") in pending_meetings(
         str(tmp_path), days=3, cooldown_secs=0
     )
+
+
+# ── the HUD results tab must not depend on ATR being allowed through ────────
+# ATR's browser tier is blocked for long stretches (Nov-2026: the results tab
+# went silent mid-meeting). Raceform's cards are server-rendered HTML and
+# always work, so the SA meeting is served from them — full finishing order
+# plus SP, every race of the day.
+
+def test_off_times_come_from_the_meeting_header():
+    html = """
+    <div class="winners-glance-list">
+      <a class="winners-glance-row" href="#race-1"><span class="wg-race">R1<small>12:37</small></span></a>
+      <a class="winners-glance-row" href="#race-2"><span class="wg-race">R2<small>13:07</small></span></a>
+    </div>
+    """ + _MEETING_HTML
+    races = parse_meeting_html(html, "Kenilworth", "2026-11-10")
+    assert races[0]["off_time"] == "12:37"
+
+
+def test_confirmed_results_render_as_atr_shaped_races(tmp_path):
+    from core_agent.skills.league.results_feed import confirmed_results_as_races
+
+    append_confirmed_results(str(tmp_path), [{
+        "date": "2026-11-10", "course": "Kenilworth", "race_number": "1",
+        "off_time": "12:37",
+        "runners": [
+            {"number": 12, "name": "Peach Cobbler", "position": 1, "odds_decimal": 2.25},
+            {"number": 2, "name": "Bursturbubble", "position": 2, "odds_decimal": 6.5},
+        ],
+    }])
+
+    races = confirmed_results_as_races(str(tmp_path))
+    assert len(races) == 1
+    r = races[0]
+    assert r["title"] == "1 12:37"
+    assert r["course"] == "Kenilworth"
+    assert r["runners"][0]["position"] == "1st"
+    assert r["runners"][1]["position"] == "2nd"
+
+
+def test_hud_results_merge_prefers_the_fuller_card(tmp_path, monkeypatch):
+    """ATR's truncated summary loses to Raceform's full card."""
+    from core_agent.routes import monitoring
+
+    monkeypatch.setattr(monitoring, "DATA_DIR", tmp_path)
+    append_confirmed_results(str(tmp_path), [{
+        "date": "2026-11-10", "course": "Kenilworth (RSA)", "race_number": "1",
+        "off_time": "12:37",
+        "runners": [
+            {"number": 12, "name": "Peach Cobbler", "position": 1, "odds_decimal": 2.25},
+            {"number": 2, "name": "Bursturbubble", "position": 2, "odds_decimal": 6.5},
+            {"number": 3, "name": "Cape Town Deern", "position": 3, "odds_decimal": 26.0},
+        ],
+    }])
+    atr_blob = {"results": [
+        {"course": "Kenilworth (RSA)", "date": "2026-11-10", "time": "12:37",
+         "title": "1\n12:37 - Open Maiden", "runners": [
+             {"name": "Peach Cobbler", "position": "1st"}]},
+    ], "timestamp": "2026-11-10T12:00:00"}
+
+    merged = monitoring._merge_results_with_confirmed(atr_blob)
+    races = merged["results"]
+    ken = [r for r in races if "kenilworth" in str(r.get("course", "")).lower()]
+    assert len(ken) == 1
+    assert len(ken[0]["runners"]) == 3      # the full card won
+    assert merged["timestamp"] == "2026-11-10T12:00:00"   # blob preserved
