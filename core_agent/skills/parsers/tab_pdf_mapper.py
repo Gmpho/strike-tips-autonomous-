@@ -47,6 +47,7 @@ def _map_pdf_to_races(intelligence: Dict, track: str) -> List[RaceCard]:
                     race_time="12:00",
                     track_condition="Good",
                     distance=race_dists.get(r_num),
+                    meeting_date=intelligence.get("meeting_date"),
                     runners=runners,
                 )
             )

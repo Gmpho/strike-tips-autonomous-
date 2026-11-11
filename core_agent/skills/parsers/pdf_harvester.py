@@ -10,6 +10,7 @@ from datetime import date
 from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
 from core_agent.skills.parsers.pdf_discovery import PDFDiscoveryService
+from core_agent.skills.parsers.race_dates import meeting_date_from_text as _meeting_date_from_text
 
 logger = logging.getLogger("pdf-harvester")
 
@@ -356,6 +357,11 @@ class PDFHarvester:
             "source": intelligence_type,
             "track": track,
             "date": today,
+            # The meeting date the PDF itself states (TAB/Computaform publish
+            # the NEXT meeting early, so "today" is not a safe assumption —
+            # Nov-2026: a Saturday card was published as today's and its
+            # exotics landed under "Today" on the board). None = not stated.
+            "meeting_date": _meeting_date_from_text(raw_text),
             "runners": runners,
             "races": races,
             "parsed_tips": [

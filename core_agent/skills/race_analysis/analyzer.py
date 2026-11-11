@@ -48,6 +48,10 @@ class RaceCard:
     runners: List[Runner] = field(default_factory=list)
     race_class: Optional[str] = None
     prize_money: Optional[float] = None
+    # The meeting date of the card this race belongs to (ISO). None = the
+    # source did not say (treated as today). TAB/Computaform publish the
+    # NEXT meeting early, so "today" is not a safe assumption.
+    meeting_date: Optional[str] = None
 
 
 @dataclass

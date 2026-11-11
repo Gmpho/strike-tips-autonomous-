@@ -16,6 +16,7 @@ from typing import List, Optional, Dict
 logger = logging.getLogger("tab4racing-scraper")
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
+from core_agent.skills.parsers.race_dates import program_date as _program_date
 from core_agent.core.http_client import get_async_client
 
 
@@ -76,6 +77,12 @@ class ScrapedRace:
     prize_money: Optional[float] = None
     bet_types: List[str] = field(default_factory=list)
     jurisdiction: str = "SA"
+    # The meeting date of the CARD this race belongs to (ISO). TAB serves the
+    # NEXT meeting for a track long before it runs, so "today" is not a safe
+    # assumption (Nov-2026: Kenilworth/Turffontein's Saturday cards were
+    # stamped with today's date and showed up under "Today" on the exotics
+    # board). None = the source did not say (treated as today).
+    meeting_date: Optional[str] = None
 
 
 def _parse_distance_m(*candidates) -> Optional[int]:
@@ -261,6 +268,12 @@ class TAB4RacingScraper:
                     race_list = v.get("RaceList", [])
                     if not race_list:
                         continue
+                    # The card's own meeting date ("ProgramDate"). TAB serves
+                    # the NEXT meeting for a track weeks ahead, so the date is
+                    # the only thing that says which day these races belong
+                    # to (Nov-2026: Saturday's Kenilworth/Turffontein cards
+                    # were being published as today's).
+                    _meeting_date = _program_date(v)
 
                     races = []
                     for r in race_list:
@@ -287,6 +300,7 @@ class TAB4RacingScraper:
                         races.append(
                             ScrapedRace(
                                 track=track_name,
+                                meeting_date=_meeting_date,
                                 race_number=int(r.get("Race", 0)),
                                 race_time=r.get("AdvertisedStartTime", "").split(" ")[
                                     -1

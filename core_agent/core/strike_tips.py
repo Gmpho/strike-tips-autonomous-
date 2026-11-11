@@ -1290,18 +1290,24 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
 
     today = _date.today().isoformat()
     now_iso = _dt.now().isoformat()
-    by_track: Dict[str, List[Dict]] = {}
+    # Group by (track, meeting date): one scan can produce today's card AND
+    # a future meeting's card (TAB publishes the next one early), and each
+    # ticket belongs under the day it actually runs.
+    by_track: Dict[tuple, List[Dict]] = {}
     for p in plays:
         if not isinstance(p, dict):
             continue
-        by_track.setdefault(str(p.get("_track", "unknown")), []).append(p)
-    for track, pools in by_track.items():
+        _p_date = str(p.get("event_date") or event_date)[:10]
+        by_track.setdefault(
+            (str(p.get("_track", "unknown")), _p_date), []
+        ).append(p)
+    for (track, p_date), pools in by_track.items():
         old_pools: List[Dict] = []
         kept_history = []
         for e in history:
             if (
                 isinstance(e, dict)
-                and str(e.get("event_date", "")) == str(event_date)
+                and str(e.get("event_date", "")) == p_date
                 and str(e.get("track", "")) == track
             ):
                 old_pools.extend(
@@ -1314,7 +1320,7 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
         for p in pools:
             merged_by_key[_exotic_card_key(p)] = p
         history.append({
-            "event_date": str(event_date),
+            "event_date": p_date,
             "track": track,
             "pools": list(merged_by_key.values()),
             "created_at": now_iso,
@@ -1745,6 +1751,12 @@ class StrikeTips:
                 results.append(
                     {
                         "track": track,
+                        # The meeting date of the card this race belongs to.
+                        # TAB publishes the NEXT meeting early, so "today" is
+                        # not a safe assumption (Nov-2026: Saturday's
+                        # Kenilworth/Turffontein cards were published as
+                        # today's and landed under "Today" on the board).
+                        "meeting_date": getattr(r, "meeting_date", None),
                         "race_number": r.race_number,
                         "race_time": r.race_time,
                         "distance": r.distance,
@@ -2631,11 +2643,36 @@ class StrikeTips:
 
         # 2. Legacy fallback
         all_results = {}
+        # Cards for meetings that are NOT today (TAB publishes the next
+        # meeting weeks ahead). They must not feed today's value bets, picks
+        # or auto-bets — but their exotics belong on the board under their
+        # OWN date, not under "Today" (Nov-2026: Saturday's Kenilworth and
+        # Turffontein cards were published as today's and every ticket was
+        # labelled "Today").
+        future_results = {}
+        _today_iso = date.today().isoformat()
         total_value_bets = 0
         for i, track in enumerate(tracks):
             try:
                 results = await self.scrape_and_analyze_track(track)
-                all_results[track] = results
+                _todays = [
+                    r for r in (results or [])
+                    if not (isinstance(r, dict) and r.get("meeting_date")
+                            and str(r["meeting_date"])[:10] != _today_iso)
+                ]
+                _future = [
+                    r for r in (results or [])
+                    if (isinstance(r, dict) and r.get("meeting_date")
+                        and str(r["meeting_date"])[:10] != _today_iso)
+                ]
+                all_results[track] = _todays
+                if _future:
+                    future_results[track] = _future
+                    print(
+                        f"[GATE] {track}: card is for "
+                        f"{sorted({str(r['meeting_date'])[:10] for r in _future})} "
+                        f"— kept for the exotics board, out of today's analysis"
+                    )
                 if results:
                     total_value_bets += sum(
                         len(r.get("value_bets", []))
@@ -2752,6 +2789,44 @@ class StrikeTips:
                                 break
                 except Exception as e:
                     print(f"[WARN] Official picks attach skipped: {e}")
+                # Stamp each play with the meeting date of the card it came
+                # from, so the board groups it under its own day (today's
+                # card -> today, Saturday's card -> Saturday).
+                _meet = sorted({
+                    str(r.get("meeting_date"))[:10]
+                    for r in (_traces or []) if isinstance(r, dict)
+                    and r.get("meeting_date")
+                })
+                _meet_date = _meet[0] if _meet else _today_iso
+                for _p in _plays or []:
+                    if isinstance(_p, dict):
+                        _p["event_date"] = _meet_date
+                exotic_plays.extend(_plays or [])
+            # Future meetings (TAB publishes the next card weeks ahead) get
+            # their own tickets on the board, dated for the day they actually
+            # run. They never reach today's value bets, picks or auto-bets.
+            for _tname, _traces in (future_results or {}).items():
+                if not _traces:
+                    continue
+                try:
+                    _plays = await self._analyze_exotic_pools(
+                        {_tname: _traces}, {},
+                        tips_text="",
+                        nr_names=_nr_names,
+                        snap_odds=_snap_odds,
+                    )
+                except Exception as e:
+                    print(f"[ERR] Future exotic analysis failed for {_tname}: {e}")
+                    _plays = []
+                _meet = sorted({
+                    str(r.get("meeting_date"))[:10]
+                    for r in (_traces or []) if isinstance(r, dict)
+                    and r.get("meeting_date")
+                })
+                _meet_date = _meet[0] if _meet else _today_iso
+                for _p in _plays or []:
+                    if isinstance(_p, dict):
+                        _p["event_date"] = _meet_date
                 exotic_plays.extend(_plays or [])
             # Single choke point for BOTH exotics_latest.json and the auto-bet
             # placement below (guards, jurisdiction, dividend, distance).
@@ -3046,6 +3121,19 @@ class StrikeTips:
                                 estimated_div = _pool_estimate_dividend(play.get("pool"), legs)
                             play_track = play.get("_track", list(all_results.keys())[0])
                             if not combos:
+                                continue
+                            # A ticket for a LATER meeting (TAB publishes the
+                            # next card weeks ahead) stays on the board under
+                            # its own date, but the bankroll never bets it:
+                            # the tote program for that meeting is not open
+                            # yet, and a ticket dated today could only ever
+                            # settle against the wrong day's card.
+                            _play_date = str(play.get("event_date") or "")[:10]
+                            if _play_date and _play_date != _today_iso:
+                                print(
+                                    f"[AUTO-BET] Skipped {pool} @ {play_track}: "
+                                    f"the meeting is on {_play_date}, not today"
+                                )
                                 continue
                             bet = self.bankroll.record_exotic_bet(
                                 track=play_track,
