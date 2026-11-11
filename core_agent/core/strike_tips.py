@@ -203,6 +203,88 @@ def _snapshot_distances(data_dir: str, today_iso: str) -> Dict[tuple, int]:
     return out
 
 
+# Live TAB meeting list, cached briefly. Program codes rotate per meeting
+# (Nov-2026: Fairview was "XFA" in the hardcoded map and "XFD" live), so the
+# code has to be resolved from the feed, never assumed.
+_TAB_PROGRAM_CACHE: Dict[str, Any] = {"programs": [], "at": 0.0}
+_TAB_PROGRAM_TTL_SECS = 900
+
+
+async def _tab_programs(ttl_secs: int = _TAB_PROGRAM_TTL_SECS) -> List[Any]:
+    """Live TAB meeting list. Cached: one scan asks for a program per track."""
+    import time as _time
+
+    cached = _TAB_PROGRAM_CACHE.get("programs") or []
+    age = _time.time() - float(_TAB_PROGRAM_CACHE.get("at") or 0.0)
+    if cached and age < ttl_secs:
+        return cached
+    try:
+        from core_agent.skills.parsers.racecard_api import get_programs
+
+        progs = await get_programs()
+    except Exception as e:
+        logger.debug("TAB program list unavailable: %s", e)
+        return cached
+    if progs:
+        _TAB_PROGRAM_CACHE["programs"] = progs
+        _TAB_PROGRAM_CACHE["at"] = _time.time()
+    return progs
+
+
+async def _tab_card_distances(track: str, meeting_date: str) -> Dict[int, int]:
+    """Real race distances for one meeting, from TAB's live card.
+
+    Betway's card states no distance, and the merged market snapshot only
+    stamps ``distance_m`` when the market name happens to carry one (Nov-2026:
+    0 of the snapshot's events had one), so every exotic leg rendered "· —"
+    on the board. TAB states the distance for every race of a meeting.
+
+    One plain-JSON call per meeting — no browser slot, no CF challenge. A
+    meeting whose program is unknown, whose date does not match the card, or
+    whose program has no card yields nothing: a distance from another day is
+    never applied, and a race TAB does not state keeps its unknown distance.
+    """
+    out: Dict[int, int] = {}
+    want = str(meeting_date or "")[:10]
+    progs = await _tab_programs()
+    match = None
+    for p in progs or []:
+        name = str(getattr(p, "program_name", "") or "")
+        venue = str(getattr(p, "venue", "") or "")
+        tkey = str(track or "").strip().lower()
+        if not (tkey and (tkey in name.lower() or tkey == venue.lower())):
+            continue
+        if not getattr(p, "has_racecard", False):
+            continue
+        p_date = str(getattr(p, "program_date", "") or "")[:10]
+        if want and p_date and p_date != want:
+            continue
+        match = p
+        break
+    if match is None:
+        return out
+    try:
+        from core_agent.skills.parsers.racecard_api import get_racecard
+
+        card = await get_racecard(
+            getattr(match, "program_code", ""),
+            program_date=getattr(match, "program_date", None),
+            program_name=getattr(match, "program_name", None),
+        )
+    except Exception as e:
+        logger.debug("TAB card distances unavailable for %s: %s", track, e)
+        return out
+    for r in card or []:
+        try:
+            rn = int(getattr(r, "race_number", 0) or 0)
+            dm = int(getattr(r, "distance", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if rn > 0 and dm >= 800:
+            out[rn] = dm
+    return out
+
+
 def _snapshot_sast_day(snapshot: Dict) -> str:
     """The calendar day (SAST) a market snapshot belongs to.
 
@@ -1109,6 +1191,12 @@ def _finalise_exotic_plays(
             if not isinstance(combo, dict) or combo.get("distance_m"):
                 continue
             race_no = combo.get("race")
+            # The AI returns the leg number as a string often enough that a
+            # strict int comparison left the leg without a distance ("· —").
+            try:
+                race_no = int(race_no)
+            except (TypeError, ValueError):
+                pass
             info = next(
                 (r for r in races
                  if isinstance(r, dict) and r.get("race_number") == race_no),
@@ -1555,6 +1643,36 @@ class StrikeTips:
             if not races:
                 print(f"[WARN] No race data found for {track} after all attempts.")
                 return []
+
+            # Real distances from TAB's live card (Nov-2026: every exotic leg
+            # rendered "· —" because Betway's card carries no distance and the
+            # market snapshot's distance_m was empty for every SA meeting).
+            # Runs BEFORE the AI prompts, so the reasoning quotes the real
+            # distance instead of declaring it unknown.
+            if any(getattr(r, "distance", None) is None for r in races):
+                _meet = next(
+                    (
+                        str(getattr(r, "meeting_date", "") or "")[:10]
+                        for r in races
+                        if getattr(r, "meeting_date", None)
+                    ),
+                    today_iso,
+                )
+                _tab_dists = await _tab_card_distances(track, _meet)
+                if _tab_dists:
+                    _filled = 0
+                    for _r in races:
+                        if getattr(_r, "distance", None) is not None:
+                            continue
+                        _d = _tab_dists.get(int(getattr(_r, "race_number", 0) or 0))
+                        if _d:
+                            _r.distance = _d
+                            _filled += 1
+                    if _filled:
+                        print(
+                            f"[DIST] Filled {_filled} race distance(s) for "
+                            f"{track} from TAB's live card"
+                        )
 
             # Enrich with Betfair form (gear/days/comments/verdict/ratings)
             # from the monitor's last-good cache + exact snapshot distances.

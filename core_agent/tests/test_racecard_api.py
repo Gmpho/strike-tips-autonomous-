@@ -496,3 +496,60 @@ def test_parse_programs_maps_option_list_entries():
     assert blitz[0].program_code == "BLITZ"
     assert blitz[0].jurisdiction == "POOL"
     assert blitz[0].has_racecard is False
+
+
+def test_parse_programs_reads_the_live_data_option_list():
+    """Nov-2026: the live feed moved the option list from ``result`` to
+    ``data`` and serves it as a LIST of meeting dicts. A parser that only
+    knew the old shape returned zero programs, so every program-code lookup
+    (and every live card) was dead."""
+    payload = {
+        "error": 0,
+        "data": {
+            "option_list": [
+                {
+                    "ProgramCode": "XFD",
+                    "ProgramName": "TAB Fairview",
+                    "ProgramDate": "2026-11-11 00:00:00",
+                    "Status": "OPEN",
+                    "HighestRace": "8",
+                    "CurrentRace": "1",
+                },
+                {
+                    "ProgramCode": "BLITZ",
+                    "ProgramName": "BLITZ",
+                    "ProgramDate": "2026-11-11 00:00:00",
+                    "HighestRace": "0",
+                },
+            ]
+        },
+    }
+
+    got = parse_programs(payload)
+    assert [p.program_code for p in got] == ["BLITZ", "XFD"]
+    fv = next(p for p in got if p.program_code == "XFD")
+    assert fv.venue == "Tab Fairview"
+    assert fv.jurisdiction == "SA"
+    assert fv.program_date == "2026-11-11"
+    assert fv.has_racecard is True
+    # the pool pseudo-program is still recognised and excluded from cards
+    assert next(p for p in got if p.program_code == "BLITZ").has_racecard is False
+
+
+def test_parse_programs_reads_a_data_option_list_dict():
+    """The list form is what the feed serves today; the dict form under
+    ``data`` is accepted too, so a reshuffle cannot silently zero it."""
+    payload = {
+        "error": 0,
+        "data": {
+            "option_list": {
+                "1": {
+                    "ProgramCode": "XFD",
+                    "ProgramName": "TAB Fairview",
+                    "ProgramDate": "2026-11-11",
+                }
+            }
+        },
+    }
+    got = parse_programs(payload)
+    assert [p.program_code for p in got] == ["XFD"]

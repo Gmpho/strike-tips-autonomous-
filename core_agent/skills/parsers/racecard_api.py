@@ -259,8 +259,28 @@ def _error_message(payload) -> Optional[str]:
 
 
 def _programs_payload(payload) -> Dict:
-    body = payload.get("result") if isinstance(payload, dict) else None
-    return body if isinstance(body, dict) else {}
+    """The program list from a GamePlayRequest body.
+
+    The feed moved the option list from ``result`` to ``data`` (verified live
+    Nov-2026) and now serves it as a LIST of meeting dicts instead of a dict
+    keyed by index. Both containers are accepted and a list is normalised to a
+    dict, so ``parse_programs`` iterates either shape the same way.
+
+    A parser that only knew the old shape returned zero programs, which killed
+    every live-card lookup that depends on a program code — including the
+    distance backfill, and any track whose hardcoded code had rotated.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    for holder in (payload.get("result"), payload.get("data")):
+        if not isinstance(holder, dict):
+            continue
+        option_list = holder.get("option_list")
+        if isinstance(option_list, dict) and option_list:
+            return holder
+        if isinstance(option_list, list) and option_list:
+            return {"option_list": {str(i): e for i, e in enumerate(option_list)}}
+    return {}
 
 
 def _race_list(payload) -> List[Dict]:
