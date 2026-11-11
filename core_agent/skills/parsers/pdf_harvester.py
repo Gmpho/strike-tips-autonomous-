@@ -54,7 +54,17 @@ class PDFHarvester:
 
         if os.path.exists(cache_file):
             with open(cache_file) as f:
-                return {**json.load(f), "cached": True}
+                cached = json.load(f)
+            if not cached.get("meeting_date"):
+                # Cached before the meeting date was captured (or from an
+                # older build): recover it from the card text we already
+                # hold instead of re-fetching the PDF (Nov-2026: the cache
+                # outlives the deploy, so the Saturday cards were still
+                # dated "today").
+                cached["meeting_date"] = _meeting_date_from_text(
+                    cached.get("raw_text") or ""
+                )
+            return {**cached, "cached": True}
 
         # Negative cache: tracks with no meeting today (Vaal / Scottsville /
         # Durbanville on 2026-11-04) 404 on every probe, and the 15-min
