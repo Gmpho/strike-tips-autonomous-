@@ -75,6 +75,12 @@ logger = logging.getLogger("at-the-races")
 # and any successful fetch clears it (self-heals if ATR ever opens back up).
 _BREAKER_FAILURE_THRESHOLD = 6
 _BREAKER_COOLDOWN_SECS = 6 * 3600
+# Half-open probe: while the cooldown runs, ONE fetch is allowed every
+# interval. Without it the breaker could only ever be cleared by a success
+# that was never attempted — ATR opening back up went unnoticed for the
+# whole 6h cooldown and the results tab stayed frozen (Nov-2026: the UK
+# card stopped landing and the league's UK picks sat pending all evening).
+_BREAKER_PROBE_INTERVAL_SECS = 20 * 60
 _breaker_failures = 0
 
 
@@ -83,6 +89,15 @@ def _breaker_flag_path():
         from core_agent.config.paths import DATA_DIR
 
         return DATA_DIR / ".atr_blocked_until"
+    except Exception:
+        return None
+
+
+def _breaker_probe_path():
+    try:
+        from core_agent.config.paths import DATA_DIR
+
+        return DATA_DIR / ".atr_probe_at"
     except Exception:
         return None
 
@@ -100,6 +115,37 @@ def atr_circuit_open() -> bool:
         return False
 
 
+def atr_circuit_probe_due() -> bool:
+    """True when a half-open probe is due during the breaker's cooldown.
+
+    The breaker could only ever be cleared by a successful fetch, but while
+    it was open NO fetch was attempted — so ATR opening back up went unnoticed
+    for the whole 6h cooldown (Nov-2026: the results tab froze and the
+    league's UK picks sat pending all evening). One probe per interval keeps
+    the host from being hammered and lets the breaker self-heal as soon as
+    ATR lets us through.
+    """
+    try:
+        import time as _time
+
+        probe = _breaker_probe_path()
+        if probe is None:
+            return False
+        try:
+            last = float(probe.read_text().strip() or 0) if probe.exists() else 0.0
+        except Exception:
+            last = 0.0
+        if (_time.time() - last) < _BREAKER_PROBE_INTERVAL_SECS:
+            return False
+        try:
+            probe.write_text(str(_time.time()))
+        except Exception:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _record_failure(path: str) -> None:
     global _breaker_failures
     _breaker_failures += 1
@@ -110,7 +156,16 @@ def _record_failure(path: str) -> None:
 
         flag = _breaker_flag_path()
         if flag is not None:
-            flag.write_text(str(_time.time() + _BREAKER_COOLDOWN_SECS))
+            # A half-open probe must NOT extend the cooldown — the running
+            # one already covers it.
+            active = False
+            try:
+                active = flag.exists() and float(
+                    flag.read_text().strip() or 0) > _time.time()
+            except Exception:
+                active = False
+            if not active:
+                flag.write_text(str(_time.time() + _BREAKER_COOLDOWN_SECS))
         logger.warning(
             "ATR circuit breaker TRIPPED after %d consecutive failures (last: %s) — "
             "pausing ATR fetches for %dh; host is blocking every tier",
@@ -655,8 +710,16 @@ class AtTheRacesAPI:
         browser allowance that feeds the /results page itself.
         """
         if atr_circuit_open():
-            logger.debug("ATR circuit breaker open — skipping %s", path)
-            return None
+            # Half-open: during the cooldown ONE feed fetch per interval is
+            # still attempted, so ATR is picked up the moment it opens
+            # instead of after the full 6h. Per-race enrichment
+            # (allow_stealth=False) stays fully blocked — hundreds of pages
+            # must never slip through on a probe.
+            if allow_stealth and atr_circuit_probe_due():
+                logger.info("ATR circuit breaker half-open — probing %s", path)
+            else:
+                logger.debug("ATR circuit breaker open — skipping %s", path)
+                return None
         body = self._fetch_tiered(path, allow_stealth=allow_stealth)
         if body:
             _record_success()

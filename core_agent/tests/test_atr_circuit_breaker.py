@@ -17,6 +17,9 @@ from core_agent.skills.parsers import attheraces_api as atr
 def flag(tmp_path, monkeypatch):
     path = tmp_path / ".atr_blocked_until"
     monkeypatch.setattr(atr, "_breaker_flag_path", lambda: path)
+    monkeypatch.setattr(
+        atr, "_breaker_probe_path", lambda: tmp_path / ".atr_probe_at"
+    )
     monkeypatch.setattr(atr, "_breaker_failures", 0)
     return path
 
@@ -48,6 +51,7 @@ def test_expired_cooldown_reopens_traffic(flag):
 
 
 def test_fetch_skips_tiers_while_open(flag, monkeypatch):
+    """The breaker holds the per-race enrichment off completely."""
     flag.write_text(str(time.time() + 600))
     calls = []
 
@@ -58,8 +62,43 @@ def test_fetch_skips_tiers_while_open(flag, monkeypatch):
     monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", boom)
     api = atr.AtTheRacesAPI()
 
-    assert api._fetch("/market-movers") is None
+    assert api._fetch("/racecard/Kenilworth/10-November-2026/1237",
+                       allow_stealth=False) is None
     assert calls == []
+
+
+def test_feed_fetch_probes_once_during_the_cooldown(flag, monkeypatch):
+    """Half-open: one feed fetch per interval is still attempted, so ATR
+    opening back up is noticed (the breaker could never self-heal before)."""
+    flag.write_text(str(time.time() + 600))
+    calls = []
+
+    def boom(self, path, allow_stealth=True):
+        calls.append(path)
+        return None
+
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", boom)
+    api = atr.AtTheRacesAPI()
+
+    api._fetch("/results/today")           # the probe
+    assert calls == ["/results/today"]
+    api._fetch("/results/today")           # inside the interval -> blocked
+    assert calls == ["/results/today"]
+    # Once the interval passes, another probe is allowed.
+    monkeypatch.setattr(atr, "_BREAKER_PROBE_INTERVAL_SECS", 0)
+    api._fetch("/results/today")
+    assert len(calls) == 2
+
+
+def test_probe_success_clears_the_breaker(flag, monkeypatch):
+    """A successful probe ends the cooldown immediately."""
+    flag.write_text(str(time.time() + 600))
+    monkeypatch.setattr(
+        atr.AtTheRacesAPI, "_fetch_tiered", lambda self, path, allow_stealth=True: b"ok"
+    )
+    api = atr.AtTheRacesAPI()
+    assert api._fetch("/results/today") == b"ok"
+    assert atr.atr_circuit_open() is False
 
 
 def test_fetch_records_success_on_body(flag, monkeypatch):

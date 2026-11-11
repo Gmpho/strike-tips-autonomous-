@@ -691,12 +691,31 @@ def test_real_bankroll_moves_on_settle_not_placement(tmp_path):
     assert gov.get_open_exposure() == pytest.approx(0.0)
 
 
+def _expected_event_date(day: int, month: int) -> str:
+    """The ISO date the parser resolves a "D Mon" event name to.
+
+    Betfair names carry no year: the year resolves forward and a date more
+    than 60 days in the past rolls +1y. Stating that rule here keeps the
+    test honest as the calendar moves (a hardcoded "2026-09-11" broke the
+    suite the day the 60-day window passed — Nov-2026).
+    """
+    from datetime import date as _date
+
+    today = _date.today()
+    parsed = _date(today.year, month, day)
+    if (today - parsed).days > 60:
+        parsed = _date(today.year + 1, month, day)
+    return parsed.isoformat()
+
+
 def test_course_cleaning_and_event_date_parsing():
     from core_agent.skills.parsers.betfair_sa import BetfairSA
 
     assert BetfairSA._clean_course("Fairview (RSA) 11 Sep") == "Fairview"
     assert BetfairSA._clean_course("Greyville") == "Greyville"
-    assert BetfairSA._event_date_from_market({"event": {"name": "Fairview (RSA) 11 Sep"}}) == "2026-09-11"
+    assert BetfairSA._event_date_from_market(
+        {"event": {"name": "Fairview (RSA) 11 Sep"}}
+    ) == _expected_event_date(11, 9)
     assert BetfairSA._event_date_from_market({"event": {"name": "Fairview"}}) is None
     assert BetfairSA._event_date_from_market({}) is None
 
@@ -724,7 +743,7 @@ def test_parse_market_carries_event_date():
     assert ev is not None
     assert ev["course"] == "Fairview"
     assert ev["offTime"] == "12:15"
-    assert ev["eventDate"] == "2026-09-11"
+    assert ev["eventDate"] == _expected_event_date(11, 9)
     assert ev["raceNumber"] == 1
 
 

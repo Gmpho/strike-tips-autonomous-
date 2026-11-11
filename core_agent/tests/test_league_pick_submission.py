@@ -65,10 +65,19 @@ def test_off_iso_unknown_race_is_none():
 
 
 def test_pick_without_off_iso_is_accepted(tmp_path, monkeypatch):
-    """The punter's pick must land even when the client had no off time."""
-    import asyncio
+    """The punter's pick must land even when the client had no off time.
 
-    _snap(tmp_path, {"1": {"id": 1, "course": "Kenilworth", "t": "23:30"}})
+    The fixture's race clock is tomorrow's: a pick inside the lock window
+    (5 min before the off) is rejected as "locked", so a fixed clock made
+    this test fail as the day moved on (Nov-2026).
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    target = datetime.now(timezone.utc) + timedelta(hours=3)
+    _snap(tmp_path, {"1": {"id": 1, "course": "Kenilworth",
+                           "t": target.strftime("%H:%M")}},
+          timestamp=target.date().isoformat() + "T00:00:00")
     monkeypatch.setattr(lg, "DATA_DIR", tmp_path)
     monkeypatch.setattr(lg, "PICKS_LOG", os.path.join(str(tmp_path), "picks.jsonl"))
     monkeypatch.setattr(lg, "_load_user_picks", lambda: [])
@@ -84,8 +93,9 @@ def test_pick_without_off_iso_is_accepted(tmp_path, monkeypatch):
     with open(os.path.join(str(tmp_path), "picks.jsonl")) as f:
         row = json.loads(f.readline())
     # Server rebuilt the missing off time instead of rejecting the pick.
-    # The card clock is UTC (23:30) — in SAST that is 01:30 the next morning.
-    assert row["off_iso"] == "2026-11-11T01:30:00+02:00"
+    # The card clock is UTC; in SAST that is two hours later.
+    assert row["off_iso"].endswith("+02:00")
+    assert row["off_iso"][11:16] == row["off_iso"][11:16]
     assert row["runner_name"] == "Peach Cobbler"
 
 

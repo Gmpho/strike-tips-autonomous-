@@ -103,12 +103,17 @@ def test_settle_open_picks_marks_loss_without_points(tmp_path):
 
 
 def test_settle_open_picks_leaves_unknown_races_pending(tmp_path):
+    from datetime import date as _date
+
     _write_jsonl(os.path.join(tmp_path, "settled_winners.jsonl"), [
         {"date": "2026-11-04", "track": "greyville", "race": "7", "winner": "Ragnar The King"},
     ])
-    # Greyville R8 has no confirmed winner on record yet.
+    # Greyville R8 has no confirmed winner on record yet. The pick date is
+    # relative so the 7-day expiry window cannot expire the fixture (and
+    # fail the test) as the calendar moves.
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
-        _pick(race_id="17434621", race_number=8, runner_name="The Ghost"),
+        _pick(race_id="17434621", race_number=8, runner_name="The Ghost",
+              date=_date.today().isoformat()),
     ])
 
     stats = settle_open_picks(str(tmp_path))
@@ -134,7 +139,16 @@ def test_settle_open_picks_never_resettles(tmp_path):
 
 
 def test_settle_open_picks_no_winners_file(tmp_path):
-    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
+    """No result on record -> still PENDING (never a guess).
+
+    The date is relative: the expiry window is 7 days, so a hardcoded
+    fixture date made this test expire (and fail) a week after it was
+    written (Nov-2026).
+    """
+    from datetime import date as _date
+
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"),
+                 [_pick(date=_date.today().isoformat())])
     stats = settle_open_picks(str(tmp_path))
     assert stats == {"settled": 0, "won": 0, "pending": 1, "void": 0, "expired": 0}
 
