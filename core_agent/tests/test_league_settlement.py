@@ -90,9 +90,19 @@ def test_settle_open_picks_marks_win_with_points(tmp_path):
 
 
 def test_settle_open_picks_marks_loss_without_points(tmp_path):
-    _write_jsonl(os.path.join(tmp_path, "settled_winners.jsonl"), [
-        {"date": "2026-11-04", "track": "greyville", "race": "7", "winner": "Some Other Horse"},
-    ])
+    """A card that settles the top 4 proves the pick was outside it -> LOSS.
+
+    Nov-2026: the league read "not on the card" as "not top-4" even when the
+    card held a single runner. The loss now needs proof — a card carrying
+    1st-4th — so this fixture supplies one.
+    """
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Second Horse", "position": "2nd", "odds_decimal": 3.0},
+        {"name": "Third Horse", "position": "3rd", "odds_decimal": 9.0},
+        {"name": "Fourth Horse", "position": "4th", "odds_decimal": 5.0},
+    ])])
+    open(os.path.join(tmp_path, "settled_winners.jsonl"), "w").close()
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
 
     settle_open_picks(str(tmp_path))
@@ -100,6 +110,127 @@ def test_settle_open_picks_marks_loss_without_points(tmp_path):
     assert row["settled"] is True
     assert row["won"] is False
     assert row["points"] == 0
+
+
+def test_settle_open_picks_keeps_a_pick_pending_on_winner_only_evidence(tmp_path):
+    """The dated archive records the winner and nothing else.
+
+    "Not the winner" is not evidence of being outside the top 4, so a pick
+    that is not the archived winner stays PENDING until a card with positions
+    arrives (Nov-2026: Skip The Line, 2nd in Fairview R1, settled a loss).
+    """
+    _write_jsonl(os.path.join(tmp_path, "settled_winners.jsonl"), [
+        {"date": "2026-11-04", "track": "greyville", "race": "7", "winner": "Some Other Horse"},
+    ])
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
+
+    stats = settle_open_picks(str(tmp_path))
+    assert stats["settled"] == 0
+    assert stats["pending"] == 1
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["settled"] is False
+    assert row["points"] == 0
+
+
+def test_settle_open_picks_keeps_a_pick_pending_on_a_partial_card(tmp_path):
+    """A card holding only 1st and 2nd proves nothing about 3rd and 4th.
+
+    The pick is not on the card, so it might be 3rd or 4th — a scoring
+    finish. It stays PENDING until the full card lands.
+    """
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Second Horse", "position": "2nd", "odds_decimal": 3.0},
+    ])])
+    open(os.path.join(tmp_path, "settled_winners.jsonl"), "w").close()
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
+
+    stats = settle_open_picks(str(tmp_path))
+    assert stats["settled"] == 0
+    assert stats["pending"] == 1
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["settled"] is False
+
+
+def test_settle_open_picks_scores_a_pick_found_on_a_partial_card(tmp_path):
+    """The card names the pick with its position — that IS the proof."""
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Ragnar The King", "position": "2nd", "odds_decimal": 4.75},
+    ])])
+    open(os.path.join(tmp_path, "settled_winners.jsonl"), "w").close()
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [_pick()])
+
+    stats = settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    assert stats["settled"] == 1
+    assert stats["won"] == 1
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["won"] is True
+    assert row["finish_position"] == 2
+    assert row["points"] >= 1
+
+
+def test_rescore_upgrades_a_pick_settled_without_a_position(tmp_path):
+    """Nov-2026: a pick settled a loss from winner-only evidence is upgraded
+    once the full card proves it finished in the top 4."""
+    from core_agent.skills.league.settlement import rescore_settled_picks
+
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(won=False, points=0, settled=True, settled_at="2026-11-04T20:00:00+00:00",
+              finish_position=None, winner_name="Some Other Horse", winner_sp=0.0),
+    ])
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Ragnar The King", "position": "2nd", "odds_decimal": 4.75},
+    ])])
+
+    out = rescore_settled_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    assert out == {"checked": 1, "upgraded": 1}
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["won"] is True
+    assert row["placed"] is True
+    assert row["finish_position"] == 2
+    assert row["points"] >= 1
+    assert row["winner_name"] == "The Wolf"
+
+
+def test_rescore_never_downgrades_a_settled_pick(tmp_path):
+    """A pick settled with a real position keeps its verdict, win or loss."""
+    from core_agent.skills.league.settlement import rescore_settled_picks
+
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(won=False, points=0, settled=True, settled_at="2026-11-04T20:00:00+00:00",
+              finish_position=5),
+    ])
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Ragnar The King", "position": "2nd", "odds_decimal": 4.75},
+    ])])
+
+    out = rescore_settled_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    assert out == {"checked": 0, "upgraded": 0}
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["won"] is False
+    assert row["finish_position"] == 5
+
+
+def test_settle_open_picks_upgrades_a_past_mis_score(tmp_path):
+    """The correction runs as part of every settle pass, so a pick that was
+    settled a loss on winner-only evidence is fixed once the card lands."""
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(won=False, points=0, settled=True, settled_at="2026-11-04T20:00:00+00:00",
+              finish_position=None),
+    ])
+    _write_atr(tmp_path, [_atr_race(7, [
+        {"name": "The Wolf", "position": "1st", "odds_decimal": 6.5},
+        {"name": "Ragnar The King", "position": "2nd", "odds_decimal": 4.75},
+    ])])
+
+    settle_open_picks(str(tmp_path), now_iso="2026-11-05T12:00:00+00:00")
+    row = _read_jsonl(os.path.join(tmp_path, "league_picks.jsonl"))[0]
+    assert row["won"] is True
+    assert row["finish_position"] == 2
+    assert row["points"] >= 1
 
 
 def test_settle_open_picks_leaves_unknown_races_pending(tmp_path):

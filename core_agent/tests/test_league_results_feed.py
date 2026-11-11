@@ -176,7 +176,11 @@ def test_confirmed_card_settles_unplaced_pick_as_loss(tmp_path):
     })
     append_confirmed_results(str(tmp_path), races)
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
-        _pick(runner_number=99, runner_name="Nowhere To Be Seen"),
+        # The card holds the whole field (4 runners), so it settles where the
+        # top 4 ended and a horse without a finish is outside it. The pick's
+        # field_size must describe THIS card — a field size the card does not
+        # cover would leave the pick pending, which is the point of the rule.
+        _pick(runner_number=99, runner_name="Nowhere To Be Seen", field_size=4),
     ])
 
     settle_open_picks(str(tmp_path))

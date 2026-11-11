@@ -375,8 +375,19 @@ def append_confirmed_results(data_dir: str, races: Iterable[Dict[str, Any]]) -> 
             r.get("position") == 1 for r in race.get("runners") or []
         ):
             continue
-        by_key[key] = race
-        added += 1
+        # Keep the RICHER card for a race. A fetch taken while the race was
+        # still running can parse a single row (the winner), and letting that
+        # partial card replace a full one made the league read "not on the
+        # card" as "outside the top 4" (Nov-2026: Skip The Line, 2nd in
+        # Fairview R1, settled a loss from a one-runner card).
+        prev = by_key.get(key)
+        if (
+            prev is None
+            or race.get("void")
+            or len(race.get("runners") or []) >= len(prev.get("runners") or [])
+        ):
+            by_key[key] = race
+            added += 1
     if not added:
         return 0
 

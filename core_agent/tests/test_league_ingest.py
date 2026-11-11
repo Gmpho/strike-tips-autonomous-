@@ -60,9 +60,14 @@ def test_ingest_single_race_and_settle(tmp_path):
 
     assert result["ok"] is True
     assert result["races_ingested"] == 1
-    assert result["settlement"]["settled"] == 3
-    # Top 4 score points (Silver Chariot 1st, Bronze Runner 3rd) -> 2 scored, Unplaced Horse lost
+    # Top 4 score points (Silver Chariot 1st, Bronze Runner 3rd) -> 2 scored.
+    # "Unplaced Horse" is not among the three places the operator card knows,
+    # so it COULD still be 4th — a scoring finish. It stays PENDING until a
+    # card that settles the top 4 arrives (Nov-2026: a pick was settled a
+    # loss from a card that held only the winner).
+    assert result["settlement"]["settled"] == 2
     assert result["settlement"]["won"] == 2
+    assert result["settlement"]["pending"] == 1
 
     # Check confirmed_results.jsonl content
     confirmed = load_confirmed_results(str(tmp_path))

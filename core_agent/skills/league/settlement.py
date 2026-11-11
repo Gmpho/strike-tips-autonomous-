@@ -83,6 +83,33 @@ def _atr_race_number(title: Any) -> str:
     m = re.match(r"\s*(\d+)", str(title or ""))
     return m.group(1) if m else ""
 
+def _card_proves_top4(runners: List[Dict[str, Any]], field_size: int = 0) -> bool:
+    """True when the card proves a horse it does not place was outside the top 4.
+
+    Two independent proofs:
+      * the card carries all four of 1st-4th (an ATR enriched card truncates
+        to exactly those; a finished Raceform card carries them all);
+      * the card covers the whole field — it lists at least as many runners
+        as the pick's recorded field size — so every finisher is known and
+        the horse is not among them.
+
+    A card holding only the winner proves neither: the horse may be 2nd, 3rd
+    or 4th, and all three score. Such a card must leave the pick PENDING —
+    never guess a loss (Nov-2026: Skip The Line finished 2nd in Fairview R1
+    and was settled a loss from a one-runner card).
+    """
+    positions = set()
+    for r in runners or []:
+        pos = _pos_to_int(r.get("position"))
+        if pos is not None:
+            positions.add(pos)
+    if {1, 2, 3, 4} <= positions:
+        return True
+    if field_size and len(runners or []) >= field_size:
+        return True
+    return False
+
+
 def _pos_to_int(pos: Any) -> Optional[int]:
     """Convert '1st'/'2nd'/etc. (or a bare int) to an int position."""
     s = str(pos or "").strip().lower()
@@ -226,6 +253,102 @@ def load_winner_details(
     return idx
 
 
+def rescore_settled_picks(
+    data_dir: str,
+    now_iso: Optional[str] = None,
+    picks_filename: str = "league_picks.jsonl",
+) -> Dict[str, int]:
+    """Re-examine picks settled WITHOUT a position and upgrade the wrong ones.
+
+    Nov-2026: a pick was settled a loss from winner-only evidence — the card
+    held only the race winner, so "not the winner" was read as "outside the
+    top 4". Skip The Line finished 2nd in Fairview R1 and scored 0 points;
+    113 picks over eight days were settled the same way. Once the full card
+    lands, the evidence places the horse, so the pick is upgraded to a scored
+    pick with its points.
+
+    Upgrades only: a settled pick is never re-opened or downgraded, so the
+    leaderboard history and the strike rate never churn on a correction.
+    Returns {"checked": n, "upgraded": n}.
+    """
+    path = os.path.join(data_dir, picks_filename)
+    rows = _read_jsonl(path)
+    if not rows:
+        return {"checked": 0, "upgraded": 0}
+    winners = load_winner_details(data_dir, now_iso)
+
+    checked = 0
+    upgraded = 0
+    changed = False
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        if not p.get("settled") or p.get("won") or p.get("void"):
+            continue
+        if p.get("finish_position") is not None:
+            continue  # settled with a real position: that verdict stands
+        checked += 1
+        key = (
+            str(p.get("date") or "")[:10],
+            str(p.get("course") or "").strip().lower(),
+            str(p.get("race_number") or "").strip(),
+        )
+        info = winners.get(key)
+        if not info:
+            continue
+        runners = info.get("runners") or []
+        if not runners:
+            continue
+        finish_pos = None
+        placed_sp = None
+        for ru in runners:
+            if names_match(p.get("runner_name"), ru.get("name")):
+                finish_pos = _pos_to_int(ru.get("position"))
+                try:
+                    placed_sp = float(ru.get("odds_decimal")) if ru.get("odds_decimal") else None
+                except (TypeError, ValueError):
+                    placed_sp = None
+                break
+        if finish_pos is None or not (1 <= finish_pos <= 4):
+            continue  # the card still does not place it in the top 4
+        field_size = int(p.get("field_size") or 0)
+        sp = info.get("sp")
+        if finish_pos == 1:
+            if sp is None:
+                sp = float(p.get("pick_odds") or 0) or None
+        else:
+            sp = placed_sp
+        p["won"] = True
+        p["placed"] = True
+        p["finish_position"] = finish_pos
+        p["points"] = score_pick(field_size, finish_pos, float(p.get("pick_odds") or 0), sp)
+        p["winner_name"] = info.get("winner")
+        p["winner_sp"] = float(sp or 0)
+        p["rescored_at"] = now_iso
+        changed = True
+        upgraded += 1
+        logger.info(
+            "League re-scored %s @ %s R%s: %s finished %s — points %s",
+            p.get("runner_name"), p.get("course"), p.get("race_number"),
+            p.get("runner_name"), finish_pos, p.get("points"),
+        )
+
+    if changed:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    if checked:
+        logger.info(
+            "League re-score: %d settled pick(s) without a position checked, %d upgraded",
+            checked, upgraded,
+        )
+    return {"checked": checked, "upgraded": upgraded}
+
+
 def settle_open_picks(
     data_dir: str,
     now_iso: Optional[str] = None,
@@ -238,6 +361,10 @@ def settle_open_picks(
     when its race has a confirmed winner on record — nothing is guessed, and
     a race we have no result for simply stays pending.
 
+    Picks already settled without a position are re-examined first, so a
+    verdict that rested on incomplete evidence is upgraded once the full card
+    lands (see ``rescore_settled_picks``).
+
     Returns {"settled": n, "won": n, "pending": n}.
     """
     path = os.path.join(data_dir, picks_filename)
@@ -245,6 +372,15 @@ def settle_open_picks(
     winners = load_winner_details(data_dir, now_iso)
     if not rows:
         return {"settled": 0, "won": 0, "void": 0, "expired": 0, "pending": 0}
+
+    # Correct past verdicts that rested on incomplete evidence before
+    # settling anything new.
+    try:
+        rescore_settled_picks(data_dir, now_iso, picks_filename)
+        rows = _read_jsonl(path)
+        winners = load_winner_details(data_dir, now_iso)
+    except Exception as exc:
+        logger.warning("League re-score skipped: %s", exc)
 
     settled_n = 0
     won_n = 0
@@ -329,9 +465,11 @@ def settle_open_picks(
             finish_pos = None
             placed_sp = None
             nr_hit = False
+            matched = False
             if runners:
                 for ru in runners:
                     if names_match(p.get("runner_name"), ru.get("name")):
+                        matched = True
                         if ru.get("non_runner"):
                             nr_hit = True
                         finish_pos = _pos_to_int(ru.get("position"))
@@ -341,9 +479,12 @@ def settle_open_picks(
                             placed_sp = None
                         break
             else:
-                # Dated archive only records the winner (1st). A matching pick
-                # wins; a non-match is a loss — we have no position data there.
+                # Winner-only evidence: the dated archive records the 1st and
+                # nothing else. It can confirm a WIN, but it can never prove a
+                # loss — "not the winner" is not evidence of being outside the
+                # top 4.
                 if names_match(p.get("runner_name"), winner):
+                    matched = True
                     finish_pos = 1
 
             if nr_hit:
@@ -362,6 +503,18 @@ def settle_open_picks(
                 changed = True
                 void_n += 1
                 continue
+
+            # A pick the card does not place is a LOSS only when the card
+            # proves where the top 4 ended. Without that proof the horse may
+            # be 2nd, 3rd or 4th — all scoring finishes — so the pick stays
+            # PENDING until the full card lands (the per-race backfill
+            # re-fetches it).
+            if matched:
+                if finish_pos is None and not _card_proves_top4(runners, field_size):
+                    continue
+            else:
+                if not _card_proves_top4(runners, field_size):
+                    continue
 
             scored = finish_pos is not None and 1 <= finish_pos <= 4
             if scored:
