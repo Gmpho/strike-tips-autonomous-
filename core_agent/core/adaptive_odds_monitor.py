@@ -1002,7 +1002,18 @@ def _atr_results_lull(now_ts: Optional[float] = None, horizon_secs: int = 3600) 
         seen = int((checks.get("days") or {}).get(today_iso, {}).get("races_seen") or 0)
     except (TypeError, ValueError):
         return False
-    return seen == 0
+    if seen != 0:
+        return False
+    # "Nothing has run today" is only reassuring if nothing is still owed.
+    # Evening cards run into the next SAST morning, so while yesterday still
+    # needs finishing an old snapshot is evidence of a problem, not of a quiet
+    # morning — do not swallow that alarm.
+    try:
+        if _atr_day_needs_finishing(ATR_RESULTS_PATH, _atr_yesterday_iso(), now_ts):
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def _atr_day_signature(races: List[Dict]) -> str:

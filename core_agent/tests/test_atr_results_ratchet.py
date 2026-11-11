@@ -185,19 +185,59 @@ def test_note_checks_prunes_days_older_than_the_keep_window():
     assert datetime.now().date().isoformat() in days
 
 
+def _yesterday_closed(*, raced=0):
+    """Snapshot + checks proving yesterday's card was watched to its end."""
+    yesterday = mon._atr_yesterday_iso()
+    snap = _write_snapshot(
+        mon.ATR_RESULTS_PATH,
+        day=yesterday,
+        races=raced,
+        # Quiet for the whole window (9h), whatever the wall clock says now.
+        grew_at=datetime.now().timestamp() - 9 * 3600,
+    )
+    today = datetime.now().date().isoformat()
+    _write_checks(
+        mon.ATR_RESULTS_CHECKS_PATH,
+        {
+            today: {"last_checked_at": datetime.now().timestamp(), "races_seen": 0},
+            yesterday: {
+                "last_checked_at": mon._atr_day_end_ts(yesterday) + 60,
+                "races_seen": raced,
+            },
+        },
+        last_success=datetime.now().timestamp(),
+    )
+    return snap
+
+
 def test_lull_true_when_polling_fine_with_nothing_run_yet():
+    _yesterday_closed(raced=113)
+
+    assert mon._atr_results_lull() is True
+
+
+def test_lull_false_while_yesterday_is_still_owed_a_fetch():
+    """A quiet morning is only quiet if last night's card is accounted for.
+
+    Evening cards run to ~06:00 SAST; while yesterday still needs finishing,
+    an old results snapshot is a warning, not a lull.
+    """
     today = datetime.now().date().isoformat()
     _write_checks(
         mon.ATR_RESULTS_CHECKS_PATH,
         {today: {"last_checked_at": datetime.now().timestamp(), "races_seen": 0}},
         last_success=datetime.now().timestamp(),
     )
+    assert mon._atr_day_needs_finishing(
+        mon.ATR_RESULTS_PATH, mon._atr_yesterday_iso()
+    ) is True
 
-    assert mon._atr_results_lull() is True
+    assert mon._atr_results_lull() is False
 
 
 def test_lull_false_when_races_are_landing():
     today = datetime.now().date().isoformat()
+    _yesterday_closed()
     _write_checks(
         mon.ATR_RESULTS_CHECKS_PATH,
         {today: {"last_checked_at": datetime.now().timestamp(), "races_seen": 12}},
