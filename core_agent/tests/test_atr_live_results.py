@@ -236,6 +236,7 @@ def monitor(monkeypatch, tmp_path):
 
     results_path = tmp_path / "atr_results_snapshot.json"
     monkeypatch.setattr(mon, "ATR_RESULTS_PATH", str(results_path))
+    monkeypatch.setattr(mon, "ATR_RESULTS_CHECKS_PATH", tmp_path / "atr_results_checks.json")
     monkeypatch.setattr(mon, "ATR_MOVERS_PATH", str(tmp_path / "movers.json"))
     monkeypatch.setattr(mon, "ATR_PREDICTOR_PATH", str(tmp_path / "predictor.json"))
     monkeypatch.setattr(m, "_volume_reload", lambda: None)
@@ -284,13 +285,25 @@ def test_stealth_burst_funds_one_allowance_for_several_pages(monkeypatch, tmp_pa
 
 
 def test_yesterday_is_not_refetched_once_captured(monitor):
+    """Captured *and watched to the end of its card* — then stop fetching it.
+
+    Nov-2026: presence in the snapshot alone used to mean "finished", which is
+    how 2026-11-10 froze at 12:20 with 8 of ~113 races and was never fetched
+    again. A day is only droppable once the feed was still polling it after it
+    ended (see test_atr_results_ratchet for the frozen-day regression).
+    """
     atr_api, m, results_path, _ = monitor
+    day = mon._atr_yesterday_iso()
     results_path.write_text(json.dumps({"results": [{
         "course": "Greyville",
-        "date": mon._atr_yesterday_iso(),
+        "date": day,
         "title": "1\n12:30 - Some Handicap",
         "runners": [{"name": "Alpha", "position": "1st"}],
     }], "timestamp": "2026-11-07T00:00:00"}))
+    mon.ATR_RESULTS_CHECKS_PATH.write_text(json.dumps({
+        "days": {day: {"last_checked_at": mon._atr_day_end_ts(day) + 60, "races_seen": 1}},
+        "last_success": mon._atr_day_end_ts(day) + 60,
+    }))
 
     asyncio.run(m._refresh_atr_feeds({"events": {}}))
 

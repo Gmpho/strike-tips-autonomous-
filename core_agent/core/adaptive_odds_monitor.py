@@ -872,6 +872,138 @@ def _atr_yesterday_iso(now: Optional[datetime] = None) -> str:
 # and stop once nothing new has landed for this long.
 ATR_CARD_QUIET_SECS = 6 * 3600
 
+# What the results feed actually *looked at*, per day.
+#
+# The snapshot's `captured` map only knows about writes, so a day whose writes
+# stopped early (Nov-2026: 2026-11-10 froze at 12:20 with 8 of ~113 races) looked
+# "quiet" for 6h and was then declared finished forever — the missing Lingfield
+# and Fairyhouse cards could never be captured again and their picks sat PENDING
+# until the day-7 expiry. This side file records every successful poll instead,
+# and is deliberately NOT the snapshot: rewriting the snapshot every cycle would
+# bump its mtime and make the 45-min freshness gate skip fetches during a live
+# card.
+ATR_RESULTS_CHECKS_PATH = DATA_DIR / "atr_results_checks.json"
+
+# How long a per-day poll record is kept. Long enough to cover the quiet window
+# plus the day-7 pick expiry that motivates it; short enough that the file never
+# becomes a liability on the volume.
+ATR_CHECKS_KEEP_SECS = 14 * 24 * 3600
+
+
+def _atr_day_end_ts(day: str) -> float:
+    """Instant after which a day's card cannot produce new results.
+
+    Meeting dates are labels, not clocks: a US card labelled D still finishes
+    around 04:00 SAST on D+1 (= 02:00 UTC). Allow until 06:00 SAST on D+1
+    (04:00 UTC) so a late card is never declared finished early.
+    """
+    from datetime import time as _time_cls, timezone as _tz
+
+    try:
+        d = datetime.fromisoformat(str(day)[:10]).date()
+    except (TypeError, ValueError):
+        return 0.0
+    end = datetime.combine(d + timedelta(days=1), _time_cls(4, 0), tzinfo=_tz.utc)
+    return end.timestamp()
+
+
+def _atr_read_checks() -> Dict[str, Any]:
+    """Poll bookkeeping written by the results feed (see ATR_RESULTS_CHECKS_PATH)."""
+    try:
+        blob = json.loads(Path(ATR_RESULTS_CHECKS_PATH).read_text())
+    except Exception:
+        return {}
+    return blob if isinstance(blob, dict) else {}
+
+
+def _atr_day_last_checked(day: str) -> float:
+    """When the feed last successfully looked at this day (0 = never)."""
+    try:
+        days = _atr_read_checks().get("days") or {}
+        entry = days.get(str(day)[:10]) or {}
+        return float(entry.get("last_checked_at") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _atr_note_checks(
+    days: List[str],
+    races_by_day: Optional[Dict[str, int]] = None,
+    error: Optional[str] = None,
+    now_ts: Optional[float] = None,
+) -> None:
+    """Record that the feed polled these days, and what the page held.
+
+    ``races_by_day`` is what ATR returned for each day (0 = the page was real
+    but nothing had run yet). Only call this for polls that actually saw a
+    page — a blocked fetch must never look like a completed check, or a day we
+    could not read would get declared finished.
+    """
+    import time as _time
+
+    now_ts = _time.time() if now_ts is None else now_ts
+    races_by_day = races_by_day or {}
+    blob = _atr_read_checks()
+    days_map = blob.get("days") if isinstance(blob.get("days"), dict) else {}
+    days_map = dict(days_map)
+    for day in days or []:
+        key = str(day)[:10]
+        entry = days_map.get(key)
+        entry = dict(entry) if isinstance(entry, dict) else {}
+        entry["last_checked_at"] = now_ts
+        if key in races_by_day:
+            entry["races_seen"] = int(races_by_day.get(key) or 0)
+        days_map[key] = entry
+    blob["days"] = days_map
+    blob["last_attempt"] = now_ts
+    # Keep the file bounded: one entry per day would otherwise grow forever.
+    cutoff = now_ts - ATR_CHECKS_KEEP_SECS
+    blob["days"] = {
+        key: entry
+        for key, entry in days_map.items()
+        if isinstance(entry, dict)
+        and float(entry.get("last_checked_at") or 0) >= cutoff
+    }
+    if error:
+        blob["last_error"] = str(error)[:200]
+    else:
+        blob.pop("last_error", None)
+        blob["last_success"] = now_ts
+    try:
+        _atomic_write_json(str(ATR_RESULTS_CHECKS_PATH), blob)
+    except Exception:
+        pass
+
+
+def _atr_results_lull(now_ts: Optional[float] = None, horizon_secs: int = 3600) -> bool:
+    """True when the feed is polling fine and simply has nothing to show yet.
+
+    Before the first meeting of the day ATR's /results page holds only cards
+    (Nov-2026: 143 articles, 0 placings at 08:00 UTC), so an old snapshot is
+    correct rather than broken. Alarming every 5 minutes through that lull is
+    what drowned the real fault.
+    """
+    import time as _time
+
+    checks = _atr_read_checks()
+    if checks.get("last_error"):
+        return False
+    try:
+        last = float(checks.get("last_success") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not last:
+        return False
+    now_ts = _time.time() if now_ts is None else now_ts
+    if (now_ts - last) > horizon_secs:
+        return False  # we are not reaching the page at all — a real problem
+    today_iso = datetime.now().date().isoformat()
+    try:
+        seen = int((checks.get("days") or {}).get(today_iso, {}).get("races_seen") or 0)
+    except (TypeError, ValueError):
+        return False
+    return seen == 0
+
 
 def _atr_day_signature(races: List[Dict]) -> str:
     """Fingerprint of one day's card: meetings, race numbers, result depth."""
@@ -974,15 +1106,24 @@ def _atr_day_needs_finishing(
 ) -> bool:
     """True while a day's card can still produce new results.
 
-    Never captured -> fetch. Captured but still growing (or grown within the
-    last ATR_CARD_QUIET_SECS) -> keep fetching, because late meetings on the
-    card are still running. Quiet for the whole window -> finished.
+    Never captured -> fetch. Captured but never polled after the card ended ->
+    fetch (a day can stop being *written* long before it stops *running*).
+    Watched to its end and still growing, or grown within the last
+    ATR_CARD_QUIET_SECS -> keep fetching. Otherwise the day is finished.
     """
     import time as _time
 
     now_ts = _time.time() if now_ts is None else now_ts
-    cap = _atr_captured(path).get(str(day)[:10])
+    key = str(day)[:10]
+    cap = _atr_captured(path).get(key)
     if not cap or not cap.get("races"):
+        return True
+    # Quiet is only evidence of a finished day if we were still WATCHING the
+    # day when it ended. A day whose writes stopped early is quiet for the
+    # wrong reason: Nov-2026, 2026-11-10 froze at 12:20 with 8 of ~113 races
+    # captured, and the old rule called it finished for good — the evening UK
+    # cards were never captured and their picks could not settle.
+    if _atr_day_last_checked(key) < _atr_day_end_ts(key):
         return True
     try:
         last = float(cap.get("last_grew_at"))
@@ -1361,11 +1502,37 @@ class AdaptiveOddsMonitor:
             # refetched until the card stops growing for ATR_CARD_QUIET_SECS.
             if _atr_day_needs_finishing(ATR_RESULTS_PATH, _atr_yesterday_iso()):
                 days.append("yesterday")
+            # Record what we actually looked at (see ATR_RESULTS_CHECKS_PATH).
+            # Only a poll that SAW a page counts as a check: a blocked fetch
+            # marked as checked is exactly how a day gets declared finished
+            # while it is still missing results.
+            _today_key = datetime.now().date().isoformat()
+            _seen_days: List[str] = []
+            _races_by_day: Dict[str, int] = {}
+            _fetch_err: Optional[str] = None
             for day in days:
                 try:
-                    results.extend(await self.at_races.get_results(day) or [])
+                    got = await self.at_races.get_results(day) or []
                 except Exception as exc:
                     logger.debug("ATR %s results fetch skipped: %s", day, exc)
+                    _fetch_err = f"{day}: {exc}"
+                    continue
+                if not getattr(self.at_races, "_last_results_page_ok", True):
+                    _fetch_err = f"{day}: no page (blocked or throttled)"
+                    continue
+                _day_key = _today_key if day == "today" else _atr_yesterday_iso()
+                _seen_days.append(_day_key)
+                _races_by_day[_day_key] = len(got)
+                results.extend(got)
+            if _seen_days or _fetch_err:
+                _atr_note_checks(_seen_days, _races_by_day, error=_fetch_err)
+                # Persist the poll bookkeeping. The next cycle may run in a
+                # different cron container and mounts the last *committed*
+                # revision, so an uncommitted check would make every day look
+                # unwatched (and keep re-fetching yesterday forever). This
+                # commits the volume without rewriting the results snapshot,
+                # so the 45-min freshness gate still holds.
+                wrote = True
             if results:
                 existing_results: List[Dict] = []
                 old_ts = None
@@ -1738,6 +1905,15 @@ class AdaptiveOddsMonitor:
             (ATR_MOVERS_PATH, "ATR Market Movers"),
             (ATR_PREDICTOR_PATH, "ATR Predictor"),
         ]:
+            if (
+                path == ATR_RESULTS_PATH
+                and not stale_alerts
+                and _atr_results_lull()
+            ):
+                # The feed is polling fine and simply has no finished races
+                # yet today; the snapshot *should* be old right now.
+                logger.debug("ATR results look old but the feed is healthy (pre-race lull)")
+                continue
             if path.exists():
                 try:
                     data = json.loads(path.read_text())

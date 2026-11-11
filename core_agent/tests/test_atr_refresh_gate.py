@@ -40,8 +40,10 @@ class _FakeATR:
 
 
 @pytest.fixture
-def harness(monkeypatch):
+def harness(monkeypatch, tmp_path):
     atr = _FakeATR()
+    # Poll bookkeeping must never touch the real data volume from a unit test.
+    monkeypatch.setattr(mon, "ATR_RESULTS_CHECKS_PATH", tmp_path / "atr_results_checks.json")
     monitor = object.__new__(mon.AdaptiveOddsMonitor)
     monitor.at_races = atr
 
@@ -88,13 +90,24 @@ def test_only_stale_results_fetch_and_commit(harness, monkeypatch):
     # browser allowance is ~1/hour, so "yesterday" first starved "today" and
     # the HUD only ever showed yesterday's card (Nov-2026).
     assert atr.calls == [("results", "today"), ("results", "yesterday")]
-    assert state["writes"] == [mon.ATR_RESULTS_PATH]
+    # The poll bookkeeping lands first, then the snapshot. The checks file has
+    # its own mtime (never gated on), so recording a poll does not defuse the
+    # 45-min freshness gate the way rewriting the snapshot would.
+    assert state["writes"] == [str(mon.ATR_RESULTS_CHECKS_PATH), mon.ATR_RESULTS_PATH]
     assert state["commits"] == 1
     # The mount must be refreshed before the gate is trusted.
     assert state["reloads"] == 1
 
 
-def test_stale_feed_with_empty_result_does_not_commit(harness, monkeypatch):
+def test_stale_feed_with_empty_result_does_not_rewrite_results_snapshot(harness, monkeypatch):
+    """A card-only page must not be written as an empty result set.
+
+    Since Nov-2026 the poll is still recorded in the checks side file (the
+    feed must know the day was watched, and the staleness alarm must know the
+    feed is healthy), but the snapshot itself stays untouched: its mtime is
+    what opens the 45-minute gate, and a rewritten "empty" snapshot would look
+    fresh while carrying no results.
+    """
     atr, monitor, state = harness
     _gate(
         monkeypatch,
@@ -110,8 +123,9 @@ def test_stale_feed_with_empty_result_does_not_commit(harness, monkeypatch):
 
     asyncio.run(monitor._refresh_atr_feeds({"events": {}}))
 
-    assert state["writes"] == []
-    assert state["commits"] == 0
+    assert state["writes"] == [str(mon.ATR_RESULTS_CHECKS_PATH)]
+    # Bookkeeping is committed so the next cron container sees the check.
+    assert state["commits"] == 1
 
 
 # --- Predictor freshness contract (Nov-2026) -------------------------------

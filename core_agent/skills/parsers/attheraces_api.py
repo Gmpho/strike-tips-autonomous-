@@ -587,6 +587,17 @@ class AtTheRacesAPI:
     # 403s tripped a 6h breaker every afternoon).
     _self_throttled = False
 
+    # Per-race enrichment (the optional full-card pages) has its OWN failure
+    # budget. It is best-effort: the feed is what matters, and hundreds of
+    # blocked /racecard pages must never trip the FEED's breaker and blind
+    # the results card for hours (Nov-2026: 15 enrichment misses tripped the
+    # breaker right after a successful 113-race feed fetch).
+    _ENRICHMENT_FAILURE_THRESHOLD = 6
+    _enrichment_failures = 0
+    # While paused, per-race pages are skipped entirely (the feed still runs).
+    _enrichment_blocked_until = 0.0
+    _ENRICHMENT_BLOCK_SECS = 15 * 60
+
     @staticmethod
     def _is_challenge_page(body: bytes) -> bool:
         """Detect bot-challenge shells with no real content.
@@ -721,15 +732,39 @@ class AtTheRacesAPI:
                 logger.debug("ATR circuit breaker open — skipping %s", path)
                 return None
         body = self._fetch_tiered(path, allow_stealth=allow_stealth)
-        if body:
-            _record_success()
-        elif getattr(self, "_self_throttled", False):
-            logger.debug(
-                "ATR %s missed while the browser tier was throttled — "
-                "not counting toward the circuit breaker", path,
-            )
+        if allow_stealth:
+            if body:
+                _record_success()
+            elif getattr(self, "_self_throttled", False):
+                logger.debug(
+                    "ATR %s missed while the browser tier was throttled — "
+                    "not counting toward the circuit breaker", path,
+                )
+            else:
+                _record_failure(path)
         else:
-            _record_failure(path)
+            # Per-race enrichment, cheap tiers only. It has its own failure
+            # budget: 240 /racecard pages is normal for a big card, and their
+            # misses must never trip the FEED's breaker (Nov-2026: 15 misses
+            # tripped it minutes after a successful 113-race feed fetch and
+            # blinded /results for the rest of the afternoon).
+            import time as _time
+
+            if body:
+                self._enrichment_failures = 0
+            else:
+                self._enrichment_failures = getattr(self, "_enrichment_failures", 0) + 1
+                if self._enrichment_failures >= self._ENRICHMENT_FAILURE_THRESHOLD:
+                    self._enrichment_blocked_until = (
+                        _time.time() + self._ENRICHMENT_BLOCK_SECS
+                    )
+                    self._enrichment_failures = 0
+                    logger.info(
+                        "ATR enrichment paused for %d min — %d consecutive "
+                        "/racecard misses (feed pages unaffected)",
+                        self._ENRICHMENT_BLOCK_SECS // 60,
+                        self._ENRICHMENT_FAILURE_THRESHOLD,
+                    )
         return body
 
     def _fetch_tiered(self, path: str, allow_stealth: bool = True) -> Optional[bytes]:
@@ -1110,6 +1145,10 @@ class AtTheRacesAPI:
         """
         if not full_url:
             return []
+        import time as _time
+
+        if _time.time() < getattr(self, "_enrichment_blocked_until", 0):
+            return []  # paused after repeated misses; feed pages unaffected
         try:
             html = self._fetch(full_url, allow_stealth=False)
             if not html or len(html) < 10_000:
@@ -1210,6 +1249,11 @@ class AtTheRacesAPI:
         get a turn. Worst case 2×150s (yesterday+today) still fits the 600s cron.
         """
         results_path = "/results" if str(date or "").lower() in ("today", "") else f"/results/{date}"
+        # Did we actually SEE a page? [] means either "no races have run yet"
+        # or "the host blocked us", and callers must be able to tell those
+        # apart: a blocked poll must never be recorded as a completed check of
+        # the day (Nov-2026: a day frozen at 12:20 looked like a finished day).
+        self._last_results_page_ok = False
         for attempt in range(3):
             try:
                 html = await asyncio.wait_for(asyncio.to_thread(self._fetch, results_path), timeout=150)
@@ -1227,11 +1271,13 @@ class AtTheRacesAPI:
             return []
 
         page_day = self._page_date(html) or self._label_iso(date)
+        self._last_results_page_ok = True
         sel = Selector(html, auto_save=True, adaptive=True)
 
         meeting_divs = sel.css(".push--x-small")
         if not meeting_divs:
             logger.warning("No meeting containers (.push--x-small) found on ATR page (%d bytes)", len(html))
+            self._last_results_page_ok = False
             return []
 
         # Walk every article and attribute it to the NEAREST `.push--x-small`

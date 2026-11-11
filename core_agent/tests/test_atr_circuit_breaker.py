@@ -159,3 +159,59 @@ def test_genuine_failure_after_throttle_miss_still_counts(flag, monkeypatch):
 
     api._fetch("/market-movers")
     assert atr._breaker_failures == 1
+
+
+# --- enrich failures have their own budget --------------------------------
+# Nov-2026: a 113-race results page parsed cleanly, then 15 blocked
+# /racecard enrichment misses tripped the FEED breaker and every ATR snapshot
+# froze for the afternoon. Enrichment is best-effort and must stay that way.
+
+
+def test_enrichment_misses_do_not_trip_the_feed_breaker(flag, monkeypatch):
+    monkeypatch.setattr(
+        atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p, allow_stealth=True: None
+    )
+    api = atr.AtTheRacesAPI()
+
+    for _ in range(20):
+        assert api.get_full_result("/racecard/Kenilworth/10-November-2026/1237") == []
+
+    assert atr._breaker_failures == 0
+    assert atr.atr_circuit_open() is False
+    # ...and it paused itself instead of hammering 240 dead URLs every cycle.
+    assert api._enrichment_blocked_until > time.time()
+
+
+def test_enrichment_pause_expires_and_retries(flag, monkeypatch):
+    calls = []
+
+    def fake(self, path, allow_stealth=True):
+        calls.append((path, allow_stealth))
+        return None
+
+    monkeypatch.setattr(atr.AtTheRacesAPI, "_fetch_tiered", fake)
+    api = atr.AtTheRacesAPI()
+
+    assert api.get_full_result("/racecard/a") == []
+    assert calls == [("/racecard/a", False)], "enrichment must never use the browser tier"
+
+    api._enrichment_blocked_until = time.time() + 600
+    assert api.get_full_result("/racecard/b") == []
+    assert calls == [("/racecard/a", False)], "paused: no fetch"
+
+    api._enrichment_blocked_until = time.time() - 1
+    assert api.get_full_result("/racecard/c") == []
+    assert calls[-1] == ("/racecard/c", False), "the pause is temporary"
+
+
+def test_enrichment_success_resets_its_budget(flag, monkeypatch):
+    api = atr.AtTheRacesAPI()
+    api._enrichment_failures = api._ENRICHMENT_FAILURE_THRESHOLD - 1
+
+    monkeypatch.setattr(
+        atr.AtTheRacesAPI, "_fetch_tiered", lambda self, p, allow_stealth=True: b"x" * 20_000
+    )
+    api._parse_full_race = lambda html: [{"name": "Alpha", "position": "1st"}]
+
+    assert api.get_full_result("/racecard/a") == [{"name": "Alpha", "position": "1st"}]
+    assert api._enrichment_failures == 0
