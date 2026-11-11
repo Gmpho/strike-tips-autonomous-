@@ -1207,7 +1207,14 @@ def _read_exotic_history(data_dir: str) -> List[Dict]:
             if not isinstance(pool, dict):
                 continue
             play = dict(pool)
-            play.setdefault("event_date", entry.get("event_date"))
+            # The entry's date WINS over the play's own copy: a ticket that
+            # was filed under the wrong day (a Saturday card stamped "today")
+            # must move with its entry, or the board keeps showing it under
+            # the old date forever (Nov-2026).
+            if entry.get("event_date"):
+                play["event_date"] = entry.get("event_date")
+            else:
+                play.setdefault("event_date", entry.get("event_date"))
             play.setdefault("_track", entry.get("track"))
             flat.append(play)
     # Newest event first, then pool order as analyzed.
@@ -1304,11 +1311,24 @@ def _merge_exotic_history(data_dir: str, event_date: str, plays: List[Dict]) -> 
     for (track, p_date), pools in by_track.items():
         old_pools: List[Dict] = []
         kept_history = []
+        # Pool keys this scan re-files. A ticket that moved to another meeting
+        # day (the card's real date was learned late) must not leave a stale
+        # copy under the old day, or the board shows it twice.
+        _refiled = {_exotic_card_key(p) for p in pools}
         for e in history:
+            if not isinstance(e, dict):
+                continue
+            _same_track = str(e.get("track", "")) == track
+            if _same_track and str(e.get("event_date", "")) != p_date:
+                _e_keys = {
+                    _exotic_card_key(p) for p in (e.get("pools") or [])
+                    if isinstance(p, dict)
+                }
+                if _e_keys & _refiled:
+                    continue  # re-filed under the new date — drop the stale one
             if (
-                isinstance(e, dict)
+                _same_track
                 and str(e.get("event_date", "")) == p_date
-                and str(e.get("track", "")) == track
             ):
                 old_pools.extend(
                     p for p in (e.get("pools") or []) if isinstance(p, dict)

@@ -85,3 +85,46 @@ def test_rescan_of_one_day_keeps_the_other_day(tmp_path):
     tracks = {str(p.get("_track")) for p in merged}
     assert "kenilworth" in tracks      # Saturday's board survived
     assert "fairview" in tracks
+
+
+def test_a_ticket_refiled_under_its_real_day_does_not_leave_a_stale_copy(tmp_path):
+    """A card filed under the wrong day must move, not duplicate."""
+    # An earlier scan filed Saturday's card under today.
+    _merge_exotic_history(
+        str(tmp_path), "2026-11-11",
+        [_play("kenilworth", "BIPOT", [1, 2, 3, 4, 5, 6], "2026-11-11")],
+    )
+    # The rescan learns the real meeting date and re-files the same ticket.
+    merged = _merge_exotic_history(
+        str(tmp_path), "2026-11-11",
+        [_play("kenilworth", "BIPOT", [1, 2, 3, 4, 5, 6], "2026-11-13")],
+    )
+
+    dates = {str(p.get("event_date")) for p in merged}
+    assert dates == {"2026-11-13"}          # moved, not duplicated
+    assert len(merged) == 1
+
+
+def test_the_history_entry_date_wins_over_the_play_copy(tmp_path):
+    """The board's day comes from the entry, never from a stale play copy."""
+    _merge_exotic_history(
+        str(tmp_path), "2026-11-13",
+        [_play("kenilworth", "BIPOT", [1, 2, 3, 4, 5, 6], "2026-11-13")],
+    )
+    # Rewrite the history the way a pre-fix scan wrote it: the play copy
+    # still carries the old day.
+    import json
+
+    hist = os.path.join(str(tmp_path), "exotics_history.json")
+    with open(hist) as f:
+        history = json.load(f)
+    for entry in history:
+        for pool in entry.get("pools") or []:
+            pool["event_date"] = "2026-11-11"
+    with open(hist, "w") as f:
+        json.dump(history, f)
+
+    from core_agent.core.strike_tips import _read_exotic_history
+
+    flat = _read_exotic_history(str(tmp_path))
+    assert {str(p.get("event_date")) for p in flat} == {"2026-11-13"}
