@@ -258,8 +258,10 @@ def test_today_is_fetched_before_yesterday(monitor):
     asyncio.run(m._refresh_atr_feeds({"events": {}}))
 
     assert atr_api.calls == ["today", "yesterday"]
-    # One allowance funded the whole stale-feed burst (results only here).
-    assert atr_api.bursts == [1]
+    # One allowance funded the whole stale-feed burst, and it must hold a slot
+    # per results page: counting the feed once let "today" eat the only hourly
+    # browser fetch, so yesterday was starved on every cycle.
+    assert atr_api.bursts == [2]
 
 
 def test_stealth_burst_funds_one_allowance_for_several_pages(monkeypatch, tmp_path):

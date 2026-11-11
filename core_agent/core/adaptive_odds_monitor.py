@@ -1487,7 +1487,15 @@ class AdaptiveOddsMonitor:
         try:
             stale_pages = 0
             if not _atr_file_fresh(ATR_RESULTS_PATH):
+                # The results feed may visit TWO pages (today, then yesterday
+                # while its card is still finishing) and the burst must fund
+                # both. Counting the feed once meant "today" always ate the
+                # single hourly browser slot and a still-running evening card
+                # could never be fetched — the day stayed open forever because
+                # every cycle starved it.
                 stale_pages += 1
+                if _atr_day_needs_finishing(ATR_RESULTS_PATH, _atr_yesterday_iso()):
+                    stale_pages += 1
             if not _atr_file_fresh(ATR_MOVERS_PATH):
                 stale_pages += 1
             if not _atr_predictor_fresh():

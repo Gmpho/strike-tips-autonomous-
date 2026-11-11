@@ -378,3 +378,32 @@ def test_yesterday_results_still_written_when_today_is_empty(monkeypatch):
     assert snap["captured"][yesterday]["races"] == 2
     assert {r["course"] for r in snap["results"]} == {"Lingfield (GB)", "Fairyhouse (IRE)"}
     assert state["commits"] == 1
+
+
+# --- 5. the burst must fund a page per results day ------------------------
+
+
+def test_burst_funds_a_page_per_results_day(monkeypatch):
+    """Two pages need two slots: today must not eat yesterday's allowance.
+
+    Nov-2026: the burst counted the results *feed* once, so the single hourly
+    browser fetch always went to "today" and a still-running evening card was
+    starved every cycle — the day could never be finished.
+    """
+    atr, monitor, _ = _harness(
+        monkeypatch, {"today": (True, []), "yesterday": (True, [])}
+    )
+
+    asyncio.run(monitor._refresh_atr_feeds({"events": {}}))
+
+    assert atr.bursts == [2]
+
+
+def test_burst_funds_one_page_once_yesterday_is_finished(monkeypatch):
+    atr, monitor, _ = _harness(monkeypatch, {"today": (True, [])})
+    _yesterday_closed(raced=113)
+
+    asyncio.run(monitor._refresh_atr_feeds({"events": {}}))
+
+    assert [c for c in atr.calls if c[0] == "results"] == [("results", "today")]
+    assert atr.bursts == [1]
