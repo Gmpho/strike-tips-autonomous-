@@ -1057,6 +1057,7 @@ def _finalise_exotic_plays(
     snapshot_horses: Dict[str, set],
     snapshot_odds: Dict[str, Dict[str, float]],
     nr_names: Dict[tuple, set],
+    today_iso: Optional[str] = None,
 ) -> List[Dict]:
     """Single choke point that gates, stamps and normalises exotic plays.
 
@@ -1081,7 +1082,18 @@ def _finalise_exotic_plays(
             print(f"[EXOTIC] AI play '{play.get('pool')}' dropped: "
                   "cloth-number selections, no horse names")
             continue
-        if not _play_matches_snapshot(play, snapshot_horses):
+        # The phantom guard asks "do these horses run in TODAY's card?". A
+        # ticket for a LATER meeting (TAB publishes the next card weeks
+        # ahead) cannot be in today's card by definition — checking it there
+        # deleted every future-meeting ticket (Nov-2026: Saturday's pools
+        # vanished from the board).
+        _play_date = str(play.get("event_date") or "")[:10]
+        _is_today = (
+            not _play_date
+            or not today_iso
+            or _play_date == str(today_iso)[:10]
+        )
+        if _is_today and not _play_matches_snapshot(play, snapshot_horses):
             continue
         if not _play_has_balance(play, snapshot_odds):
             continue
@@ -2851,7 +2863,8 @@ class StrikeTips:
             # Single choke point for BOTH exotics_latest.json and the auto-bet
             # placement below (guards, jurisdiction, dividend, distance).
             exotic_plays = _finalise_exotic_plays(
-                exotic_plays, all_results, _snap_horses, _snap_odds, _nr_names
+                exotic_plays, all_results, _snap_horses, _snap_odds, _nr_names,
+                today_iso=_today_iso,
             )
             if exotic_plays:
                 print(f"[EXOTIC] Found {len(exotic_plays)} exotic play(s)")

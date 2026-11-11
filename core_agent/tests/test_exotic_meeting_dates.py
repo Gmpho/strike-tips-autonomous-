@@ -128,3 +128,44 @@ def test_the_history_entry_date_wins_over_the_play_copy(tmp_path):
 
     flat = _read_exotic_history(str(tmp_path))
     assert {str(p.get("event_date")) for p in flat} == {"2026-11-13"}
+
+
+def test_future_meeting_tickets_survive_the_phantom_guard(tmp_path):
+    """A ticket for a later meeting is not a phantom meeting.
+
+    The guard asks whether the horses run in TODAY's card — a Saturday
+    ticket is not there by definition, and the guard used to delete it.
+    """
+    from core_agent.core.strike_tips import _finalise_exotic_plays
+
+    play = {
+        "pool": "BIPOT",
+        "_track": "kenilworth",
+        "event_date": "2026-11-14",
+        "legs": [1, 2, 3, 4, 5, 6],
+        "combinations": [{"race": 1, "banker": "LULA ROSE", "savers": []}],
+    }
+    # Today's card holds only Fairview — Kenilworth is not on it.
+    out = _finalise_exotic_plays(
+        [play], {}, {"fairview": {"peach cobbler"}}, {}, {},
+        today_iso="2026-11-11",
+    )
+    assert len(out) == 1
+    assert out[0]["event_date"] == "2026-11-14"
+
+
+def test_today_meeting_tickets_still_face_the_phantom_guard(tmp_path):
+    from core_agent.core.strike_tips import _finalise_exotic_plays
+
+    play = {
+        "pool": "BIPOT",
+        "_track": "kenilworth",
+        "event_date": "2026-11-11",
+        "legs": [1, 2, 3, 4, 5, 6],
+        "combinations": [{"race": 1, "banker": "LULA ROSE", "savers": []}],
+    }
+    out = _finalise_exotic_plays(
+        [play], {}, {"fairview": {"peach cobbler"}}, {}, {},
+        today_iso="2026-11-11",
+    )
+    assert out == []          # not on today's card -> phantom -> dropped
