@@ -40,6 +40,55 @@ def _race_no(title: Any) -> str:
     return m.group(1) if m else ""
 
 
+def _attach_form(races: Any) -> Any:
+    """Attach the Betfair form string to the result cards.
+
+    Neither ATR's results page nor Raceform publishes a form line — it
+    lives in the Betfair enrichment the monitor already keeps (form, gear,
+    days since run, trainer). Without this the results tab printed "· —"
+    in the Form column for every runner, while the live race cards showed
+    form fine.
+    """
+    import re as _re
+
+    if not isinstance(races, list):
+        return races
+    try:
+        from core_agent.core.strike_tips import _bf_form_index
+
+        index = _bf_form_index(str(DATA_DIR))
+    except Exception as exc:
+        logger.debug("Betfair form index unavailable: %s", exc)
+        return races
+    if not index:
+        return races
+
+    def _norm(value: Any) -> str:
+        return _re.sub(r"[^a-z0-9 ]", " ", _re.sub(r"\([^)]*\)", " ", str(value or "").lower())).strip()
+
+    for race in races:
+        if not isinstance(race, dict):
+            continue
+        try:
+            key = (_course_key(race.get("course")), int(_race_no(race.get("title")) or 0))
+        except (TypeError, ValueError):
+            continue
+        bf_runners = index.get(key) or []
+        if not bf_runners:
+            continue
+        by_name = {_norm(b.get("name")): b for b in bf_runners if isinstance(b, dict)}
+        for runner in race.get("runners") or []:
+            if not isinstance(runner, dict) or runner.get("form"):
+                continue
+            hit = by_name.get(_norm(runner.get("name")))
+            if not hit:
+                continue
+            form = str(hit.get("form") or "").strip()
+            if form:
+                runner["form"] = form
+    return races
+
+
 def _merge_results_with_confirmed(atr_blob: Any) -> Any:
     """Serve ATR's results together with the SA cards Raceform confirmed.
 
@@ -76,7 +125,7 @@ def _merge_results_with_confirmed(atr_blob: Any) -> Any:
             races[races.index(prev)] = r
             index[key] = r
     merged = dict(blob)
-    merged["results"] = races
+    merged["results"] = _attach_form(races)
     return merged
 
 

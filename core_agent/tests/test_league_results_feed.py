@@ -9,11 +9,13 @@ import os
 
 from core_agent.skills.league.results_feed import (
     append_confirmed_results,
+    confirmed_results_as_races,
     load_confirmed_results,
     parse_finish,
     parse_meeting_html,
     parse_odds,
     pending_meetings,
+    pending_meetings_otb,
 )
 from core_agent.skills.league.settlement import load_winner_details, settle_open_picks
 
@@ -141,6 +143,56 @@ def test_pending_meetings_only_covers_sa_raceform_tracks(tmp_path):
     ])
     got = pending_meetings(str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 7))
     assert got == [("2026-11-06", "Fairview"), ("2026-11-06", "Greyville")]
+
+
+# ── the Offtrackbetting fallback (ATR is quiet) ──────────────────────────────
+
+def test_pending_meetings_otb_covers_races_atr_never_published(tmp_path, monkeypatch):
+    """A race ATR has no card for is exactly what Offtrackbetting is asked
+    for — including the cards Raceform does not cover (Hong Kong)."""
+    import core_agent.skills.league.results_feed as rf
+
+    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: {
+        ("2026-11-06", "greyville", "1"),   # ATR has this one
+    })
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(date="2026-11-06", course="Greyville", race_number=1),
+        _pick(race_id="h1", date="2026-11-06", course="Happy Valley", race_number=1),
+        _pick(race_id="h2", date="2026-11-06", course="Ayr", race_number=4),
+    ])
+
+    got = pending_meetings_otb(str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 7))
+    assert ("2026-11-06", "Happy Valley") in got
+    assert ("2026-11-06", "Ayr") in got
+    assert ("2026-11-06", "Greyville") not in got  # ATR already holds it
+
+
+def test_pending_meetings_otb_skips_races_with_a_confirmed_card(tmp_path, monkeypatch):
+    import core_agent.skills.league.results_feed as rf
+
+    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: set())
+    races = parse_meeting_html(_MEETING_HTML, "Greyville", "2026-11-06")
+    append_confirmed_results(str(tmp_path), races)
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(date="2026-11-06", course="Greyville", race_number=1),
+    ])
+
+    got = pending_meetings_otb(str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 7))
+    assert got == []
+
+
+def test_confirmed_card_exposes_the_price_the_hud_reads(tmp_path):
+    """The HUD prints `runner.odds`; the card stores `odds_decimal`. Without
+    the extra field every confirmed card showed "· —" for prices."""
+    races = parse_meeting_html(_MEETING_HTML, "Greyville", "2026-11-06")
+    append_confirmed_results(str(tmp_path), races)
+
+    out = confirmed_results_as_races(str(tmp_path))
+    assert out
+    runner = out[0]["runners"][0]
+    assert runner["odds"] == "33/1"
+    assert runner["odds_decimal"] == 34.0
+    assert runner["position"] == "1st"
 
 
 # ── settlement integration ──────────────────────────────────────────────────

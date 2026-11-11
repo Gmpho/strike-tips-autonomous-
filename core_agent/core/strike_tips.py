@@ -231,6 +231,34 @@ async def _tab_programs(ttl_secs: int = _TAB_PROGRAM_TTL_SECS) -> List[Any]:
     return progs
 
 
+async def _tab_meeting_date(track: str) -> str:
+    """The meeting's own day from TAB's live feed, or "" when unknown.
+
+    A card served by Betway carries no meeting_date, so a meeting published
+    early (TAB publishes the NEXT meeting weeks ahead) looked like today's
+    card — and every exotic ticket placed for it was dated today. Such a
+    ticket can never settle: it looks for a card that never existed and
+    expires with no verdict. TAB's feed lists the meetings of the day with
+    their own date, so an undated card is dated from there; a track the feed
+    does not list is not running today and stays unknown.
+    """
+    try:
+        progs = await _tab_programs()
+    except Exception as exc:
+        logger.debug("TAB meeting date unavailable for %s: %s", track, exc)
+        return ""
+    tkey = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", str(track or "").lower())).strip()
+    if not tkey:
+        return ""
+    for p in progs or []:
+        name = str(getattr(p, "program_name", "") or "")
+        nkey = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", name.lower())).strip()
+        nkey = re.sub(r"^tab ", "", nkey)
+        if nkey == tkey or nkey.startswith(tkey) or tkey.startswith(nkey):
+            return str(getattr(p, "program_date", "") or "")[:10]
+    return ""
+
+
 async def _tab_card_distances(track: str, meeting_date: str) -> Dict[int, int]:
     """Real race distances for one meeting, from TAB's live card.
 
@@ -2947,10 +2975,22 @@ class StrikeTips:
                     for r in (_traces or []) if isinstance(r, dict)
                     and r.get("meeting_date")
                 })
-                _meet_date = _meet[0] if _meet else _today_iso
+                _meet_date = _meet[0] if _meet else ""
+                if not _meet_date:
+                    # The card does not say which day it belongs to. TAB's
+                    # live feed does — it lists the meeting's own date (a
+                    # Betway-served card carries no meeting_date at all, so
+                    # Saturday's meeting looked like today's and every
+                    # exotic ticket placed for it was dated today, which
+                    # made it un-settleable: it would look for a card that
+                    # never existed and expire with no verdict).
+                    _meet_date = await _tab_meeting_date(_tname)
                 for _p in _plays or []:
                     if isinstance(_p, dict):
-                        _p["event_date"] = _meet_date
+                        _p["event_date"] = _meet_date or _today_iso
+                        # False = the meeting's day is unknown, so no ticket
+                        # may be placed for it (see the auto-bet guard).
+                        _p["_meeting_known"] = bool(_meet_date)
                 exotic_plays.extend(_plays or [])
             # Future meetings (TAB publishes the next card weeks ahead) get
             # their own tickets on the board, dated for the day they actually
@@ -3280,6 +3320,17 @@ class StrikeTips:
                             # yet, and a ticket dated today could only ever
                             # settle against the wrong day's card.
                             _play_date = str(play.get("event_date") or "")[:10]
+                            if not play.get("_meeting_known", True):
+                                # The meeting's day is unknown, so no date can
+                                # be trusted on the ticket. Placing one would
+                                # produce a ticket that can never settle
+                                # (Nov-2026: 22 tickets dated today for
+                                # Thursday/Friday/Saturday meetings).
+                                print(
+                                    f"[AUTO-BET] Skipped {pool} @ {play_track}: "
+                                    f"the meeting's date is unknown"
+                                )
+                                continue
                             if _play_date and _play_date != _today_iso:
                                 print(
                                     f"[AUTO-BET] Skipped {pool} @ {play_track}: "

@@ -177,6 +177,9 @@ def parse_meeting_html(
                 # ran and did not finish) — both have no finishing position.
                 "finish_raw": cells[col["finish"]].get_text(" ", strip=True),
                 "odds_decimal": parse_odds(cells[col["odds"]].get_text(" ", strip=True)),
+                # The raw price cell too ("9/4"), so the results tab can
+                # print the bookie's price instead of a bare decimal.
+                "odds": cells[col["odds"]].get_text(" ", strip=True),
             })
 
         if any(r["position"] == 1 for r in runners):
@@ -231,6 +234,28 @@ def _ordinal(pos: Any) -> str:
     return f"{n}th"
 
 
+def _odds_text(odds_decimal: Any, raw: Any = None) -> str:
+    """A price the HUD can print: the raw cell text when the card has it,
+    else the decimal in fractional form ("11/4"), else empty — never a guess."""
+    text = str(raw or "").strip()
+    if text:
+        return text
+    try:
+        dec = float(odds_decimal)
+    except (TypeError, ValueError):
+        return ""
+    if dec <= 1:
+        return ""
+    frac = dec - 1.0
+    for den in (1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 16, 20, 25):
+        num = round(frac * den)
+        if num <= 0:
+            continue
+        if abs(frac - num / den) < 0.005:
+            return f"{num}/{den}" if den > 1 else f"{num}/1"
+    return f"{frac:.2f}"
+
+
 def confirmed_results_as_races(data_dir: str) -> List[Dict[str, Any]]:
     """The confirmed SA cards as ATR-shaped race records.
 
@@ -253,11 +278,17 @@ def confirmed_results_as_races(data_dir: str) -> List[Dict[str, Any]]:
             name = str(r.get("name") or "").strip()
             if not name:
                 continue
+            odds = r.get("odds_decimal")
             runners.append({
                 "name": name,
                 "position": _ordinal(r.get("position")),
-                "odds_decimal": r.get("odds_decimal"),
-                "form": "",
+                "odds_decimal": odds,
+                # The HUD renders `runner.odds`; the card stores
+                # `odds_decimal`, so without this every confirmed card
+                # showed "· —" in the Odds column (Nov-2026: the SA cards on
+                # the results tab had no prices at all).
+                "odds": _odds_text(odds, r.get("odds")),
+                "form": str(r.get("form") or ""),
             })
         if not runners:
             continue
@@ -483,6 +514,77 @@ def pending_meetings(
     return sorted(out)
 
 
+def _atr_cards_by_key() -> set:
+    """(date, course, race) keys the ATR snapshot already holds.
+
+    ATR is the primary source; Offtrackbetting is only asked for the races
+    ATR is quiet about (Nov-2026: Huntingdon R6 and Lingfield R7-R8 were
+    never published, and no Hong Kong race had EVER been captured).
+    """
+    out = set()
+    try:
+        from core_agent.config.paths import ATR_RESULTS_PATH
+
+        if not ATR_RESULTS_PATH.exists():
+            return out
+        blob = json.loads(ATR_RESULTS_PATH.read_text())
+    except Exception:
+        return out
+    for race in blob.get("results") or []:
+        if not isinstance(race, dict):
+            continue
+        day = str(race.get("date") or "")[:10]
+        course = _track_key(race.get("course"))
+        title = str(race.get("title") or "")
+        m = re.match(r"\s*(\d+)", title)
+        if day and course and m:
+            out.add((day, course, m.group(1)))
+    return out
+
+
+def pending_meetings_otb(
+    data_dir: str, days: int = 3, today: Optional[_date] = None,
+    cooldown_secs: int = FETCH_COOLDOWN_SECS,
+) -> List[tuple]:
+    """(date, course) pairs whose pending picks ATR cannot answer for.
+
+    Per RACE, like ``pending_meetings``: a meeting is needed when any of its
+    pending races is missing from the ATR snapshot. SA meetings are handled
+    by Raceform (the official cards) and are skipped here unless Raceform
+    failed to deliver them.
+    """
+    today = today or datetime.now().date()
+    floor = today - timedelta(days=days)
+    have = {_result_key(r) for r in load_confirmed_results(data_dir)}
+    atr = _atr_cards_by_key()
+    markers = _fetch_markers(data_dir)
+    now = time.time()
+    out = set()
+    for row in _read_jsonl(os.path.join(data_dir, "league_picks.jsonl")):
+        if row.get("settled"):
+            continue
+        course = str(row.get("course") or "")
+        day = str(row.get("date") or "")[:10]
+        if not course or not day:
+            continue
+        try:
+            if datetime.fromisoformat(day).date() < floor:
+                continue
+        except ValueError:
+            continue
+        race = str(row.get("race_number") or "").strip()
+        key = (day, _track_key(course), race)
+        if key in have:
+            continue  # this race already has a confirmed card
+        if key in atr:
+            continue  # ATR already holds it — not quiet
+        last = markers.get(f"{day}|{_track_key(course)}")
+        if last and (now - last) < cooldown_secs:
+            continue  # fetched recently; wait before asking again
+        out.add((day, course))
+    return sorted(out)
+
+
 def backfill_missing_results(
     data_dir: str, days: int = 3, limit: int = 6,
     today: Optional[_date] = None,
@@ -501,6 +603,24 @@ def backfill_missing_results(
             stats["races"] += append_confirmed_results(data_dir, races)
         except Exception as exc:  # network, markup drift, rate limit
             stats["errors"].append(f"{day} {course}: {str(exc)[:120]}")
+
+    # Offtrackbetting — the fallback for every card ATR is quiet about,
+    # including the meetings Raceform does not cover (Hong Kong, the USA).
+    try:
+        from core_agent.skills.parsers import offtrackbetting as _otb
+
+        for day, course in pending_meetings_otb(data_dir, days=days, today=today)[:limit]:
+            try:
+                races = _otb.get_results_for_track(course, day)
+                if not races:
+                    continue
+                _mark_fetched(data_dir, day, course)
+                stats["meetings"] += 1
+                stats["races"] += append_confirmed_results(data_dir, races)
+            except Exception as exc:
+                stats["errors"].append(f"{day} {course} (otb): {str(exc)[:120]}")
+    except Exception as exc:
+        logger.debug("Offtrackbetting backfill skipped: %s", exc)
     return stats
 
 

@@ -176,7 +176,16 @@ def load_winner_details(
                 odds = float(runner.get("odds_decimal")) if runner.get("odds_decimal") else None
             except (TypeError, ValueError):
                 odds = None
-            runners.append({"name": name, "position": position, "odds_decimal": odds})
+            runners.append({
+                "name": name,
+                "position": position,
+                "odds_decimal": odds,
+                # A scratched horse never ran: the pick is refunded, not lost.
+                # The flag lives on the confirmed card (Offtrackbetting and
+                # Raceform both publish withdrawals), so it has to survive
+                # into the index or the pick is scored a loss (Nov-2026).
+                "non_runner": bool(runner.get("non_runner")),
+            })
             if position == 1 and winner is None:
                 winner, sp = name or None, odds
         if track and race and date and row.get("void"):
