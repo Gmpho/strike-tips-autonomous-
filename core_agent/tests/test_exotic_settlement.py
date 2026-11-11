@@ -897,6 +897,34 @@ def test_monitor_cache_does_not_bleed_labels_onto_later_days(tmp_path, monkeypat
         "turffontein", (date.today() - timedelta(days=1)).isoformat()) == []
 
 
+def test_monitor_cache_accepts_absolute_iso_days(tmp_path, monkeypatch):
+    """Nov-2026: the monitor started stamping absolute ISO days on write while
+    this gate still resolved only relative labels, so ``cal.get("2026-11-10")``
+    was None and EVERY snapshot record was dropped. Ten UK/IRE paper singles
+    stayed PENDING for a day while the league picks (ISO-aware) settled fine.
+    Both shapes must read, and an ISO stamp must never bleed onto other days."""
+    day = date.today() - timedelta(days=1)
+    rows = [
+        {"course": "Huntingdon", "date": day.isoformat(),
+         "title": "2\n13:50 - Handicap Hurdle",
+         "runners": [{"name": "A", "position": "1st"}]},
+        {"course": "Lingfield", "date": "yesterday",
+         "title": "7 15:20 - Handicap",
+         "runners": [{"name": "B", "position": "2nd"}]},
+    ]
+    _snap(tmp_path, monkeypatch, date.today(), rows)
+
+    tracker = ResultTracker()
+    iso_rows = tracker._monitor_cached_results("huntingdon", day.isoformat())
+    assert [r["title"] for r in iso_rows] == ["2\n13:50 - Handicap Hurdle"]
+    # the legacy label row still resolves through the snapshot calendar
+    assert [r["title"] for r in tracker._monitor_cached_results("lingfield", day.isoformat())] == [
+        "7 15:20 - Handicap"
+    ]
+    # an ISO stamp is an absolute day: it must not answer for today
+    assert tracker._monitor_cached_results("huntingdon", date.today().isoformat()) == []
+
+
 def test_monitor_cache_rejects_unparsable_timestamp(tmp_path, monkeypatch):
     import core_agent.config.paths as paths
     snap = tmp_path / "atr_results_snapshot.json"

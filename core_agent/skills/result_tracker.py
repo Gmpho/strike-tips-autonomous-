@@ -928,11 +928,18 @@ class ResultTracker:
         Fastly-solved ATR fetch). Reusing it means zero contention with the
         headless-Chromium throttle slot and zero CF challenge risk.
 
-        The file holds ATR's "today/yesterday" labels, which shift meaning
-        across midnight, so the labels are resolved against the SNAPSHOT'S OWN
-        day (its ``timestamp``), not against today. Requiring a snapshot from
+        The file may hold ATR's "today/yesterday" labels, which shift meaning
+        across midnight, so a label is resolved against the SNAPSHOT'S OWN day
+        (its ``timestamp``), not against today. Requiring a snapshot from
         today discarded real data for 48h while ATR was blocked (Oct-2026: 492
         results sat on disk unused, so every exotic recorded "no_results").
+
+        Since Nov-2026 the monitor rewrites those labels to absolute ISO days
+        on write, so BOTH shapes are accepted: an ISO stamp is compared as-is
+        and a legacy label still resolves through the snapshot calendar.
+        A label-only gate silently dropped every record once the writer moved
+        to ISO days (Nov-2026: ten UK/IRE paper singles sat PENDING forever
+        while the league picks — which read ISO directly — settled fine).
         Never raises; [] on any miss.
         """
         try:
@@ -956,7 +963,12 @@ class ResultTracker:
             for race in blob.get("results") or []:
                 if not isinstance(race, dict):
                     continue
-                if cal.get(str(race.get("date") or "").lower()) != iso_date:
+                raw_day = str(race.get("date") or "").strip()
+                if re.match(r"^\d{4}-\d{2}-\d{2}", raw_day):
+                    day_iso = raw_day[:10]
+                else:
+                    day_iso = cal.get(raw_day.lower())
+                if day_iso != iso_date:
                     continue
                 if str(track or "").lower() not in str(race.get("course") or "").lower():
                     continue
