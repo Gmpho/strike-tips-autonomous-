@@ -21,11 +21,30 @@ configure_logging()
 
 logger = logging.getLogger("modal-app")
 
-image = modal.Image.from_dockerfile("Dockerfile")
+image = modal.Image.from_dockerfile("Dockerfile").env({
+    # The ATR browser tier keeps its profile off the data volume so a browser
+    # run can never block that volume's reload.
+    "ATR_BROWSER_PROFILE": "/app/browser/profile",
+})
 
 app = modal.App("strike-tips-racing")
 
 data_volume = modal.Volume.from_name("strike-tips-data", create_if_missing=True)
+
+# The headless browser's profile lives on its OWN volume (Nov-2026).
+# Modal refuses to reload a volume while ANY file in it is open, and
+# Chromium keeps the profile's files open for the whole fetch — so a
+# browser run blocked the DATA volume's reload, and prod then served a
+# stale snapshot (plus a wall of log spam: the failure message carries
+# Chromium's whole command line). The profile still persists across
+# containers here, which is what keeps the solved Fastly challenge cookie
+# alive between the 5-min cron cycles.
+browser_volume = modal.Volume.from_name("strike-tips-browser", create_if_missing=True)
+BROWSER_PROFILE_DIR = "/app/browser/profile"
+
+# Every function that mounts the data volume also mounts the browser volume,
+# so the ATR browser tier always writes its profile outside the data volume.
+VOLUMES = {"/app/data": data_volume, "/app/browser": browser_volume}
 
 secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name("strike-tips-api-key"), modal.Secret.from_name("strike-tips-search"), modal.Secret.from_name("supabase-strike-tips")]
 
@@ -34,7 +53,7 @@ secrets = [modal.Secret.from_name("strike-tips-secrets"), modal.Secret.from_name
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=256,
     timeout=3600,
     env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
@@ -477,7 +496,7 @@ def register_webhook():
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=1024,
     timeout=1800,
     max_containers=1,
@@ -502,7 +521,7 @@ def daily_scan():
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=1024,
     timeout=1800,
     max_containers=1,
@@ -537,7 +556,7 @@ def value_scan():
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=512,
     timeout=300,
     max_containers=1,
@@ -562,7 +581,7 @@ def reconcile_ledger():
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=1024,
     timeout=1800,
     max_containers=1,
@@ -637,7 +656,7 @@ def daily_spend_report():
 @app.function(
     image=image,
     secrets=secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=1024,
     timeout=1800,
     max_containers=1,
@@ -687,13 +706,16 @@ async def run_scan(chat_id: Optional[int] = None):
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
-    volumes={"/app/data": data_volume},
+    volumes=VOLUMES,
     memory=1024,
     timeout=900,
     max_containers=1,
     scaledown_window=60,
     schedule=modal.Cron("*/5 * * * *", timezone="Africa/Johannesburg"),
-    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run")},
+    env={"OLLAMA_HOST": os.getenv("OLLAMA_HOST", "https://gmpho--strike-tips-ollama-cloud-ollama.modal.run"),
+         # The ATR browser tier keeps its profile off the data volume so a
+         # browser run can never block that volume's reload.
+         "ATR_BROWSER_PROFILE": BROWSER_PROFILE_DIR},
 )
 async def run_odds_monitor():
     """Scheduled odds sync — one cycle every 5 min (05:00-23:00 SAST effective)."""

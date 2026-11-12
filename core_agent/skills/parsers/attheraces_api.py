@@ -60,7 +60,19 @@ except ImportError:
         def css(self, *args, **kwargs):
             return []
 
-BROWSER_PROFILE = "/app/data/browser_profile"
+# Where the headless browser keeps its profile.
+#
+# On Modal this MUST NOT live on the data volume (Nov-2026): Modal refuses to
+# reload a volume while any file in it is open, and Chromium holds the
+# profile open for the whole fetch — so a browser run blocked the data
+# volume's reload and prod served a stale snapshot (with a wall of log spam:
+# the failure message carries Chromium's whole command line). The profile
+# still has to PERSIST between the 5-min cron cycles, because the solved
+# Fastly challenge cookie lives in it — hence its own volume.
+#
+# Docker keeps the host bind-mount at the old path (docker-compose.yml), and
+# the default below preserves that.
+BROWSER_PROFILE = os.environ.get("ATR_BROWSER_PROFILE") or "/app/data/browser_profile"
 
 logger = logging.getLogger("at-the-races")
 
