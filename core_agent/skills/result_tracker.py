@@ -34,6 +34,17 @@ _NON_NAME_WORDS = frozenset({
     "south", "africa", "result", "results",
 })
 
+# Prose words that open a LOCATION, not a horse name. `_extract_race_winner`
+# matches "1st <words>" in scraped text, so a line like "…finishes 1st at
+# Belmont Stakes" captured the phrase "at Belmont Stakes" as if it were a
+# winner (Nov-2026: that string — from a 2022 US reprint — settled Vaal R5
+# LOST six minutes after the tip, four hours before the off). Rejecting the
+# capture is the safe direction: the worst case is a bet that stays PENDING.
+_LEADING_PROSE_WORDS = frozenset({
+    "at", "in", "on", "from", "by", "for", "with", "of", "to", "the",
+    "a", "an", "and", "but", "after", "before", "behind", "ahead",
+})
+
 # Grace period after scheduled off-time before a race counts as runnable for
 # settlement (results need time to publish).
 OFF_TIME_GRACE_MINUTES = 15
@@ -897,9 +908,22 @@ class ResultTracker:
         return page
 
     async def _raceform_results(self, track: str, iso_date: str) -> List[Dict]:
-        """ATR-shaped results for an exact race day from the Raceform archive."""
+        """ATR-shaped results for an exact race day from the Raceform archive.
+
+        Refuses a page whose served racedate isn't the requested day: the
+        archive silently falls back to the nearest meeting, so trusting the
+        URL alone files another day's card under this track (``_raceform_dividend``
+        has always checked; this path did not).
+        """
         page = await self._raceform_page(track, iso_date)
         if not page:
+            return []
+        served = _raceform_page_date(page)
+        if served and served != iso_date:
+            logger.info(
+                "[RACEFORM] %s: archive served %s, wanted %s — refusing page",
+                track, served, iso_date,
+            )
             return []
         races = _parse_raceform_results(page, track, iso_date)
         logger.info("[RACEFORM] %s %s: %d races", track, iso_date, len(races))
@@ -1322,8 +1346,13 @@ class ResultTracker:
                     # Over-rejection only leaves a bet PENDING (safe);
                     # under-rejection fabricates LOST results (harmful).
                     words = set(w.lower().split())
-                    if not words & _NON_NAME_WORDS:
-                        return w
+                    if words & _NON_NAME_WORDS:
+                        continue
+                    # A capture that OPENS with a preposition/article is a
+                    # place, not a name ("1st at Belmont Stakes").
+                    if w.lower().split()[0] in _LEADING_PROSE_WORDS:
+                        continue
+                    return w
         return None
 
     @staticmethod
@@ -1336,7 +1365,9 @@ class ResultTracker:
         when the stamped meeting date matches the bet date — otherwise the
         market belongs to a different edition of the race and its time says
         nothing about the bet. Falls back to scan/snapshot display times.
-        Never raises — unknown means "no gate", not "no settle".
+        Never raises. ``None`` means unknown: the CALLER decides what that
+        costs, and since Nov-2026 it fails closed for races dated today or
+        later (an empty snapshot used to remove the pre-race gate entirely).
         """
         try:
             from core_agent.config.paths import DATA_DIR as _default_dir
@@ -2081,7 +2112,29 @@ class ResultTracker:
                 )
             except Exception:
                 off = None
-            if off is not None:
+            if off is None:
+                # Fail CLOSED when the race is today or still to come. This
+                # used to be "unknown off-time = no gate", so one empty
+                # snapshot window (Nov-2026: Betway 403s blanked the card
+                # between 05:00 and 08:00 UTC) removed the only thing standing
+                # between a live card and a fabricated result. If we cannot
+                # say when a race starts, we cannot say it has finished.
+                #
+                # Only an ISO-dated bet on/after today is gated: an older bet
+                # has plainly run, and an unparseable date keeps the old
+                # fail-open behaviour (see test_unparseable_date_fails_open).
+                try:
+                    _bd = date.fromisoformat(str(getattr(bet, "date", "") or "")[:10])
+                except (ValueError, TypeError):
+                    _bd = None
+                if _bd is not None and _bd >= date.today():
+                    logger.info(
+                        "%s Off-time unknown for %s @ %s R%s (dated %s) — "
+                        "cannot settle yet, staying PENDING",
+                        _tag(), bet.horse, bet.track, bet.race_number, _bd,
+                    )
+                    continue
+            else:
                 if off.tzinfo is None:
                     off = off.replace(tzinfo=_SAST)
                 if datetime.now(_SAST) < off + timedelta(minutes=OFF_TIME_GRACE_MINUTES):
@@ -2198,7 +2251,24 @@ class ResultTracker:
                         notes = f"Auto-settled (WINNER confirmed, confidence={confidence:.0%})"
                         _log_settled_winner(bet, winner)
                     else:
-                        # 2. Check if a DIFFERENT winner was confirmed for this race
+                        # 2. A DIFFERENT SPELLING of our own horse is still a
+                        # win ("BE THE ONE" vs "Be The One"). Anything else in
+                        # scraped text is NOT evidence of a loss.
+                        #
+                        # Free text may prove a WIN; it may never prove a LOSS
+                        # (Nov-2026). `_search_result` returns whatever DDGS
+                        # hands back — a soup of unrelated snippets. For Vaal
+                        # R5 it returned a 2022 US reprint ending "Mo Donegal
+                        # finishes 1st at Belmont Stakes"; the old code took
+                        # that as "the winner was someone else" and settled the
+                        # ticket LOST six minutes after the tip, four hours
+                        # before the off. The text never mentioned South Africa
+                        # — it matched "vaal" only through restaurant listings
+                        # ("Vaal Mall", "Feathers Guesthouse").
+                        #
+                        # A LOST verdict now requires structured, date-scoped
+                        # proof (monitor cache / Raceform archive / ATR), which
+                        # `_structured_placing` above already provides.
                         confirmed_winner = self._extract_race_winner(result_text)
                         if confirmed_winner:
                             match_score = self._fuzzy_match(confirmed_winner, bet.horse)
@@ -2208,10 +2278,12 @@ class ResultTracker:
                                 notes = f"Auto-settled (WINNER: {confirmed_winner}, confidence={match_score:.0%})"
                                 _log_settled_winner(bet, confirmed_winner)
                             else:
-                                won = False
-                                settle_needed = True
-                                notes = f"Auto-settled (LOST - 1st was {confirmed_winner})"
-                                _log_settled_winner(bet, confirmed_winner)
+                                logger.info(
+                                    "%s Unconfirmed winner %r for %s @ %s R%s — "
+                                    "free text cannot prove a loss, staying PENDING",
+                                    _tag(), confirmed_winner, bet.horse,
+                                    bet.track, bet.race_number,
+                                )
 
             if settle_needed:
                 settled_ok = False

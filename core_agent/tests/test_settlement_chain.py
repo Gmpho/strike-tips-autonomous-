@@ -5,7 +5,7 @@ bets stuck PENDING forever, bankroll never moving, analytics empty.
 """
 import asyncio
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,8 +16,8 @@ from core_agent.skills.result_tracker import (
     atr_date_label,
 )
 
-# Real implementation handle: the autouse wall-clock fixture below mocks
-# _race_off_datetime to None, so gate-specific tests rebind this.
+# Real implementation handle: the autouse wall-clock fixture below stubs
+# _race_off_datetime to a past time, so gate-specific tests rebind this.
 _REAL_RACE_OFF_DATETIME = ResultTracker._race_off_datetime
 
 
@@ -54,9 +54,15 @@ def stub_brain_module():
 def _no_wallclock_offtime_gate():
     """Settlement-behavior tests must not depend on wall-clock time or the
     repo's data/market_snapshot_latest.json (Sep-2026: a same-day snapshot
-    file started gating noon tests as 'race not run yet'). Gate-specific
-    tests below re-patch _race_off_datetime explicitly."""
-    with patch.object(ResultTracker, "_race_off_datetime", return_value=None):
+    file started gating noon tests as 'race not run yet').
+
+    The stub returns a time long in the PAST rather than ``None``: since
+    Nov-2026 an unknown off-time fails CLOSED for bets dated today, so
+    ``None`` would stop every settlement test from ever reaching the gate
+    it is meant to test. Gate-specific tests below re-patch explicitly.
+    """
+    past = datetime.now(timezone.utc) - timedelta(hours=6)
+    with patch.object(ResultTracker, "_race_off_datetime", return_value=past):
         yield
 
 
@@ -155,11 +161,138 @@ def test_single_bet_settles_win_and_loss(stub_brain_module):
     gov.settle_bet.assert_called_once()
     assert gov.settle_bet.call_args[1]["won"] is True
 
-    gov.reset_mock()
-    gov.get_open_bets.return_value = [_bet(horse="Silver Storm")]
-    settled = asyncio.run(go("Winner: Night Fever (1st) in race 4 at Vaal"))
+
+def test_free_text_can_never_prove_a_loss(stub_brain_module):
+    """Nov-2026: a different name in scraped text is NOT a loss.
+
+    ``_search_result`` returns whatever DDGS hands back. For Vaal R5 it
+    returned a 2022 US reprint ending "Mo Donegal finishes 1st at Belmont
+    Stakes"; the old code read that as "the winner was someone else" and
+    settled the ticket LOST six minutes after the tip — four hours before
+    the off, on a card whose first race had not jumped. A LOST now requires
+    structured, date-scoped proof.
+    """
+    gov = MagicMock()
+    gov.get_open_bets.return_value = [_bet(horse="BE THE ONE", race_number=5)]
+    tracker = ResultTracker(bankroll_governor=gov)
+
+    belmont_soup = (
+        "Fairview · Race 4 Won at 15/2 2nd rated 6 Nov Kwagga Blitz "
+        "Compu-Kart Raceway On Vaal Feathers Guesthouse Vaal Mall "
+        "Mo Donegal finishes 1st at Belmont Stakes, another Pletcher win "
+        "Sun, Jun 12th 2022"
+    )
+
+    async def go():
+        with patch.object(
+            ResultTracker, "_search_result", new=AsyncMock(return_value=belmont_soup)
+        ), patch.object(
+            ResultTracker, "_structured_placing", new=AsyncMock(return_value=None)
+        ):
+            return await tracker.check_and_settle_open_bets()
+
+    assert asyncio.run(go()) == []
+    gov.settle_bet.assert_not_called()
+
+
+def test_leading_prose_is_never_a_winner_name():
+    """'1st at Belmont Stakes' must never parse as a horse name."""
+    rt = ResultTracker(bankroll_governor=MagicMock())
+    assert rt._extract_race_winner(
+        "Mo Donegal finishes 1st at Belmont Stakes, another Pletcher win"
+    ) is None
+    # A real name still parses.
+    assert rt._extract_race_winner(
+        "Winner: Silver Storm (1st) in race 4 at Vaal"
+    ) == "Silver Storm"
+
+
+def test_unknown_off_time_fails_closed_for_todays_card(stub_brain_module):
+    """Nov-2026: unknown off-time used to mean 'no gate'.
+
+    One empty snapshot window (Betway 403s blanked the card between 05:00
+    and 08:00 UTC) removed the pre-race gate entirely, which is how a live
+    card could be settled hours before it ran. If we cannot say when a race
+    starts, we cannot say it has finished.
+    """
+    gov = MagicMock()
+    gov.get_open_bets.return_value = [_bet(horse="BE THE ONE", race_number=5)]
+    tracker = ResultTracker(bankroll_governor=gov)
+
+    async def go():
+        with patch.object(
+            ResultTracker, "_race_off_datetime", return_value=None
+        ), patch.object(
+            ResultTracker, "_search_result",
+            new=AsyncMock(return_value="Winner: Some Other Horse (1st)"),
+        ), patch.object(
+            ResultTracker, "_structured_placing", new=AsyncMock(return_value=None)
+        ):
+            return await tracker.check_and_settle_open_bets()
+
+    assert asyncio.run(go()) == []
+    gov.settle_bet.assert_not_called()
+
+
+def test_unknown_off_time_still_settles_a_past_day(stub_brain_module):
+    """The fail-closed rule is today-only: an older bet has plainly run."""
+    gov = MagicMock()
+    old = _bet(horse="Old Runner")
+    old.date = (date.today() - timedelta(days=1)).isoformat()
+    gov.get_open_bets.return_value = [old]
+    tracker = ResultTracker(bankroll_governor=gov)
+
+    async def go():
+        with patch.object(
+            ResultTracker, "_race_off_datetime", return_value=None
+        ), patch.object(
+            ResultTracker, "_structured_placing",
+            new=AsyncMock(return_value=("2nd", "Night Fever")),
+        ):
+            return await tracker.check_and_settle_open_bets()
+
+    settled = asyncio.run(go())
     assert len(settled) == 1 and settled[0]["won"] is False
-    assert gov.settle_bet.call_args[1]["won"] is False
+
+
+def test_raceform_results_refuse_another_days_page():
+    """Raceform answers a missing meeting with the NEAREST one, HTTP 200.
+
+    ``_raceform_dividend`` has always checked the served racedate; the
+    results path did not, so another day's card could be filed under this
+    track and settle bets against the wrong meeting.
+    """
+    rt = ResultTracker(bankroll_governor=MagicMock())
+    with patch.object(
+        ResultTracker, "_raceform_page", new=AsyncMock(return_value="<html/>")
+    ), patch(
+        "core_agent.skills.result_tracker._raceform_page_date",
+        return_value="2026-11-05",
+    ), patch(
+        "core_agent.skills.result_tracker._parse_raceform_results"
+    ) as parse:
+        races = asyncio.run(rt._raceform_results("vaal", "2026-11-12"))
+
+    assert races == []
+    parse.assert_not_called()
+
+
+def test_raceform_results_accept_the_requested_day():
+    """Guard against over-rejection: a matching page must still parse."""
+    rt = ResultTracker(bankroll_governor=MagicMock())
+    parsed = [{"title": "1 12:15 Vaal", "runners": []}]
+    with patch.object(
+        ResultTracker, "_raceform_page", new=AsyncMock(return_value="<html/>")
+    ), patch(
+        "core_agent.skills.result_tracker._raceform_page_date",
+        return_value="2026-11-12",
+    ), patch(
+        "core_agent.skills.result_tracker._parse_raceform_results",
+        return_value=parsed,
+    ):
+        races = asyncio.run(rt._raceform_results("vaal", "2026-11-12"))
+
+    assert races == parsed
 
 
 def test_single_settles_from_structured_without_text_search(stub_brain_module):
