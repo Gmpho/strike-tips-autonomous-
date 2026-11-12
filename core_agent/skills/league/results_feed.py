@@ -187,12 +187,41 @@ def parse_meeting_html(
                 "date": date,
                 "course": course,
                 "race_number": str(race_number),
-                "off_time": off_times.get(str(race_number), ""),
+                    "off_time": off_times.get(str(race_number), ""),
+                "off_time_utc": _off_time_utc(
+                    off_times.get(str(race_number), ""), course, "raceform"),
                 "runners": runners,
                 "source": "raceform",
             })
 
     return races
+
+
+def _off_time_utc(off_time: Any, course: str, source: str) -> str:
+    """The race's off time in UTC ("HH:MM"), or "" when it cannot be stated.
+
+    Raceform publishes South African off times in SAST (UTC+2, no DST);
+    Offtrackbetting derives them from a UTC epoch. A card is matched by
+    instant across feeds, so the frame has to be explicit — a card that
+    cannot state its UTC time keeps the race-number path it always had.
+    """
+    s = str(off_time or "").strip()[:5]
+    if not re.match(r"^\d{1,2}:\d{2}$", s):
+        return ""
+    if source == "raceform":
+        try:
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+
+            local_tz = ZoneInfo("Africa/Johannesburg")
+            if region_of(str(course or "")) != "SA":
+                local_tz = timezone.utc
+            local = datetime.strptime(s, "%H:%M").replace(
+                year=2000, month=1, day=1, tzinfo=local_tz)
+            return local.astimezone(timezone.utc).strftime("%H:%M")
+        except Exception:
+            return ""
+    return s  # Offtrackbetting states UTC already
 
 
 def _off_times_from_html(soup) -> Dict[str, str]:

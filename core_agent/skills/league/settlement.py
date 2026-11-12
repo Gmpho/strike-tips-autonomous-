@@ -10,7 +10,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .scoring import score_pick
 
@@ -142,6 +142,68 @@ def _atr_date(raw: Any, snap_day: Optional[datetime]) -> Optional[str]:
     return None
 
 
+def _utc_hhmm(value: Any) -> str:
+    """An off time as UTC "HH:MM".
+
+    A pick's ``off_iso`` is written in the meeting's own timezone (SAST for SA,
+    UTC for the US meetings, local time for UK/IRE), while ATR's own card
+    titles are always UTC. Everything that has to be compared across feeds is
+    normalised here, so a South African card at 12:15 SAST and an ATR title at
+    10:15 are recognised as the same instant.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if re.match(r"^\d{1,2}:\d{2}$", s):
+        return s[:5]  # already a wall clock; treated as UTC by the caller
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%H:%M")
+
+
+def _atr_title_hhmm(title: Any) -> str:
+    """The off time ATR's own title carries ("3\\n18:30 - Race 3 - ...").
+
+    ATR states card times in UTC for every region it covers (Vaal R1 is
+    "10:15" for the 12:15 SAST race), so the title time is directly
+    comparable with a pick's UTC off time.
+    """
+    m = re.search(r"(\d{1,2}:\d{2})\s*-\s*Race", str(title or ""))
+    return m.group(1) if m else ""
+
+
+def _card_has_horse(card: Optional[Dict[str, Any]], pick: Dict[str, Any]) -> bool:
+    """True when the card lists the picked horse."""
+    if not card:
+        return False
+    for ru in card.get("runners") or []:
+        if names_match(pick.get("runner_name"), ru.get("name")):
+            return True
+    return False
+
+
+def _index_by_time(
+    by_time: Dict[tuple, Dict[str, Any]],
+    date: str,
+    track: str,
+    hhmm: Any,
+    info: Dict[str, Any],
+) -> None:
+    """Index one race's evidence by its UTC off time.
+
+    A card without a resolvable UTC time is simply not indexed by time — it
+    stays reachable through the race-number path, which is all it ever had.
+    """
+    t = str(hhmm or "").strip()[:5]
+    if not (date and track and re.match(r"^\d{1,2}:\d{2}$", t)):
+        return
+    by_time.setdefault((date, track, t), info)
+
+
 def load_winner_details(
     data_dir: str, now_iso: Optional[str] = None
 ) -> Dict[tuple, Dict[str, Any]]:
@@ -160,7 +222,90 @@ def load_winner_details(
     every meeting, so a track+race key would settle the wrong horse. A race we
     have no result for is simply absent — never guessed.
     """
+    idx, _ = _load_winner_evidence(data_dir, now_iso)
+    return idx
+
+
+def load_winner_details_by_time(
+    data_dir: str, now_iso: Optional[str] = None
+) -> Dict[tuple, Dict[str, Any]]:
+    """Map (date, track, "HH:MM" UTC) -> the same evidence, keyed by instant.
+
+    Race numbers are not portable between feeds (Nov-2026: Betway numbered the
+    Horseshoe Indianapolis meeting differently from ATR, so the same 18:30 race
+    was "R4" in the odds feed and "R1" in ATR's card). The off time is the
+    one identifier every feed agrees on, so evidence is also indexed by it.
+
+    Only evidence that states its time in UTC is indexed: confirmed cards
+    carry ``off_time_utc`` (written by the card producers), ATR's titles are
+    already UTC. The dated winner archive states no time and stays on the
+    race-number path.
+    """
+    _, by_time = _load_winner_evidence(data_dir, now_iso)
+    return by_time
+
+
+def load_atr_races_by_time(
+    data_dir: str, now_iso: Optional[str] = None
+) -> Dict[tuple, Dict[str, Any]]:
+    """Map (date, track, "HH:MM" UTC) -> ATR's own race card for that instant.
+
+    ATR's numbering is the one the league's ATR branch reads, so it — and only
+    it — may renumber a pick. Cards from other feeds carry their own
+    numbering and must never rewrite a pick's race number.
+    """
+    out: Dict[tuple, Dict[str, Any]] = {}
+    snap_path = os.path.join(data_dir, "atr_results_snapshot.json")
+    try:
+        with open(snap_path) as f:
+            snap = json.load(f)
+    except Exception:
+        snap = {}
+
+    snap_day = None
+    ts = snap.get("timestamp") if isinstance(snap, dict) else None
+    if ts:
+        try:
+            snap_day = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            snap_day = None
+    if snap_day is None and now_iso:
+        try:
+            snap_day = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+        except Exception:
+            snap_day = None
+
+    if not isinstance(snap, dict):
+        return out
+    for r in snap.get("results") or []:
+        track = _track_key(r.get("course"))
+        race = _atr_race_number(r.get("title"))
+        date = _atr_date(r.get("date"), snap_day)
+        hhmm = _atr_title_hhmm(r.get("title"))
+        if not (track and race and date and hhmm):
+            continue
+        runners = [
+            {
+                "name": str(x.get("name") or "").strip(),
+                "position": str(x.get("position") or "").strip(),
+                "odds_decimal": x.get("odds_decimal"),
+                "non_runner": bool(x.get("non_runner")),
+            }
+            for x in (r.get("runners") or [])
+        ]
+        out[(date, track, hhmm)] = {
+            "race_number": race,
+            "runners": runners,
+        }
+    return out
+
+
+def _load_winner_evidence(
+    data_dir: str, now_iso: Optional[str] = None
+) -> Tuple[Dict[tuple, Dict[str, Any]], Dict[tuple, Dict[str, Any]]]:
+    """The result evidence, indexed by race number AND by off time."""
     idx: Dict[tuple, Dict[str, Any]] = {}
+    by_time: Dict[tuple, Dict[str, Any]] = {}
 
     for row in _read_jsonl(os.path.join(data_dir, "confirmed_results.jsonl")):
         track = _track_key(row.get("course") or row.get("track"))
@@ -192,15 +337,25 @@ def load_winner_details(
             # Refunded / abandoned race: no winner exists and none ever will.
             # Recorded explicitly so settlement can void the pick instead of
             # leaving it pending against a result that cannot arrive.
-            idx[(date, track, race)] = {
+            info = {
                 "winner": None,
                 "void": True,
                 "void_reason": str(row.get("void_reason") or "refunded"),
                 "sp": None,
                 "runners": runners,
+                "race_number": race,
             }
+            idx[(date, track, race)] = info
+            _index_by_time(by_time, date, track, row.get("off_time_utc"), info)
         elif track and race and date and winner:
-            idx[(date, track, race)] = {"winner": winner, "sp": sp, "runners": runners}
+            info = {
+                "winner": winner,
+                "sp": sp,
+                "runners": runners,
+                "race_number": race,
+            }
+            idx[(date, track, race)] = info
+            _index_by_time(by_time, date, track, row.get("off_time_utc"), info)
 
     for row in _read_jsonl(os.path.join(data_dir, "settled_winners.jsonl")):
         track = _track_key(row.get("track"))
@@ -238,8 +393,6 @@ def load_winner_details(
             if not (track and race and date):
                 continue
             key = (date, track, race)
-            if key in idx:
-                continue  # dated archive wins over a rolling snapshot
             winner = None
             sp = None
             runners = []
@@ -257,9 +410,132 @@ def load_winner_details(
                     except Exception:
                         sp = None
             if winner:
-                idx[key] = {"winner": winner, "sp": sp, "runners": runners}
+                info = {
+                    "winner": winner,
+                    "sp": sp,
+                    "runners": runners,
+                    "race_number": race,
+                }
+                # ATR states card times in UTC, so its title time is directly
+                # comparable with a pick's UTC off time.
+                _index_by_time(by_time, date, track, _atr_title_hhmm(r.get("title")), info)
+                if key not in idx:
+                    idx[key] = info  # dated archive wins over a rolling snapshot
 
-    return idx
+    return idx, by_time
+
+
+def _resolve_pick_race(
+    pick: Dict[str, Any],
+    by_number: Dict[tuple, Dict[str, Any]],
+    by_time: Dict[tuple, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """The race evidence a pick must be settled against.
+
+    The stored race number comes from the odds feed, and feeds number US
+    meetings differently from ATR (Nov-2026: the same 18:30 race at Horseshoe
+    Indianapolis was "R4" in the odds feed and "R1" in ATR's card). The off
+    time is the one identifier both agree on, so it decides — but only when
+    the evidence agrees with it:
+
+      * the off-time card holds the picked horse -> that is the race;
+      * the off-time card and the numbered card are the same race -> that one;
+      * the numbers disagree and neither card holds the horse -> the race
+        identity is in dispute, so NO card may settle this pick. It stays
+        PENDING rather than taking a verdict from a race it may not have been
+        placed in (and it expires as unverifiable if the dispute never clears).
+    """
+    date = str(pick.get("date") or "")[:10]
+    track = _track_key(pick.get("course"))
+    race = str(pick.get("race_number") or "").strip()
+    hhmm = _utc_hhmm(pick.get("off_iso"))
+    timed = by_time.get((date, track, hhmm)) if hhmm else None
+    numbered = by_number.get((date, track, race))
+
+    if timed is None:
+        return numbered
+    if _card_has_horse(timed, pick):
+        return timed
+    if numbered is None:
+        return timed
+    if str(timed.get("race_number") or "") == race:
+        return numbered
+    return None  # identity in dispute: no card may settle this pick
+
+
+def repair_misnumbered_picks(
+    data_dir: str,
+    now_iso: Optional[str] = None,
+    picks_filename: str = "league_picks.jsonl",
+) -> Dict[str, int]:
+    """Correct a pick's race number when ATR proves a different race for it.
+
+    Nov-2026: two Horseshoe Indianapolis picks carried the odds feed's race
+    number (R3/R4 for ATR's R1/R2). "Apotheon" won ATR's R1 but was settled a
+    LOSS because the pick said R3, and "Four Star General" (2nd in R2) sat
+    PENDING against a card that could never place it.
+
+    Only ATR may renumber a pick: ATR is the numbering the league's own result
+    branch reads, and a card from another feed carries that feed's numbering.
+    A pick is only renumbered when ATR holds the picked horse for that exact
+    off time — no proof, no change. A pick that already carries a finishing
+    position is left alone: its verdict has spoken.
+    """
+    path = os.path.join(data_dir, picks_filename)
+    rows = _read_jsonl(path)
+    if not rows:
+        return {"checked": 0, "repaired": 0}
+
+    atr_by_time = load_atr_races_by_time(data_dir, now_iso)
+    checked = 0
+    repaired = 0
+    changed = False
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        if p.get("finish_position") is not None:
+            continue  # a settled verdict stands
+        date = str(p.get("date") or "")[:10]
+        track = _track_key(p.get("course"))
+        race = str(p.get("race_number") or "").strip()
+        hhmm = _utc_hhmm(p.get("off_iso"))
+        entry = atr_by_time.get((date, track, hhmm)) if hhmm else None
+        if not entry:
+            continue
+        true_race = str(entry.get("race_number") or "").strip()
+        if not true_race or true_race == race:
+            continue
+        checked += 1
+        if not _card_has_horse(entry, p):
+            continue  # ATR does not place our horse there: no proof, no change
+        p["race_number"] = int(true_race) if true_race.isdigit() else true_race
+        p["race_number_corrected"] = {
+            "from": race,
+            "to": p["race_number"],
+            "at": now_iso or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reason": "the odds feed numbered this meeting differently from ATR",
+        }
+        repaired += 1
+        changed = True
+        logger.info(
+            "League race number repaired: %s @ %s R%s -> R%s (ATR off time %s)",
+            p.get("runner_name"), p.get("course"), race, p["race_number"], hhmm,
+        )
+
+    if changed:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    if checked:
+        logger.info(
+            "League race-number repair: %d pick(s) checked, %d repaired",
+            checked, repaired,
+        )
+    return {"checked": checked, "repaired": repaired}
 
 
 def rescore_settled_picks(
@@ -285,6 +561,7 @@ def rescore_settled_picks(
     if not rows:
         return {"checked": 0, "upgraded": 0}
     winners = load_winner_details(data_dir, now_iso)
+    by_time = load_winner_details_by_time(data_dir, now_iso)
 
     checked = 0
     upgraded = 0
@@ -297,12 +574,7 @@ def rescore_settled_picks(
         if p.get("finish_position") is not None:
             continue  # settled with a real position: that verdict stands
         checked += 1
-        key = (
-            str(p.get("date") or "")[:10],
-            str(p.get("course") or "").strip().lower(),
-            str(p.get("race_number") or "").strip(),
-        )
-        info = winners.get(key)
+        info = _resolve_pick_race(p, winners, by_time)
         if not info:
             continue
         runners = info.get("runners") or []
@@ -379,8 +651,21 @@ def settle_open_picks(
     path = os.path.join(data_dir, picks_filename)
     rows = _read_jsonl(path)
     winners = load_winner_details(data_dir, now_iso)
+    by_time = load_winner_details_by_time(data_dir, now_iso)
     if not rows:
         return {"settled": 0, "won": 0, "void": 0, "expired": 0, "pending": 0}
+
+    # A pick can carry the odds feed's race number, which is not the numbering
+    # ATR uses (Nov-2026: the same race was R4 in the feed and R1 in ATR's
+    # card). Repair it before anything is read against it, so no pick is
+    # settled against a race it was not placed in.
+    try:
+        repair_misnumbered_picks(data_dir, now_iso, picks_filename)
+        rows = _read_jsonl(path)
+        winners = load_winner_details(data_dir, now_iso)
+        by_time = load_winner_details_by_time(data_dir, now_iso)
+    except Exception as exc:
+        logger.warning("League race-number repair skipped: %s", exc)
 
     # Correct past verdicts that rested on incomplete evidence before
     # settling anything new.
@@ -388,6 +673,7 @@ def settle_open_picks(
         rescore_settled_picks(data_dir, now_iso, picks_filename)
         rows = _read_jsonl(path)
         winners = load_winner_details(data_dir, now_iso)
+        by_time = load_winner_details_by_time(data_dir, now_iso)
     except Exception as exc:
         logger.warning("League re-score skipped: %s", exc)
 
@@ -417,12 +703,7 @@ def settle_open_picks(
         if p.get("settled"):
             continue
         try:
-            key = (
-                str(p.get("date") or "")[:10],
-                str(p.get("course") or "").strip().lower(),
-                str(p.get("race_number") or "").strip(),
-            )
-            info = winners.get(key)
+            info = _resolve_pick_race(p, winners, by_time)
             if info and info.get("void"):
                 # Refunded or abandoned race: the stake comes back, nothing is
                 # won, and the pick is excluded from the strike rate. Bankroll

@@ -457,6 +457,7 @@ def _parse_meeting(payload: Dict[str, Any], day: str) -> List[Dict[str, Any]]:
             "course": "",
             "race_number": str(int(race_no)),
             "off_time": off_time,
+            "off_time_utc": off_time,
             "runners": runners,
             "source": "otb",
         })
