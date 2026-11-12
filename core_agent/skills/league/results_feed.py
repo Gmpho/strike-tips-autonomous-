@@ -32,7 +32,7 @@ from datetime import date as _date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from .regions import region_of
-from .settlement import _read_jsonl, _track_key
+from .settlement import _card_proves_top4, _read_jsonl, _track_key
 
 logger = logging.getLogger("league-results-feed")
 
@@ -514,14 +514,21 @@ def pending_meetings(
     return sorted(out)
 
 
-def _atr_cards_by_key() -> set:
-    """(date, course, race) keys the ATR snapshot already holds.
+def _atr_cards_by_key() -> Dict[tuple, List[Dict[str, Any]]]:
+    """(date, course, race) -> the runners ATR published for it.
 
     ATR is the primary source; Offtrackbetting is only asked for the races
-    ATR is quiet about (Nov-2026: Huntingdon R6 and Lingfield R7-R8 were
+    ATR cannot answer for (Nov-2026: Huntingdon R6 and Lingfield R7-R8 were
     never published, and no Hong Kong race had EVER been captured).
+
+    Holding a race is NOT the same as answering it. ATR's /results listing
+    truncates every race to the top 1-3 (see ``attheraces_api``), and the
+    per-race full-card enrichment fails often (Nov-2026: 196 of 255 cached
+    pages failed). A three-runner card out of twelve settles nothing —
+    ``_card_proves_top4`` needs 1st-4th or the whole field — so the caller
+    must inspect the runners, not just the key.
     """
-    out = set()
+    out: Dict[tuple, List[Dict[str, Any]]] = {}
     try:
         from core_agent.config.paths import ATR_RESULTS_PATH
 
@@ -538,7 +545,11 @@ def _atr_cards_by_key() -> set:
         title = str(race.get("title") or "")
         m = re.match(r"\s*(\d+)", title)
         if day and course and m:
-            out.add((day, course, m.group(1)))
+            key = (day, course, m.group(1))
+            runners = race.get("runners") or []
+            # Duplicate writes for one race: keep the richest card.
+            if len(runners) > len(out.get(key) or []):
+                out[key] = list(runners)
     return out
 
 
@@ -549,9 +560,16 @@ def pending_meetings_otb(
     """(date, course) pairs whose pending picks ATR cannot answer for.
 
     Per RACE, like ``pending_meetings``: a meeting is needed when any of its
-    pending races is missing from the ATR snapshot. SA meetings are handled
-    by Raceform (the official cards) and are skipped here unless Raceform
-    failed to deliver them.
+    pending races is missing from the ATR snapshot, OR when ATR holds the race
+    but its card cannot prove where the top 4 ended. The second half is the
+    Nov-2026 USA gap: ATR lists every USA race with only 1-3 runners, so a
+    pick that finished 4th — a scoring finish — was indistinguishable from one
+    that finished last and sat PENDING forever, while Offtrackbetting held the
+    full field (Finger Lakes 7/6/6/7, Horseshoe Indianapolis 7/6/14). Holding
+    a truncated card must not silence the fallback.
+
+    SA meetings are handled by Raceform (the official cards) and are skipped
+    here unless Raceform failed to deliver them.
     """
     today = today or datetime.now().date()
     floor = today - timedelta(days=days)
@@ -576,8 +594,15 @@ def pending_meetings_otb(
         key = (day, _track_key(course), race)
         if key in have:
             continue  # this race already has a confirmed card
-        if key in atr:
-            continue  # ATR already holds it — not quiet
+        # ATR answering a race is not the same as ATR settling it. Only skip
+        # the fallback when the card in hand can actually place the pick: the
+        # /results listing truncates to the top 1-3, and a 3-of-12 card proves
+        # neither 1st-4th nor the full field (Nov-2026: every USA pick outside
+        # the top 3 stayed PENDING while OTB had the whole card).
+        if key in atr and _card_proves_top4(
+            atr[key], int(row.get("field_size") or 0)
+        ):
+            continue  # ATR holds a card good enough to settle this race
         last = markers.get(f"{day}|{_track_key(course)}")
         if last and (now - last) < cooldown_secs:
             continue  # fetched recently; wait before asking again

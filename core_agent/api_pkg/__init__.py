@@ -61,7 +61,12 @@ _rate_store: dict = {}
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path in ("/", "/docs", "/openapi.json", "/telegram-webhook"):
+    # Liveness probes are exempt. They are the HUD's canary: a 429 here makes
+    # the client declare the backend OFFLINE while the API is perfectly
+    # healthy (Nov-2026: several open tabs polling /api/system/health at the
+    # same second crossed the per-path ceiling and the pill flickered red).
+    if path in ("/", "/docs", "/openapi.json", "/telegram-webhook",
+                "/api/system/health", "/v1/health"):
         return await call_next(request)
 
     # Long-lived containers see a frozen volume view; pull the latest

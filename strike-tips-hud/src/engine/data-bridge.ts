@@ -300,6 +300,15 @@ export class DataBridge {
   }
 
   private async runFast() {
+    // A hidden tab keeps polling on the browser's throttled timer, which made
+    // every forgotten tab its own 6-req/min client (Nov-2026: 39 polls/min per
+    // path across a handful of open tabs, tripping the API limiter). Nothing
+    // here is needed off-screen: `refreshNow` paints the moment the tab is
+    // visible again, so skipping the fetch costs no freshness at all.
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.scheduleFast();
+      return;
+    }
     const start = performance.now();
     try {
       // Paint the balance FIRST from the light legs, then do the heavy
@@ -350,6 +359,12 @@ export class DataBridge {
   }
 
   private async runSlow() {
+    // Same rationale as runFast: a hidden tab has nobody reading the news
+    // feed or the Live-Ops vitals, and `refreshNow` re-hydrates on return.
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.scheduleSlow();
+      return;
+    }
     try {
       // Decoupled feeds (Sep-2026): telemetry + news do NOT change the race
       // snapshot hash, so gating them on syncSnapshot left LiveOps/news

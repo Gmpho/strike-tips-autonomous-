@@ -153,7 +153,12 @@ def test_pending_meetings_otb_covers_races_atr_never_published(tmp_path, monkeyp
     import core_agent.skills.league.results_feed as rf
 
     monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: {
-        ("2026-11-06", "greyville", "1"),   # ATR has this one
+        # ATR has this one, with a card good enough to settle the pick:
+        # 1st-4th present and the whole field covered.
+        ("2026-11-06", "greyville", "1"): [
+            {"name": "A", "position": "1st"}, {"name": "B", "position": "2nd"},
+            {"name": "C", "position": "3rd"}, {"name": "D", "position": "4th"},
+        ] + [{"name": f"X{i}", "position": ""} for i in range(13)],
     })
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
         _pick(date="2026-11-06", course="Greyville", race_number=1),
@@ -164,13 +169,61 @@ def test_pending_meetings_otb_covers_races_atr_never_published(tmp_path, monkeyp
     got = pending_meetings_otb(str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 7))
     assert ("2026-11-06", "Happy Valley") in got
     assert ("2026-11-06", "Ayr") in got
-    assert ("2026-11-06", "Greyville") not in got  # ATR already holds it
+    assert ("2026-11-06", "Greyville") not in got  # ATR settles this one
+
+
+def test_pending_meetings_otb_asks_for_a_truncated_atr_card(tmp_path, monkeypatch):
+    """ATR holding a race is not ATR answering it (Nov-2026, the USA gap).
+
+    ATR's /results listing truncates every race to the top 1-3, so a
+    three-runner card out of twelve proves neither 1st-4th nor the full
+    field and settles nothing. Skipping the fallback on the mere presence of
+    the key left every USA pick outside the top 3 PENDING for ever while
+    Offtrackbetting held the whole card (Horseshoe Indianapolis 7/6/14).
+    """
+    import core_agent.skills.league.results_feed as rf
+
+    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: {
+        ("2026-11-11", rf._track_key("Churchill Downs (USA)"), "5"): [
+            {"name": "A", "position": "1st"},
+            {"name": "B", "position": "2nd"},
+            {"name": "C", "position": "3rd"},
+        ],
+    })
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(race_id="us1", date="2026-11-11",
+              course="Churchill Downs (USA)", race_number=5, field_size=12),
+    ])
+
+    got = pending_meetings_otb(
+        str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 12)
+    )
+    assert ("2026-11-11", "Churchill Downs (USA)") in got
+
+
+def test_pending_meetings_otb_settles_on_a_complete_atr_card(tmp_path, monkeypatch):
+    """Guard against over-fetching: a full-field card must not call OTB."""
+    import core_agent.skills.league.results_feed as rf
+
+    full = [{"name": f"H{i}", "position": f"{i}th" if i <= 4 else ""} for i in range(1, 8)]
+    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: {
+        ("2026-11-11", rf._track_key("Horseshoe Indianapolis (USA)"), "4"): full,
+    })
+    _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
+        _pick(race_id="us2", date="2026-11-11",
+              course="Horseshoe Indianapolis (USA)", race_number=4, field_size=7),
+    ])
+
+    got = pending_meetings_otb(
+        str(tmp_path), days=3, today=__import__("datetime").date(2026, 11, 12)
+    )
+    assert got == []
 
 
 def test_pending_meetings_otb_skips_races_with_a_confirmed_card(tmp_path, monkeypatch):
     import core_agent.skills.league.results_feed as rf
 
-    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: set())
+    monkeypatch.setattr(rf, "_atr_cards_by_key", lambda: {})
     races = parse_meeting_html(_MEETING_HTML, "Greyville", "2026-11-06")
     append_confirmed_results(str(tmp_path), races)
     _write_jsonl(os.path.join(tmp_path, "league_picks.jsonl"), [
