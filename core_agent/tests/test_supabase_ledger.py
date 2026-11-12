@@ -238,8 +238,10 @@ def test_quiet_hours(hour, quiet):
 
 @pytest.mark.parametrize("snap,expected", [
     (None, False),
-    ({}, False),
-    ({"events": {}}, False),
+    # An empty payload has no evidence of a dark day, so the gate runs the
+    # monitor (Nov-2026: an unknown age used to skip and freeze the board).
+    ({}, True),
+    ({"events": {}}, True),
     ({"events": {"a": {}}}, True),
     ("garbage", False),
 ])

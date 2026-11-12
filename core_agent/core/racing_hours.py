@@ -15,7 +15,14 @@ QUIET_END_HOUR = 5     # 05:00 SAST: monitors resume
 # A zero-race snapshot older than this is an upstream hiccup, not a dark day:
 # fail OPEN so the only writer that can refill it actually runs. Kept well
 # above the 5-minute cron cadence so a genuine dark day still skips.
-DARK_DAY_MAX_AGE_SECS = 6 * 3600
+#
+# Nov-2026: 6h was too long. Quiet hours are 23:00-05:00 SAST (6h), so the
+# last card of the night was still "recent" when monitors resumed — the gate
+# honoured a snapshot whose every race had already run, and the dashboard sat
+# empty from 01:00 until 07:00 SAST. A dark day needs no such grace: the
+# monitor writes a fresh empty card on its first cycle and stands down again.
+# 90 minutes is ~a sixth of a racing day and still 18x the cron cadence.
+DARK_DAY_MAX_AGE_SECS = 90 * 60
 
 
 def in_quiet_hours(hour: int) -> bool:
@@ -85,7 +92,11 @@ def has_meetings_today(
       ``tests/test_dark_day_gate.py``);
     * the last cycle recorded an upstream failure (``fetch_ok`` False) — an
       empty card from a 403/timeout is an outage, not a dark day, and skipping
-      it would hide the outage until the card aged out.
+      it would hide the outage until the card aged out;
+    * the card's age cannot be determined at all (no timestamp, no cache
+      writer time). Nov-2026: an unknown age used to skip, which turned a
+      bookkeeping gap into the same multi-hour freeze — no evidence of a dark
+      day is not evidence of one.
 
     Skip (return False) only with positive evidence: a fresh, successfully
     fetched, genuinely empty card.
@@ -103,6 +114,8 @@ def has_meetings_today(
     limit = DARK_DAY_MAX_AGE_SECS if max_age_secs is None else max_age_secs
     age = _snapshot_age_secs(snapshot, time.time())
     if age is None:
-        # Missing/undecodable timestamp: keep the historical behaviour.
-        return False
+        # Unknown age: run the cycle. The monitor is the only writer that can
+        # prove a dark day, and one wasted cycle is far cheaper than a frozen
+        # board (Nov-2026: the dashboard sat empty from 01:00 to 07:00 SAST).
+        return True
     return age > limit

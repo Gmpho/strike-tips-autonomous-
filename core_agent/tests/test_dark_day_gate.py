@@ -57,10 +57,26 @@ def test_events_present_always_runs():
     assert has_meetings_today(snap) is True
 
 
-def test_missing_or_bad_timestamp_keeps_old_behaviour():
-    assert has_meetings_today({"events": {}}) is False
-    assert has_meetings_today({"events": {}, "timestamp": "not-a-date"}) is False
-    assert has_meetings_today({"events": {}, "timestamp": None}) is False
+def test_missing_or_bad_timestamp_fails_open():
+    """Unknown age is not evidence of a dark day (Nov-2026 freeze).
+
+    This used to skip. A snapshot whose age could not be read froze the board
+    exactly the way a stale one did, so the gate now runs the only writer.
+    """
+    assert has_meetings_today({"events": {}}) is True
+    assert has_meetings_today({"events": {}, "timestamp": "not-a-date"}) is True
+    assert has_meetings_today({"events": {}, "timestamp": None}) is True
+
+
+def test_empty_card_left_over_from_quiet_hours_fails_open():
+    """Nov-2026: quiet hours are 23:00-05:00 SAST, so the last card of the
+    night was still under 6h old when monitors resumed. The gate honoured a
+    snapshot whose every race had already run and the board stayed empty from
+    01:00 to 07:00 SAST. Anything older than one dark-day window must run."""
+    assert DARK_DAY_MAX_AGE_SECS <= 2 * 3600, "must be well under the 6h quiet window"
+    # Last US race ran at 23:43Z; monitors resumed at 03:00Z (05:00 SAST).
+    snap = {"events": {}, "count": 0, "timestamp": _stamp(6 * 3600 + 12 * 60)}
+    assert has_meetings_today(snap) is True
 
 
 def test_age_guard_is_tunable():

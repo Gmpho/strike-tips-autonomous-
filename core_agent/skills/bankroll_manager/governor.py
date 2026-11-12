@@ -10,7 +10,7 @@ import os
 import uuid
 import fcntl
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields
 
 from core_agent.config.settings import BankrollConfig
 from datetime import date, datetime
@@ -100,6 +100,26 @@ class BetRecord:
     # lose but place are the backbone of future place-pool analysis —
     # a LOST ticket that ran 2nd is signal, not noise.
     placed: Optional[str] = None
+    # The meeting's own day, when it differs from the day the ticket was
+    # written (Nov-2026: a Thursday scan placed tickets for Friday/Saturday
+    # meetings so the expiry clock and the settlement card could follow the
+    # right day). Optional because most tickets are placed on their own day.
+    meeting_date: Optional[str] = None
+
+
+# Unknown keys must never cost the whole ledger. Nov-2026: one extra field
+# written by a maintenance script made ``BetRecord(**row)`` raise, the loader
+# refused all 2,243 records, and ``_save_state`` then refused every write —
+# bets stopped being recorded and nothing could settle for a day. Drop
+# unknown keys on load and keep the good ones.
+_BET_FIELDS = frozenset(f.name for f in fields(BetRecord))
+
+
+def _bet_from_row(row: Dict) -> "BetRecord":
+    """Build a BetRecord from a stored row, ignoring fields we don't know."""
+    if not isinstance(row, dict):
+        raise TypeError(f"bet row must be a dict, got {type(row).__name__}")
+    return BetRecord(**{k: v for k, v in row.items() if k in _BET_FIELDS})
 
 
 @dataclass
@@ -290,7 +310,7 @@ class BankrollGovernor:
             try:
                 with open(self._bets_file) as f:
                     raw_bets = json.load(f)
-                self._bets = [BetRecord(**b) for b in raw_bets]
+                self._bets = [_bet_from_row(b) for b in raw_bets]
             except Exception as e:
                 logger.error(f"REFUSING corrupt bet history file (repair from backup): {e}")
                 self._bets = []

@@ -534,3 +534,62 @@ def test_lock_still_excludes_two_governors(temp_data_dir):
     b.refresh_from_disk(force=True)
     assert len(b.get_open_bets()) == 1
     assert b.get_open_exposure() == pytest.approx(50.0)
+
+
+# ── unknown keys must never cost the ledger (Nov-2026 freeze) ───────────
+
+def _row(**over):
+    base = {
+        "bet_id": "b1", "timestamp": "2026-11-11T03:11:02",
+        "date": "2026-11-14", "track": "Kenilworth", "race_number": 5,
+        "horse": "Coastal Path", "odds": 4.2, "stake": 4.8,
+        "potential_return": 20.16, "status": "PENDING", "edge_percent": 9.0,
+        "confidence": "HIGH",
+    }
+    base.update(over)
+    return base
+
+
+def test_unknown_field_does_not_reject_the_whole_ledger(temp_data_dir):
+    """A maintenance script wrote ``meeting_date`` into 22 rows; BetRecord
+    raised, the loader refused all 2,243 records, and ``_save_state`` then
+    refused every write — no bets recorded, nothing settled, for a day."""
+    rows = [_row(bet_id="b1", meeting_date="2026-11-14"),
+            _row(bet_id="b2", horse="Skip The Line"),
+            _row(bet_id="b3", horse="Imaginable", some_future_field=1)]
+    with open(os.path.join(temp_data_dir, "bet_history.json"), "w") as f:
+        json.dump(rows, f)
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    assert gov._state_corrupt is False, "unknown keys are not corruption"
+    assert len(gov._bets) == 3, "every good row must survive one stray field"
+
+
+def test_meeting_date_round_trips(temp_data_dir):
+    with open(os.path.join(temp_data_dir, "bet_history.json"), "w") as f:
+        json.dump([_row(meeting_date="2026-11-14")], f)
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    assert gov._bets[0].meeting_date == "2026-11-14"
+
+
+def test_ledger_still_refuses_genuinely_corrupt_json(temp_data_dir):
+    """Fail-closed is kept: a real corruption still refuses to save over it."""
+    with open(os.path.join(temp_data_dir, "bet_history.json"), "w") as f:
+        f.write("{not json")
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    assert gov._state_corrupt is True
+    assert gov._bets == []
+
+
+def test_non_dict_row_is_still_corruption(temp_data_dir):
+    with open(os.path.join(temp_data_dir, "bet_history.json"), "w") as f:
+        json.dump([_row(), "garbage"], f)
+
+    gov = BankrollGovernor(data_dir=temp_data_dir, starting_bankroll=1000.0)
+
+    assert gov._state_corrupt is True
