@@ -1399,6 +1399,34 @@ class AdaptiveOddsMonitor:
         )
         return {"events": pruned, "count": len(pruned), "cached": True}
 
+    def _feed_market_events(self, state: dict) -> None:
+        """Feed the canonical market event stream from the snapshot just written.
+
+        The monitor writes its own pruned state straight to the snapshot file
+        (it cannot go through ``snapshot_writer``, which would prune and
+        restamp state the monitor has already settled). This is where its
+        prices join the one event store — otherwise the 5-minute snapshot
+        would feed every surface except the canonical one.
+        """
+        try:
+            from core_agent.core.market_events import diff_snapshot
+
+            moved = diff_snapshot(state)
+            if moved:
+                logger.info(
+                    "Market events: %d move(s) recorded — %s",
+                    len(moved),
+                    ", ".join(
+                        f"{(e.get('race') or {}).get('course')} "
+                        f"R{(e.get('race') or {}).get('race_number')} "
+                        f"{(e.get('runner') or {}).get('name')} "
+                        f"{e.get('prev')}->{e.get('price')}"
+                        for e in moved[:4]
+                    ),
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Market event diff skipped: %s", exc)
+
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
         # Record the alert in the canonical market event store FIRST, before
@@ -1724,6 +1752,7 @@ class AdaptiveOddsMonitor:
             active_ids = list(state["events"].keys())
             _merge_daily_scan_into(state)
             _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
+            self._feed_market_events(state)
             try:
                 enrich_snapshot_with_insights(state)
             except Exception as e:
@@ -1841,6 +1870,7 @@ class AdaptiveOddsMonitor:
 
                 _merge_daily_scan_into(state)
                 _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
+                self._feed_market_events(state)
                 # Swarm enrichment: zero-cost field insights for every region without
                 # Betway timeForm (USA/Japan/SA/...). Runs inline, never blocks the loop.
                 try:
