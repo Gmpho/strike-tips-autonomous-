@@ -5,6 +5,7 @@ import {
   ChevronDown as SortDesc, Flame, Star, CircleDot, Globe, LayoutList, Table as TableIcon 
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { marketStatus } from '../lib/market-status';
 
 interface RaceCardProps {
   event: RaceEvent;
@@ -92,7 +93,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
   const topHorse = event.runners?.[0];
-  const hasMarketData = topHorse && typeof topHorse.odds === 'number' && topHorse.odds > 0;
+  const market = marketStatus(event.runners);
 
   // Resolve runner based on selectedCategory
   const selections = event.aiSelections || {};
@@ -187,8 +188,15 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
           <div className="text-right">
             <div className="text-[8px] sm:text-[9px] font-bold text-theme-secondary mb-0.5">STATUS</div>
-            <div className={`border ${hasMarketData ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' : 'border-purple-500/40 text-purple-400 bg-purple-500/10'} text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded uppercase`}>
-              {hasMarketData ? 'LIVE MARKET' : 'EVALUATING'}
+            <div
+              title={
+                market.kind === 'no-prices'
+                  ? 'Runners and form are loaded, but no bookmaker price has been returned for this meeting yet.'
+                  : undefined
+              }
+              className={`border ${market.tone === 'emerald' ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' : market.tone === 'slate' ? 'border-slate-500/40 text-slate-300 bg-slate-500/10' : 'border-purple-500/40 text-purple-400 bg-purple-500/10'} text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded uppercase`}
+            >
+              {market.label}
             </div>
           </div>
           <div className="p-1 rounded-lg bg-white/5 border border-white/5">
