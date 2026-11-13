@@ -153,6 +153,44 @@ function isSteamer(mover: MarketMover): boolean {
   return false;
 }
 
+// ─── Provenance ──────────────────────────────────────────────────────────────
+// A movers row must say where it came from and how old it is. Our own
+// snapshot diffs are 5-minute fresh; ATR's page is gated at 45 minutes and
+// sits behind a challenge wall, so an ATR row silently presented as live
+// would be a lie the reader cannot see.
+function formatAge(ageSecs?: number | null): string {
+  if (typeof ageSecs !== 'number' || !Number.isFinite(ageSecs) || ageSecs < 0) return '';
+  if (ageSecs < 90) return 'just now';
+  const mins = Math.round(ageSecs / 60);
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.round(mins / 60);
+  return `${hours}h old`;
+}
+
+function ProvenanceChip({ mover }: { mover: MarketMover }) {
+  const source = mover.source;
+  if (!source) return null; // older feeds carried no provenance — say nothing
+  const age = formatAge(mover.age_secs);
+  const isOurs = source === 'snapshot';
+  return (
+    <span
+      title={
+        isOurs
+          ? 'Computed from our own 5-minute market snapshot'
+          : 'Fallback: ATR\'s movers page, which refreshes at most every 45 minutes'
+      }
+      className={`shrink-0 px-1.5 py-0.5 text-[7px] font-black rounded border uppercase tracking-wider ${
+        isOurs
+          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+          : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
+      }`}
+    >
+      {isOurs ? 'Ours' : 'ATR'}
+      {age ? ` · ${age}` : ''}
+    </span>
+  );
+}
+
 // ─── Movement Badge Component ─────────────────────────────────────────────────
 function MovementBadge({ movement, firstShow, currentOdds }: { movement: string; firstShow?: string; currentOdds?: string }) {
   const info = parseMovement(movement, firstShow, currentOdds);
@@ -233,9 +271,12 @@ function MoverCard({ mover, index, runner, meetingCourse, meetingTime }: {
               </span>
             )}
           </h3>
-          <p className="text-[10px] font-bold text-theme-secondary uppercase tracking-wider mt-0.5 flex items-center gap-1">
-            <Clock className="w-2.5 h-2.5 shrink-0" />
-            {mover.time}
+          <p className="text-[10px] font-bold text-theme-secondary uppercase tracking-wider mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <span className="flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5 shrink-0" />
+              {mover.time}
+            </span>
+            <ProvenanceChip mover={mover} />
           </p>
         </div>
         <MovementBadge movement={mover.movement} firstShow={mover.first_show} currentOdds={mover.current_odds} />
@@ -580,7 +621,8 @@ export const MarketMoversView: React.FC = () => {
       {marketMovers.length > 0 && (
         <div className="shrink-0 pt-3 border-t border-theme">
           <p className="text-[10px] text-theme-secondary font-semibold">
-            {marketMovers.length} movers tracked — sourced live from ATR odds feed
+            {marketMovers.length} movers tracked — our own 5-minute snapshot, with
+            ATR as a labelled fallback where we don't quote
           </p>
         </div>
       )}

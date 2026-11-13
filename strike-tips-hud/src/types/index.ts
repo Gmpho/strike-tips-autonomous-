@@ -167,6 +167,19 @@ export interface MarketMover {
   movement: string;
   /** ATR meeting region (Oct-2026 scraper repair). Absent on old snapshots. */
   region?: string;
+  /** Canonical-event fields (Live Intelligence). Additive: old feeds omit them. */
+  id?: string;
+  /** `snapshot` = our own 5-min diff (primary); `atr` = fallback page. */
+  source?: 'snapshot' | 'atr' | string;
+  /** How old this row's data is, in seconds. Never absent on new feeds. */
+  age_secs?: number | null;
+  move_pct?: number | string | null;
+  direction?: 'shortened' | 'drifted' | 'stable' | string;
+  severity?: 'steamer' | 'drifter' | 'move' | string;
+  /** True when the runner is the user's own league pick. */
+  is_user_pick?: boolean;
+  race_number?: number | string | null;
+  timestamp?: string;
 }
 
 export interface Predictor {

@@ -88,12 +88,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const adminItems = [
     { icon: ShieldCheck, label: 'Healing Cloud', id: 'healing' },
     { icon: Activity, label: 'System Vitals', id: 'vitals' },
+    // Agent engine telemetry belongs with the other operator tools, not in
+    // the punter's racing list. The route id stays `telemetry` so /telemetry
+    // and every existing link keep resolving; /engine-ops aliases to it.
+    { icon: Radar, label: 'Engine Ops', id: 'telemetry' },
   ];
 
   const racingItems = [
     { icon: Zap, label: 'Race Simulator', id: 'simulator' },
     { icon: Newspaper, label: 'News', id: 'news' },
-    { icon: Radar, label: 'Live Ops', id: 'telemetry' },
     { icon: TrendingUp, label: 'Market Movers', id: 'market-movers' },
     { icon: Sparkles, label: 'Predictor', id: 'predictor' },
     { icon: Flag, label: 'Results', id: 'results' },
@@ -173,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className={`mt-6 mb-2 px-3 shrink-0 ${isCollapsed ? 'flex justify-center' : ''}`}>
           {!isCollapsed ? (
-            <p className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Admin</p>
+            <p className="text-[9px] font-black text-theme-secondary opacity-50 uppercase tracking-widest">Operator</p>
           ) : (
             <div className="w-4 h-px bg-theme-secondary opacity-20" />
           )}

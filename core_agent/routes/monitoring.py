@@ -296,12 +296,34 @@ async def get_monitoring_snapshot(request: Request):
     except Exception:
         pass
 
-    # Inject recently triggered alerts from the AlertEngine's history log
-    result["alerts"] = _load_recent_alerts(20)
+    # Alerts and movers both come from the canonical market event store.
+    # Before this, "a price moved" was derived three more times from three
+    # other sources and the surfaces disagreed. Now the Logs audit reads the
+    # store, the Movers feed reads the store, and neither can drift.
+    try:
+        from core_agent.core import market_events
+
+        # An empty store means it has not learned anything yet (fresh deploy),
+        # not that nothing happened — so the alert engine's own history keeps
+        # the audit trail unbroken until the store has events of its own.
+        result["alerts"] = market_events.alerts_for_hud(20) or _load_recent_alerts(20)
+    except Exception:
+        # Never let the store break the dashboard: the alert engine's own
+        # history is a strictly worse fallback, but it is still a feed.
+        result["alerts"] = _load_recent_alerts(20)
 
     # Bundle the slow-moving side feeds so one poll replaces the SSE fan-out
     # (retiring SSE eliminates 24/7 billed executions per open tab).
-    result["movers"] = _read_json_file(ATR_MOVERS_PATH)
+    try:
+        from core_agent.core import market_events
+
+        # Our own snapshot diffs are primary; ATR's page is a tagged
+        # fallback carrying its age, not the primary feed it used to be.
+        result["movers"] = market_events.movers_for_hud(
+            60, atr_blob=_read_json_file(ATR_MOVERS_PATH)
+        )
+    except Exception:
+        result["movers"] = _read_json_file(ATR_MOVERS_PATH)
     result["predictor"] = _read_json_file(ATR_PREDICTOR_PATH)
     result["results"] = _merge_results_with_confirmed(
         _read_json_file(ATR_RESULTS_PATH)

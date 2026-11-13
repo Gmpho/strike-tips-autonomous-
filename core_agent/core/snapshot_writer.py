@@ -233,4 +233,29 @@ def write_market_snapshot(
         set_snapshot(clean, source=source)
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Snapshot cache refresh skipped: %s", exc)
+
+    # Feed the canonical market event stream. This is the primary source of
+    # "a price moved" — 5-minute cadence across every meeting we quote,
+    # instead of ATR's 45-minute challenge-walled page. Hooked here because
+    # this is the single sanctioned writer: every producer of a snapshot
+    # feeds the stream by using it, and no producer has to remember to.
+    try:
+        from core_agent.core.market_events import diff_snapshot
+
+        moved = diff_snapshot(clean)
+        if moved:
+            logger.info(
+                "Market events: %d move(s) recorded (%s)",
+                len(moved),
+                ", ".join(
+                    f"{(e.get('race') or {}).get('course')} "
+                    f"R{(e.get('race') or {}).get('race_number')} "
+                    f"{(e.get('runner') or {}).get('name')} "
+                    f"{e.get('prev')}->{e.get('price')}"
+                    for e in moved[:4]
+                ),
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Market event diff skipped: %s", exc)
+
     return clean

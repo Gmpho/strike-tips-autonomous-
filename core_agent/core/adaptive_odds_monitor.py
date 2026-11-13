@@ -1401,6 +1401,17 @@ class AdaptiveOddsMonitor:
 
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
+        # Record the alert in the canonical market event store FIRST, before
+        # any delivery gate. The audit trail must not depend on Telegram
+        # being configured or on the alert surviving the rate limiter: an
+        # alert that fired is a fact, whatever we did with it.
+        try:
+            from core_agent.core.market_events import record_alert
+
+            record_alert(msg)
+        except Exception as exc:
+            logger.debug("Alert event record skipped: %s", exc)
+
         if not self._telegram_notifier or not self._digester:
             return
         horse = msg.get("horse", "?")

@@ -6,6 +6,7 @@ import { usePWA } from './hooks/usePWA';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { usePromoActions } from './hooks/usePromoActions';
 import { eligibleCampaigns } from './lib/campaigns';
+import { PUBLIC_VIEWS, viewFromPath } from './lib/routes';
 import { PromoCarousel } from './components/promos/PromoCarousel';
 import { LandingPage } from './components/landing/LandingPage';
 import { GuestBanner } from './components/landing/GuestBanner';
@@ -59,26 +60,11 @@ const ViewFallback = () => (
   </div>
 );
 
-const LEGAL_VIEWS = ['privacy', 'terms', 'disclaimer', 'how-to-bet', 'faq', 'betting-rules', 'responsible', 'contact', 'support'];
-// Logged-out visitors may read support + legal pages (with a sign-in
-// banner); every other view gates to the landing page.
-const PUBLIC_VIEWS = [...LEGAL_VIEWS, 'leaderboard'];
-const VALID_VIEWS = [
-  'dashboard', 'agents', 'chat', 'podcast', 'tts', 'exotics', 'bankroll', 'analytics', 'logs', 'settings',
-  'healing', 'vitals', 'dreaming', 'news', 'telemetry', 'market-movers', 'predictor', 'results', 'simulator',
-  'leaderboard',
-  'picks',
-  'profile',
-  ...LEGAL_VIEWS
-];
-
+// Route ids, aliases and path resolution live in lib/routes.ts so a rename
+// can be tested against the URLs people actually have saved.
 function getViewFromPath(): string {
-  const path = window.location.pathname.slice(1); // remove leading /
-  if (VALID_VIEWS.includes(path)) {
-    return path;
-  }
   const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('strike_active_view') : null;
-  return saved && VALID_VIEWS.includes(saved) ? saved : 'dashboard';
+  return viewFromPath(window.location.pathname, saved);
 }
 
 export const App: React.FC = () => {
