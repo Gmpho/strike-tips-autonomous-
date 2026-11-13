@@ -20,6 +20,7 @@ export const REGIONS: Record<string, RegionInfo> = {
   FRA: { code: 'FRA', label: 'France', flag: '🇫🇷' },
   NZ: { code: 'NZ', label: 'New Zealand', flag: '🇳🇿' },
   UAE: { code: 'UAE', label: 'UAE', flag: '🇦🇪' },
+  BHR: { code: 'BHR', label: 'Bahrain', flag: '🇧🇭' },
   ARG: { code: 'ARG', label: 'Argentina', flag: '🇦🇷' },
   GER: { code: 'GER', label: 'Germany', flag: '🇩🇪' },
   OTHER: { code: 'OTHER', label: 'Other', flag: '🌍' },
@@ -38,7 +39,7 @@ const COURSE_MAP: Record<string, string> = {
   // UK
   redcar: 'UK_IE', uttoxeter: 'UK_IE', wolverhampton: 'UK_IE', yarmouth: 'UK_IE',
   bath: 'UK_IE', doncaster: 'UK_IE', musselburgh: 'UK_IE', kelso: 'UK_IE',
-  beverley: 'UK_IE', lingfield: 'UK_IE', sandown: 'UK_IE',
+  beverley: 'UK_IE', lingfield: 'UK_IE', sandown: 'UK_IE', ayr: 'UK_IE',
   ascot: 'UK_IE', epsom: 'UK_IE', goodwood: 'UK_IE', newmarket: 'UK_IE',
   york: 'UK_IE', chester: 'UK_IE', haydock: 'UK_IE', aintree: 'UK_IE',
   cheltenham: 'UK_IE', kempton: 'UK_IE', newcastle: 'UK_IE', southwell: 'UK_IE',
@@ -74,7 +75,10 @@ const COURSE_MAP: Record<string, string> = {
   matamata: 'NZ', ellerslie: 'NZ', trentham: 'NZ', riccarton: 'NZ',
   wellington: 'NZ', 'te rapa': 'NZ',
   // UAE / Germany / Argentina
-  meydan: 'UAE', 'jebel ali': 'UAE',
+  meydan: 'UAE', 'jebel ali': 'UAE', 'abu dhabi': 'UAE', dubai: 'UAE',
+  'al ain': 'UAE',
+  // Bahrain (Nov-2026: the exchange feed carries the meeting, the map did not)
+  bahrain: 'BHR', sakhir: 'BHR',
   'baden baden': 'GER', cologne: 'GER', munich: 'GER',
   palermo: 'ARG', 'san isidro': 'ARG',
 };
@@ -94,7 +98,8 @@ const RUNNER_REGION_MAP: [RegExp, string][] = [
   [/canada|canadian/, 'CAN'],
   [/france|french/, 'FRA'],
   [/new\s*zealand/, 'NZ'],
-  [/\buae\b|dubai|emirates/, 'UAE'],
+  [/\buae\b|dubai|emirates|abu\s*dhabi|al\s*ain/, 'UAE'],
+  [/bahrain|sakhir/, 'BHR'],
   [/germany|german/, 'GER'],
   [/argentina/, 'ARG'],
 ];
@@ -143,5 +148,7 @@ export function regionOf(course: string, runnerRegions: (string | undefined)[] =
   if (/\(ire\)/.test(raw)) return 'UK_IE';
   if (/\(fr\)/.test(raw)) return 'FRA';
   if (/\(jpn\)/.test(raw)) return 'JP';
+  if (/\(uae\)/.test(raw)) return 'UAE';
+  if (/\(bhr\)|\(bahrain\)/.test(raw)) return 'BHR';
   return 'OTHER';
 }

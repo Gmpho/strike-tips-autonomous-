@@ -9,6 +9,11 @@ from core_agent.core.http_client import get_async_client
 
 logger = logging.getLogger("betway-api")
 
+# One-shot diagnostic: log Betway's own region labels the first time we
+# fetch, so the ALLOWED whitelist can be confirmed from production data
+# rather than guessed (see the Gulf comment in fetch_racing_data).
+_REGION_LABELS_LOGGED = False
+
 
 class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
@@ -50,7 +55,31 @@ class BetwayAPI:
                     "Hong Kong",
                     "Japan",
                     "France",
+                    # Gulf (Nov-2026): the UAE season runs Oct-Apr (Abu Dhabi
+                    # from 22 Oct, Meydan's Carnival from 6 Nov) and Bahrain
+                    # races through the winter. Without these the region filter
+                    # dropped both before an event id was ever fetched, so the
+                    # Gulf could never reach the snapshot however the course
+                    # map looked. Names are substring-matched and only the
+                    # venues we can settle are listed.
+                    "United Arab Emirates",
+                    "UAE",
+                    "Bahrain",
                 ]
+
+                # Learn Betway's real region labels from production instead of
+                # guessing: the probe path is 403'd (per-IP fingerprint) but
+                # this runs on the same direct fetch the live monitor uses.
+                # Logged once per process, so it costs nothing per poll.
+                global _REGION_LABELS_LOGGED
+                if not _REGION_LABELS_LOGGED:
+                    _REGION_LABELS_LOGGED = True
+                    logger.info(
+                        "Betway regions: %s",
+                        sorted(
+                            str(r.get("name") or "") for r in data.get("regions", [])
+                        ),
+                    )
 
                 for reg in data.get("regions", []):
                     if not any(a in reg.get("name", "") for a in ALLOWED):

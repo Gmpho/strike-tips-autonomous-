@@ -218,7 +218,7 @@ class BetfairSA:
                 if self.country_filter and grp.get("countryCode") not in self.country_filter:
                     continue
                 for event in grp.get("events", []) or []:
-                    for market in event.get("markets", []) or []:
+                    for race_idx, market in enumerate(event.get("markets", []) or []):
                         mid = str(market.get("marketId") or market.get("id") or "")
                         if mid and mid not in seen:
                             seen.add(mid)
@@ -228,6 +228,14 @@ class BetfairSA:
                                 "course": (event.get("name") or grp.get("name") or "Unknown").strip(),
                                 "t": (market.get("timeLabel") or market.get("time") or "").strip(),
                                 "raceName": (market.get("name") or "").strip(),
+                                # The market's position in the meeting's list is
+                                # its race number when the name does not say
+                                # so. Betfair names SA/UK/US races "R1 1200m
+                                # Mdn" but the Gulf meetings arrive as
+                                # "1m2f Grp 1" with no R-prefix — without
+                                # this the race had no number at all and
+                                # could not be keyed, shown or settled.
+                                "raceIndex": race_idx,
                             }
 
         if not market_ids:
@@ -272,6 +280,13 @@ class BetfairSA:
                         )
                         if rn is not None:
                             event["raceNumber"] = rn
+                    if event.get("raceNumber") is None and info.get("raceIndex") is not None:
+                        # No R-prefix in the name (the Gulf meetings): the
+                        # market's position in the meeting IS its race number.
+                        # Names that do carry an R-number keep it — a meeting
+                        # can be listed from R4 onwards, where the index would
+                        # be wrong.
+                        event["raceNumber"] = int(info["raceIndex"]) + 1
                     if not event.get("distanceM"):
                         dm = self._distance_from_market(
                             {"markets": [{"name": info["raceName"]}]}

@@ -41,10 +41,26 @@ _USA = {"churchill downs", "santa anita", "belmont park", "saratoga",
         "penn national", "horseshoe indianapolis", "woodbine"}
 # woodbine is CAN per HUD but grouped here for simplicity; override below
 _CAN = {"woodbine"}
+# Gulf (Nov-2026): the Betfair exchange feed carries Bahrain (group "BAH")
+# and ATR's results cover Abu Dhabi, but neither venue was in any map — so
+# every Gulf race resolved to "OTHER" and was dropped by the region filters
+# before it could reach the card.
+_UAE = {"abu dhabi", "dubai", "meydan", "jebel ali", "al ain"}
+_BHR = {"bahrain", "sakhir"}
 
 
 def _norm(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").strip().lower())
+
+
+def _base(name: str) -> str:
+    """The venue without its country suffix: "Abu Dhabi (UAE)" -> "abu dhabi".
+
+    Only the Gulf lookup uses this. The suffix is how ATR names its courses
+    ("Kenilworth (RSA)"), and the Gulf venues reach us in both forms —
+    Betfair says "Bahrain", ATR says "Abu Dhabi (UAE)".
+    """
+    return re.sub(r"\s*\([^)]*\)", " ", str(name or "")).strip().lower()
 
 
 def region_of(track: str) -> str:
@@ -59,6 +75,10 @@ def region_of(track: str) -> str:
         return "AUS"
     if t in _CAN:
         return "CAN"
+    if t in _UAE or _base(t) in _UAE:
+        return "UAE"
+    if t in _BHR or _base(t) in _BHR:
+        return "BHR"
     if t in _USA:
         return "USA"
     if t in _UK_IE:
@@ -70,5 +90,6 @@ def region_label(code: str) -> str:
     return {
         "SA": "South Africa", "UK_IE": "UK & Ireland", "HK": "Hong Kong",
         "JP": "Japan", "AUS": "Australia", "CAN": "Canada", "USA": "USA",
-        "FRA": "France", "OTHER": "Other",
+        "FRA": "France", "UAE": "United Arab Emirates", "BHR": "Bahrain",
+        "OTHER": "Other",
     }.get(code, code)
