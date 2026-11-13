@@ -677,6 +677,32 @@ def from_atr(movers: Iterable[Dict[str, Any]],
 # --------------------------------------------------------------------------
 # Serving
 # --------------------------------------------------------------------------
+def _utc_wall_to_sast(wall: Any) -> Any:
+    """HH:MM UTC wall -> HH:MM South African clock face, wrapped at midnight.
+
+    The snapshot stores Betway's ``t`` as a UTC wall-clock while Betfair's
+    ``offTime``/``bf_off_time`` is already SAST, so a meeting that Betfair
+    does not carry has no local time to read and would otherwise render two
+    hours early. South Africa is a fixed UTC+2 with no daylight saving.
+    """
+    if not isinstance(wall, str) or ":" not in wall:
+        return wall
+    try:
+        h, m = wall.strip().split(":")[:2]
+        total = (int(h) * 60 + int(m) + 120) % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except (ValueError, TypeError):
+        return wall
+
+
+def _display_off(race: Dict[str, Any]) -> Any:
+    """The race's off-time as a clock face a punter recognises."""
+    local = race.get("off_local")
+    if local:
+        return local
+    return _utc_wall_to_sast(race.get("off"))
+
+
 def _move_label(pct: Any) -> str:
     """A movement string that cannot be misread, for the HUD's fallback path.
 
@@ -713,8 +739,7 @@ def movers_for_hud(limit: int = 60,
             "id": event.get("id"),
             "horse": (event.get("runner") or {}).get("name"),
             "course": (event.get("race") or {}).get("course"),
-            "time": (event.get("race") or {}).get("off_local")
-                    or (event.get("race") or {}).get("off"),
+            "time": _display_off(event.get("race") or {}),
             "current_odds": event.get("price"),
             "first_show": event.get("prev"),
             # Human-readable rather than a bare signed number: the view

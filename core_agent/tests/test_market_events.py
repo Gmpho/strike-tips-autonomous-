@@ -478,3 +478,52 @@ def test_writes_are_atomic(store):
                      path=store["events_path"])
     assert store["events_path"].exists()
     assert not os.path.exists(str(store["events_path"]) + ".tmp")
+
+
+# ── off-time display ────────────────────────────────────────────────────────
+
+def test_a_movers_row_never_shows_a_utc_wall(store):
+    """Betway-only meetings carry no Betfair off-time, so there is nothing
+    SAST-shaped to read. They must still show the local clock face — the
+    same 2-hour error the race cards had cannot move house."""
+    me.diff_snapshot(
+        _snapshot([("Laurel Park", 3, "Drumnadrochit", 2.62)]),
+        picks=[],
+        now=datetime(2026, 11, 13, 10, 0),
+        baseline_path=store["baseline_path"],
+        events_path=store["events_path"],
+    )
+    written = _diff(store, _snapshot([("Laurel Park", 3, "Drumnadrochit", 1.57)],
+                                     ts="2026-11-13T10:05:00"),
+                    now=datetime(2026, 11, 13, 10, 5))
+    assert len(written) == 1
+    # The snapshot stores "14:35" (UTC) and this meeting has no bf_off_time.
+    assert written[0]["race"]["off"] == "14:15"
+
+    rows = me.movers_for_hud(events_path=store["events_path"])
+    assert rows[0]["time"] == "16:15"
+
+
+def test_a_betfair_sourced_off_time_is_used_as_is(store):
+    """Where Betfair supplies the SAST wall, that is already correct."""
+    snap = _snapshot([("Greyville", 1, "Bright Comet", 11.0)])
+    for event in snap["events"].values():
+        event["bf_off_time"] = "16:37"
+    me.diff_snapshot(snap, picks=[], now=datetime(2026, 11, 13, 10, 0),
+                     baseline_path=store["baseline_path"],
+                     events_path=store["events_path"])
+    snap2 = _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
+                      ts="2026-11-13T10:05:00")
+    for event in snap2["events"].values():
+        event["bf_off_time"] = "16:37"
+    _diff(store, snap2, now=datetime(2026, 11, 13, 10, 5))
+    rows = me.movers_for_hud(events_path=store["events_path"])
+    assert rows[0]["time"] == "16:37"
+
+
+def test_utc_wall_wraps_past_midnight():
+    assert me._utc_wall_to_sast("23:30") == "01:30"
+    assert me._utc_wall_to_sast("22:00") == "00:00"
+    assert me._utc_wall_to_sast("14:15") == "16:15"
+    assert me._utc_wall_to_sast("TBA") == "TBA"
+    assert me._utc_wall_to_sast(None) is None
