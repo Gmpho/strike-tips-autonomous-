@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { marketStatus } from '../lib/market-status';
+import { offTimeLocal } from '../lib/race-time';
 
 interface RaceCardProps {
   event: RaceEvent;
@@ -590,7 +591,7 @@ export const RaceCard: React.FC<RaceCardProps> = React.memo(({
         <div className="flex items-center gap-2">
           <Timer className="w-3 h-3 text-theme-secondary shrink-0" />
           <span className="text-[9px] sm:text-[10px] text-theme-secondary font-black uppercase tracking-wider sm:tracking-widest">
-            OFF_TIME: {event.t}{typeof event.distance_m === 'number' && event.distance_m > 0 ? ` · ${event.distance_m}M` : ''}
+            OFF_TIME: {offTimeLocal(event.t)}{typeof event.distance_m === 'number' && event.distance_m > 0 ? ` · ${event.distance_m}M` : ''}
           </span>
         </div>
         <div className="flex items-center gap-2">

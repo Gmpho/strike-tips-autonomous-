@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Bot, User, Loader2, Plus, Trash2, StopCircle, Menu, X, FileText, Volume2, VolumeX, Languages, ImagePlus, Globe, ExternalLink, Mic, Square, Radio, Sparkles, Zap, Table } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../lib/api-fetch';
+import { offTimeLocal } from '../lib/race-time';
 import { checkWebGPUSupport, getWebLLMEngine, resetWebLLMEngine } from '../lib/webllm';
 import { useTTS } from '../hooks/useTTS';
 import { useTranslation } from '../hooks/useTranslation';
@@ -53,7 +54,7 @@ function formatRaceCardPrompt(event: RaceEvent, focusRunner?: Runner): string {
   const focusLine = focusRunner ? `\nFOCUS RUNNER: ${focusRunner.name}${typeof focusRunner.odds === 'number' ? ` @ ${focusRunner.odds.toFixed(2)}` : ''} — analyse this runner's value case in depth (form, draw, jockey/trainer stats, and how it compares to the field below).\n` : '';
   return `Analyse this race for value betting opportunities:
 
-Course: ${event.course} | Race ${event.raceNumber} | Off Time: ${event.t}${focusLine}
+Course: ${event.course} | Race ${event.raceNumber} | Off Time: ${offTimeLocal(event.t)}${focusLine}
 Runners:
 ${runnersText}
 

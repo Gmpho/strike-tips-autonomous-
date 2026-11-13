@@ -13,6 +13,7 @@ import {
   type SimulationFrame 
 } from '../../engine/simulation/pacingEngine';
 import { RaceTrackCanvas } from '../simulator/RaceTrackCanvas';
+import { offTimeLocal } from '../../lib/race-time';
 
 /* ── Demo race data (offline fallback) ─────────────────────────────── */
 const mkRunner = (
@@ -299,7 +300,7 @@ export const RaceSimulatorView: React.FC<RaceSimulatorViewProps> = ({
                   R{ev.raceNumber}
                 </span>
                 {ev.t && (
-                  <span className="text-[10px] font-mono opacity-80">{ev.t}</span>
+                  <span className="text-[10px] font-mono opacity-80">{offTimeLocal(ev.t)}</span>
                 )}
               </button>
             );
@@ -323,7 +324,7 @@ export const RaceSimulatorView: React.FC<RaceSimulatorViewProps> = ({
             {activeEvent.t && (
               <div className="hidden sm:flex items-center gap-1.5 text-xs text-zinc-400 font-mono">
                 <Timer className="w-3.5 h-3.5 text-zinc-500" />
-                <span>OFF: {activeEvent.t}</span>
+                <span>OFF: {offTimeLocal(activeEvent.t)}</span>
               </div>
             )}
           </div>
