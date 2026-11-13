@@ -746,7 +746,7 @@ def movers_for_hud(limit: int = 60,
             # derives direction from prev/current when both are present, so
             # this string only matters as a fallback — and as a fallback it
             # must not be ambiguous about which way the price went.
-            "movement": _move_label(event.get("move_pct")),
+            "movement": _move_label(event.get("move_pct")) or "—",
             "move_pct": event.get("move_pct"),
             "direction": event.get("direction"),
             "severity": event.get("severity"),
@@ -776,7 +776,7 @@ def movers_for_hud(limit: int = 60,
                 "movement": (
                     _move_label(event.get("move_pct"))
                     if isinstance(event.get("move_pct"), (int, float))
-                    else event.get("move_pct")
+                    else (event.get("move_pct") or "—")
                 ),
                 "move_pct": event.get("move_pct"),
                 "direction": event.get("direction"),

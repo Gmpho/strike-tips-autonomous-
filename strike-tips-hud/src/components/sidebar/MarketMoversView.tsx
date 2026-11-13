@@ -29,7 +29,7 @@ interface MovementInfo {
 
 function parseFractionalOdds(fraction: string): number | null {
   if (!fraction) return null;
-  const clean = fraction.trim().toLowerCase();
+  const clean = String(fraction ?? '').trim().toLowerCase();
   if (clean === 'evs' || clean === 'evens' || clean === 'eve') {
     return 2.0;
   }
@@ -75,11 +75,11 @@ function parseMovement(movement: string, firstShow?: string, currentOdds?: strin
     }
   }
 
-  if (!movement || movement.trim() === '' || movement === '—') {
+  if (!movement || String(movement).trim() === '' || movement === '—') {
     return { direction: 'stable', label: 'Stable', numericChange: null };
   }
 
-  const raw = movement.trim();
+  const raw = String(movement).trim();
   const m = raw.toLowerCase();
 
   // 1) Explicit keyword detection
@@ -411,8 +411,8 @@ export const MarketMoversView: React.FC = () => {
   const marketMovers = Array.isArray(store.marketMovers) ? store.marketMovers : [];
   const meetingIndex = useHorseMeetingIndex(store.events);
   const runnerIndex = useMemo(() => buildRunnerIndex(store.events), [store.events]);
-  const meetingFor = (m: MarketMover) => meetingIndex.get((m.horse || '').trim().toLowerCase());
-  const runnerFor = (m: MarketMover) => runnerIndex.get((m.horse || '').trim().toLowerCase());
+  const meetingFor = (m: MarketMover) => meetingIndex.get(String(m?.horse ?? '').trim().toLowerCase());
+  const runnerFor = (m: MarketMover) => runnerIndex.get(String(m?.horse ?? '').trim().toLowerCase());
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [trackFilter, setTrackFilter] = React.useState('ALL');
@@ -422,13 +422,15 @@ export const MarketMoversView: React.FC = () => {
 
   // Filter based on search query and track
   const filteredMovers = marketMovers.filter((m) => {
-    const matchesSearch = 
-      m.horse.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.course.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      getFullCourseName(m.course).toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesTrack = trackFilter === 'ALL' || m.course.toLowerCase() === trackFilter.toLowerCase();
-    
+    const horse = String(m?.horse ?? '');
+    const course = String(m?.course ?? '');
+    const matchesSearch =
+      horse.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(getFullCourseName(m?.course)).toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesTrack = trackFilter === 'ALL' || course.toLowerCase() === trackFilter.toLowerCase();
+
     return matchesSearch && matchesTrack;
   });
 
