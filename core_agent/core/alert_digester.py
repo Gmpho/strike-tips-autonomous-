@@ -231,6 +231,14 @@ class AlertDigester:
 
     @classmethod
     def _move_pct(cls, meta: dict) -> Optional[float]:
+        # Canonical store first: one record, one number, no re-derivation.
+        ce = (meta or {}).get("canonical_event") if isinstance(meta, dict) else None
+        if isinstance(ce, dict) and isinstance(ce.get("move_pct"), (int, float)):
+            try:
+                return round(float(ce["move_pct"]), 1)
+            except (TypeError, ValueError):
+                pass
+        # Legacy journey store (pre-migration callers).
         try:
             o = float(meta["journey"]["open"])
             l = float(meta["journey"]["latest"])
@@ -249,18 +257,32 @@ class AlertDigester:
             course = str(meta.get("course", "?"))
             race = str(meta.get("race", "") or "").strip()
             where = f"{course} R{race}" if race and race != "?" else course
-            j = meta.get("journey") or {}
-            o, l = j.get("open"), j.get("latest")
+
+            # Canonical event first: the same record the Movers tab and the
+            # Logs audit read. Falls back to the alert engine's journey store
+            # for callers that have not been migrated yet.
+            ce = meta.get("canonical_event") if isinstance(meta, dict) else None
+            if isinstance(ce, dict):
+                o = ce.get("prev")
+                l = ce.get("price")
+                open_at = ce.get("prev_ts")
+                latest_at = ce.get("ts")
+                off = str(ce.get("race", {}).get("off") or meta.get("off") or "").strip()
+            else:
+                j = meta.get("journey") or {}
+                o, l = j.get("open"), j.get("latest")
+                open_at = j.get("open_at")
+                latest_at = j.get("latest_at")
+                off = str(meta.get("off", "") or "").strip()
             if o is None or l is None:
                 return None
             move = cls._move_pct(meta) or 0.0
             tag = "📉 STEAMER" if move > 0 else ("📈 DRIFTER" if move < 0 else "➖ STEADY")
             line1 = f"{tag} 🐎 {horse} @ {where}"
-            off = str(meta.get("off", "") or "").strip()
             mto = meta.get("mins_to_off")
             when = f" (off {off}, {int(mto)}m)" if off and mto is not None else ""
-            line2 = (f"💰 {o} ({cls._hhmm(j.get('open_at'))}) → "
-                     f"{l} ({cls._hhmm(j.get('latest_at'))}){when}")
+            line2 = (f"💰 {o} ({cls._hhmm(open_at)}) → "
+                     f"{l} ({cls._hhmm(latest_at)}){when}")
             enrich = meta.get("enrich") or {}
             # Labeled chips (Oct-2026): bare fragments ("· 0 · 411614")
             # confused users — every value carries its name now.

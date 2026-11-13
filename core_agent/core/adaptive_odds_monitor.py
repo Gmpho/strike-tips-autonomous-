@@ -1436,7 +1436,10 @@ class AdaptiveOddsMonitor:
         try:
             from core_agent.core.market_events import record_alert
 
-            record_alert(msg)
+            _written = record_alert(msg)
+            if _written:
+                msg = dict(msg)
+                msg["canonical_event"] = _written[0]
         except Exception as exc:
             logger.debug("Alert event record skipped: %s", exc)
 
