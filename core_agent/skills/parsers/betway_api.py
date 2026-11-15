@@ -2,6 +2,7 @@ import logging
 import asyncio
 import re
 import random
+import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .tab4racing import ScrapedRace, ScrapedRunner, _parse_distance_m
@@ -18,6 +19,23 @@ _REGION_LABELS_LOGGED = False
 class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
 
+    # Retry ladder for the probabilistic 403. Three things matter here:
+    #
+    # 1. The block is per browser fingerprint, so a *fresh session* each
+    #    attempt is what clears it (see fetch_racing_data).
+    # 2. The failures arrive in waves, not independently. Nov-2026 production
+    #    had 166 in two days, clustered in the 03:00-07:00 UTC window when the
+    #    international cards load, and 26 poll cycles returned zero races.
+    #    With four attempts at a ~29% per-attempt failure rate we would expect
+    #    ~0.7% total failure, but 4.5% was observed — proof the failures
+    #    correlate. Retrying inside the same wave needs *time*, not just
+    #    another fingerprint.
+    # 3. The whole ladder still has to fit inside the 5-minute poll, so a
+    #    total budget (not just a per-sleep cap) bounds the damage.
+    MAX_ATTEMPTS = 5
+    BACKOFF_SECONDS = (3.0, 9.0, 24.0, 45.0)
+    RETRY_BUDGET_SECONDS = 150.0
+
     async def fetch_racing_data(self) -> Dict[str, Any]:
         """Fetch raw racing data from Betway's TrackRacing (TAB) API.
 
@@ -32,8 +50,9 @@ class BetwayAPI:
             "Referer": "https://www.betway.co.za/sport/horse-racing",
             "Origin": "https://www.betway.co.za",
         }
-        backoff = [3, 8, 20, 30]
-        for attempt in range(4):
+        started = time.monotonic()
+        last_error: Optional[BaseException] = None
+        for attempt in range(self.MAX_ATTEMPTS):
             try:
                 client = get_async_client(
                     timeout=90.0,
@@ -101,9 +120,34 @@ class BetwayAPI:
 
                 return {"status": "success", "details": events_details}
             except Exception as e:
-                logger.info(f"Betway fetch attempt {attempt+1} failed (retrying): {e}")
-                await asyncio.sleep(backoff[attempt] + random.uniform(0, 2))
-        return {"status": "error", "error": "Max retries reached"}
+                last_error = e
+                attempts_used = attempt + 1
+                if attempts_used >= self.MAX_ATTEMPTS:
+                    logger.warning(
+                        "Betway fetch gave up after %d attempts: %s",
+                        attempts_used, e,
+                    )
+                    break
+                base = self.BACKOFF_SECONDS[
+                    min(attempt, len(self.BACKOFF_SECONDS) - 1)
+                ]
+                # Spread of ±50% around the base: stays jittered enough that
+                # two containers cannot lock-step onto the same wave, without
+                # collapsing to a zero-length sleep the way full jitter can.
+                delay = random.uniform(base * 0.5, base * 1.5)
+                elapsed = time.monotonic() - started
+                if elapsed + delay > self.RETRY_BUDGET_SECONDS:
+                    logger.warning(
+                        "Betway retry budget spent after %d attempt(s) in %.0fs: %s",
+                        attempts_used, elapsed, e,
+                    )
+                    break
+                logger.info(
+                    "Betway fetch attempt %d/%d failed (retrying in %.1fs): %s",
+                    attempts_used, self.MAX_ATTEMPTS, delay, e,
+                )
+                await asyncio.sleep(delay)
+        return {"status": "error", "error": f"Max retries reached: {last_error}"}
 
     async def _fetch_event_safe(self, client, eid, reg_name, league, sem=None) -> Optional[Dict]:
         try:
