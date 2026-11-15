@@ -13,8 +13,10 @@ Both layers inject into the LLM prompt. JSONL is always primary.
 Honcho is best-effort — if it fails/is slow, the agent still works fine.
 """
 
+import hashlib
 import logging
 import os
+import re
 import typing as _typing
 from datetime import date
 from typing import Optional
@@ -27,6 +29,40 @@ from core_agent.skills.memory.jsonl_session import JSONLSession
 logger = logging.getLogger("honcho-memory")
 
 WORKSPACE_ID = os.getenv("HONCHO_WORKSPACE_ID", "strike-tips-prod")
+
+# Honcho validates peer and session ids against ^[a-zA-Z0-9_-]+$ and rejects
+# anything else at the API boundary. Because this layer is best-effort, the
+# rejection surfaced only as a warning, so memory degraded silently for every
+# API-created user: their id is ``user_api:race_<n>_<ts>`` and the colon fails
+# the pattern (Nov-2026, 5 warnings/day in production).
+_PEER_ID_INVALID = re.compile(r"[^A-Za-z0-9_-]+")
+_PEER_ID_MAX = 64
+
+
+def _honcho_id(raw: object, prefix: str = "") -> str:
+    """Return an id Honcho will accept, deterministically.
+
+    Cosmetic ids (``anon_web``, Telegram chat ids) pass through unchanged, so
+    existing peers keep their history. Only ids that could never have been
+    written are rewritten — there is no data to lose.
+
+    Args:
+        raw: The caller-supplied id (may be None, empty or non-string).
+        prefix: Optional namespace, e.g. ``"user_"``.
+
+    Returns:
+        A string matching ``^[a-zA-Z0-9_-]+$``, at most 64 characters.
+    """
+    text = str(raw if raw is not None else "").strip()
+    cleaned = _PEER_ID_INVALID.sub("_", text)
+    cleaned = re.sub(r"_{2,}", "_", cleaned).strip("_-") or "anon"
+    candidate = f"{prefix}{cleaned}"
+    if len(candidate) > _PEER_ID_MAX:
+        # Keep the readable head, pin the tail with a digest so two long ids
+        # that share a prefix cannot collide onto the same peer.
+        digest = hashlib.sha1(candidate.encode("utf-8")).hexdigest()[:8]
+        candidate = f"{candidate[: _PEER_ID_MAX - 9]}_{digest}"
+    return candidate
 
 
 def _make_honcho_client():
@@ -65,7 +101,7 @@ class HonchoMemory:
             return False
         try:
             self._honcho = client
-            self._user_peer = client.peer(f"user_{self._user_id}")
+            self._user_peer = client.peer(_honcho_id(self._user_id, prefix="user_"))
             self._agent_peer = client.peer("agent_strike")
             return True
         except Exception as e:
@@ -73,7 +109,7 @@ class HonchoMemory:
             return False
 
     def _honcho_session_id(self) -> str:
-        return f"{self._user_id}_{date.today().isoformat()}"
+        return f"{_honcho_id(self._user_id, prefix='user_')}_{date.today().isoformat()}"
 
     def get_context(self, query: Optional[str] = None) -> str:
         """
