@@ -6,6 +6,7 @@ supplies full official cards and settlement prefers them.
 """
 import json
 import os
+from datetime import date, timedelta
 
 from core_agent.skills.league.results_feed import (
     append_confirmed_results,
@@ -371,13 +372,26 @@ def _write_picks(tmp_path, picks):
             f.write(_json.dumps(p) + "\n")
 
 
+def _recent_date(days_ago: int = 1) -> str:
+    """A date inside ``pending_meetings``' window, relative to the real clock.
+
+    These tests used to pin ``2026-11-10`` with ``days=3``. The window is
+    measured back from *today*, so once the wall clock rolled past that date
+    every meeting fell out of range: the "is in" assertion failed and the
+    "not in" assertion passed for the wrong reason. Anchoring to real time
+    keeps both assertions meaningful for good.
+    """
+    return (date.today() - timedelta(days=days_ago)).isoformat()
+
+
 def test_pending_meetings_refetches_a_meeting_with_new_pending_races(tmp_path):
+    day = _recent_date()
     _write_picks(tmp_path, [
-        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=5),
+        _pick(race_id="1", date=day, course="Kenilworth", race_number=5),
     ])
     # R1-R4 are already confirmed for that meeting …
     rows = [
-        {"date": "2026-11-10", "course": "Kenilworth", "race_number": str(r),
+        {"date": day, "course": "Kenilworth", "race_number": str(r),
          "runners": [{"name": "X", "position": 1}]}
         for r in (1, 2, 3, 4)
     ]
@@ -385,34 +399,42 @@ def test_pending_meetings_refetches_a_meeting_with_new_pending_races(tmp_path):
 
     meetings = pending_meetings(str(tmp_path), days=3)
     # … so the meeting still needs a fetch for R5.
-    assert ("2026-11-10", "Kenilworth") in meetings
+    assert (day, "Kenilworth") in meetings
 
 
 def test_pending_meetings_skips_a_meeting_whose_races_are_all_confirmed(tmp_path):
+    day = _recent_date()
     _write_picks(tmp_path, [
-        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=1),
+        _pick(race_id="1", date=day, course="Kenilworth", race_number=1),
     ])
-    rows = [{"date": "2026-11-10", "course": "Kenilworth", "race_number": "1",
+    # Needed while the race has no card…
+    assert (day, "Kenilworth") in pending_meetings(str(tmp_path), days=3)
+
+    rows = [{"date": day, "course": "Kenilworth", "race_number": "1",
              "runners": [{"name": "X", "position": 1}]}]
     append_confirmed_results(str(tmp_path), rows)
 
-    assert ("2026-11-10", "Kenilworth") not in pending_meetings(str(tmp_path), days=3)
+    # …done once it has one. In-window throughout: this is about the card,
+    # not about the date expiring.
+    assert (day, "Kenilworth") not in pending_meetings(str(tmp_path), days=3)
 
 
 def test_pending_meetings_respects_the_fetch_cooldown(tmp_path):
+    day = _recent_date()
     _write_picks(tmp_path, [
-        _pick(race_id="1", date="2026-11-10", course="Kenilworth", race_number=5),
+        _pick(race_id="1", date=day, course="Kenilworth", race_number=5),
     ])
     from core_agent.skills.league import results_feed
 
-    results_feed._mark_fetched(str(tmp_path), "2026-11-10", "Kenilworth")
-    assert ("2026-11-10", "Kenilworth") not in pending_meetings(
+    results_feed._mark_fetched(str(tmp_path), day, "Kenilworth")
+    assert (day, "Kenilworth") not in pending_meetings(
         str(tmp_path), days=3
     )
     # Once the cooldown expires the meeting is fetched again.
-    assert ("2026-11-10", "Kenilworth") in pending_meetings(
+    assert (day, "Kenilworth") in pending_meetings(
         str(tmp_path), days=3, cooldown_secs=0
     )
+
 
 
 # ── the HUD results tab must not depend on ATR being allowed through ────────

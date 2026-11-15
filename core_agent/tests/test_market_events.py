@@ -21,11 +21,28 @@ from core_agent.core import market_events as me
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 
-def _snapshot(entries, ts="2026-11-13T10:00:00"):
+# These tests used to hardcode 2026-11-13T10:00 as "now". The store prunes and
+# cools down against the REAL clock (26h retention, 10-minute runner cooldown),
+# so the moment the wall clock moved past that date every window expired, every
+# read came back empty and 14 tests failed at once. Anchor "now" to the real
+# clock instead: offsets in minutes keep the same relationships forever.
+_BASE = datetime.now().replace(microsecond=0)
+
+
+def _at(minutes: int = 0) -> datetime:
+    return _BASE + timedelta(minutes=minutes)
+
+
+def _ts(minutes: int = 0) -> str:
+    return _at(minutes).isoformat()
+
+
+def _snapshot(entries, ts=None):
     """A minimal market snapshot shaped like the real one.
 
     ``entries`` is a list of (course, race_number, horse, odds[, book]).
     """
+    ts = ts or _ts(0)
     events = {}
     for idx, entry in enumerate(entries):
         course, race_number, horse, odds = entry[:4]
@@ -59,7 +76,7 @@ def _diff(store, snapshot, now=None, picks=None):
     return me.diff_snapshot(
         snapshot,
         picks=picks if picks is not None else [],
-        now=now or datetime(2026, 11, 13, 10, 0, 0),
+        now=now or _at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
@@ -72,15 +89,15 @@ def test_a_real_move_is_recorded_once(store):
     me.diff_snapshot(
         _snapshot([("Greyville", 1, "Bright Comet", 11.0)]),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = _diff(
         store,
         _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                  ts="2026-11-13T10:05:00"),
-        now=datetime(2026, 11, 13, 10, 5),
+                  ts=_ts(5)),
+        now=_at(5),
     )
 
     assert len(written) == 1
@@ -102,7 +119,7 @@ def test_the_same_transition_cannot_be_stored_twice(store):
     """Two sources seeing 3.5 -> 2.87 must not make two records."""
     event = {
         "id": me.move_id("Greyville", 1, "Bright Comet", 3.5, 2.87),
-        "ts": "2026-11-13T10:00:00",
+        "ts": _ts(0),
         "kind": me.KIND_PRICE_MOVE,
     }
     assert me.append_events([event], path=store["events_path"]) == [event]
@@ -113,8 +130,8 @@ def test_the_same_transition_cannot_be_stored_twice(store):
 def test_a_drift_is_directional_and_not_a_steamer(store):
     _diff(store, _snapshot([("Vaal", 5, "King Lee", 3.0)]))
     written = _diff(store, _snapshot([("Vaal", 5, "King Lee", 4.2)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert len(written) == 1
     assert written[0]["move_pct"] < 0
     assert written[0]["direction"] == "drifted"
@@ -129,13 +146,13 @@ def test_placeholder_to_real_price_is_not_a_move(store, placeholder):
     me.diff_snapshot(
         _snapshot([("Bahrain", 1, "Royal Champion", placeholder)]),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = _diff(store, _snapshot([("Bahrain", 1, "Royal Champion", 6.0)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert written == []
 
 
@@ -143,8 +160,8 @@ def test_real_to_placeholder_is_not_a_move(store):
     """A runner going SP (non-runner, feed gap) is a withdrawal, not drift."""
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 3.5)]))
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", "SP")],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert written == []
 
 
@@ -152,8 +169,8 @@ def test_a_change_below_threshold_is_not_a_move(store):
     """2.00 -> 2.02 is noise; it must not become a Movers card."""
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 2.00)]))
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 2.02)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert written == []
 
 
@@ -165,8 +182,8 @@ def test_a_book_switch_is_not_a_move(store):
     written = _diff(
         store,
         _snapshot([("Greyville", 1, "Bright Comet", 2.5, "atr")],
-                  ts="2026-11-13T10:05:00"),
-        now=datetime(2026, 11, 13, 10, 5),
+                  ts=_ts(5)),
+        now=_at(5),
     )
     assert written == []
 
@@ -182,8 +199,8 @@ def test_moves_are_tracked_per_book_independently(store):
         _snapshot([
             ("Greyville", 1, "Bright Comet", 2.8, "betway"),
             ("Greyville", 1, "Bright Comet", 2.7, "atr"),
-        ], ts="2026-11-13T10:05:00"),
-        now=datetime(2026, 11, 13, 10, 5),
+        ], ts=_ts(5)),
+        now=_at(5),
     )
     books = sorted(e["book"] for e in written)
     assert books == ["atr", "betway"]
@@ -195,23 +212,23 @@ def test_a_runner_is_quiet_for_the_cooldown(store):
     """A runner that just moved cannot move again inside the window."""
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 11.0)]))
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                           ts="2026-11-13T10:05:00"),
-          now=datetime(2026, 11, 13, 10, 5))
+                           ts=_ts(5)),
+          now=_at(5))
     # 4 minutes later: still inside the 10-minute window.
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 5.0)],
-                                     ts="2026-11-13T10:09:00"),
-                    now=datetime(2026, 11, 13, 10, 9))
+                                     ts=_ts(9)),
+                    now=_at(9))
     assert written == []
 
 
 def test_a_runner_speaks_again_after_the_cooldown(store):
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 11.0)]))
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                           ts="2026-11-13T10:05:00"),
-          now=datetime(2026, 11, 13, 10, 5))
+                           ts=_ts(5)),
+          now=_at(5))
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 4.0)],
-                                     ts="2026-11-13T10:20:00"),
-                    now=datetime(2026, 11, 13, 10, 20))
+                                     ts=_ts(20)),
+                    now=_at(20))
     assert len(written) == 1
 
 
@@ -221,7 +238,7 @@ def test_one_busy_race_is_capped(store):
     me.diff_snapshot(
         _snapshot([("Greyville", 1, n, 10.0) for n in names]),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
@@ -230,8 +247,8 @@ def test_one_busy_race_is_capped(store):
         store,
         _snapshot([("Greyville", 1, n, 10.0 - (i + 1) * 0.5)
                    for i, n in enumerate(names)],
-                  ts="2026-11-13T10:05:00"),
-        now=datetime(2026, 11, 13, 10, 5),
+                  ts=_ts(5)),
+        now=_at(5),
     )
     assert len(written) == me.MAX_EVENTS_PER_RACE
     # ...and they are the biggest, not an arbitrary three.
@@ -242,8 +259,8 @@ def test_a_runner_produces_one_event_per_poll(store):
     """Same runner, same poll, two snapshots — still one event."""
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 10.0)]))
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 2.0)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert len(written) == 1
 
 
@@ -252,7 +269,7 @@ def test_a_runner_produces_one_event_per_poll(store):
 def test_the_event_knows_the_users_pick(store, tmp_path):
     """A move on a runner the user holds must be marked as theirs."""
     (tmp_path / "league_picks.jsonl").write_text(json.dumps({
-        "date": "2026-11-13",
+        "date": _BASE.date().isoformat(),
         "course": "Greyville (RSA)",
         "race_number": 1,
         "runner_name": "Bright Comet",
@@ -260,19 +277,19 @@ def test_the_event_knows_the_users_pick(store, tmp_path):
         "handle": "StriketipsAI",
     }) + "\n")
 
-    picks = me.load_pick_index(data_dir=str(tmp_path), date="2026-11-13")
+    picks = me.load_pick_index(data_dir=str(tmp_path), date=_BASE.date().isoformat())
     assert len(picks) == 1
 
     me.diff_snapshot(
         _snapshot([("Greyville", 1, "Bright Comet", 11.0)]),
         picks=picks,
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5), picks=picks)
+                                     ts=_ts(5)),
+                    now=_at(5), picks=picks)
     assert written[0]["is_user_pick"] is True
     assert written[0]["pick"]["handle"] == "StriketipsAI"
 
@@ -281,13 +298,13 @@ def test_a_move_we_hold_no_pick_on_is_not_marked(store):
     me.diff_snapshot(
         _snapshot([("Greyville", 1, "Bright Comet", 11.0)]),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5), picks=[])
+                                     ts=_ts(5)),
+                    now=_at(5), picks=[])
     assert "is_user_pick" not in written[0]
 
 
@@ -295,7 +312,7 @@ def test_a_move_we_hold_no_pick_on_is_not_marked(store):
 
 def test_atr_events_carry_their_source_and_age():
     """A 45-minute-old ATR row must say so rather than pose as live."""
-    now = datetime(2026, 11, 13, 10, 0)
+    now = _at(0)
     fetched = now - timedelta(minutes=45)
     events = me.from_atr(
         [{"horse": "King Lee", "course": "Churchill Downs", "time": "14:35",
@@ -313,11 +330,11 @@ def test_atr_cannot_outrank_a_course_we_scrape(store):
     """If we observed Greyville ourselves, ATR's Greyville rows are dropped."""
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 11.0)]))
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                           ts="2026-11-13T10:05:00"),
-          now=datetime(2026, 11, 13, 10, 5))
+                           ts=_ts(5)),
+          now=_at(5))
 
     atr = {
-        "timestamp": "2026-11-13T09:30:00",
+        "timestamp": _ts(-30),
         "movers": [
             {"horse": "Bright Comet", "course": "Greyville", "time": "14:37",
              "current_odds": 6.0, "first_show": 11.0, "movement": "+45%"},
@@ -336,8 +353,8 @@ def test_atr_cannot_outrank_a_course_we_scrape(store):
 def test_every_movers_row_states_its_source_and_age(store):
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 11.0)]))
     _diff(store, _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                           ts="2026-11-13T10:05:00"),
-          now=datetime(2026, 11, 13, 10, 5))
+                           ts=_ts(5)),
+          now=_at(5))
     rows = me.movers_for_hud(events_path=store["events_path"])
     assert rows
     for row in rows:
@@ -355,8 +372,8 @@ def test_an_alert_is_normalised_into_the_store(store):
         "horse": "King Lee",
         "odds": "2.87",
         "race": "5",
-        "timestamp": "2026-11-13T10:00:00",
-        "journey": {"open": 3.5, "open_at": "2026-11-13T04:55"},
+        "timestamp": _ts(0),
+        "journey": {"open": 3.5, "open_at": _ts(-305)},
     }
     written = me.record_alert(msg, events_path=store["events_path"])
     assert len(written) == 1
@@ -380,7 +397,7 @@ def test_a_message_without_a_real_price_is_not_recorded(store):
     for odds in ("SP", 0, None, "n/a"):
         assert me.record_alert(
             {"type": "odds_drop", "course": "Vaal", "horse": "King Lee",
-             "odds": odds, "race": "5", "timestamp": "2026-11-13T10:00:00"},
+             "odds": odds, "race": "5", "timestamp": _ts(0)},
             events_path=store["events_path"],
         ) == []
 
@@ -388,7 +405,7 @@ def test_a_message_without_a_real_price_is_not_recorded(store):
 def test_a_non_odds_alert_type_is_not_a_market_event(store):
     assert me.record_alert(
         {"type": "value_bet", "course": "Vaal", "horse": "King Lee",
-         "odds": 3.0, "race": "5", "timestamp": "2026-11-13T10:00:00"},
+         "odds": 3.0, "race": "5", "timestamp": _ts(0)},
         events_path=store["events_path"],
     ) == []
 
@@ -428,43 +445,44 @@ def test_a_bad_snapshot_is_survivable(store):
 
 def test_finished_races_are_ignored(store):
     snap = _snapshot([("Greyville", 1, "Bright Comet", 11.0)])
-    me.diff_snapshot(snap, picks=[], now=datetime(2026, 11, 13, 10, 0),
+    me.diff_snapshot(snap, picks=[], now=_at(0),
                      baseline_path=store["baseline_path"],
                      events_path=store["events_path"])
     snap2 = _snapshot([("Greyville", 1, "Bright Comet", 2.0)],
-                      ts="2026-11-13T10:05:00")
+                      ts=_ts(5))
     for event in snap2["events"].values():
         event["isFinished"] = True
-    assert _diff(store, snap2, now=datetime(2026, 11, 13, 10, 5)) == []
+    assert _diff(store, snap2, now=_at(5)) == []
 
 
 def test_non_runners_are_ignored(store):
     snap = _snapshot([("Greyville", 1, "Bright Comet", 11.0)])
-    me.diff_snapshot(snap, picks=[], now=datetime(2026, 11, 13, 10, 0),
+    me.diff_snapshot(snap, picks=[], now=_at(0),
                      baseline_path=store["baseline_path"],
                      events_path=store["events_path"])
     snap2 = _snapshot([("Greyville", 1, "Bright Comet", 2.0)],
-                      ts="2026-11-13T10:05:00")
+                      ts=_ts(5))
     for event in snap2["events"].values():
         event["runners"][0]["non_runner"] = True
-    assert _diff(store, snap2, now=datetime(2026, 11, 13, 10, 5)) == []
+    assert _diff(store, snap2, now=_at(5)) == []
 
 
 def test_a_new_day_does_not_compare_against_yesterdays_price(store):
     """Same course, same race number, same horse name — different race."""
+    yesterday = _BASE - timedelta(days=1)
     me.diff_snapshot(
         _snapshot([("Greyville", 1, "Bright Comet", 11.0)],
-                  ts="2026-11-12T10:00:00"),
+                  ts=yesterday.isoformat()),
         picks=[],
-        now=datetime(2026, 11, 12, 10, 0),
+        now=yesterday,
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = me.diff_snapshot(
         _snapshot([("Greyville", 1, "Bright Comet", 3.0)],
-                  ts="2026-11-13T10:00:00"),
+                  ts=_ts(0)),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
@@ -489,13 +507,13 @@ def test_a_movers_row_never_shows_a_utc_wall(store):
     me.diff_snapshot(
         _snapshot([("Laurel Park", 3, "Drumnadrochit", 2.62)]),
         picks=[],
-        now=datetime(2026, 11, 13, 10, 0),
+        now=_at(0),
         baseline_path=store["baseline_path"],
         events_path=store["events_path"],
     )
     written = _diff(store, _snapshot([("Laurel Park", 3, "Drumnadrochit", 1.57)],
-                                     ts="2026-11-13T10:05:00"),
-                    now=datetime(2026, 11, 13, 10, 5))
+                                     ts=_ts(5)),
+                    now=_at(5))
     assert len(written) == 1
     # The snapshot stores "14:35" (UTC) and this meeting has no bf_off_time.
     assert written[0]["race"]["off"] == "14:15"
@@ -509,14 +527,14 @@ def test_a_betfair_sourced_off_time_is_used_as_is(store):
     snap = _snapshot([("Greyville", 1, "Bright Comet", 11.0)])
     for event in snap["events"].values():
         event["bf_off_time"] = "16:37"
-    me.diff_snapshot(snap, picks=[], now=datetime(2026, 11, 13, 10, 0),
+    me.diff_snapshot(snap, picks=[], now=_at(0),
                      baseline_path=store["baseline_path"],
                      events_path=store["events_path"])
     snap2 = _snapshot([("Greyville", 1, "Bright Comet", 6.5)],
-                      ts="2026-11-13T10:05:00")
+                      ts=_ts(5))
     for event in snap2["events"].values():
         event["bf_off_time"] = "16:37"
-    _diff(store, snap2, now=datetime(2026, 11, 13, 10, 5))
+    _diff(store, snap2, now=_at(5))
     rows = me.movers_for_hud(events_path=store["events_path"])
     assert rows[0]["time"] == "16:37"
 
