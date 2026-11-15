@@ -140,8 +140,24 @@ def _norm_name(value: str) -> str:
     Books disagree on punctuation ("Captain's Elect" vs "Captains
     Elect"); overlap scoring must never hinge on an apostrophe —
     2026-09-23 Durbanville BIPOT was falsely LOST on exactly that.
+
+    ATR pages append the saddle number to every runner ("Futurewolff (1)",
+    "Gallic Victor (8)"); that is not part of the horse's name and it
+    deflated the overlap score of every ONE-WORD name to exactly 0.500 —
+    just under the 0.55 match bar ({"futurewolff","1"} vs {"futurewolff"}).
+    Two-word names survived at 0.667, so the failure only ever showed on
+    single-word runners (Nov-2026: Turffontein EXACTA banker Futurewolff).
+    Only bracketed numbers are dropped — a bare number stays a name token.
     """
-    return re.sub(r"[^a-z0-9\s]", "", str(value or "").lower())
+    cleaned = re.sub(r"\(\s*\d+\s*\)|\[\s*\d+\s*\]", " ", str(value or "").lower())
+    return re.sub(r"[^a-z0-9\s]", "", cleaned).strip()
+
+
+def _clean_runner_name(value) -> str:
+    """Runner name without the trailing "(N)" saddle number ATR appends."""
+    return re.sub(
+        r"\s*(?:\(\s*\d+\s*\)|\[\s*\d+\s*\])\s*$", "", str(value or "")
+    ).strip()
 
 
 def _log_settled_winner(bet, winner: str) -> None:
@@ -218,9 +234,44 @@ def _raceform_url(track: Optional[str], iso_date: Optional[str]) -> Optional[str
     return f"https://raceform.co.za/horse-racing-results/{t}/{d}"
 
 
+# One pool is named many ways depending on who is speaking: the bookmaker
+# board codes it ("PA", "BI1", "JP2", "P6"), the stored ticket keeps that code
+# or a display label ("TRIFECTA Multi"), and Raceform's dividend table prints
+# its own name ("Place Accumulator", "Trifecta"). Every dividend comparison
+# runs through _pool_key, so the aliases live there and BOTH sides of the
+# comparison collapse onto one key. (Nov-2026: a won TRIFECTA Multi and a won
+# PA both reported "dividend not published" — Raceform's dividend was fetched
+# and then discarded because the keys were TRIFECTAMULTI vs TRIFECTA and
+# PA vs PLACEACCUMULATOR.)
+_POOL_ALIASES = {
+    "PA": "PLACEACCUMULATOR",
+    "PLACEACC": "PLACEACCUMULATOR",
+    "BI": "BIPOT",
+    "BI1": "BIPOT",
+    "BI2": "BIPOT",
+    "JP1": "JACKPOT",
+    "JP2": "JACKPOT",
+    "JP3": "JACKPOT",
+    "P3": "PICK3",
+    "P6": "PICK6",
+    "EXA": "EXACTA",
+    "EXACTAMULTI": "EXACTA",
+    "TRI": "TRIFECTA",
+    "TRIMULTI": "TRIFECTA",
+    "TRIFECTAMULTI": "TRIFECTA",
+    "QUA": "QUARTET",
+    "QUARTETMULTI": "QUARTET",
+}
+
+
 def _pool_key(pool_type) -> str:
-    """Uppercase alphanumeric pool key: \"Pick 6\"/\"PICK6\"/\"pick 6\" -> PICK6."""
-    return re.sub(r"[^A-Z0-9]", "", str(pool_type or "").upper())
+    """Uppercase alphanumeric pool key with aliases collapsed.
+
+    "Pick 6"/"PICK6"/"P6" -> PICK6, "PA"/"Place Accumulator" ->
+    PLACEACCUMULATOR, "TRIFECTA Multi" -> TRIFECTA.
+    """
+    key = re.sub(r"[^A-Z0-9]", "", str(pool_type or "").upper())
+    return _POOL_ALIASES.get(key, key)
 
 
 def _raceform_page_date(page: str) -> Optional[str]:
@@ -1045,12 +1096,33 @@ class ResultTracker:
                     if not key:
                         continue
                     pos = str(r.get("position", "") or "").strip()
+                    # A scratched runner carries no placing and CGI's
+                    # ``finish:0`` flag. The merge used to rebuild each row
+                    # with name+position only, so the proof of a scratch was
+                    # dropped before settlement could act on it (Nov-2026:
+                    # a Turffontein EXACTA banker was flagged
+                    # ``non_runner: true`` on the card and still read as
+                    # "unreadable" — the ticket could be neither voided nor
+                    # settled).
+                    nr = bool(r.get("non_runner")) and not pos
+                    _name = _clean_runner_name(r.get("name", ""))
                     prev = slot.get(key)
-                    if prev is None or (not prev.get("position") and pos):
+                    if prev is None:
                         slot[key] = {
-                            "name": str(r.get("name", "")),
+                            "name": _name,
                             "position": pos,
+                            "non_runner": nr,
                         }
+                    elif pos and not prev.get("position"):
+                        # A placing beats a blank row — and a horse that
+                        # placed plainly ran, so any stale scratch flag goes.
+                        slot[key] = {
+                            "name": _name,
+                            "position": pos,
+                            "non_runner": False,
+                        }
+                    elif nr:
+                        prev["non_runner"] = True
 
         if delta <= 1:
             _fold(self._monitor_cached_results(track, iso))
@@ -1173,6 +1245,14 @@ class ResultTracker:
         text confirmed nothing, while the results sat in the snapshot.)
         Returns (position, winner_name) with position like "1st", or None
         when the horse isn't found — never fabricate.
+
+        A card that carries ALL FOUR placings proves that any horse it also
+        lists with a blank position finished outside the top 4 — a proven
+        LOSS for a single, reported as ``("unplaced", winner)``. A card
+        carrying only some placings proves nothing (the blank horse may be
+        2nd, 3rd or 4th), so it still returns None. (Nov-2026: Dangerous
+        Touch ran in Windsor R5, the card held 1st-4th and listed it blank,
+        and the bet hung PENDING until the 3-day cap expired it.)
         """
         if not horse or ":" in str(horse):
             return None
@@ -1186,11 +1266,17 @@ class ResultTracker:
                  if str(r.get("position", "")).strip() == "1st"),
                 "",
             )
+            # A blank position only means "outside the placings" once the
+            # card has published the placings — otherwise it means "unread".
+            _placed = {str(r.get("position", "")).strip() for r in runners}
+            _card_covers_top4 = {"1st", "2nd", "3rd", "4th"} <= _placed
             for r in runners:
                 if self._fuzzy_match(str(r.get("name", "")), horse) >= 0.55:
                     pos = str(r.get("position", "")).strip() or None
                     if pos:
                         return (pos, winner)
+                    if _card_covers_top4:
+                        return ("unplaced", winner)
                     return None
         except Exception as e:
             logger.debug(f"Structured placing lookup failed for {horse}: {e}")
@@ -1533,16 +1619,27 @@ class ResultTracker:
                 # not "proven unplaced" (Oct-2026): the docstring rule
                 # "missing place data stays unknown, never guessed" applies
                 # here too. Returning "" made a blank banker a hard FAIL.
+                # "NR" is different: the scorer flagged the horse a
+                # non-runner, which is proof it never took part.
                 for r in runners:
                     if self._fuzzy_match(str(r.get("name", "")), str(name)) >= 0.55:
                         p = str(r.get("position", "")).strip()
                         if p:
                             return p
+                        if r.get("non_runner"):
+                            return "NR"
                 return None
 
             banker_pos = _pos(cands[0]) if cands else None
+            if banker_pos == "NR":
+                # Banker scratched: this combination was never struck on a
+                # live runner and single-race pools have no TAB substitution,
+                # so the book refunds it. VOID — never LOST, never PENDING.
+                # (Nov-2026: Turffontein R1 EXACTA banker Futurewolff was
+                # `non_runner: true`; the ticket hung until the 3-day cap.)
+                return "void"
             if banker_pos is None:
-                return "unknown"  # banker scratched/absent: single pools
+                return "unknown"  # banker absent from the card: single pools
                                   # refund via VOID path, never auto-verdict
             if banker_pos != "1st":
                 return "fail"
@@ -1553,7 +1650,7 @@ class ResultTracker:
             saver_places = set()
             for s in cands[1:]:
                 p = _pos(s)
-                if p:
+                if p and p != "NR":
                     saver_places.add(p)
             if needed <= saver_places:
                 return "pass"
@@ -1704,6 +1801,52 @@ class ResultTracker:
                 agent="ResultTracker",
                 status="WARN",
             )
+        # A scratched banker in a single-race pool (EXACTA/TRIFECTA/QUARTET)
+        # means the combination was never struck on a live runner: the book
+        # refunds the stake. Single-race pools have no TAB favourite
+        # substitution, and `single_race_status` reports it as "void" instead
+        # of an eternal "unknown". (Nov-2026: Turffontein R1 EXACTA banker
+        # Futurewolff was a non-runner — the ticket could neither settle nor
+        # be voided, and would have silently expired with the stake gone.)
+        if "void" in legs_state:
+            _void_races = ", ".join(
+                f"R{ticket['combos'][i].get('race')}"
+                for i, s in enumerate(legs_state) if s == "void"
+            ) or "?"
+            notes = (
+                f"Void (banker scratched — non-runner in {_void_races}); "
+                "stake refunded"
+            )
+            if dry_run:
+                return {
+                    "bet_id": bet.bet_id,
+                    "won": None,
+                    "void": True,
+                    "pool_return": 0.0,
+                    "notes": notes,
+                    "dry_run": True,
+                }
+            ok = gov.cancel_pending_bet(bet.bet_id, notes) if gov else False
+            if not ok:
+                _record_pending(
+                    bet.bet_id, "settle_failed",
+                    "governor refused void (refund) write",
+                    getattr(bet, "track", ""), ticket["pool_type"],
+                )
+                return None
+            logger.info(
+                "Auto-voided exotic: %s @%s (%s)",
+                bet.horse, getattr(bet, "track", "?"), notes,
+            )
+            return {
+                "bet_id": bet.bet_id,
+                "horse": bet.horse,
+                "track": getattr(bet, "track", ""),
+                "race_number": getattr(bet, "race_number", 0),
+                "won": None,
+                "void": True,
+                "notes": notes,
+            }
         # A confirmed dead leg kills the (single) combination outright: a
         # multi-leg pool only wins when EVERY leg passes, so one proven
         # "fail" is a sound LOST even while another leg is still unknown.
