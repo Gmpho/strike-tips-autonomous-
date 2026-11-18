@@ -215,3 +215,27 @@ def test_enrichment_success_resets_its_budget(flag, monkeypatch):
 
     assert api.get_full_result("/racecard/a") == [{"name": "Alpha", "position": "1st"}]
     assert api._enrichment_failures == 0
+
+
+def test_trip_logs_once_then_reports_still_open(flag, caplog):
+    """Nov-2026: only the not-open→open transition is a WARNING.
+
+    Every failed half-open probe used to emit a fresh "TRIPPED" line, so one
+    incident against a blocked host read as five (7→10 consecutive failures
+    with the cooldown unchanged). The trip must be logged once; later
+    failures say the breaker is still open and that the cooldown holds.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(atr._BREAKER_FAILURE_THRESHOLD):
+            atr._record_failure("/results")
+        atr._record_failure("/results")
+        atr._record_failure("/results")
+
+    trips = [r for r in caplog.records if "TRIPPED" in r.getMessage()]
+    still_open = [r for r in caplog.records if "still open" in r.getMessage()]
+    assert len(trips) == 1, [r.getMessage() for r in caplog.records]
+    assert trips[0].levelno == logging.WARNING
+    assert len(still_open) == 2
+    assert all(r.levelno == logging.INFO for r in still_open)

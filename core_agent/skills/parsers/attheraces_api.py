@@ -167,10 +167,10 @@ def _record_failure(path: str) -> None:
         import time as _time
 
         flag = _breaker_flag_path()
+        active = False
         if flag is not None:
             # A half-open probe must NOT extend the cooldown — the running
             # one already covers it.
-            active = False
             try:
                 active = flag.exists() and float(
                     flag.read_text().strip() or 0) > _time.time()
@@ -178,13 +178,26 @@ def _record_failure(path: str) -> None:
                 active = False
             if not active:
                 flag.write_text(str(_time.time() + _BREAKER_COOLDOWN_SECS))
-        logger.warning(
-            "ATR circuit breaker TRIPPED after %d consecutive failures (last: %s) — "
-            "pausing ATR fetches for %dh; host is blocking every tier",
-            _breaker_failures,
-            path,
-            _BREAKER_COOLDOWN_SECS // 3600,
-        )
+        if active:
+            # Already open: WARNING only on the not-open→open transition.
+            # Every failed half-open probe used to emit a fresh "TRIPPED"
+            # line, so five probes read as five separate incidents when the
+            # breaker had simply stayed shut (Nov-2026: 5 WARNINGs, 1 trip).
+            logger.info(
+                "ATR circuit breaker still open after %d consecutive "
+                "failures (last: %s) — cooldown holds",
+                _breaker_failures,
+                path,
+            )
+        else:
+            logger.warning(
+                "ATR circuit breaker TRIPPED after %d consecutive failures "
+                "(last: %s) — pausing ATR fetches for %dh; host is blocking "
+                "every tier",
+                _breaker_failures,
+                path,
+                _BREAKER_COOLDOWN_SECS // 3600,
+            )
     except Exception:
         pass
 
