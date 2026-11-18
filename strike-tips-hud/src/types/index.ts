@@ -271,5 +271,14 @@ export interface HUDState {
    *  monitor writes the card every 5 min; the HUD shows races as "synced"
    *  relative to this so a stalled feed is visible, not assumed live. */
   lastSyncTs: number;
+  /** Feed health as stamped by the odds monitor (Nov-2026). `fetch_ok` is
+   *  false whenever the Betway cycle failed and the snapshot is a reuse of an
+   *  older card; `stale` marks the empty-snapshot guard's recovered copy.
+   *  Both must be surfaced — a card of hours-old prices must never look live. */
+  feedOk: boolean | null;
+  feedStale: boolean;
+  feedError: string | null;
+  /** Epoch ms this tab first saw a not-live feed (cleared on recovery). */
+  feedStaleSince: number | null;
   lastUpdate: number;
 }

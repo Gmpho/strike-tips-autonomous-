@@ -56,6 +56,10 @@ class HUDStore {
     results: [],
     news: [],
     lastSyncTs: 0,
+    feedOk: null,
+    feedStale: false,
+    feedError: null,
+    feedStaleSince: null,
     telemetry: [],
     lastUpdate: Date.now()
   };

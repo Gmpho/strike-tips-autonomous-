@@ -16,6 +16,7 @@ import type { RaceEvent, Runner } from './types';
 import { Sidebar } from './components/sidebar/Sidebar.tsx';
 import { WebGLErrorBoundary } from './components/visualizer/WebGLErrorBoundary';
 import { Header } from './components/layout/Header';
+import { FeedStaleBanner } from './components/layout/FeedStaleBanner';
 import { Footer } from './components/layout/Footer';
 import { BottomNav } from './components/layout/BottomNav';
 import { RaceCard } from './components/RaceCard.tsx';
@@ -371,6 +372,7 @@ export const App: React.FC = () => {
           <div className="px-3 sm:px-6 md:px-8 lg:px-12 py-4 sm:py-6 md:py-8 pb-24 md:pb-8 flex-1 flex flex-col min-h-0 w-full max-w-full">
             <div className="w-full flex-1 flex flex-col min-h-0 max-w-7xl mx-auto">
               {isGuest && <GuestBanner />}
+              <FeedStaleBanner />
               <AnimatePresence>
                 <motion.div
                   key={activeView}

@@ -28,6 +28,9 @@ export class DataBridge {
   private slowBackoffMs = SLOW_INTERVAL;
   private lastSnapshotHash: string | null = null;
   private refCount = 0;
+  /** Epoch ms of the first snapshot this tab received with fetch_ok:false.
+   *  Reset to null by the first live cycle, so the banner can age honestly. */
+  private staleSinceMs: number | null = null;
 
   start() {
     this.refCount++;
@@ -104,12 +107,26 @@ export class DataBridge {
           return true;
         })
       );
+      const feedDown = data.stale === true || data.fetch_ok === false;
+      if (feedDown) {
+        this.staleSinceMs ??= Date.now();
+      } else {
+        this.staleSinceMs = null;
+      }
       const patch: Record<string, unknown> = {
         events,
         alerts: data.alerts || [],
         // Stamped on every real card download so the views can show how fresh
         // the "live" races are instead of implying liveness.
         lastSyncTs: Date.now(),
+        // Feed health (Nov-2026). `fetch_ok:false` = the monitor could not
+        // refresh prices this cycle (Betway 403 waves) and is serving the last
+        // card it had. Tracked here so the banner can say *how long* we have
+        // been non-live instead of only that we are.
+        feedOk: typeof data.fetch_ok === 'boolean' ? data.fetch_ok : null,
+        feedStale: data.stale === true,
+        feedError: typeof data.fetch_error === 'string' && data.fetch_error ? data.fetch_error : null,
+        feedStaleSince: feedDown ? this.staleSinceMs : null,
       };
       const unwrap = (v: unknown): unknown => {
         // Bundle files wrap arrays ({movers: [...], timestamp}); SSE used to
