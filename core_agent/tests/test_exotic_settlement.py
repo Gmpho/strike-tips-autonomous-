@@ -254,6 +254,32 @@ def test_future_off_time_skipped(stub_modules, gov):
     gov.settle_exotic_bet.assert_not_called()
 
 
+def test_off_time_gate_runs_before_result_lookup(stub_modules, gov):
+    """Nov-2026 ordering fix: a ticket whose final leg has not run must never
+    trigger a result-source lookup.
+
+    The lookup used to run first, so every settle sweep walked Raceform +
+    ATR /results for 13-16 tickets that could not possibly have results and
+    then logged ``no_results``: 695 junk rows/day in settlement_diagnostics
+    (983 rows, 174 KB) and one uncached ATR /results hit per ticket per
+    sweep — the strongest candidate for the 6h breaker trips that blinded
+    ATR's results tab.
+    """
+    bet = _bet(notes=_ticket_notes("JACKPOT", [(4, "KENSAL GREEN", [])]))
+    tracker = ResultTracker(bankroll_governor=gov)
+    with patch.object(ResultTracker, "_race_off_datetime",
+                      return_value=datetime.now(_SAST) + timedelta(hours=3)), \
+            patch.object(ResultTracker, "_exotic_leg_races",
+                         new=AsyncMock(return_value=RACES)) as lookup, \
+            patch("core_agent.skills.result_tracker._record_pending") as diag:
+        rec = asyncio.run(tracker._settle_exotic_ticket(bet, gov, None))
+    assert rec is None
+    lookup.assert_not_called()
+    gov.settle_exotic_bet.assert_not_called()
+    diag.assert_called_once()
+    assert diag.call_args[0][1] == "before_off_time"
+
+
 def test_full_loop_settles_exotic_lost(stub_modules, past_off, gov):
     bet = _bet(notes=_ticket_notes("JACKPOT", [
         (4, "PRESSONREGARDLESS", ["ALSO RAN"]),

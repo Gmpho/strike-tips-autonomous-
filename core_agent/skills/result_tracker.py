@@ -1561,25 +1561,15 @@ class ResultTracker:
         requirement = _exotic_requirement(ticket["pool_type"])
         legs = ticket["pool_legs"]
 
-        try:
-            # Merged day-scoped sources (cache + Raceform + ATR backstop);
-            # always the bet's OWN race day, never a collapsed label.
-            races = await self._exotic_leg_races(
-                getattr(bet, "track", ""), getattr(bet, "date", None)
-            )
-        except Exception as e:
-            logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
-            _diag(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
-                            getattr(bet, "track", ""), ticket["pool_type"])
-            return None
-        if not races:
-            _diag(bet.bet_id, "no_results", "no day-scoped result source",
-                            getattr(bet, "track", ""), ticket["pool_type"])
-            return None
-
-        # Gate on the last leg's off-time when known (a ticket can't be dead
-        # before its final leg has run). Unknown off-time falls through to
-        # evidence: only confirmed results settle anything.
+        # Gate on the last leg's off-time BEFORE any result-source lookup
+        # (Nov-2026). The lookup used to run first, so every settle sweep
+        # walked Raceform + ATR /results for 13-16 tickets whose races had
+        # not run yet and then logged "no_results": ~695 junk rows/day in
+        # settlement_diagnostics (983 rows, 174 KB) and one uncached ATR
+        # /results hit per ticket per sweep — the strongest candidate for
+        # the 6h breaker trips that blinded ATR. A ticket cannot be dead
+        # before its final leg has run. Unknown off-time still falls
+        # through — evidence alone settles, and only on proof.
         try:
             last_off = self._race_off_datetime(
                 getattr(bet, "track", ""), legs[-1], getattr(bet, "date", None)
@@ -1596,6 +1586,22 @@ class ResultTracker:
                     getattr(bet, "track", ""), ticket["pool_type"],
                 )
                 return None
+
+        try:
+            # Merged day-scoped sources (cache + Raceform + ATR backstop);
+            # always the bet's OWN race day, never a collapsed label.
+            races = await self._exotic_leg_races(
+                getattr(bet, "track", ""), getattr(bet, "date", None)
+            )
+        except Exception as e:
+            logger.debug(f"Exotic results lookup failed for {bet.bet_id}: {e}")
+            _diag(bet.bet_id, "no_results", f"lookup error: {e}"[:200],
+                            getattr(bet, "track", ""), ticket["pool_type"])
+            return None
+        if not races:
+            _diag(bet.bet_id, "no_results", "no day-scoped result source",
+                            getattr(bet, "track", ""), ticket["pool_type"])
+            return None
 
         flagged_sub: List[str] = []
 
