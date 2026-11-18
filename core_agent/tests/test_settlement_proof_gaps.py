@@ -302,7 +302,13 @@ def _bet(**kw):
     b.confidence = kw.get("confidence", "EXOTIC")
     b.stake = kw.get("stake", 1.20)
     b.actual_return = 0.0
-    b.date = kw.get("date", "2026-11-14")
+    # Default to TODAY, not a frozen 2026-11-14: `_exotic_leg_races()` only
+    # consults the ATR source for a ticket that is today/yesterday old
+    # (delta <= 1), so a hardcoded date silently turned every ATR-backed test
+    # here into a vacuous "no_results" pass once the clock moved past it
+    # (Nov-2026: 4 tests went red at midnight, and 2 more were passing for
+    # the wrong reason). The cards below are stubbed, so "today" is fine.
+    b.date = kw.get("date", datetime.now().date().isoformat())
     b.notes = kw.get("notes", "")
     return b
 
