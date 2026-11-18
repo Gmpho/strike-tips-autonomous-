@@ -224,6 +224,26 @@ def test_identical_ticket_still_skipped(tmp_path):
     assert a is not None and b is None
 
 
+def test_identical_supersede_keeps_the_existing_ticket(tmp_path):
+    """Nov-2026 churn: two calls in one scan with the same selections voided
+    the first ticket and re-added an identical one a second later, so every
+    QUARTET carried a VOID + PENDING pair on the board. Identical selections
+    mean the stake is already committed — keep the ticket, drop the dupe."""
+    gov = _gov(tmp_path)
+    combos = [{
+        "race": 1,
+        "banker": "Tweed Man",
+        "savers": ["Blue Lava", "Correspondent", "Moonrise"],
+    }]
+    a = gov.record_exotic_bet("kenilworth", "QUARTET", [1], combos, 1.2, 100.0,
+                              source="daily")
+    b = gov.record_exotic_bet("kenilworth", "QUARTET", [1], combos, 1.2, 100.0,
+                              supersede=True, source="daily")
+    assert a is not None and b is not None
+    assert b.bet_id == a.bet_id
+    assert [x.status for x in gov._bets] == ["PENDING"]
+
+
 def test_label_variants_detected_as_same_ticket(tmp_path):
     gov = _gov(tmp_path)
     combos = _combos(["Deonarie", "Close Encounter"])

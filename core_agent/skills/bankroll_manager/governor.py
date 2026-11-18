@@ -40,6 +40,45 @@ def _load_paper_settings(data_dir: str) -> dict:
 
 logger = logging.getLogger("bankroll-governor")
 
+
+def _exotic_combo_signature(combinations) -> Optional[tuple]:
+    """Order-insensitive fingerprint of a ticket's selections.
+
+    Used to tell a genuine *replacement* from a re-record of the identical
+    ticket. ``None`` means the list could not be read; callers must treat
+    that as "not identical" and fall back to normal supersede behaviour.
+    """
+    try:
+        sig = []
+        for c in combinations or []:
+            if not isinstance(c, dict):
+                return None
+            try:
+                race = int(c.get("race"))
+            except (TypeError, ValueError):
+                race = -1
+            banker = str(c.get("banker") or "").strip().casefold()
+            savers = tuple(sorted(
+                str(s).strip().casefold() for s in (c.get("savers") or [])
+            ))
+            sig.append((race, banker, savers))
+        return tuple(sorted(sig)) if sig else None
+    except Exception:
+        return None
+
+
+def _stored_exotic_combos(bet) -> Optional[list]:
+    """The ``combinations`` stored in a ticket's notes, or None if unreadable."""
+    try:
+        notes = getattr(bet, "notes", "") or ""
+        if not str(notes).strip().startswith("{"):
+            return None
+        combos = json.loads(notes).get("combinations")
+        return combos if isinstance(combos, list) else None
+    except Exception:
+        return None
+
+
 _DSI_CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "dsi_cache.json")
 
 
@@ -830,6 +869,26 @@ class BankrollGovernor:
                         and existing.status == "PENDING"
                         and existing.is_paper == is_paper
                     ):
+                        # A re-record of the SAME ticket is not a supersede.
+                        # Nov-2026: two calls in one daily scan (same legs,
+                        # same combinations) voided the first and re-added an
+                        # identical one a second later, so every QUARTET
+                        # carried a VOID + PENDING pair on the board. Identical
+                        # selections mean the stake is already committed —
+                        # keep the ticket that exists and drop the duplicate.
+                        _new_sig = _exotic_combo_signature(combinations)
+                        if (
+                            _new_sig is not None
+                            and _new_sig == _exotic_combo_signature(
+                                _stored_exotic_combos(existing)
+                            )
+                        ):
+                            logger.info(
+                                f"Identical exotic re-record ignored: "
+                                f"{existing.bet_id} {pool_type} {leg_key} @ {track} "
+                                f"already holds these selections"
+                            )
+                            return existing
                         # Terminal VOID (not void_settlement, which returns the
                         # ticket to PENDING): VOID is outside the dupe key set,
                         # so the pool is freed for the replacement.
