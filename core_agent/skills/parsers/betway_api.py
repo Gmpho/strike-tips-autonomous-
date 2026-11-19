@@ -36,6 +36,66 @@ class BetwayAPI:
     BACKOFF_SECONDS = (3.0, 9.0, 24.0, 45.0)
     RETRY_BUDGET_SECONDS = 150.0
 
+    # Once a direct fetch is blocked, stop retrying direct for the rest of
+    # this process: Modal datacenter IPs are on Betway's blocklist, so every
+    # subsequent attempt would just burn the retry budget. Route through the
+    # Cloudflare Worker proxy instead (Cloudflare edge IPs pass).
+    _proxy_mode = False
+
+    def _worker_config(self):
+        import os
+        url = (os.environ.get("CLOUDFLARE_MCP_URL", "") or "").rstrip("/") or "https://striketips-mcp.gmphorg379.workers.dev"
+        key = os.environ.get("STRIKE_TIPS_API_KEY", "") or os.environ.get("CLOUDFLARE_API_KEY", "")
+        return url, key
+
+    async def _http_get(self, path: str, qs: str, headers: dict) -> Optional[Dict[str, Any]]:
+        """Fetch a Betway TrackRacing endpoint, falling back to the Worker proxy.
+
+        Returns parsed JSON on success, None on failure (so callers can retry).
+        """
+        # Direct path (curl_cffi, fresh session per call via get_async_client).
+        if not self._proxy_mode:
+            try:
+                from core_agent.core.http_client import get_async_client
+                client = get_async_client(timeout=90.0, no_proxy=True,
+                                         resolve_hosts={"www.betway.co.za"})
+                url = f"{self.BASE_URL}/{path}?{qs}"
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    try:
+                        return resp.json()
+                    except Exception:
+                        pass
+                if resp.status_code == 403:
+                    logger.warning("Betway direct fetch 403 on %s — switching to Worker proxy", path)
+                    self._proxy_mode = True
+            except Exception as e:
+                logger.debug("Betway direct fetch failed on %s: %s", path, e)
+                self._proxy_mode = True
+
+        # Worker proxy path (Cloudflare edge).
+        url, key = self._worker_config()
+        if not key:
+            logger.debug("Worker proxy skipped (no API key)")
+            return None
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.get(
+                    f"{url}/api/fetch-betway",
+                    params={"path": path, "qs": qs},
+                    headers={"x-api-key": key},
+                )
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    return None
+            logger.warning("Worker proxy %s returned %d: %.120s", path, resp.status_code, resp.text)
+        except Exception as e:
+            logger.debug("Worker proxy failed on %s: %s", path, e)
+        return None
+
     async def fetch_racing_data(self) -> Dict[str, Any]:
         """Fetch raw racing data from Betway's TrackRacing (TAB) API.
 
@@ -59,10 +119,10 @@ class BetwayAPI:
                     no_proxy=True,
                     resolve_hosts={"www.betway.co.za"},
                 )
-                daily_url = f"{self.BASE_URL}/GetDaily?sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
-                daily_resp = await client.get(daily_url, headers=bw_headers)
-                daily_resp.raise_for_status()
-                data = daily_resp.json()
+                daily_qs = "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
+                data = await self._http_get("GetDaily", daily_qs, bw_headers)
+                if data is None:
+                    raise RuntimeError("Betway GetDaily returned no data (direct + proxy both failed)")
 
                 event_ids = []
                 ALLOWED = [
@@ -151,7 +211,6 @@ class BetwayAPI:
 
     async def _fetch_event_safe(self, client, eid, reg_name, league, sem=None) -> Optional[Dict]:
         try:
-            url = f"{self.BASE_URL}/GetEvent?eventIds={eid}&marketGroupName=&countryCode=ZA"
             bw_headers = {
                 "Referer": "https://www.betway.co.za/sport/horse-racing",
                 "Origin": "https://www.betway.co.za",
@@ -159,15 +218,14 @@ class BetwayAPI:
             if sem:
                 async with sem:
                     await asyncio.sleep(random.uniform(0.05, 0.3))
-                    resp = await client.get(url, headers=bw_headers)
-            else:
-                resp = await client.get(url, headers=bw_headers)
-            if resp.status_code == 200:
-                data = resp.json()
+            qs = f"eventIds={eid}&marketGroupName=&countryCode=ZA"
+            data = await self._http_get("GetEvent", qs, bw_headers)
+            if isinstance(data, dict):
                 data["eventId"] = eid
                 data["regionName"] = reg_name
                 data["leagueName"] = league
                 return data
+            return None
         except Exception as e:
             logger.debug(f"Failed to fetch event {eid}: {e}")
         return None
