@@ -122,3 +122,100 @@ def test_engine_rebuilds_from_ledger_and_keeps_dream_priors(tmp_path):
     assert segment["total_staked"] == 20.0
     assert segment["total_returned"] == 50.0
     assert engine._stats["durbanville:any:mid"]["dream_bets"] == 7
+
+
+# ── Two books (Nov-2026) ─────────────────────────────────────────────
+# The HUD reported a 23.7% "win rate" that was 265 wins over 1,118 tickets,
+# which is neither the real book (105/105 won, 698 expired) nor the paper
+# book (160/1,013). Every caller now reads `books.real` / `books.paper` and
+# they are never averaged into a third number.
+
+def _paper(**kwargs):
+    bet = _bet(**kwargs)
+    bet["is_paper"] = True
+    return bet
+
+
+def test_books_split_never_blend():
+    stats = compute_bet_stats([
+        _bet(status="WON", stake=10.0, payout=40.0),
+        _bet(status="EXPIRED", stake=10.0, payout=0.0),
+        _paper(status="WON", stake=10.0, payout=20.0),
+        _paper(status="LOST", stake=10.0, payout=0.0),
+        _paper(status="LOST", stake=10.0, payout=0.0),
+    ])
+    real, paper = stats["books"]["real"], stats["books"]["paper"]
+
+    assert real["settledBets"] == 1
+    assert real["losses"] == 0
+    assert real["winRate"] == 100.0
+    assert real["expiredBets"] == 1
+    # 698 of 803 real tickets never resolved in the live ledger: the share is
+    # reported, so a 100% win rate can never be read as skill.
+    assert real["unresolvedShare"] == 50.0
+
+    assert paper["settledBets"] == 3
+    assert paper["winRate"] == 33.3
+    assert paper["losses"] == 2
+
+    # The legacy flat keys still describe the whole ledger (50%, not 100/33).
+    assert stats["settledBets"] == 4
+    assert stats["winRate"] == 50.0
+
+
+def test_calibration_reports_each_book():
+    cal = compute_calibration([
+        _bet(odds=2.0, stake=10.0, payout=20.0),
+        _paper(odds=2.0, status="LOST", stake=10.0, payout=0.0),
+        _paper(odds=2.0, status="LOST", stake=10.0, payout=0.0),
+    ])
+    assert cal["books"]["real"]["samples"] == 1
+    assert cal["books"]["real"]["accuracy"] == 50.0
+    assert cal["books"]["paper"]["samples"] == 2
+    assert cal["books"]["paper"]["accuracy"] == -50.0
+    # Real +74.5pp next to paper +6.3pp is the missing-losses artefact; the
+    # blended figure hides both.
+    assert cal["samples"] == 3
+
+
+def test_track_ranking_uses_capped_roi():
+    """One BIPOT must not crown a losing track.
+
+    Turffontein's +1,540% cell was 26 winners in 175 tickets, and its top
+    three tickets were 75% of the return. Ranking on raw ROI picks that track;
+    capping each ticket at 10x stake picks the honest one.
+    """
+    from datetime import date
+
+    bets = [_bet(track="turffontein", status="LOST", stake=5.0, payout=0.0, odds=9.0)
+            for _ in range(30)]
+    bets.append(_bet(track="turffontein", status="WON", stake=5.0, payout=33000.0, odds=6600.0))
+    bets += [_bet(track="kenilworth", status="LOST", stake=5.0, payout=0.0, odds=3.0)
+             for _ in range(10)]
+    bets += [_bet(track="kenilworth", status="WON", stake=5.0, payout=12.0, odds=2.4)
+             for _ in range(15)]
+
+    res = compute_track_stats(bets, today=date(2026, 11, 1))
+    turf = res["trackStats"]["Turffontein"]
+    assert turf["roi"] > 1000          # the number that made it "Best Track"
+    assert turf["roiCapped"] < 0       # the same ledger, one jackpot capped
+    assert turf["cap"] == 10.0
+    assert turf["topShare"] > 90       # one ticket is ~all of the return
+    assert res["bestTrack"]["name"] == "Kenilworth"
+    assert res["worstTrack"]["name"] == "Turffontein"
+    # Per-track maps keep the ledger's lower-case keys (same as roiByTrack).
+    assert res["roiCappedByTrack"]["turffontein"] == turf["roiCapped"]
+
+
+def test_track_stats_books_are_disjoint():
+    from datetime import date
+
+    bets = [
+        _bet(track="turffontein", status="WON", stake=10.0, payout=30.0),
+        _paper(track="kenilworth", status="LOST", stake=10.0, payout=0.0),
+    ]
+    res = compute_track_stats(bets, today=date(2026, 11, 1))
+    assert set(res["books"]["real"]["trackStats"]) == {"Turffontein"}
+    assert set(res["books"]["paper"]["trackStats"]) == {"Kenilworth"}
+    # Blended top level still lists both, for legacy consumers only.
+    assert set(res["trackStats"]) == {"Turffontein", "Kenilworth"}

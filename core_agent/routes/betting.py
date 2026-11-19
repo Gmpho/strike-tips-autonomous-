@@ -251,7 +251,17 @@ async def get_roi_by_track():
 
     bets_data = _load_json("bet_history.json") or []
     result = compute_track_stats(bets_data)
-    result.update(compute_calibration(bets_data))
+    cal = compute_calibration(bets_data)
+    # `compute_track_stats` already returns `books` (track-shaped). Nest the
+    # calibration one so the two per-book payloads cannot overwrite each
+    # other, and keep the flat keys the older HUD reads.
+    result["calibration"] = cal
+    result.update({
+        "accuracy": cal["accuracy"],
+        "samples": cal["samples"],
+        "actualWinRate": cal["actualWinRate"],
+        "impliedWinRate": cal["impliedWinRate"],
+    })
     best = result.get("bestTrack")
     result["topTrack"] = best["name"] if best else "N/A"
     return result
