@@ -1,7 +1,9 @@
 import React, { Suspense } from 'react';
-import { TrendingUp, Activity, Target, BarChart2, DollarSign, Layers } from 'lucide-react';
+import { TrendingUp, Activity, Target, BarChart2, Layers, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
+import type { BookStats, BookTracks, RankedTrack } from '../../types';
+import type { BetLike } from '../../lib/analytics';
 
 // ApexCharts suite ships in its own on-demand chunk (treeshaken core +
 // 7 types) so the dashboard first paint never pays for it. Loaded inside
@@ -16,77 +18,208 @@ function ChartSkeleton() {
   );
 }
 
-export const AnalyticsView: React.FC = () => {
-  const { learning, betStats, bankroll, bankrollHistory, betHistory } = useHUD();
+const fmtR = (v: number | undefined | null) =>
+  v == null ? '—' : `R${Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Win rate + avg stake over SETTLED bets only — totalBets includes the
-  // refund backlog, which once collapsed the rate to single digits.
-  const settledCount = betStats?.settledBets
-    ?? ((betStats?.wins ?? 0) + (betStats?.losses ?? 0));
+const fmtDay = (value: string | null | undefined) =>
+  value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
-  const winRate = settledCount > 0
-    ? ((betStats?.wins ?? 0) / settledCount * 100).toFixed(1)
-    : '0.0';
+const signed = (v: number | undefined | null, digits = 1) =>
+  `${Number(v ?? 0) >= 0 ? '+' : ''}${Number(v ?? 0).toFixed(digits)}`;
 
-  const roi = betStats?.roi ?? learning?.totalRoi ?? 0;
+interface Kpi {
+  label: string;
+  value: string;
+  icon: typeof TrendingUp;
+  color: string;
+  sub?: string;
+}
 
-  // Profit factor: gross returns / lost stakes. Reported as "—" until at
-  // least one settled ticket has lost (division by zero is not a 316% edge).
-  const profitFactor = betStats?.profitFactor != null
-    ? `${Number(betStats.profitFactor).toFixed(2)}×`
-    : '—';
-
-  const avgStake = betStats
-    ? (betStats.avgStake ?? (settledCount > 0 ? betStats.stakeTotal / settledCount : 0)).toFixed(2)
-    : '0.00';
-
-  const totalPL = betStats
-    ? (betStats.payoutTotal - betStats.stakeTotal).toFixed(2)
-    : '0.00';
-
-  const openBetsValue = bankroll?.totalExposure?.toFixed(2) ?? '0.00';
-
-  // Coverage disclosure: 1,051 expired tickets are refunds, not losses, so
-  // ROI is measured on a settled subset. Show the subset size, not a fake ROI.
-  const coverage = betStats?.settlementRate != null
-    ? `${betStats.settlementRate.toFixed(0)}%`
-    : null;
-  const expiredCount = betStats?.expiredBets ?? 0;
-
-  const allTracks = Object.entries(learning?.roiByTrack || {}).map(([name, r]) => ({
-    name: name.charAt(0).toUpperCase() + name.slice(1),
-    roi: Number(r) || 0
-  }));
-
-  const nonZeroTracks = allTracks.filter(t => t.roi !== 0);
-  const tracks = (nonZeroTracks.length > 0 ? nonZeroTracks : allTracks.slice(0, 7)).sort((a, b) => b.roi - a.roi);
-
-  // Rankings come from the ledger with a min-sample + 90-day recency gate
-  // (kenilworth's +351% was 11 settled winners out of 105 tickets, last run
-  // in August). Fall back to the chart series only if the server omits them.
-  const bestTrack = learning?.bestTrack
-    ? { name: learning.bestTrack.name, roi: learning.bestTrack.roi, n: learning.bestTrack.n, lastSeen: learning.bestTrack.lastSeen }
-    : tracks.length > 0 && tracks[0].roi > 0
-      ? { name: tracks[0].name, roi: tracks[0].roi, n: null as number | null, lastSeen: null as string | null }
-      : null;
-  const worstTrack = learning?.worstTrack && learning.worstTrack.roi < 0
-    ? { name: learning.worstTrack.name, roi: learning.worstTrack.roi, n: learning.worstTrack.n, lastSeen: learning.worstTrack.lastSeen }
-    : tracks.length > 0 && tracks[tracks.length - 1].roi < 0
-      ? { name: tracks[tracks.length - 1].name, roi: tracks[tracks.length - 1].roi, n: null as number | null, lastSeen: null as string | null }
-      : null;
-
-  const lastRun = (value: string | null) => value
-    ? new Date(`${value}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
-    : null;
-
-  const kpis: { label: string; value: string; icon: typeof TrendingUp; color: string; sub?: string }[] = [
-    { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500', sub: `${settledCount} settled` },
-    { label: 'TOTAL ROI', value: `${Number(roi).toFixed(1)}%`, icon: Target, color: 'text-blue-500', sub: coverage ? `${coverage} coverage · ${expiredCount} expired` : undefined },
-    { label: 'PROFIT FACTOR', value: profitFactor, icon: BarChart2, color: 'text-purple-500', sub: 'returns ÷ lost stakes' },
-    { label: 'AVG STAKE', value: `R${avgStake}`, icon: Layers, color: 'text-amber-500' },
-    { label: 'TOTAL P&L', value: `R${totalPL}`, icon: DollarSign, color: Number(totalPL) >= 0 ? 'text-emerald-500' : 'text-red-500' },
-    { label: 'OPEN EXPOSURE', value: `R${openBetsValue}`, icon: Activity, color: 'text-cyan-500' },
+/** One book's KPI row. Real and paper are never averaged into a third set. */
+function bookKpis(stats: BookStats | undefined): Kpi[] {
+  if (!stats) return [];
+  return [
+    {
+      label: 'WIN RATE',
+      value: `${Number(stats.winRate ?? 0).toFixed(1)}%`,
+      icon: TrendingUp,
+      color: 'text-emerald-500',
+      sub: `${stats.settledBets} settled · ${stats.losses} lost`,
+    },
+    {
+      label: 'SETTLED',
+      value: `${stats.settledBets}`,
+      icon: BarChart2,
+      color: 'text-blue-500',
+      sub: `${Number(stats.settlementRate ?? 0).toFixed(1)}% of ${stats.totalBets} tickets`,
+    },
+    {
+      label: 'UNRESOLVED',
+      value: `${Number(stats.unresolvedShare ?? 0).toFixed(1)}%`,
+      icon: AlertTriangle,
+      color: Number(stats.unresolvedShare ?? 0) >= 50 ? 'text-amber-500' : 'text-slate-400',
+      sub: `${stats.unresolved ?? 0} expired without a result`,
+    },
+    {
+      label: 'STAKED',
+      value: fmtR(stats.stakeTotal),
+      icon: Layers,
+      color: 'text-amber-500',
+      sub: `avg ${fmtR(stats.avgStake)} per settled ticket`,
+    },
+    {
+      label: 'ROI',
+      value: `${signed(stats.roi)}%`,
+      icon: Target,
+      color: Number(stats.roi) >= 0 ? 'text-emerald-500' : 'text-red-500',
+      sub: `settled tickets only · ${fmtR(stats.payoutTotal)} returned`,
+    },
+    {
+      label: 'LAST SETTLED',
+      value: fmtDay(stats.lastSettled),
+      icon: Activity,
+      color: 'text-cyan-500',
+      sub: 'no settlement since this date',
+    },
   ];
+}
+
+function KpiGrid({ kpis }: { kpis: Kpi[] }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+      {kpis.map((stat, i) => (
+        <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme group hover:border-theme-primary transition-colors">
+          <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
+          <div className="text-xl font-black text-theme-primary mb-0.5 tabular">{stat.value}</div>
+          <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
+          {stat.sub && (
+            <div className="text-[9px] text-theme-secondary/70 font-bold mt-1 normal-case">{stat.sub}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Best/worst card. Shows the capped number, then what the raw number was. */
+function TrackCard({ label, track, tone }: { label: string; track: RankedTrack; tone: 'good' | 'bad' }) {
+  const capped = track.roiCapped ?? track.roi;
+  const cappedUp = capped >= 0;
+  const border = tone === 'good' ? 'border-emerald-500/20' : 'border-red-500/20';
+  const color = cappedUp ? 'text-emerald-400' : 'text-red-400';
+  return (
+    <div className={`p-4 rounded-2xl bg-theme-panel border ${border}`}>
+      <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">{label}</div>
+      <div className="text-theme-primary font-black">{track.name}</div>
+      <div className={`font-black tabular ${color}`}>{signed(capped)}% ROI</div>
+      <div className="text-[9px] text-theme-secondary/70 font-bold mt-1">
+        {track.n} settled · capped at {track.cap ?? 10}× stake
+        {lastRun(track.lastSeen) ? ` · last ${lastRun(track.lastSeen)}` : ''}
+      </div>
+      {Math.abs(track.roi - capped) >= 1 && (
+        <div className="text-[9px] text-theme-secondary/60 font-bold mt-0.5">
+          uncapped reads {signed(track.roi)}%
+          {track.topShare != null ? ` · one ticket = ${Number(track.topShare).toFixed(0)}% of returns` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function lastRun(value: string | null | undefined) {
+  return value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : null;
+}
+
+/** Every settled track, ranked on the capped ROI (one jackpot can't win this). */
+function TrackTable({ books, note }: { books: BookTracks; note: string }) {
+  const rows = Object.entries(books.trackStats || {})
+    .map(([name, row]) => ({ name, ...row }))
+    .sort((a, b) => (b.roiCapped ?? b.roi) - (a.roiCapped ?? a.roi));
+  if (rows.length === 0) return null;
+  return (
+    <div className="p-4 sm:p-6 rounded-2xl bg-theme-panel border border-theme">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 className="text-xs font-black text-theme-primary uppercase tracking-widest">Track Ledger</h3>
+        <span className="text-[10px] font-black text-theme-secondary">{note}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-theme-secondary">
+              <th className="text-left py-2 pr-3 font-black">Track</th>
+              <th className="text-right py-2 px-2 font-black">Settled</th>
+              <th className="text-right py-2 px-2 font-black">Capped ROI</th>
+              <th className="text-right py-2 px-2 font-black">Uncapped</th>
+              <th className="text-right py-2 px-2 font-black">Top ticket</th>
+              <th className="text-right py-2 pl-2 font-black">Last run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const capped = r.roiCapped ?? r.roi;
+              const top = r.topTicket;
+              return (
+                <tr key={r.name} className="border-t border-theme">
+                  <td className="py-2 pr-3 font-bold text-theme-primary whitespace-nowrap">
+                    {r.name}
+                    {!r.eligible && <span className="ml-1 text-[9px] text-theme-secondary/60 font-bold">(under sample)</span>}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular text-theme-secondary">{r.n}</td>
+                  <td className={`py-2 px-2 text-right tabular font-black ${capped >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {signed(capped)}%
+                  </td>
+                  <td className="py-2 px-2 text-right tabular text-theme-secondary">{signed(r.roi)}%</td>
+                  <td className="py-2 px-2 text-right tabular text-theme-secondary">
+                    {top && r.topShare != null ? `${Number(r.topShare).toFixed(0)}%` : '—'}
+                  </td>
+                  <td className="py-2 pl-2 text-right tabular text-theme-secondary">{lastRun(r.lastSeen) ?? '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-theme-secondary">
+        Capped ROI counts each ticket's return at most {books.cap ?? 10}× its stake — the number the
+        track ranking uses. A track above shows how much of its raw return came from a single pool
+        dividend under “top ticket”. Minimum sample {books.minSample ?? 20} settled, last run within{' '}
+        {books.recencyDays ?? 90} days.
+      </p>
+    </div>
+  );
+}
+
+export const AnalyticsView: React.FC = () => {
+  const { learning, betStats, bankrollHistory, betHistory } = useHUD();
+
+  const real = betStats?.books?.real;
+  const paper = betStats?.books?.paper;
+  // Backend not yet redeployed: the payload has no per-book split. Say so
+  // instead of quietly showing a blended number as if it were a book.
+  const hasBooks = Boolean(real && paper);
+
+  const paperTracks: BookTracks | undefined = learning?.books?.paper;
+  const realTracks: BookTracks | undefined = learning?.books?.real;
+  const calibration = learning?.calibration;
+
+  const paperBets = React.useMemo(
+    () => (betHistory || []).filter((b) => b.is_paper === true),
+    [betHistory],
+  );
+  const paperSettled = React.useMemo(
+    () => paperBets.filter((b) => b.settled).length,
+    [paperBets],
+  );
+
+  const openExposure = (betHistory || [])
+    .filter((b) => String(b.status || '').toUpperCase() === 'PENDING')
+    .reduce((s, b) => s + (Number(b.stake) || 0), 0);
+
+  const realTracksWithSample = realTracks
+    ? Object.entries(realTracks.trackStats || {})
+        .map(([name, row]) => ({ name, ...row }))
+        .sort((a, b) => b.n - a.n)[0]
+    : undefined;
 
   return (
     <motion.div
@@ -100,63 +233,104 @@ export const AnalyticsView: React.FC = () => {
           Intelligence Analytics
         </h2>
         <p className="text-[10px] sm:text-xs text-theme-secondary mt-1 uppercase tracking-widest font-black">
-          Strategy Performance Metrics
+          Real money first · paper simulation below · never averaged
         </p>
       </div>
 
-      {/* KPI Grid — 6 cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-        {kpis.map((stat, i) => (
-          <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme group hover:border-theme-primary transition-colors">
-            <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
-            <div className="text-xl font-black text-theme-primary mb-0.5 tabular">{stat.value}</div>
-            <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>
-            {stat.sub && (
-              <div className="text-[9px] text-theme-secondary/70 font-bold mt-1 normal-case">{stat.sub}</div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* ApexCharts suite (lazy chunk) */}
-      <Suspense fallback={<><ChartSkeleton /><ChartSkeleton /></>}>
-        <ApexSuite
-          bankrollHistory={bankrollHistory}
-          betHistory={betHistory}
-          betStats={betStats}
-          roiByTrack={learning?.roiByTrack}
-        />
-      </Suspense>
-
-      {/* Best / Worst Track */}
-      {(bestTrack || worstTrack) && (
-        <div className={`grid ${bestTrack && worstTrack ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
-          {bestTrack && (
-            <div className="p-4 rounded-2xl bg-theme-panel border border-emerald-500/20">
-              <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Best Track</div>
-              <div className="text-theme-primary font-black">{bestTrack.name}</div>
-              <div className="text-emerald-400 font-black tabular">{bestTrack.roi >= 0 ? '+' : ''}{bestTrack.roi.toFixed(1)}% ROI</div>
-              <div className="text-[9px] text-theme-secondary/70 font-bold mt-1">
-                {bestTrack.n != null ? `${bestTrack.n} settled` : 'settled sample'}
-                {lastRun(bestTrack.lastSeen) ? ` · last ${lastRun(bestTrack.lastSeen)}` : ''}
-              </div>
-            </div>
-          )}
-          {worstTrack && (
-            <div className="p-4 rounded-2xl bg-theme-panel border border-red-500/20">
-              <div className="text-[10px] text-theme-secondary font-black uppercase tracking-widest mb-1">Worst Track</div>
-              <div className="text-theme-primary font-black">{worstTrack.name}</div>
-              <div className="text-red-400 font-black tabular">{worstTrack.roi.toFixed(1)}% ROI</div>
-              <div className="text-[9px] text-theme-secondary/70 font-bold mt-1">
-                {worstTrack.n != null ? `${worstTrack.n} settled` : 'settled sample'}
-                {lastRun(worstTrack.lastSeen) ? ` · last ${lastRun(worstTrack.lastSeen)}` : ''}
-              </div>
-            </div>
-          )}
+      {!hasBooks && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200/90">
+          Per-book split unavailable from the API (the backend has not been redeployed). Win rate and
+          ROI on this page are the blended ledger — treat them as provisional.
         </div>
       )}
 
-      {/* Learning Insights */}
+      {/* ── Real money ─────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-black uppercase tracking-widest text-theme-primary">Real money</h3>
+          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
+            Betway ledger
+          </span>
+        </div>
+
+        {real && real.losses === 0 && real.settledBets > 0 && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-200/90">
+            <div className="font-black text-amber-300 mb-1 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" /> Provisional — not a measured record
+            </div>
+            All {real.settledBets} settled real tickets won and {real.expiredBets} of{' '}
+            {(real.settledBets + real.expiredBets).toLocaleString()} real tickets expired with no result
+            ({Number(real.unresolvedShare ?? 0).toFixed(1)}% unresolved). A 100% win rate here is missing
+            data, not skill: the losses were never recorded. Last real settlement {fmtDay(real.lastSettled)}.
+          </div>
+        )}
+
+        <KpiGrid kpis={bookKpis(real)} />
+
+        {realTracks && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {realTracks.bestTrack && realTracks.worstTrack ? (
+              <>
+                <TrackCard label="Best real track" track={realTracks.bestTrack} tone="good" />
+                <TrackCard label="Worst real track" track={realTracks.worstTrack} tone="bad" />
+              </>
+            ) : (
+              <div className="sm:col-span-2 p-4 rounded-2xl bg-theme-panel border border-theme text-[11px] text-theme-secondary leading-relaxed">
+                No real track qualifies for a ranking yet: the gate is {realTracks.minSample ?? 20}{' '}
+                settled tickets inside {realTracks.recencyDays ?? 90} days.
+                {realTracksWithSample
+                  ? ` The largest real sample is ${realTracksWithSample.name} with ${realTracksWithSample.n} settled and last run ${lastRun(realTracksWithSample.lastSeen) ?? 'unknown'} — not enough to name a best or worst track.`
+                  : ' No real track has a settled ticket yet.'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {realTracks && (realTracks.bestTrack || realTracksWithSample) && (
+          <TrackTable books={realTracks} note="real money · capped ranking" />
+        )}
+      </section>
+
+      <Suspense fallback={<ChartSkeleton />}>
+        <ApexSuite.Equity history={bankrollHistory} />
+      </Suspense>
+
+      {/* ── Paper simulation ───────────────────────────────────── */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-black uppercase tracking-widest text-theme-primary">Paper simulation</h3>
+          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300">
+            {paper?.settledBets ?? paperSettled} settled · not real money
+          </span>
+        </div>
+        <p className="text-[11px] text-theme-secondary leading-relaxed max-w-3xl">
+          The simulator is where the volume is: {paper?.settledBets ?? 0} settled tickets,{' '}
+          {paper?.wins ?? 0} won and {paper?.losses ?? 0} lost. Its ROI is carried by pool dividends,
+          so the sections below show the median ticket, the capped track ranking, and the pool book
+          separately. Real money is the record above; this is the laboratory.
+        </p>
+
+        <KpiGrid kpis={bookKpis(paper)} />
+
+        {paperTracks && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {paperTracks.bestTrack && <TrackCard label="Best paper track (capped)" track={paperTracks.bestTrack} tone="good" />}
+            {paperTracks.worstTrack && <TrackCard label="Worst paper track (capped)" track={paperTracks.worstTrack} tone="bad" />}
+          </div>
+        )}
+
+        {paperTracks && <TrackTable books={paperTracks} note="paper · capped ranking" />}
+
+        <Suspense fallback={<><ChartSkeleton /><ChartSkeleton /></>}>
+          <ApexSuite.Paper
+            bets={paperBets}
+            stats={paper}
+            tracks={paperTracks}
+          />
+        </Suspense>
+      </section>
+
+      {/* ── Learning insights ──────────────────────────────────── */}
       <div className="p-6 rounded-2xl bg-theme-panel border border-theme group hover:border-emerald-500/30 transition-all duration-500">
         <div className="flex items-center gap-3 mb-4">
           <Target className="w-4 h-4 text-blue-500" />
@@ -166,25 +340,45 @@ export const AnalyticsView: React.FC = () => {
         </div>
         <div className="space-y-2 text-sm text-theme-secondary leading-relaxed font-bold group-hover:text-theme-primary transition-colors">
           <p>
-            Best settled track:{' '}
-            <span className="text-emerald-500">{bestTrack?.name ?? 'N/A'}</span>
-            {bestTrack ? ` (${bestTrack.roi >= 0 ? '+' : ''}${bestTrack.roi.toFixed(1)}%, ` : ' ('}
-            <span className="text-theme-primary">
-              {bestTrack?.n ?? 0} settled{lastRun(bestTrack?.lastSeen ?? null) ? ` · last ${lastRun(bestTrack?.lastSeen ?? null)}` : ''}
+            Paper calibration:{' '}
+            <span className={Number(calibration?.books?.paper?.accuracy ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-400'}>
+              {signed(calibration?.books?.paper?.accuracy)}%
             </span>
-            {`), minimum ${learning?.minSample ?? 20} settled and ${learning?.recencyDays ?? 90}-day window.`}
+            {' actual vs implied across '}
+            <span className="text-theme-primary">{calibration?.books?.paper?.samples ?? paper?.settledBets ?? 0}</span>
+            {' settled paper tickets'}
+            {calibration?.books?.paper
+              ? ` (${Number(calibration.books.paper.actualWinRate).toFixed(1)}% actual, ${Number(calibration.books.paper.impliedWinRate).toFixed(1)}% implied).`
+              : '.'}
           </p>
           <p>
-            Book calibration:{' '}
-            <span className={Number(learning?.accuracy) >= 0 ? 'text-emerald-500' : 'text-red-400'}>
-              {Number(learning?.accuracy ?? 0) > 0 ? '+' : ''}{Number(learning?.accuracy ?? 0).toFixed(1)}%
+            Real calibration:{' '}
+            <span className="text-theme-primary">
+              {calibration?.books?.real ? `${signed(calibration.books.real.accuracy)}pp` : '—'}
             </span>
-            {' vs implied, across '}
-            <span className="text-theme-primary">{settledCount}</span>
-            {' settled tickets.'}
-            {betStats?.roiIncludingExpired != null && expiredCount > 0 && (
-              <span className="text-theme-secondary/70"> If expired tickets were counted as losses, ROI would read {Number(betStats.roiIncludingExpired).toFixed(1)}%.</span>
-            )}
+            {calibration?.books?.real
+              ? ` across ${calibration.books.real.samples} settled real tickets. With ${real?.losses ?? 0} recorded losses this figure cannot be read as an edge — it is the size of the missing results.`
+              : ' — no settled real sample.'}
+          </p>
+          <p>
+            Best settled track:{' '}
+            <span className="text-emerald-500">{paperTracks?.bestTrack?.name ?? 'N/A'}</span>
+            {paperTracks?.bestTrack
+              ? ` (${signed(paperTracks.bestTrack.roiCapped ?? paperTracks.bestTrack.roi)}% capped ROI, ${paperTracks.bestTrack.n} settled, last run ${lastRun(paperTracks.bestTrack.lastSeen) ?? 'unknown'})`
+              : ''}
+            {`, minimum ${paperTracks?.minSample ?? 20} settled within ${paperTracks?.recencyDays ?? 90} days.`}
+          </p>
+          {paper?.roiIncludingExpired != null && (
+            <p className="text-theme-secondary/80">
+              Disclosure, not a stress test: expired tickets are refunds. Counting them as losses would
+              put paper ROI at {signed(paper.roiIncludingExpired)}% instead of {signed(paper.roi)}%. The
+              expired stake is small next to the settled book, so this changes the story less than it
+              appears to.
+            </p>
+          )}
+          <p className="text-theme-secondary/80">
+            {betHistory.length.toLocaleString()} ledger rows loaded · {fmtR(openExposure)} currently
+            pending (stake not yet at risk). Nothing here is settled until a result is proven.
           </p>
         </div>
       </div>
@@ -192,16 +386,13 @@ export const AnalyticsView: React.FC = () => {
   );
 };
 
-// Separate component so the lazy chunk boundary is explicit and the charts
-// mount only after the KPI paint.
-const ApexSuite: React.FC<{
-  bankrollHistory: { t: string; balance: number }[];
-  betHistory: never[] | unknown[];
-  betStats: { wins: number; losses: number } | undefined | null;
-  roiByTrack: Record<string, number> | undefined;
-}> = ({ bankrollHistory, betHistory, betStats, roiByTrack }) => {
-  const [Charts, setCharts] = React.useState<typeof import('../analytics/AnalyticsCharts') | null>(null);
+// ── Lazy chart chunks ─────────────────────────────────────────────
+// Two explicit dynamic-import boundaries so the KPI paint never waits for
+// ApexCharts and each section loads its own chart module.
+type ChartsModule = typeof import('../analytics/AnalyticsCharts');
 
+function useChartsModule() {
+  const [Charts, setCharts] = React.useState<ChartsModule | null>(null);
   React.useEffect(() => {
     let live = true;
     import('../analytics/AnalyticsCharts').then((m) => {
@@ -211,23 +402,55 @@ const ApexSuite: React.FC<{
       live = false;
     };
   }, []);
+  return Charts;
+}
 
-  // Touch-free dynamic chunk: bundlers split on import().
+const Equity = ({ history }: { history: { t: string; balance: number }[] }) => {
+  const Charts = useChartsModule();
+  if (!Charts) return <ChartSkeleton />;
+  return <Charts.EquityChart history={history} />;
+};
+
+const Paper = ({
+  bets,
+  stats,
+  tracks,
+}: {
+  bets: BetLike[];
+  stats: BookStats | undefined;
+  tracks: BookTracks | undefined;
+}) => {
+  const Charts = useChartsModule();
   if (!Charts) return <><ChartSkeleton /><ChartSkeleton /></>;
-  const bets = (betHistory || []) as never[];
+  const capped = tracks?.roiCappedByTrack ?? {};
   return (
     <div className="space-y-5 sm:space-y-8">
-      <Charts.EquityChart history={bankrollHistory} />
-      <Charts.DailyPnlChart bets={bets} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 sm:gap-8">
-        <Charts.TrackRoiChart roiByTrack={roiByTrack} />
-        <Charts.WinLossDonut wins={betStats?.wins ?? 0} losses={betStats?.losses ?? 0} />
+        <Charts.TrackRoiChart
+          roiByTrack={capped}
+          title="ROI by Track · capped"
+          note={`each ticket ≤ ${tracks?.cap ?? 10}× stake`}
+        />
+        <Charts.WinLossDonut
+          wins={stats?.wins ?? 0}
+          losses={stats?.losses ?? 0}
+          title="Win / Loss · paper"
+          note={`${stats?.settledBets ?? 0} settled`}
+        />
       </div>
+      <Charts.ExoticsTable bets={bets} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 sm:gap-8">
-        <Charts.BracketChart bets={bets} />
+        <Charts.BracketChart
+          bets={bets}
+          winMarketOnly
+          title="ROI by Odds Bracket · win market"
+        />
         <Charts.PnlHistogram bets={bets} />
       </div>
-      <Charts.RoiHeatmap bets={bets} />
+      <Charts.RoiHeatmap bets={bets} title="ROI Heatmap · Track × Odds (median)" />
+      <Charts.DailyPnlChart bets={bets} />
     </div>
   );
 };
+
+const ApexSuite = { Equity, Paper };

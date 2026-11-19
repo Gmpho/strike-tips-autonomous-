@@ -8,6 +8,10 @@ export interface SettledBet {
   payout: number;
   won: boolean;
   placedAt: string;
+  /** Paper simulation ticket. Never averaged with real money. */
+  isPaper: boolean;
+  /** Runner / pool label ("PICK 6:3-4-5-6-7-8", "Uncle Sam", …). */
+  label: string;
 }
 
 export interface BetLike {
@@ -18,6 +22,9 @@ export interface BetLike {
   won?: boolean;
   settled?: boolean;
   placedAt?: string;
+  horse?: string;
+  status?: string;
+  is_paper?: boolean;
 }
 
 export function settledBets(history: BetLike[] | undefined | null): SettledBet[] {
@@ -29,9 +36,17 @@ export function settledBets(history: BetLike[] | undefined | null): SettledBet[]
       odds: Number(b.odds) || 0,
       stake: Number(b.stake) || 0,
       payout: Number(b.payout) || 0,
-      won: b.won === true,
+      won: b.won === true || String(b.status || '').toUpperCase() === 'WON',
       placedAt: String(b.placedAt || ''),
+      isPaper: b.is_paper === true,
+      label: String(b.horse || ''),
     }));
+}
+
+/** Split a settled set by book. `real` excludes paper, never the reverse mix. */
+export function byBook(bets: SettledBet[], book: 'real' | 'paper' | 'all'): SettledBet[] {
+  if (book === 'all') return bets;
+  return bets.filter((b) => (book === 'paper' ? b.isPaper : !b.isPaper));
 }
 
 export function betNet(b: SettledBet): number {
@@ -106,13 +121,93 @@ export function bracketForOdds(o: number): string {
   return 'odds_2_to_4';
 }
 
+// ── Pool tickets vs win market ───────────────────────────────────
+// A PICK 6 / BIPOT / JACKPOT ticket is priced as a dividend and the recorder
+// labels it with a colon ("PICK 6:3-4-5-6-7-8", "EXACTA:7"). Those tickets
+// return 500x-4,600x when they land and zero otherwise, so leaving them in a
+// track's cell makes one jackpot look like a track edge.
+//
+// The label is the signal, not the odds: on the live ledger 8 pool tickets
+// are priced under 100 and 4 genuine win-market longshots are priced over it
+// (Flower Burst 91.0, Three Tigers 34.0, …). Classifying by odds alone would
+// reclassify both groups the wrong way round.
+export const WIN_MARKET_MAX_ODDS = 100;
+
+export function isPoolTicket(b: { odds: number; label?: string }): boolean {
+  const label = String(b.label || '');
+  // Only fall back to the price when the ledger row has no label at all.
+  return label ? label.includes(':') : Math.abs(b.odds) >= WIN_MARKET_MAX_ODDS;
+}
+
+export function poolName(label: string): string {
+  const head = String(label || '').split(':')[0].trim().toUpperCase();
+  return head || 'POOL';
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export interface ExoticRow {
+  pool: string;
+  n: number;
+  wins: number;
+  staked: number;
+  returned: number;
+  roi: number;
+  /** Median return multiple — 0 means the median pool ticket returns nothing. */
+  medianMultiple: number;
+  topReturn: number;
+  /** Share of the book's total return this pool produced. */
+  returnShare: number;
+}
+
+/** Pool-ticket performance, split by pool type (the lottery, stated plainly). */
+export function exoticBreakdown(bets: SettledBet[]): ExoticRow[] {
+  const pools = bets.filter(isPoolTicket);
+  const gross = pools.reduce((s, b) => s + b.payout, 0);
+  const groups = new Map<string, SettledBet[]>();
+  for (const b of pools) {
+    const key = poolName(b.label);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(b);
+  }
+  return [...groups.entries()]
+    .map(([pool, rows]) => {
+      const staked = rows.reduce((s, b) => s + b.stake, 0);
+      const returned = rows.reduce((s, b) => s + b.payout, 0);
+      return {
+        pool,
+        n: rows.length,
+        wins: rows.filter((b) => b.won).length,
+        staked: Math.round(staked * 100) / 100,
+        returned: Math.round(returned * 100) / 100,
+        roi: staked > 0 ? Math.round(((returned - staked) / staked) * 1000) / 10 : 0,
+        medianMultiple:
+          Math.round(
+            median(rows.filter((b) => b.stake > 0).map((b) => b.payout / b.stake)) * 100,
+          ) / 100,
+        topReturn: Math.round(Math.max(...rows.map((b) => b.payout)) * 100) / 100,
+        returnShare: gross > 0 ? Math.round((returned / gross) * 1000) / 10 : 0,
+      };
+    })
+    .sort((a, b) => b.returned - a.returned);
+}
+
 /** ROI% per odds bracket computed from settled history (fallback-safe). */
-export function bracketRoi(bets: SettledBet[]): Record<string, { roi: number; wins: number; total: number; staked: number; net: number }> {
+export function bracketRoi(
+  bets: SettledBet[],
+  winMarketOnly = false,
+): Record<string, { roi: number; wins: number; total: number; staked: number; net: number }> {
   const out: Record<string, { roi: number; wins: number; total: number; staked: number; net: number }> = {};
   for (const b of ODDS_BRACKETS) {
     out[b.key] = { roi: 0, wins: 0, total: 0, staked: 0, net: 0 };
   }
   for (const b of bets) {
+    if (winMarketOnly && isPoolTicket(b)) continue;
     const cell = out[bracketForOdds(b.odds)];
     cell.total += 1;
     if (b.won) cell.wins += 1;
@@ -126,47 +221,73 @@ export function bracketRoi(bets: SettledBet[]): Record<string, { roi: number; wi
   return out;
 }
 
-/** ROI% heatmap rows: top-N tracks by volume x odds brackets. */
+export const HEATMAP_MIN_SAMPLE = 5;
+
+/**
+ * Median ROI% heatmap: top-N tracks by volume × odds brackets.
+ *
+ * Median, not mean: one R33,222 BIPOT in a cell of 175 tickets moves the mean
+ * from -43% to +1,540%. The median ticket in most 7+ cells returns zero.
+ * Cells with fewer than `minSample` tickets are blank — a +65% cell built on
+ * one winner is noise, not a finding.
+ */
 export function roiHeatmap(
   bets: SettledBet[],
   maxTracks = 6,
-): { tracks: string[]; brackets: string[]; matrix: (number | null)[][]; volumes: number[][] } {
+  minSample = HEATMAP_MIN_SAMPLE,
+): {
+  tracks: string[];
+  brackets: string[];
+  matrix: (number | null)[][];
+  volumes: number[][];
+  winners: number[][];
+  minSample: number;
+} {
+  // Win market only: pool dividends are a different question and drown the
+  // column with 74-90% zeros plus a handful of 4-digit multiples.
+  const market = bets.filter((b) => !isPoolTicket(b) && b.odds > 0);
   const byTrack = new Map<string, SettledBet[]>();
-  for (const b of bets) {
+  for (const b of market) {
     const t = b.track.toLowerCase();
     if (!byTrack.has(t)) byTrack.set(t, []);
     byTrack.get(t)!.push(b);
   }
   const ranked = [...byTrack.entries()]
-    .map(([t, bs]) => ({ t, n: bs.length, staked: bs.reduce((s, b) => s + b.stake, 0) }))
+    .map(([t, bs]) => ({ t, n: bs.length }))
     .sort((a, b) => b.n - a.n)
     .slice(0, maxTracks);
   const brackets = ODDS_BRACKETS.map((b) => b.label);
   const matrix: (number | null)[][] = [];
   const volumes: number[][] = [];
+  const winners: number[][] = [];
   for (const { t } of ranked) {
     const row: (number | null)[] = [];
     const vol: number[] = [];
+    const won: number[] = [];
     const bs = byTrack.get(t)!;
     for (const br of ODDS_BRACKETS) {
       const cell = bs.filter((b) => br.test(b.odds));
       vol.push(cell.length);
-      if (cell.length === 0) {
+      won.push(cell.filter((b) => b.won).length);
+      if (cell.length < minSample) {
         row.push(null);
         continue;
       }
-      const staked = cell.reduce((s, b) => s + b.stake, 0);
-      const net = cell.reduce((s, b) => s + betNet(b), 0);
-      row.push(staked > 0 ? Math.round((net / staked) * 1000) / 10 : null);
+      // Median return multiple → ROI%. Stake-weighted means are what lied.
+      const multiple = median(cell.filter((b) => b.stake > 0).map((b) => b.payout / b.stake));
+      row.push(Math.round((multiple - 1) * 1000) / 10);
     }
     matrix.push(row);
     volumes.push(vol);
+    winners.push(won);
   }
   return {
     tracks: ranked.map((r) => r.t.charAt(0).toUpperCase() + r.t.slice(1)),
     brackets,
     matrix,
     volumes,
+    winners,
+    minSample,
   };
 }
 

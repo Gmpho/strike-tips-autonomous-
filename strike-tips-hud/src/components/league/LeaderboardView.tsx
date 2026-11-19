@@ -57,6 +57,8 @@ interface Row {
   /** Playing, but under the qualification gate — shown as "provisional", not failing. */
   provisional?: boolean;
   decayed: boolean;
+  /** Cohorts and the machine account — never ranked against punters. */
+  system?: boolean;
   last_settled: string | null;
 }
 
@@ -74,6 +76,11 @@ interface MeSummary {
 export const LeaderboardView: React.FC = () => {
   const [region, setRegion] = useState('');
   const [scope, setScope] = useState<'all' | 'region' | 'tier' | 'track'>('all');
+  // Two populations, two boards. Cohorts and the machine account are system
+  // aggregates built only from settled wins; ranking them against people
+  // produced "100% strike rate vs your 14%", which argues the machine beats
+  // the punter. They get their own board and never share a rank.
+  const [board, setBoard] = useState<'punters' | 'system'>('punters');
   const [sort, setSort] = useState<'form' | 'value' | 'strike' | 'weekly' | 'total'>('form');
   const [tab, setTab] = useState<'record' | 'players' | 'meetings' | 'formula'>('record');
   const [expandedPlayer, setExpandedPlayer] = useState<string | null>(null);
@@ -119,8 +126,20 @@ export const LeaderboardView: React.FC = () => {
     return () => { cancelled = true; };
   }, [uid, token]);
 
-  const url = `/api/league/board?scope=${scope}&sort=${sort}${region ? `&region=${region}` : ''}&limit=200`;
-  const { data, isLoading, error } = useSWR(url, jsonFetcher, { refreshInterval: 60_000 });
+  // `scope=all` is the human board on the server; `system` is the cohort
+  // board. Two keys, so switching boards never empties the Players tab.
+  const qs = `sort=${sort}${region ? `&region=${region}` : ''}&limit=200`;
+  const puntersUrl = `/api/league/board?scope=all&${qs}`;
+  const systemUrl = board === 'system'
+    ? `/api/league/board?scope=${scope === 'all' ? 'system' : scope}&${qs}`
+    : null;
+  const { data: puntersData, isLoading: puntersLoading, error: puntersError } =
+    useSWR(puntersUrl, jsonFetcher, { refreshInterval: 60_000 });
+  const { data: systemData, isLoading: systemLoading, error: systemError } =
+    useSWR(systemUrl, jsonFetcher, { refreshInterval: 60_000 });
+  const data = board === 'system' ? systemData : puntersData;
+  const isLoading = board === 'system' ? systemLoading : puntersLoading;
+  const error = board === 'system' ? systemError : puntersError;
   const { data: formula } = useSWR('/api/league/formula', jsonFetcher);
   // Today's cards are only needed on the Meetings tab — don't pay for them
   // on every leaderboard visit.
@@ -145,7 +164,7 @@ export const LeaderboardView: React.FC = () => {
   }, [expandedPlayer]);
   // Every player row, including unranked ones (<5 settled tips). The ranked
   // board filters those out, but community tips should still be visible.
-  const playerRows: Row[] = (data?.all_rows || []).filter((r: Row) => r.entity_type === 'player');
+  const playerRows: Row[] = (puntersData?.all_rows || []).filter((r: Row) => r.entity_type === 'player');
   // Ranked punters first, then whoever has settled the most, then points.
   // Unranked-but-active punters must never be buried under an empty board.
   const sortedPlayers = useMemo(() => [...playerRows].sort((a, b) => {
@@ -172,16 +191,26 @@ export const LeaderboardView: React.FC = () => {
     return out;
   }, [racesData]);
   const ranked = rows; // already qualified+non-decayed from API
+  // Rows that exist but have not settled anything inside the decay window.
+  // Shown separately instead of silently vanishing from the board.
+  const inactiveRows: Row[] = (data?.all_rows || []).filter((r: Row) => r.decayed);
   const pageSize = 40;
   const totalPages = Math.max(1, Math.ceil(ranked.length / pageSize));
   const pageRows = ranked.slice((page - 1) * pageSize, page * pageSize);
 
-  // highlight strip
+  // Highlight strip (human board only).
   const topForm = [...ranked].sort((a, b) => b.form_rating - a.form_rating)[0];
   const bestValue = [...ranked].sort((a, b) => b.value_index - a.value_index)[0];
   const topStrike = [...ranked].filter(r => r.settled >= 10).sort((a, b) => b.strike_rate - a.strike_rate)[0];
   const weeklyLeader = [...ranked].sort((a, b) => b.weekly_points - a.weekly_points)[0];
-  const rising = [...ranked].sort((a, b) => b.settled - a.settled)[0];
+  // Every weekly_points is 0 when no real pick settled this week — the old
+  // strip still crowned a leader with "0 points this week".
+  const weekHasPoints = (weeklyLeader?.weekly_points ?? 0) > 0;
+  // "Rising star" used to be `sort by settled desc`, which handed the award
+  // to the 105-ticket cohort and labelled it "New". It is a punter: newest
+  // qualified-ish record with the most points, not the biggest sample.
+  const risingPool = playerRows.filter(r => r.settled > 0 && r.settled < 20 && !r.decayed);
+  const rising = [...risingPool].sort((a, b) => b.total_points - a.total_points)[0];
 
   const asOf = data?.as_of ? new Date(data.as_of) : null;
   const ageMin = asOf ? Math.round((Date.now() - asOf.getTime()) / 60000) : null;
@@ -266,15 +295,22 @@ export const LeaderboardView: React.FC = () => {
           </div>
         )}
 
-        {/* Highlight strip — cohort stats, so Record only. */}
-        {tab === 'record' && ranked.length > 0 && (
+        {/* Highlight strip — human board only. */}
+        {tab === 'record' && board === 'punters' && ranked.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
             {[
               { label: 'Top Form', row: topForm, val: (r: Row | undefined) => r?.form_rating.toFixed(1), sub: 'form rating' },
               { label: 'Best Value', row: bestValue, val: (r: Row | undefined) => r?.value_index.toFixed(0), sub: 'value index' },
-              { label: 'Top Strike Rate', row: topStrike, val: (r: Row | undefined) => r ? `${(r.strike_rate * 100).toFixed(0)}%` : '—', sub: '30-day strike rate' },
-              { label: 'Weekly Leader', row: weeklyLeader, val: (r: Row | undefined) => r?.weekly_points.toLocaleString(), sub: 'points this week' },
-              { label: 'Rising Star', row: rising, val: () => 'New', sub: 'settled tips' },
+              { label: 'Top Strike Rate', row: topStrike, val: (r: Row | undefined) => r ? `${(r.strike_rate * 100).toFixed(0)}%` : '—', sub: 'settled-tip strike rate' },
+              {
+                label: 'Weekly Leader',
+                row: weekHasPoints ? weeklyLeader : undefined,
+                val: (r: Row | undefined) => r ? r.weekly_points.toLocaleString() : '—',
+                // Crowning someone with "0 points this week" made the award
+                // look broken. Say there were no settled tips instead.
+                sub: weekHasPoints ? 'points this week' : 'no tips settled this week',
+              },
+              { label: 'Rising Star', row: rising, val: () => 'New', sub: 'under 20 settled tips' },
             ].map(c => (
               <div key={c.label} className="bg-slate-800/60 border border-slate-700 rounded-xl p-3 text-center">
                 <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">{c.label}</div>
@@ -319,19 +355,52 @@ export const LeaderboardView: React.FC = () => {
 
         {tab === 'record' && (
           <>
+            {/* Board switch. Cohorts and the machine account are aggregates
+                built only from settled wins — they never share a rank with a
+                punter, because the comparison itself is misleading. */}
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <div className="inline-flex rounded-xl bg-slate-800/70 border border-slate-700 p-1">
+                {([['punters', 'Punters'], ['system', 'System']] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => { setBoard(k); setPage(1); }}
+                    className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-colors ${board === k ? 'bg-yellow-500/20 text-yellow-400' : 'text-slate-400 hover:text-white'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-slate-500">
+                {board === 'punters'
+                  ? `${ranked.length} ranked · ${(data?.population?.human_entities ?? 0)} punters`
+                  : 'AI cohorts and the machine account — not ranked against punters'}
+              </span>
+            </div>
+
+            {board === 'system' && (
+              <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200/90 leading-relaxed">
+                <div className="font-bold text-amber-300 mb-1">System record, not a punter record</div>
+                These rows are built only from settled results, so they cannot lose.
+                {' '}
+                {data?.system_record
+                  ? `${data.system_record.won}/${data.system_record.settled} won, ${data.system_record.expired} of ${data.system_record.settled + data.system_record.expired} real tickets expired unsettled (${data.system_record.unresolvedShare}%)${data.system_record.lastSettled ? ` · last settled ${data.system_record.lastSettled}` : ''}.`
+                  : 'Most real tickets expired unsettled.'}
+                {' '}A 100% strike rate here is structural, not skill.
+              </div>
+            )}
+
             {/* Controls */}
             <div className="flex flex-wrap items-center gap-3 mb-4">
               <select value={region} onChange={e => { setRegion(e.target.value); setPage(1); }}
                 className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
                 {REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
               </select>
-              <select value={scope} onChange={e => { setScope(e.target.value as any); setPage(1); }}
-                className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
-                <option value="all">All cohorts</option>
-                <option value="region">Regions only</option>
-                <option value="tier">Tiers only</option>
-                <option value="track">Tracks only</option>
-              </select>
+              {board === 'system' && (
+                <select value={scope} onChange={e => { setScope(e.target.value as any); setPage(1); }}
+                  className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
+                  <option value="all">All cohorts</option>
+                  <option value="region">Regions only</option>
+                  <option value="tier">Tiers only</option>
+                  <option value="track">Tracks only</option>
+                </select>
+              )}
               <div className="ml-auto flex items-center gap-1 text-xs text-slate-400">
                 Sort:
                 {(['form', 'value', 'strike', 'weekly', 'total'] as const).map(s => (
@@ -354,7 +423,40 @@ export const LeaderboardView: React.FC = () => {
               <div className="text-center py-12 text-slate-400">
                 <Trophy className="w-10 h-10 mx-auto mb-3 opacity-40" />
                 <p className="mb-1">No qualified rows yet.</p>
-                <p className="text-xs">Needs {data?.min_tips ?? 5} settled tips in 30 days. Sample: {data?.total_rows ?? 0} rows.</p>
+                <p className="text-xs">
+                  Needs {data?.min_tips ?? 5} settled tips and activity inside the {data?.decay_days ?? DECAY_DAYS}-day window.
+                  {board === 'system'
+                    ? ' The system record has not settled a public pick in that window.'
+                    : ` ${inactiveRows.length} punter${inactiveRows.length === 1 ? '' : 's'} listed as inactive below.`}
+                </p>
+              </div>
+            )}
+
+            {/* Nobody disappears silently: decayed rows are listed, unranked. */}
+            {!isLoading && inactiveRows.length > 0 && (
+              <div className="mt-6">
+                <div className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2">
+                  Inactive · nothing settled in the last {data?.decay_days ?? DECAY_DAYS} days
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-slate-800">
+                  <table className="min-w-full text-sm opacity-75">
+                    <tbody>
+                      {inactiveRows.slice(0, pageSize).map(r => (
+                        <tr key={r.entity_id + r.region} className="border-t border-slate-800">
+                          <td className="px-4 py-2 text-slate-500 w-16">—</td>
+                          <td className="px-4 py-2">
+                            <div className="text-slate-300 font-semibold truncate">{r.handle}</div>
+                            <div className="text-[10px] text-slate-500">
+                              {r.region} · {r.settled} settled · last {r.last_settled ? r.last_settled.slice(0, 10) : '—'}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-slate-400">{r.form_rating.toFixed(1)}</td>
+                          <td className="px-4 py-2 text-slate-500 hidden md:table-cell">{r.total_points.toLocaleString()} pts</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -365,7 +467,7 @@ export const LeaderboardView: React.FC = () => {
                     <thead className="bg-gradient-to-r from-slate-800 to-slate-900">
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300">Rank</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300">Cohort</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300">{board === 'system' ? 'System' : 'Punter'}</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300">Form</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300 hidden md:table-cell">Value</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300 hidden md:table-cell">Strike</th>
@@ -432,7 +534,7 @@ export const LeaderboardView: React.FC = () => {
 
             {/* Freshness */}
             <div className="mt-6 text-xs text-slate-500 text-center">
-              {data?.total_rows ?? 0} cohort-rows from {data?.ranked_rows ?? 0} ranked · min {data?.min_tips ?? 5} settled tips · {DECAY_DAYS}-day decay
+              {board === 'punters' ? 'Human board' : 'System board'} · {data?.ranked_rows ?? 0} ranked of {data?.total_rows ?? 0} rows · min {data?.min_tips ?? 5} settled tips · {data?.decay_days ?? DECAY_DAYS}-day activity window
               {ageMin != null && ` · scores updated ${ageMin}m ago`}
               {ageMin != null && ageMin > 60 * 48 && ' · stale'}
             </div>

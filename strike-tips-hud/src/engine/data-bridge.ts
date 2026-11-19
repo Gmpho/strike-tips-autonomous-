@@ -455,6 +455,12 @@ export class DataBridge {
           worstTrack: roiRaw.worstTrack ?? null,
           minSample: roiRaw.minSample,
           recencyDays: roiRaw.recencyDays,
+          // The track cards rank on a jackpot-capped ROI, and the analytics
+          // page reports real money and paper separately — carry both.
+          roiCappedByTrack: roiRaw.roiCappedByTrack,
+          cap: roiRaw.cap,
+          books: roiRaw.books ?? undefined,
+          calibration: roiRaw.calibration ?? undefined,
         },
         bankrollHistory: bankrollHist.history || [],
         honcho: memoryData ? {

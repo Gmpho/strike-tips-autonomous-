@@ -80,6 +80,19 @@ export interface LearningState {
   worstTrack?: RankedTrack | null;
   minSample?: number;
   recencyDays?: number;
+  /** ROI whose per-ticket return is capped — what the track cards rank on. */
+  roiCappedByTrack?: Record<string, number>;
+  cap?: number;
+  /** Per-book track payloads; `books.real` and `books.paper` never mix. */
+  books?: { real: BookTracks; paper: BookTracks };
+  /** Calibration per book, plus the blended flat keys above. */
+  calibration?: {
+    accuracy: number;
+    samples: number;
+    actualWinRate: number;
+    impliedWinRate: number;
+    books?: Record<string, { accuracy: number; samples: number; actualWinRate: number; impliedWinRate: number }>;
+  };
 }
 
 export interface HealingEvent {
@@ -120,6 +133,8 @@ export interface BetRecord {
   payout?: number;
   status?: string;
   notes?: string;
+  /** Paper simulation ticket (absent/false = real money). */
+  is_paper?: boolean;
 }
 
 export interface BetStats {
@@ -141,6 +156,13 @@ export interface BetStats {
   profitFactor?: number | null;
   /** Disclosure only: expired tickets counted as losses. */
   roiIncludingExpired?: number;
+  /** Win rate per book — the flat keys above are the blended ledger. */
+  winRate?: number;
+  unresolved?: number;
+  unresolvedShare?: number;
+  lastSettled?: string | null;
+  /** Real-money and paper ledgers, never to be averaged. */
+  books?: { real: BookStats; paper: BookStats };
 }
 
 export interface TrackStat {
@@ -152,6 +174,49 @@ export interface TrackStat {
   lastSeen: string | null;
   daysSince: number | null;
   eligible: boolean;
+  /** ROI with each ticket's return capped at `cap` x stake — the ranking number. */
+  roiCapped?: number;
+  cap?: number;
+  /** The single ticket that drives this track's return. */
+  topTicket?: { horse: string; stake: number; returned: number; odds: number } | null;
+  /** % of the track's total return that one ticket accounts for. */
+  topShare?: number | null;
+}
+
+/** One book (real money / paper simulation) of ledger-derived statistics. */
+export interface BookStats {
+  totalBets: number;
+  settledBets: number;
+  wins: number;
+  losses: number;
+  expiredBets: number;
+  pendingBets: number;
+  /** Wins / settled tickets, per book. Never blend the two books. */
+  winRate?: number;
+  stakeTotal: number;
+  payoutTotal: number;
+  roi: number;
+  /** Disclosure only: expired tickets counted as losses (refunds are not losses). */
+  roiIncludingExpired?: number;
+  profitFactor?: number | null;
+  /** Tickets that never produced a result at all. */
+  unresolved?: number;
+  unresolvedShare?: number;
+  lastSettled?: string | null;
+  avgStake?: number;
+  settlementRate?: number;
+}
+
+/** Per-track payload for one book. */
+export interface BookTracks {
+  roiByTrack: Record<string, number>;
+  roiCappedByTrack?: Record<string, number>;
+  trackStats: Record<string, TrackStat>;
+  bestTrack?: RankedTrack | null;
+  worstTrack?: RankedTrack | null;
+  minSample?: number;
+  recencyDays?: number;
+  cap?: number;
 }
 
 export interface RankedTrack extends TrackStat {

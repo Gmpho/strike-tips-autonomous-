@@ -93,9 +93,14 @@ export const BankrollView: React.FC = () => {
     );
   }
 
-  // Settled-only win rate (totalBets includes the open backlog).
-  const settledCount = (betStats?.wins ?? 0) + (betStats?.losses ?? 0);
-  const winRate = settledCount > 0 ? ((betStats?.wins ?? 0) / settledCount * 100).toFixed(1) : '0.0';
+  // Win rate per book. The blended 23.7% was neither book's rate — it glued
+  // 1,013 paper tickets to 105 real ones. Real money is the headline here.
+  const realBook = betStats?.books?.real;
+  const settledCount = realBook?.settledBets ?? ((betStats?.wins ?? 0) + (betStats?.losses ?? 0));
+  const winRate = settledCount > 0
+    ? (((realBook?.wins ?? betStats?.wins ?? 0) / settledCount) * 100).toFixed(1)
+    : '0.0';
+  const bookRoi = realBook?.roi ?? betStats?.roi ?? 0;
 
   // Ledger: newest-first, filterable, day-grouped, paginated.
   const [execFilter, setExecFilter] = React.useState<ExecFilter>('ALL');
@@ -226,13 +231,13 @@ export const BankrollView: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: 'TOTAL BETS', value: betStats?.totalBets || 0, icon: Target, color: 'text-blue-500' },
-          { label: 'WIN RATE', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
+          { label: realBook ? 'REAL WIN RATE' : 'WIN RATE · BLENDED', value: `${winRate}%`, icon: TrendingUp, color: 'text-emerald-500' },
           { label: 'EXPOSURE', value: `R ${bankroll?.totalExposure?.toFixed(2) || '0.00'}`, icon: Wallet, color: 'text-indigo-500' },
-          { label: 'TOTAL ROI', value: `${(betStats?.roi || 0) >= 0 ? '+' : ''}${betStats?.roi?.toFixed(1) || '0.0'}%`, icon: TrendingUp, color: (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' },
+          { label: realBook ? 'REAL ROI' : 'ROI · BLENDED', value: `${bookRoi >= 0 ? '+' : ''}${bookRoi.toFixed(1)}%`, icon: TrendingUp, color: bookRoi >= 0 ? 'text-emerald-500' : 'text-red-500' },
         ].map((stat, i) => (
           <div key={i} className="p-4 rounded-2xl bg-theme-panel border border-theme ">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-3`} />
-            <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label === 'TOTAL ROI' ? (betStats?.roi || 0) >= 0 ? 'text-emerald-500' : 'text-red-500' : ''}`}>
+            <div className={`text-xl font-black text-theme-primary mb-0.5 tabular ${stat.label.includes('ROI') ? (bookRoi >= 0 ? 'text-emerald-500' : 'text-red-500') : ''}`}>
               {stat.value}
             </div>
             <div className="text-[10px] text-theme-secondary font-black tracking-tighter uppercase">{stat.label}</div>

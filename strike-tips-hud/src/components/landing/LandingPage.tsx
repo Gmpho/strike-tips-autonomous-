@@ -103,8 +103,11 @@ export const LandingPage: React.FC = () => {
           <div className="absolute bottom-4 inset-x-4 rounded-2xl border border-white/20 bg-white/10 backdrop-blur-xl px-5 py-3.5 flex items-center gap-3 text-sm shadow-[0_8px_30px_rgba(0,0,0,0.45)]">
             <span className="text-3xl">🏇</span>
             <div>
-              <p className="font-bold">Bankroll R3,799.56 <span className="text-emerald-400 text-xs font-black">PEAK</span></p>
-              <p className="text-white/70 text-xs">Lifetime P&L +R2,799.56 · 33.8% win rate</p>
+              {/* No performance numbers on a public page: the ledger carries
+                  two books (real + paper) and a stat here can only be stale or
+                  blended. Claims live on /analytics, per book, with dates. */}
+              <p className="font-bold">Bankroll discipline <span className="text-blue-300 text-xs font-black">SIMULATION</span></p>
+              <p className="text-white/70 text-xs">Paper ledger · real results settle only with proof</p>
             </div>
           </div>
         </div>
