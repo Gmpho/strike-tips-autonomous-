@@ -248,9 +248,6 @@ export const AnalyticsView: React.FC = () => {
       <section className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-black uppercase tracking-widest text-theme-primary">Real money</h3>
-          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
-            Betway ledger
-          </span>
         </div>
 
         {real && real.losses === 0 && real.settledBets > 0 && (
