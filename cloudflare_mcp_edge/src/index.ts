@@ -35,6 +35,9 @@ const ALLOWED_ORIGINS = new Set([
   "http://localhost:5173",
 ]);
 
+// In-memory edge cache to prevent Betway rate limits on rapid repeated calls
+const betwayMemoryCache = new Map<string, { body: string; status: number; contentType: string; expiresAt: number }>();
+
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
   const allow = ALLOWED_ORIGINS.has(origin) ? origin : PRIMARY_ORIGIN;
@@ -432,6 +435,18 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       if (!isAuthorized(request, env)) return json({ error: "unauthorized" }, 401);
       const betway_path = getStr(q, "path") || "GetDaily";
       const qs = getStr(q, "qs") || "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2";
+      const cacheKey = `betway:${betway_path}:${qs}`;
+
+      // 1. Check in-memory edge cache (30s TTL for GetEvent, 60s for GetDaily)
+      const now = Date.now();
+      const memCached = betwayMemoryCache.get(cacheKey);
+      if (memCached && now < memCached.expiresAt) {
+        return new Response(memCached.body, {
+          status: memCached.status,
+          headers: { "Content-Type": memCached.contentType, "X-Cache": "HIT-EDGE-MEM" },
+        });
+      }
+
       const betway_url = `https://www.betway.co.za/sportsapi/v1/TrackRacing/${betway_path}?${qs}`;
       try {
         const upstream = await fetch(betway_url, {
@@ -441,14 +456,45 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
             "Origin": "https://www.betway.co.za",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-ZA,en;q=0.9",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
           },
         });
         const body = await upstream.text();
+        const contentType = upstream.headers.get("Content-Type") || "application/json";
+
+        // Cache successful responses in edge memory
+        if (upstream.status === 200 && body.length > 50) {
+          const ttlMs = betway_path === "GetDaily" ? 60_000 : 30_000;
+          betwayMemoryCache.set(cacheKey, {
+            body,
+            status: upstream.status,
+            contentType,
+            expiresAt: now + ttlMs,
+          });
+        } else if (upstream.status === 403 && memCached) {
+          // If Betway temporarily rate-limits with 403 but we have an existing cache, serve stale cache!
+          return new Response(memCached.body, {
+            status: 200,
+            headers: { "Content-Type": memCached.contentType, "X-Cache": "STALE-FALLBACK" },
+          });
+        }
+
         return new Response(body, {
           status: upstream.status,
-          headers: { "Content-Type": upstream.headers.get("Content-Type") || "application/json" },
+          headers: { "Content-Type": contentType },
         });
       } catch (err) {
+        if (memCached) {
+          return new Response(memCached.body, {
+            status: 200,
+            headers: { "Content-Type": memCached.contentType, "X-Cache": "STALE-ERROR-FALLBACK" },
+          });
+        }
         return json({ error: "betway_proxy_failed", detail: String(err) }, 502);
       }
     }
