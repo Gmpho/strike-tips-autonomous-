@@ -23,17 +23,21 @@ function isAuthorized(request: Request, env: Env): boolean {
   return !!env.BACKEND_API_KEY && request.headers.get("x-api-key") === env.BACKEND_API_KEY;
 }
 
+// The live host is Cloudflare Pages. The Vercel project is retired (Nov-2026);
+// its origins were the fallback here, so a browser on an unknown origin was
+// told to allow vercel.app and then blocked anyway — a CORS error pointing at
+// a host that serves nothing.
+const PRIMARY_ORIGIN = "https://strike-tips-hud.pages.dev";
+
 const ALLOWED_ORIGINS = new Set([
-  "https://strike-tips-hud.vercel.app",
-  "https://www.strike-tips-hud.vercel.app",
-  "https://strike-tips-hud.pages.dev",
+  PRIMARY_ORIGIN,
   "http://localhost:3000",
   "http://localhost:5173",
 ]);
 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
-  const allow = ALLOWED_ORIGINS.has(origin) ? origin : "https://strike-tips-hud.vercel.app";
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : PRIMARY_ORIGIN;
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -47,7 +51,7 @@ function corsHeaders(request: Request): Record<string, string> {
 function json(data: unknown, status = 200, request?: Request): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": "https://strike-tips-hud.vercel.app" }) },
+    headers: { "Content-Type": "application/json", ...(request ? corsHeaders(request) : { "Access-Control-Allow-Origin": PRIMARY_ORIGIN }) },
   });
 }
 
