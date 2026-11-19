@@ -24,13 +24,11 @@ from .scoring import (
 
 WEEK_START_SAST_OFFSET_HOURS = 2  # Monday 00:00 SAST == Sunday 22:00 UTC
 
-# Accounts that are the machine, not a punter. They hold a real Supabase
-# login and submit real picks, so the board treated them as a person —
-# "StriketipsAI" sat at #4 among humans with 97 settled tips, which is
-# exactly the comparison that makes a punter stop backing their own picks.
-# Matched case-insensitively on the display handle; extend per environment
-# with LEAGUE_SYSTEM_HANDLES="handle,handle".
-SYSTEM_HANDLES = frozenset({"striketipsai", "strike tips ai", "striketips ai"})
+# Accounts that are the machine and not a punter. There is no default entry:
+# "StriketipsAI" holds a real login and is the owner's own betting account, so
+# treating it as a bot pushed a human's 111-tip record onto the system board.
+# Add handles per environment with LEAGUE_SYSTEM_HANDLES="handle,handle".
+SYSTEM_HANDLES: frozenset = frozenset()
 
 
 def system_handles() -> frozenset:

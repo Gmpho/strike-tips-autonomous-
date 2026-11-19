@@ -56,49 +56,69 @@ def _load_bets() -> List[Dict[str, Any]]:
 
 
 def _expand_bets_to_picks(bets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Turn each settled bet into cohort pick dicts (region / tier / track).
+    """Turn each settled bet into cohort pick dicts, one family per book.
 
-    Paper bets are excluded from the public record.
+    Two books, never merged (Nov-2026):
+    * the real ledger is the owner's money. It settles rarely and 698 of its
+      tickets expired without a result, so its newest settlement can be months
+      old — that is a fact about the book, not a reason to hide it;
+    * the paper ledger is the engine's simulated record. It settles every
+      meeting, which is the only reason the board has recent dates on it.
+
+    Paper cohorts carry a `paper:` id prefix and `book="paper"`, so a row can
+    never be mistaken for real money and the two are never averaged.
     """
     out: List[Dict[str, Any]] = []
-    # A "tier" cohort is only a distinct cohort when there is more than one
-    # tier to compare. Every real bet in the ledger is confidence=AUTO, so the
-    # AUTO tier row was byte-for-byte the South Africa region row (identical
-    # 105 settled, 553 points) — the board showed the same record twice, at
-    # the same rank. Emit tiers only when the ledger actually has tiers.
-    usable = [
-        b for b in bets
-        if not b.get("is_paper")
-        and (b.get("status") or "").upper() in ("WON", "LOST")
-    ]
-    tiers = {str(b.get("confidence") or "AUTO") for b in usable}
-    emit_tiers = len(tiers) > 1
+    for is_paper in (False, True):
+        book = "paper" if is_paper else "real"
+        prefix = "paper:" if is_paper else ""
+        # A "tier" cohort is only a distinct cohort when there is more than one
+        # tier to compare. Every real bet is confidence=AUTO, so the AUTO tier
+        # row was byte-for-byte the South Africa region row (identical 105
+        # settled, 553 points) — the board showed the same record twice, at the
+        # same rank. Emit tiers only when that book actually has tiers.
+        usable = [
+            b for b in bets
+            if bool(b.get("is_paper")) is is_paper
+            and (b.get("status") or "").upper() in ("WON", "LOST")
+        ]
+        tiers_by_region: Dict[str, set] = {}
+        for b in usable:
+            tiers_by_region.setdefault(region_of(b.get("track") or ""), set()).add(
+                str(b.get("confidence") or "AUTO")
+            )
+        suffix = " (paper)" if is_paper else ""
 
-    for b in usable:
-        status = (b.get("status") or "").upper()
-        won = status == "WON"
-        track = b.get("track") or ""
-        region = region_of(track)
-        conf = b.get("confidence") or "AUTO"
-        odds = float(b.get("odds") or 0)
-        placed = b.get("placed")  # '1st'/'2nd'/... or None
-        position = 1 if (placed == "1st" or won) else (
-            2 if placed == "2nd" else (3 if placed == "3rd" else (4 if placed == "4th" else 99))
-        )
-        # Cohort 1: region
-        out.append(_pick(b, "cohort", f"region:{region}", region_label(region) + " record",
-                      region, won, odds, position, b))
-        # Cohort 2: confidence tier (only when tiers actually differ)
-        if emit_tiers:
-            out.append(_pick(b, "cohort", f"tier:{conf}", conf.replace("_", " ").title() + " tier",
-                          region, won, odds, position, b))
-        # Cohort 3: track
-        out.append(_pick(b, "cohort", f"track:{track.lower()}", track.title() + " record",
-                      region, won, odds, position, b))
+        for b in usable:
+            status = (b.get("status") or "").upper()
+            won = status == "WON"
+            track = b.get("track") or ""
+            region = region_of(track)
+            conf = b.get("confidence") or "AUTO"
+            odds = float(b.get("odds") or 0)
+            placed = b.get("placed")  # '1st'/'2nd'/'... or None
+            position = 1 if (placed == "1st" or won) else (
+                2 if placed == "2nd" else (3 if placed == "3rd" else (4 if placed == "4th" else 99))
+            )
+            # Cohort 1: region
+            out.append(_pick(b, "cohort", f"{prefix}region:{region}",
+                             region_label(region) + " record" + suffix,
+                             region, won, odds, position, b, book))
+            # Cohort 2: confidence tier — only where a region really has more
+            # than one tier, and region-scoped so two regions can't collide on
+            # an id ("tier:VALUE" was emitted twice, once per region).
+            if len(tiers_by_region.get(region, ())) > 1:
+                out.append(_pick(b, "cohort", f"{prefix}tier:{region}:{conf}",
+                                 f"{conf.replace('_', ' ').title()} tier ({region_label(region)})" + suffix,
+                                 region, won, odds, position, b, book))
+            # Cohort 3: track
+            out.append(_pick(b, "cohort", f"{prefix}track:{track.lower()}",
+                             track.title() + " record" + suffix,
+                             region, won, odds, position, b, book))
     return out
 
 
-def _pick(b, etype, eid, name, region, won, odds, position, raw) -> Dict[str, Any]:
+def _pick(b, etype, eid, name, region, won, odds, position, raw, book="real") -> Dict[str, Any]:
     field_size = int(raw.get("field_size") or 8)
     sp = raw.get("winner_sp")
     pts = score_pick(field_size, position, odds, sp) if won else 0
@@ -112,6 +132,7 @@ def _pick(b, etype, eid, name, region, won, odds, position, raw) -> Dict[str, An
         "entity_id": eid,
         "entity_name": name,
         "region": region,
+        "book": book,
         "date": raw.get("date"),
         "settled": True,
         "won": won,
@@ -301,7 +322,8 @@ async def board(
 
     if scope in ("region", "tier", "track"):
         prefix = f"{scope}:"
-        picks = [p for p in system_picks if str(p.get("entity_id", "")).startswith(prefix)]
+        picks = [p for p in system_picks
+                 if str(p.get("entity_id", "")).startswith((prefix, f"paper:{prefix}"))]
     elif scope == "system":
         picks = system_picks
     else:
@@ -309,6 +331,16 @@ async def board(
     if region:
         picks = [p for p in picks if p.get("region") == region]
     rows = build_board(picks, _now_iso())
+    # Which book a row came from. Cohort ids are the only ones that encode it;
+    # player rows are human and belong to neither book.
+    for r in rows:
+        eid = str(r.get("entity_id") or "")
+        if eid.startswith("paper:"):
+            r["book"] = "paper"
+        elif eid.startswith(("region:", "track:", "tier:")):
+            r["book"] = "real"
+        else:
+            r["book"] = None
     # Only qualified + non-decayed by default for the ranked board.
     ranked = [r for r in rows if r.get("qualified") and not r.get("decayed")]
     # sort
@@ -352,24 +384,32 @@ async def board(
         "all_rows": rows,
     }
     if payload["scope"] == "system":
-        real = [b for b in bets if not b.get("is_paper")]
-        settled = [b for b in real if (b.get("status") or "").upper() in ("WON", "LOST")]
-        expired = [b for b in real if (b.get("status") or "").upper() == "EXPIRED"]
-        stamps = sorted(
-            str(b.get("date") or b.get("placedAt") or "")[:10] for b in settled
-        )
-        payload["system_record"] = {
-            "settled": len(settled),
-            "won": sum(1 for b in settled if (b.get("status") or "").upper() == "WON"),
-            "expired": len(expired),
-            # The single most important sentence on that board: the public
-            # record is built only from settled results, and 87% of the real
-            # ledger never settled, so a 100% strike rate is structural.
-            "unresolvedShare": round(
-                len(expired) / (len(settled) + len(expired)) * 100, 1
-            ) if (settled or expired) else 0.0,
-            "lastSettled": stamps[-1] if stamps else None,
-        }
+        def _book_record(is_paper: bool) -> Dict[str, Any]:
+            book_bets = [b for b in bets if bool(b.get("is_paper")) is is_paper]
+            settled = [b for b in book_bets if (b.get("status") or "").upper() in ("WON", "LOST")]
+            expired = [b for b in book_bets if (b.get("status") or "").upper() == "EXPIRED"]
+            stamps = sorted(
+                str(b.get("date") or b.get("placedAt") or "")[:10] for b in settled
+            )
+            return {
+                "settled": len(settled),
+                "won": sum(1 for b in settled if (b.get("status") or "").upper() == "WON"),
+                "expired": len(expired),
+                # The single most important sentence on that board: the public
+                # record is built only from settled results, and most of the
+                # real ledger never settled, so its strike rate is structural.
+                "unresolvedShare": round(
+                    len(expired) / (len(settled) + len(expired)) * 100, 1
+                ) if (settled or expired) else 0.0,
+                "lastSettled": stamps[-1] if stamps else None,
+            }
+
+        record = _book_record(False)
+        # Flat keys stay real-money (older consumers read them); the paper book
+        # rides alongside so the board can show recent settlements without
+        # pretending they were real.
+        record["paper"] = _book_record(True)
+        payload["system_record"] = record
     return payload
 
 
