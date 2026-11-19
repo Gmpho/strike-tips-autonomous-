@@ -57,8 +57,10 @@ interface Row {
   /** Playing, but under the qualification gate — shown as "provisional", not failing. */
   provisional?: boolean;
   decayed: boolean;
-  /** Cohorts and the machine account — never ranked against punters. */
+  /** Cohorts only — never ranked against punters. */
   system?: boolean;
+  /** Which ledger a cohort row was built from. `null` on human rows. */
+  book?: 'real' | 'paper' | null;
   last_settled: string | null;
 }
 
@@ -355,9 +357,10 @@ export const LeaderboardView: React.FC = () => {
 
         {tab === 'record' && (
           <>
-            {/* Board switch. Cohorts and the machine account are aggregates
-                built only from settled wins — they never share a rank with a
-                punter, because the comparison itself is misleading. */}
+            {/* Board switch. Cohorts are aggregates built only from settled
+                results, so they never share a rank with a punter: the
+                comparison itself is misleading. Your own account is a punter
+                and stays on the Punters board. */}
             <div className="flex flex-wrap items-center gap-3 mb-4">
               <div className="inline-flex rounded-xl bg-slate-800/70 border border-slate-700 p-1">
                 {([['punters', 'Punters'], ['system', 'System']] as const).map(([k, label]) => (
@@ -370,19 +373,33 @@ export const LeaderboardView: React.FC = () => {
               <span className="text-[11px] text-slate-500">
                 {board === 'punters'
                   ? `${ranked.length} ranked · ${(data?.population?.human_entities ?? 0)} punters`
-                  : 'AI cohorts and the machine account — not ranked against punters'}
+                  : 'AI cohorts only — real and paper ledgers, never ranked against punters'}
               </span>
             </div>
 
             {board === 'system' && (
               <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200/90 leading-relaxed">
                 <div className="font-bold text-amber-300 mb-1">System record, not a punter record</div>
-                These rows are built only from settled results, so they cannot lose.
+                These rows are built only from settled results, so they cannot lose on a ticket
+                that never resolved. Two ledgers are shown, never averaged:
                 {' '}
-                {data?.system_record
-                  ? `${data.system_record.won}/${data.system_record.settled} won, ${data.system_record.expired} of ${data.system_record.settled + data.system_record.expired} real tickets expired unsettled (${data.system_record.unresolvedShare}%)${data.system_record.lastSettled ? ` · last settled ${data.system_record.lastSettled}` : ''}.`
-                  : 'Most real tickets expired unsettled.'}
-                {' '}A 100% strike rate here is structural, not skill.
+                {data?.system_record && (
+                  <>
+                    <span className="font-semibold">real money</span> — {data.system_record.won}/{data.system_record.settled} won,
+                    {' '}{data.system_record.expired} expired unsettled ({data.system_record.unresolvedShare}%)
+                    {data.system_record.lastSettled ? `, last settled ${data.system_record.lastSettled}` : ''}
+                    {data.system_record.paper && (
+                      <>
+                        {'; '}
+                        <span className="font-semibold">paper</span> — {data.system_record.paper.won}/{data.system_record.paper.settled} won
+                        {data.system_record.paper.lastSettled ? `, last settled ${data.system_record.paper.lastSettled}` : ''}
+                      </>
+                    )}
+                    {'.'}
+                  </>
+                )}
+                {' '}Rows marked <span className="font-semibold">paper</span> are simulated; a 100% strike rate on real money is
+                structural, not skill.
               </div>
             )}
 
@@ -487,7 +504,19 @@ export const LeaderboardView: React.FC = () => {
                               <div className="flex items-center gap-2.5">
                                 <Avatar avatar={r.avatar} name={r.handle} size={30} />
                                 <div className="min-w-0">
-                                  <div className="text-white font-semibold truncate">{r.handle}</div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-white font-semibold truncate">{r.handle}</span>
+                                    {r.book === 'paper' && (
+                                      <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wide bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                                        paper
+                                      </span>
+                                    )}
+                                    {r.book === 'real' && (
+                                      <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wide bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                        real
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="text-[10px] text-slate-500">{r.region} · {r.settled} settled</div>
                                 </div>
                               </div>

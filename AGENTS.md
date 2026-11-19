@@ -45,7 +45,7 @@ repeats:
    - `core_agent/api_pkg/__init__.py` (web lifespan — a fork-bomb here kills prod)
    - `core_agent/core/modal_app.py` (crons, volumes, timeouts)
    - `strike-tips-hud/functions/` (prod API routes — deleting one 404s prod)
-   - `strike-tips-hud/vercel.json` (must never exist — see `docs/DEPLOY.md`)
+   - `strike-tips-hud/vercel.json` (deleted Nov-2026 — Vercel is retired; never re-add it)
    - `*.test.ts` / `core_agent/tests/` (coverage only grows)
 6. **Live model IDs come from the provider docs, not memory.** Groq retires and
    enterprise-gates IDs aggressively — verify at console.groq.com/docs/models
@@ -221,7 +221,7 @@ class Runner:
 - Tailwind CSS v4 for styling
 - Framer Motion for animations
 - Middleware (`middleware.ts`) routes API calls to Cloudflare or Modal
-- `vercel.json` has SPA rewrite only — no API rewrites (middleware handles routing)
+- Pages SPA fallback lives in `public/_redirects` (`/* /index.html 200`); COOP/COEP live in `public/_headers`; `middleware.ts` routes API calls. No `vercel.json` (deleted Nov-2026)
 
 ---
 
@@ -294,7 +294,8 @@ strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
 │   ├── app/                      # UI components
 │   └── lib/                      # API utilities
 ├── middleware.ts                 # Routing: Cloudflare vs Modal
-├── vercel.json                   # SPA rewrite only
+├── public/_redirects              # Pages SPA fallback
+├── public/_headers                # COOP/COEP + security headers
 └── package.json
 ```
 
@@ -305,7 +306,7 @@ strike-tips-hud/                  # Vite + React frontend (Cloudflare Pages)
 ### Layer Routing
 
 ```
-User → strike-tips-hud.vercel.app
+User → strike-tips-hud.pages.dev
          │
          ▼ middleware.ts
          │
