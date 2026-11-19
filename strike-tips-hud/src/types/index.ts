@@ -189,6 +189,14 @@ export interface BookStats {
   settledBets: number;
   wins: number;
   losses: number;
+  /** Wins/losses that carry a stake and (for a win) a return. */
+  provenWins?: number;
+  provenLosses?: number;
+  /** Settled as WON/LOST but with no stake or no return — unproven. */
+  unprovenWins?: number;
+  unprovenLosses?: number;
+  /** Win rate over proven tickets only; null when there are none. */
+  provenWinRate?: number | null;
   expiredBets: number;
   pendingBets: number;
   /** Wins / settled tickets, per book. Never blend the two books. */

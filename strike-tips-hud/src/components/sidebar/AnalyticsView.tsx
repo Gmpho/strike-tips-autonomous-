@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { TrendingUp, Activity, Target, BarChart2, Layers, AlertTriangle } from 'lucide-react';
+import { TrendingUp, Activity, Target, BarChart2, Layers, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import type { BookStats, BookTracks, RankedTrack } from '../../types';
@@ -44,7 +44,16 @@ function bookKpis(stats: BookStats | undefined): Kpi[] {
       value: `${Number(stats.winRate ?? 0).toFixed(1)}%`,
       icon: TrendingUp,
       color: 'text-emerald-500',
-      sub: `${stats.settledBets} settled · ${stats.losses} lost`,
+      sub: `${stats.wins} won · ${stats.losses} lost`,
+    },
+    {
+      label: 'PROVEN WINS',
+      value: `${stats.provenWins ?? stats.wins}`,
+      icon: ShieldCheck,
+      color: 'text-emerald-400',
+      sub: Number(stats.unprovenWins ?? 0) > 0
+        ? `${stats.unprovenWins} settled as WON without a stake or payout — unproven`
+        : `${stats.provenLosses ?? stats.losses} proven losses`,
     },
     {
       label: 'SETTLED',
@@ -244,6 +253,33 @@ export const AnalyticsView: React.FC = () => {
         </div>
       )}
 
+      {/* ── Ledger record: the number that reconciles with the bankroll ──
+          One line, both books, so the headline wins/losses can never be read
+          as a single book's. The book sections below sum to this line. */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-theme-panel border border-theme space-y-2">
+        <div className="text-[10px] font-black text-theme-secondary uppercase tracking-widest">
+          Ledger record · both books
+        </div>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm font-black text-theme-primary">
+          <span>{Number(betStats?.settledBets ?? 0).toLocaleString()} settled</span>
+          <span className="text-emerald-400">{betStats?.wins ?? 0} won</span>
+          <span className="text-red-400">{betStats?.losses ?? 0} lost</span>
+          <span className="text-theme-secondary font-bold">{betStats?.voidBets ?? 0} void</span>
+          <span className="text-theme-secondary font-bold">{betStats?.expiredBets ?? 0} expired</span>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-bold text-theme-secondary">
+          <span>
+            real: {real?.wins ?? 0} won · {real?.losses ?? 0} lost
+          </span>
+          <span>
+            paper: {paper?.wins ?? 0} won · {paper?.losses ?? 0} lost
+          </span>
+          <span className="text-theme-secondary/70">
+            the two books above add up to this line — they are never averaged
+          </span>
+        </div>
+      </div>
+
       {/* ── Real money ─────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -259,6 +295,13 @@ export const AnalyticsView: React.FC = () => {
             {(real.settledBets + real.expiredBets).toLocaleString()} real tickets expired with no result
             ({Number(real.unresolvedShare ?? 0).toFixed(1)}% unresolved). A 100% win rate here is missing
             data, not skill: the losses were never recorded. Last real settlement {fmtDay(real.lastSettled)}.
+            {Number(real.unprovenWins ?? 0) > 0 && (
+              <>
+                {' '}
+                {real.unprovenWins} of those {real.settledBets} "wins" carry no stake and no payout, so
+                they are unproven and are excluded from the PROVEN WINS tile.
+              </>
+            )}
           </div>
         )}
 

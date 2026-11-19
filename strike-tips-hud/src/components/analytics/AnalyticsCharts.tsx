@@ -357,11 +357,10 @@ export const RoiHeatmap: React.FC<{ bets: BetLike[]; title?: string }> = React.m
       if (hm.tracks.length === 0) {
         return { series: [], options: {}, empty: true as const, minSample: hm.minSample, sample: { cells: 0, positive: 0 } };
       }
-      // State the finding in words. A grid of identical −100% cells is honest
-      // but reads as a rendering fault; it is actually the answer.
+      // State the finding in words. The cells are money-weighted ROI, so a
+      // red grid means real money lost in those cells — not a rendering fault.
       const values = hm.matrix.flat().filter((v): v is number => v !== null);
-      const sample = { cells: values.length, positive: values.filter((v) => v > 0).length };
-      const options: ApexOptions = {
+      const sample = { cells: values.length, positive: values.filter((v) => v > 0).length };      const options: ApexOptions = {
         ...apexBase,
         plotOptions: {
           heatmap: {
@@ -392,13 +391,16 @@ export const RoiHeatmap: React.FC<{ bets: BetLike[]; title?: string }> = React.m
               const oo = o as unknown as { seriesIndex: number; dataPointIndex: number };
               const vol = hm.volumes[oo.seriesIndex]?.[oo.dataPointIndex] ?? 0;
               const won = hm.winners[oo.seriesIndex]?.[oo.dataPointIndex] ?? 0;
+              const med = hm.medians[oo.seriesIndex]?.[oo.dataPointIndex];
+              const stake = hm.staked[oo.seriesIndex]?.[oo.dataPointIndex] ?? 0;
               // A blank cell is not 0% ROI — it is too few tickets to say.
               if (v === null || v === undefined) {
                 return vol === 0
                   ? 'no settled win-market tickets'
-                  : `${vol} tickets · under ${hm.minSample}, no median shown`;
+                  : `${vol} tickets · under ${hm.minSample}, no ROI shown`;
               }
-              return `${Number(v).toFixed(1)}% median ROI · ${vol} tickets · ${won} won`;
+              const medText = med === null || med === undefined ? '' : ` · median ticket ${Number(med).toFixed(1)}%`;
+              return `${Number(v).toFixed(1)}% ROI · ${vol} tickets · ${won} won · R${Math.round(stake).toLocaleString()} staked${medText}`;
             },
           },
         },
@@ -420,25 +422,28 @@ export const RoiHeatmap: React.FC<{ bets: BetLike[]; title?: string }> = React.m
     return (
       <Card
         title={title}
-        right={<span className="text-[10px] font-black text-theme-secondary">median % ROI · win market</span>}
+        right={<span className="text-[10px] font-black text-theme-secondary">ROI % · win market · median in tooltip</span>}
       >
         {sample.cells > 0 && (
           <p className="mb-2 text-[11px] font-bold text-theme-primary">
             {sample.cells} cell{sample.cells === 1 ? '' : 's'} with {minSample}+ settled tickets ·{' '}
             <span className={sample.positive > 0 ? 'text-emerald-400' : 'text-red-400'}>
-              {sample.positive} positive
+              {sample.positive} cash-positive
             </span>
             {sample.positive < sample.cells
-              ? ` · the median ticket is a loser in ${sample.cells - sample.positive} of ${sample.cells}`
+              ? ` · the cell loses money in ${sample.cells - sample.positive} of ${sample.cells}`
               : ''}
           </p>
         )}
         <ApexChart type="heatmap" series={series} options={options} height={260} />
         <p className="mt-3 text-[10px] leading-relaxed text-theme-secondary">
-          Median ticket in the cell, not the mean — one R33,000 pool dividend in a cell of 175 turns
-          −43% into +1,540%. Pool tickets (PICK 6, BIPOT, JACKPOT) are excluded here and reported
-          below. Cells under {minSample} settled tickets stay blank: a triple-digit ROI from one
-          winner is not a finding.
+          Money-weighted ROI of every ticket in the cell (stakes and returns summed), so the cells
+          reconcile with the Track Ledger. The tooltip also shows the median ticket: with ~84% of
+          tickets losing, the median is pinned at −100% in almost every cell, which is why an earlier
+          median-only grid was a wall of red. Pool tickets (PICK 6, BIPOT, JACKPOT) are excluded here
+          and reported below — one R33,000 dividend in a cell of 175 turned −43% into +1,540%. Cells
+          under {minSample} settled tickets stay blank: a triple-digit ROI from one winner is not a
+          finding.
         </p>
       </Card>
     );

@@ -224,10 +224,20 @@ export function bracketRoi(
 export const HEATMAP_MIN_SAMPLE = 5;
 
 /**
- * Median ROI% heatmap: top-N tracks by volume × odds brackets.
+ * ROI% heatmap: top-N tracks by volume × odds brackets.
  *
- * Median, not mean: one R33,222 BIPOT in a cell of 175 tickets moves the mean
- * from -43% to +1,540%. The median ticket in most 7+ cells returns zero.
+ * Two numbers per cell, because one alone lies in a different direction:
+ *
+ * * `matrix` is the volume-weighted ROI of the cell (money in vs money out).
+ *   This is what "did this cell make or lose cash" means, and it is the number
+ *   that reconciles with the track ledger.
+ * * `medians` is the median per-ticket return. With ~84% of tickets losing,
+ *   the median is 0 in almost every cell, so a median-only grid reads as a
+ *   wall of -100% even where the cell is cash-positive. Kept for disclosure,
+ *   never as the headline.
+ *
+ * Pool tickets are excluded: one R33,222 BIPOT in a cell of 175 moves a mean
+ * from -43% to +1,540%, which disguised a lottery win as a track edge.
  * Cells with fewer than `minSample` tickets are blank — a +65% cell built on
  * one winner is noise, not a finding.
  */
@@ -239,8 +249,11 @@ export function roiHeatmap(
   tracks: string[];
   brackets: string[];
   matrix: (number | null)[][];
+  medians: (number | null)[][];
   volumes: number[][];
   winners: number[][];
+  staked: number[][];
+  returned: number[][];
   minSample: number;
 } {
   // Win market only: pool dividends are a different question and drown the
@@ -258,35 +271,54 @@ export function roiHeatmap(
     .slice(0, maxTracks);
   const brackets = ODDS_BRACKETS.map((b) => b.label);
   const matrix: (number | null)[][] = [];
+  const medians: (number | null)[][] = [];
   const volumes: number[][] = [];
   const winners: number[][] = [];
+  const staked: number[][] = [];
+  const returned: number[][] = [];
   for (const { t } of ranked) {
     const row: (number | null)[] = [];
+    const medRow: (number | null)[] = [];
     const vol: number[] = [];
     const won: number[] = [];
+    const stakeRow: number[] = [];
+    const returnRow: number[] = [];
     const bs = byTrack.get(t)!;
     for (const br of ODDS_BRACKETS) {
       const cell = bs.filter((b) => br.test(b.odds));
       vol.push(cell.length);
       won.push(cell.filter((b) => b.won).length);
-      if (cell.length < minSample) {
+      const cellStake = cell.reduce((s, b) => s + (b.stake > 0 ? b.stake : 0), 0);
+      const cellReturn = cell.reduce((s, b) => s + b.payout, 0);
+      stakeRow.push(Math.round(cellStake * 100) / 100);
+      returnRow.push(Math.round(cellReturn * 100) / 100);
+      if (cell.length < minSample || cellStake <= 0) {
         row.push(null);
+        medRow.push(null);
         continue;
       }
-      // Median return multiple → ROI%. Stake-weighted means are what lied.
+      // Headline: money-weighted ROI — the same basis as the track ledger.
+      row.push(Math.round(((cellReturn - cellStake) / cellStake) * 1000) / 10);
+      // Disclosure: median ticket. Pinned to 0 (-100%) whenever >50% lost.
       const multiple = median(cell.filter((b) => b.stake > 0).map((b) => b.payout / b.stake));
-      row.push(Math.round((multiple - 1) * 1000) / 10);
+      medRow.push(Math.round((multiple - 1) * 1000) / 10);
     }
     matrix.push(row);
+    medians.push(medRow);
     volumes.push(vol);
     winners.push(won);
+    staked.push(stakeRow);
+    returned.push(returnRow);
   }
   return {
     tracks: ranked.map((r) => r.t.charAt(0).toUpperCase() + r.t.slice(1)),
     brackets,
     matrix,
+    medians,
     volumes,
     winners,
+    staked,
+    returned,
     minSample,
   };
 }

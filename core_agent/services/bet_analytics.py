@@ -116,6 +116,16 @@ def _book_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     losing_stake = sum(_stake(b) for b in lost)
     expired_stake = sum(_stake(b) for b in expired)
 
+    # A "win" recorded with no stake or no return is not a proven win: the
+    # real ledger has 105 WON / 0 LOST because free text may prove a win but
+    # never a loss (see result_tracker), so 39 of those carry no payout at all.
+    # Counted separately so no page can show 105-for-105 as a measured record.
+    proven_wins = [b for b in won if _stake(b) > 0 and _payout(b) > 0]
+    unproven_wins = [b for b in won if not (_stake(b) > 0 and _payout(b) > 0)]
+    proven_losses = [b for b in lost if _stake(b) > 0]
+    unproven_losses = [b for b in lost if _stake(b) <= 0]
+    proven_settled = len(proven_wins) + len(proven_losses)
+
     roi = ((payout_total - settled_stake) / settled_stake * 100) if settled_stake else 0.0
     # Disclosure only: what the same book would look like if every refunded
     # expired ticket had been a loss. Not a headline number (refunds are not losses).
@@ -134,6 +144,13 @@ def _book_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "expiredBets": len(expired),
         "wins": len(won),
         "losses": len(lost),
+        # Wins/losses that carry a stake and (for a win) a return. The
+        # unproven remainder is disclosed, never folded into a rate.
+        "provenWins": len(proven_wins),
+        "provenLosses": len(proven_losses),
+        "unprovenWins": len(unproven_wins),
+        "unprovenLosses": len(unproven_losses),
+        "provenWinRate": round(len(proven_wins) / proven_settled * 100, 1) if proven_settled else None,
         # A win rate is only meaningful against settled tickets; the label in
         # the HUD says exactly that. Reported per book, never blended.
         "winRate": round(len(won) / len(settled) * 100, 1) if settled else 0.0,

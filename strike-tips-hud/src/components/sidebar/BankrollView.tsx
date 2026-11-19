@@ -9,6 +9,13 @@ import type { BetRecord } from '../../types';
 import { betPnl, betStatus } from '../../lib/bet-status';
 
 type ExecFilter = 'ALL' | 'WON' | 'LOST' | 'OPEN' | 'VOID';
+type BookFilter = 'all' | 'real' | 'paper';
+
+const BOOK_FILTERS: { key: BookFilter; label: string }[] = [
+  { key: 'all', label: 'Both books' },
+  { key: 'real', label: 'Real' },
+  { key: 'paper', label: 'Paper' },
+];
 
 // Superseded tickets carry the settler's shadow verdict in notes, e.g.
 // "… | shadow: WON R139.68 (…)" — the Void tab shows what the ticket
@@ -60,6 +67,10 @@ const PAGE = 30;
 export const BankrollView: React.FC = () => {
   const { bankroll, betStats, betHistory, betHistoryTotal, betHistoryFull, betHistoryReady, systemHealth } = useHUD();
   const [loadingFull, setLoadingFull] = React.useState(false);
+  // Which book the execution tabs count. The KPI row above is real-only, so a
+  // blended tab count (270 W / 884 L) sat directly under a 100% real win rate.
+  // "all" is the default and is labelled; the per-book chips reconcile exactly.
+  const [book, setBook] = React.useState<'all' | 'real' | 'paper'>('all');
 
   // "Show more" past the paint-fast window pulls the full ledger once,
   // then polls keep it full (betHistoryFull) instead of collapsing back.
@@ -113,21 +124,37 @@ export const BankrollView: React.FC = () => {
     [betHistory],
   );
 
+  const bookExecs = React.useMemo(
+    () => (book === 'all'
+      ? sortedExecs
+      : sortedExecs.filter((b) => (book === 'paper' ? b.is_paper === true : b.is_paper !== true))),
+    [sortedExecs, book],
+  );
+
   const filteredExecs = React.useMemo(() => {
-    if (execFilter === 'ALL') return sortedExecs;
-    if (execFilter === 'OPEN') return sortedExecs.filter((b) => betStatus(b) === 'PENDING');
+    if (execFilter === 'ALL') return bookExecs;
+    if (execFilter === 'OPEN') return bookExecs.filter((b) => betStatus(b) === 'PENDING');
     // Void tab folds EXPIRED in: both mean "no result, stake returned".
-    if (execFilter === 'VOID') return sortedExecs.filter((b) => ['VOID', 'EXPIRED'].includes(betStatus(b)));
-    return sortedExecs.filter((b) => betStatus(b) === execFilter);
-  }, [sortedExecs, execFilter]);
+    if (execFilter === 'VOID') return bookExecs.filter((b) => ['VOID', 'EXPIRED'].includes(betStatus(b)));
+    return bookExecs.filter((b) => betStatus(b) === execFilter);
+  }, [bookExecs, execFilter]);
 
   const visible = filteredExecs.slice(0, execShown);
 
+  // Loaded-row counts per book (may be a window of the ledger — the tabs
+  // still sum to the same set the list shows).
+  const bookCounts = React.useMemo(() => {
+    const c: Record<BookFilter, number> = { all: sortedExecs.length, real: 0, paper: 0 };
+    for (const b of sortedExecs) c[b.is_paper === true ? 'paper' : 'real'] += 1;
+    return c;
+  }, [sortedExecs]);
+
   // Per-tab counts (Oct-2026): makes a mis-filtering tab self-evident —
-  // the count and the rows always derive from the same filtered set.
+  // the count and the rows always derive from the same filtered set. Scoped
+  // to the selected book so the counts can never contradict the KPI row.
   const tabCounts = React.useMemo(() => {
-    const counts: Record<ExecFilter, number> = { ALL: sortedExecs.length, WON: 0, LOST: 0, OPEN: 0, VOID: 0 };
-    for (const b of sortedExecs) {
+    const counts: Record<ExecFilter, number> = { ALL: bookExecs.length, WON: 0, LOST: 0, OPEN: 0, VOID: 0 };
+    for (const b of bookExecs) {
       const st = betStatus(b);
       if (st === 'WON') counts.WON += 1;
       else if (st === 'LOST') counts.LOST += 1;
@@ -135,7 +162,7 @@ export const BankrollView: React.FC = () => {
       else if (st === 'VOID' || st === 'EXPIRED') counts.VOID += 1;
     }
     return counts;
-  }, [sortedExecs]);
+  }, [bookExecs]);
   // Windowed ledger: offer the full pull once the 120-row paint window
   // is exhausted but the server holds more.
   const canPage = visible.length < filteredExecs.length;
@@ -245,24 +272,53 @@ export const BankrollView: React.FC = () => {
         ))}
       </div>
 
+      {/* The three records, stated in one place. The tabs below count only the
+          selected book, so a "REAL WIN RATE" card can never sit above a
+          blended win count. */}
+      <div className="p-4 rounded-2xl bg-theme-panel border border-theme flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-black">
+        <span className="text-theme-secondary uppercase tracking-widest text-[10px]">Record</span>
+        <span className="text-emerald-400">real {realBook?.wins ?? 0} W · {realBook?.losses ?? 0} L</span>
+        <span className="text-blue-300">paper {betStats?.books?.paper?.wins ?? 0} W · {betStats?.books?.paper?.losses ?? 0} L</span>
+        <span className="text-theme-primary">ledger {betStats?.wins ?? 0} W · {betStats?.losses ?? 0} L</span>
+        {Number(realBook?.unprovenWins ?? 0) > 0 && (
+          <span className="text-amber-300/90 font-bold">· {realBook?.unprovenWins} real "wins" carry no stake/payout (unproven)</span>
+        )}
+      </div>
+
       {/* Recent Bets */}
       <div className="rounded-3xl bg-theme-panel border border-theme overflow-hidden ">
         <div className="px-6 py-4 border-b border-theme bg-theme-secondary/30 flex flex-wrap items-center gap-3">
           <DollarSign className="w-4 h-4 text-emerald-500" />
           <h3 className="text-sm font-black text-theme-primary uppercase tracking-widest mr-auto">Recent Executions</h3>
-          <div className="flex flex-wrap items-center justify-end gap-1 bg-black/20 rounded-xl p-1 border border-white/5">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                onClick={() => { setExecFilter(f.key); setExecShown(PAGE); }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
-                  execFilter === f.key ? 'bg-purple-500/25 text-purple-200' : 'text-theme-secondary hover:text-theme-primary'
-                }`}
-              >
-                {f.label} {tabCounts[f.key] > 0 ? `(${tabCounts[f.key]})` : ''}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center gap-1 bg-black/20 rounded-xl p-1 border border-white/5">
+              {BOOK_FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => { setBook(f.key); setExecShown(PAGE); }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    book === f.key ? 'bg-emerald-500/25 text-emerald-200' : 'text-theme-secondary hover:text-theme-primary'
+                  }`}
+                >
+                  {f.label} {bookCounts[f.key] > 0 ? `(${bookCounts[f.key]})` : ''}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1 bg-black/20 rounded-xl p-1 border border-white/5">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => { setExecFilter(f.key); setExecShown(PAGE); }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    execFilter === f.key ? 'bg-purple-500/25 text-purple-200' : 'text-theme-secondary hover:text-theme-primary'
+                  }`}
+                >
+                  {f.label} {tabCounts[f.key] > 0 ? `(${tabCounts[f.key]})` : ''}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

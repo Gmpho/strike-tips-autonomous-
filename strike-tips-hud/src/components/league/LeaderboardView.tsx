@@ -534,7 +534,7 @@ export const LeaderboardView: React.FC = () => {
                                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                     className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                     <div><div className="text-slate-500">Settled</div><div className="text-white font-bold">{r.settled}</div></div>
-                                    <div><div className="text-slate-500">Wins</div><div className="text-white font-bold">{r.wins}</div></div>
+                                    <div><div className="text-slate-500">1st (wins)</div><div className="text-white font-bold">{r.wins}</div></div>
                                     <div><div className="text-slate-500">Avg pts/tip</div><div className="text-white font-bold">{r.avg_points_per_tip.toFixed(2)}</div></div>
                                     <div><div className="text-slate-500">Last settled</div><div className="text-white font-bold">{r.last_settled ? r.last_settled.slice(0, 10) : '—'}</div></div>
                                   </motion.div>
@@ -564,6 +564,7 @@ export const LeaderboardView: React.FC = () => {
             {/* Freshness */}
             <div className="mt-6 text-xs text-slate-500 text-center">
               {board === 'punters' ? 'Human board' : 'System board'} · {data?.ranked_rows ?? 0} ranked of {data?.total_rows ?? 0} rows · min {data?.min_tips ?? 5} settled tips · {data?.decay_days ?? DECAY_DAYS}-day activity window
+              {' · this board counts tips (1st = horse finished first), not the betting ledger'}
               {ageMin != null && ` · scores updated ${ageMin}m ago`}
               {ageMin != null && ageMin > 60 * 48 && ' · stale'}
             </div>
@@ -595,7 +596,7 @@ export const LeaderboardView: React.FC = () => {
                       <th className="px-3 md:px-4 py-3 text-left text-xs font-semibold uppercase text-slate-300">Player</th>
                       <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300">Settled</th>
                       <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300 hidden sm:table-cell">Pending</th>
-                      <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300 hidden md:table-cell">Wins</th>
+                      <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300 hidden md:table-cell">1st</th>
                       <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300">Strike</th>
                       <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300">Points</th>
                       <th className="px-2 md:px-4 py-3 text-right text-xs font-semibold uppercase text-slate-300">Form</th>
