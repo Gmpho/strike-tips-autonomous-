@@ -24,6 +24,32 @@ from .scoring import (
 
 WEEK_START_SAST_OFFSET_HOURS = 2  # Monday 00:00 SAST == Sunday 22:00 UTC
 
+# Accounts that are the machine, not a punter. They hold a real Supabase
+# login and submit real picks, so the board treated them as a person —
+# "StriketipsAI" sat at #4 among humans with 97 settled tips, which is
+# exactly the comparison that makes a punter stop backing their own picks.
+# Matched case-insensitively on the display handle; extend per environment
+# with LEAGUE_SYSTEM_HANDLES="handle,handle".
+SYSTEM_HANDLES = frozenset({"striketipsai", "strike tips ai", "striketips ai"})
+
+
+def system_handles() -> frozenset:
+    import os
+
+    extra = {
+        h.strip().casefold()
+        for h in (os.getenv("LEAGUE_SYSTEM_HANDLES") or "").split(",")
+        if h.strip()
+    }
+    return SYSTEM_HANDLES | frozenset(extra)
+
+
+def is_system_entity(entity_type: str, handle: str) -> bool:
+    """True for cohort aggregates and for the machine's own account."""
+    if entity_type == "cohort":
+        return True
+    return str(handle or "").strip().casefold() in system_handles()
+
 
 def _iso_date(v: Any) -> str:
     if v is None:
@@ -181,7 +207,14 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
             # board, and whether they are "provisional" (playing, not yet counted).
             "needs": max(0, MIN_TIPS_TO_QUALIFY - g["settled"]),
             "provisional": etype == "player" and 0 < g["settled"] < MIN_TIPS_TO_QUALIFY,
-            "decayed": (decayed(last_iso, now_iso) if last_iso else True) if etype == "player" else False,
+            # Decay applies to EVERY entity. It used to be hardcoded False for
+            # non-players, so a cohort whose last settled pick was 8 August
+            # still held rank #1 in mid-November — a three-month-old record
+            # outranking punters who actually posted this week.
+            "decayed": decayed(last_iso, now_iso) if last_iso else True,
+            # Cohorts and the machine account are a separate board: they must
+            # never be ranked against people.
+            "system": is_system_entity(etype, g["name"]),
             "last_settled": last_iso,
             "rank": None,
         })

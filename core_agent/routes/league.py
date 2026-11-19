@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from core_agent.config.paths import DATA_DIR
 from core_agent.skills.league.regions import region_of, region_label
-from core_agent.skills.league.rollups import build_board
+from core_agent.skills.league.rollups import build_board, is_system_entity
 from core_agent.skills.league.scoring import (
     score_pick, base_points, sp_bonus, form_rating, value_index,
     MIN_TIPS_TO_QUALIFY, DECAY_DAYS,
@@ -61,15 +61,21 @@ def _expand_bets_to_picks(bets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Paper bets are excluded from the public record.
     """
     out: List[Dict[str, Any]] = []
-    for b in bets:
-        if b.get("is_paper"):
-            continue
+    # A "tier" cohort is only a distinct cohort when there is more than one
+    # tier to compare. Every real bet in the ledger is confidence=AUTO, so the
+    # AUTO tier row was byte-for-byte the South Africa region row (identical
+    # 105 settled, 553 points) — the board showed the same record twice, at
+    # the same rank. Emit tiers only when the ledger actually has tiers.
+    usable = [
+        b for b in bets
+        if not b.get("is_paper")
+        and (b.get("status") or "").upper() in ("WON", "LOST")
+    ]
+    tiers = {str(b.get("confidence") or "AUTO") for b in usable}
+    emit_tiers = len(tiers) > 1
+
+    for b in usable:
         status = (b.get("status") or "").upper()
-        # Only a real result counts. VOID/EXPIRED bets had no outcome (refunded
-        # race, scratched runner, stale expiry) — including them as settled
-        # losses deflated every regional strike rate on the analytics board.
-        if status not in ("WON", "LOST"):
-            continue
         won = status == "WON"
         track = b.get("track") or ""
         region = region_of(track)
@@ -82,9 +88,10 @@ def _expand_bets_to_picks(bets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # Cohort 1: region
         out.append(_pick(b, "cohort", f"region:{region}", region_label(region) + " record",
                       region, won, odds, position, b))
-        # Cohort 2: confidence tier
-        out.append(_pick(b, "cohort", f"tier:{conf}", conf.replace("_", " ").title() + " tier",
-                      region, won, odds, position, b))
+        # Cohort 2: confidence tier (only when tiers actually differ)
+        if emit_tiers:
+            out.append(_pick(b, "cohort", f"tier:{conf}", conf.replace("_", " ").title() + " tier",
+                          region, won, odds, position, b))
         # Cohort 3: track
         out.append(_pick(b, "cohort", f"track:{track.lower()}", track.title() + " record",
                       region, won, odds, position, b))
@@ -262,22 +269,45 @@ def _resolve_avatar(uid: str, google_url: Optional[str]) -> Dict[str, Any]:
 @router.get("/board")
 async def board(
     region: Optional[str] = Query(None),
-    scope: str = Query("all"),  # all | region | tier | track
+    scope: str = Query("all"),  # all | system | region | tier | track
     sort: str = Query("form"),
     include_paper: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
 ):
+    """Public board, split into two populations that never rank together.
+
+    `all` (default) is the HUMAN board: real punters only. Cohorts and the
+    machine's own account used to sit in this same ranking, where a cohort
+    built exclusively from wins (105 settled, 0 lost) showed 100% strike
+    rate above a punter's 14% — a board that argued the machine beats you.
+
+    `system` is the other board: the region / tier / track aggregates plus
+    the machine account, ranked among themselves. Its rows carry the ledger
+    caveat (`system_record`) so a 105/105 can never read as skill.
+    """
     _sync_volume()
-    picks = _expand_bets_to_picks(_load_bets())
+    bets = _load_bets()
+    picks = _expand_bets_to_picks(bets)
     picks += _load_user_picks()
+
+    def _handle(p: Dict[str, Any]) -> str:
+        return str(p.get("handle") or p.get("entity_name") or "")
+
+    def _is_system_pick(p: Dict[str, Any]) -> bool:
+        return is_system_entity(str(p.get("entity_type") or "player"), _handle(p))
+
+    human_picks = [p for p in picks if not _is_system_pick(p)]
+    system_picks = [p for p in picks if _is_system_pick(p)]
+
+    if scope in ("region", "tier", "track"):
+        prefix = f"{scope}:"
+        picks = [p for p in system_picks if str(p.get("entity_id", "")).startswith(prefix)]
+    elif scope == "system":
+        picks = system_picks
+    else:
+        picks = human_picks
     if region:
         picks = [p for p in picks if p.get("region") == region]
-    if scope == "region":
-        picks = [p for p in picks if str(p.get("entity_id", "")).startswith("region:")]
-    elif scope == "tier":
-        picks = [p for p in picks if str(p.get("entity_id", "")).startswith("tier:")]
-    elif scope == "track":
-        picks = [p for p in picks if str(p.get("entity_id", "")).startswith("track:")]
     rows = build_board(picks, _now_iso())
     # Only qualified + non-decayed by default for the ranked board.
     ranked = [r for r in rows if r.get("qualified") and not r.get("decayed")]
@@ -303,16 +333,44 @@ async def board(
         as_of = datetime.fromtimestamp(os.path.getmtime(BET_HISTORY), tz=timezone.utc).isoformat()
     except Exception:
         pass
-    return {
+
+    payload: Dict[str, Any] = {
         "as_of": as_of,
         "now": _now_iso(),
+        "scope": scope if scope in ("system", "region", "tier", "track") else "all",
         "min_tips": MIN_TIPS_TO_QUALIFY,
         "decay_days": DECAY_DAYS,
         "total_rows": len(rows),
         "ranked_rows": len(ranked),
+        # Population counts so the HUD can say "6 of 21 punters active"
+        # instead of silently hiding every decayed row.
+        "population": {
+            "human_entities": len({str(p.get("entity_id")) for p in human_picks}),
+            "system_entities": len({str(p.get("entity_id")) for p in system_picks}),
+        },
         "rows": ranked[:limit],
         "all_rows": rows,
     }
+    if payload["scope"] == "system":
+        real = [b for b in bets if not b.get("is_paper")]
+        settled = [b for b in real if (b.get("status") or "").upper() in ("WON", "LOST")]
+        expired = [b for b in real if (b.get("status") or "").upper() == "EXPIRED"]
+        stamps = sorted(
+            str(b.get("date") or b.get("placedAt") or "")[:10] for b in settled
+        )
+        payload["system_record"] = {
+            "settled": len(settled),
+            "won": sum(1 for b in settled if (b.get("status") or "").upper() == "WON"),
+            "expired": len(expired),
+            # The single most important sentence on that board: the public
+            # record is built only from settled results, and 87% of the real
+            # ledger never settled, so a 100% strike rate is structural.
+            "unresolvedShare": round(
+                len(expired) / (len(settled) + len(expired)) * 100, 1
+            ) if (settled or expired) else 0.0,
+            "lastSettled": stamps[-1] if stamps else None,
+        }
+    return payload
 
 
 @router.get("/tipster/{slug}")
