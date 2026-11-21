@@ -38,6 +38,77 @@ const ALLOWED_ORIGINS = new Set([
 // In-memory edge cache to prevent Betway rate limits on rapid repeated calls
 const betwayMemoryCache = new Map<string, { body: string; status: number; contentType: string; expiresAt: number }>();
 
+// Last-known-good card, shared across isolates via the Cache API.
+//
+// The in-memory map above is per-isolate: a success in one colo is invisible
+// to the next attempt in another, which is exactly how the monitor ended up
+// logging five 403s in a row while a sibling isolate had a good body seconds
+// earlier. `caches.default` is per-colo but shared by every isolate in it, so
+// one success covers the whole colo and a challenged isolate can serve the
+// last good prices instead of a Cloudflare challenge.
+const LAST_GOOD_TTL_SECS = 30 * 60;
+const LAST_GOOD_CACHE_NAME = "striketips-betway-lastgood";
+
+// `caches.default` collides with lib.dom's CacheStorage typings in this
+// project, so open a named cache instead — same API, same runtime behaviour.
+async function openLastGoodCache() {
+  try {
+    return await caches.open(LAST_GOOD_CACHE_NAME);
+  } catch {
+    return null; // Cache API unavailable (local dev) — degrade to upstream
+  }
+}
+
+function lastGoodRequest(cacheKey: string): Request {
+  // Synthetic URL: the Cache API keys on the request, not on a real host.
+  return new Request(`https://striketips-cache.local/lastgood/${encodeURIComponent(cacheKey)}`);
+}
+
+async function readLastGood(
+  cacheKey: string,
+): Promise<{ body: string; contentType: string; ageMs: number } | null> {
+  try {
+    const cache = await openLastGoodCache();
+    if (!cache) return null;
+    const hit = await cache.match(lastGoodRequest(cacheKey));
+    if (!hit) return null;
+    const body = await hit.text();
+    if (!body || body.length < 50) return null;
+    const storedAt = Number(hit.headers.get("X-Stored-At") || "0");
+    return {
+      body,
+      contentType: hit.headers.get("Content-Type") || "application/json",
+      // Unknown age is treated as stale, not fresh — it still works as the
+      // last-good fallback, but never short-circuits the upstream fetch.
+      ageMs: storedAt ? Date.now() - storedAt : Number.MAX_SAFE_INTEGER,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeLastGood(cacheKey: string, body: string, contentType: string): Promise<void> {
+  try {
+    const cache = await openLastGoodCache();
+    if (!cache) return;
+    await cache.put(
+      lastGoodRequest(cacheKey),
+      new Response(body, {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "X-Stored-At": String(Date.now()),
+          // A card older than this is only useful as a challenge fallback.
+          "Cache-Control": `public, max-age=${LAST_GOOD_TTL_SECS}`,
+        },
+      }),
+    );
+  } catch {
+    // Never fail the request because the cache layer failed.
+  }
+}
+
+
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("Origin") || "";
   const allow = ALLOWED_ORIGINS.has(origin) ? origin : PRIMARY_ORIGIN;
@@ -436,14 +507,28 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       const betway_path = getStr(q, "path") || "GetDaily";
       const qs = getStr(q, "qs") || "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2";
       const cacheKey = `betway:${betway_path}:${qs}`;
+      const freshTtlMs = betway_path === "GetDaily" ? 60_000 : 30_000;
 
-      // 1. Check in-memory edge cache (30s TTL for GetEvent, 60s for GetDaily)
+      // 1. Per-isolate memory: the cheapest short-circuit.
       const now = Date.now();
       const memCached = betwayMemoryCache.get(cacheKey);
       if (memCached && now < memCached.expiresAt) {
         return new Response(memCached.body, {
           status: memCached.status,
           headers: { "Content-Type": memCached.contentType, "X-Cache": "HIT-EDGE-MEM" },
+        });
+      }
+
+      // 2. Cross-isolate last-good, when it is still fresh enough to be trusted.
+      const lastGood = await readLastGood(cacheKey);
+      if (lastGood && lastGood.ageMs >= 0 && lastGood.ageMs < freshTtlMs) {
+        return new Response(lastGood.body, {
+          status: 200,
+          headers: {
+            "Content-Type": lastGood.contentType,
+            "X-Cache": "HIT-EDGE-SHARED",
+            "X-Stale-Age-Ms": String(lastGood.ageMs),
+          },
         });
       }
 
@@ -467,20 +552,28 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
         const body = await upstream.text();
         const contentType = upstream.headers.get("Content-Type") || "application/json";
 
-        // Cache successful responses in edge memory
         if (upstream.status === 200 && body.length > 50) {
-          const ttlMs = betway_path === "GetDaily" ? 60_000 : 30_000;
           betwayMemoryCache.set(cacheKey, {
             body,
             status: upstream.status,
             contentType,
-            expiresAt: now + ttlMs,
+            expiresAt: now + freshTtlMs,
           });
-        } else if (upstream.status === 403 && memCached) {
-          // If Betway temporarily rate-limits with 403 but we have an existing cache, serve stale cache!
-          return new Response(memCached.body, {
+          await writeLastGood(cacheKey, body, contentType);
+        } else if (memCached || lastGood) {
+          // Betway challenged this colo but we have a card from earlier — serve
+          // it rather than handing the monitor a Cloudflare challenge it will
+          // log as a fresh failure. Honest about how old it is.
+          const stale = memCached ?? lastGood!;
+          return new Response(stale.body, {
             status: 200,
-            headers: { "Content-Type": memCached.contentType, "X-Cache": "STALE-FALLBACK" },
+            headers: {
+              "Content-Type": stale.contentType,
+              "X-Cache": "STALE-ON-CHALLENGE",
+              "X-Stale-Age-Ms": stale === memCached
+                ? String(Math.max(0, now - (memCached.expiresAt - freshTtlMs)))
+                : String(lastGood!.ageMs),
+            },
           });
         }
 
@@ -489,10 +582,17 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
           headers: { "Content-Type": contentType },
         });
       } catch (err) {
-        if (memCached) {
-          return new Response(memCached.body, {
+        const stale = memCached ?? lastGood;
+        if (stale) {
+          return new Response(stale.body, {
             status: 200,
-            headers: { "Content-Type": memCached.contentType, "X-Cache": "STALE-ERROR-FALLBACK" },
+            headers: {
+              "Content-Type": stale.contentType,
+              "X-Cache": "STALE-ERROR-FALLBACK",
+              "X-Stale-Age-Ms": stale === memCached
+                ? String(Math.max(0, now - (memCached.expiresAt - freshTtlMs)))
+                : String(lastGood!.ageMs),
+            },
           });
         }
         return json({ error: "betway_proxy_failed", detail: String(err) }, 502);
