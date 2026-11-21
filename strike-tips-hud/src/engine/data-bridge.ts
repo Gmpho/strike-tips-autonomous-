@@ -107,9 +107,27 @@ export class DataBridge {
           return true;
         })
       );
+      // Backend stamps naive UTC ISO strings ("2026-11-20T17:36:37.480507").
+      // Date.parse treats a naive string as LOCAL time, which inflated the
+      // outage age by the client's UTC offset (SAST +2h showed "2h 0m" for a
+      // 10-minute outage). Treat any zone-less timestamp as UTC.
+      const parseServerTs = (v: unknown): number => {
+        if (typeof v !== 'string' || !v) return NaN;
+        const iso = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(v) ? v : `${v}Z`;
+        return Date.parse(iso);
+      };
       const feedDown = data.stale === true || data.fetch_ok === false;
       if (feedDown) {
-        this.staleSinceMs ??= Date.now();
+        // Prefer the server's outage start so the banner shows true outage
+        // duration, not "time since this tab first noticed".
+        const serverStaleSince = parseServerTs(data.stale_since);
+        const staleMs = Number.isFinite(serverStaleSince) ? serverStaleSince : Date.now();
+        if (this.staleSinceMs == null) {
+          this.staleSinceMs = staleMs;
+        } else if (Number.isFinite(serverStaleSince)) {
+          // Keep the earliest known outage start across polls/tabs.
+          this.staleSinceMs = Math.min(this.staleSinceMs, staleMs);
+        }
       } else {
         this.staleSinceMs = null;
       }
