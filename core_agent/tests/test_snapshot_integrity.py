@@ -33,6 +33,12 @@ from core_agent.core.adaptive_odds_monitor import (
 FROZEN_NOW = datetime(2026, 9, 20, 12, 0, 0)  # mid-day: no midnight rollover
 
 
+@pytest.fixture(autouse=True)
+def _isolated_race_registry(tmp_path, monkeypatch):
+    """Snapshot tests must not read/write the shared on-disk race registry."""
+    monkeypatch.setattr(snapshot_writer, "RACE_REGISTRY_PATH", tmp_path / "registry.json")
+
+
 class _FrozenDatetime(datetime):
     """datetime stub so HH:MM off-time maths is deterministic in tests."""
 

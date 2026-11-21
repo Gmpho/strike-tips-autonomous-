@@ -1850,8 +1850,11 @@ class AdaptiveOddsMonitor:
             # Stabilise: carry forward still-live races missed by this cycle's
             # partial per-event fetch so the card doesn't oscillate (26↔30↔18).
             try:
-                from core_agent.core.snapshot_writer import _merge_previous_live_events
+                from core_agent.core.snapshot_writer import (
+                    _merge_previous_live_events, merge_registry_events,
+                )
                 state = _merge_previous_live_events(state)
+                state = merge_registry_events(state)
             except Exception:
                 pass
             state["count"] = len(state.get("events") or {})
@@ -1978,8 +1981,11 @@ class AdaptiveOddsMonitor:
                 # Stabilise: carry forward still-live races missed by this cycle's
                 # partial per-event fetch so the card doesn't oscillate (26↔30↔18).
                 try:
-                    from core_agent.core.snapshot_writer import _merge_previous_live_events
+                    from core_agent.core.snapshot_writer import (
+                        _merge_previous_live_events, merge_registry_events,
+                    )
                     state = _merge_previous_live_events(state)
+                    state = merge_registry_events(state)
                 except Exception:
                     pass
                 state["count"] = len(state.get("events") or {})

@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core_agent.config.paths import MARKET_SNAPSHOT_PATH
@@ -165,6 +166,105 @@ def _last_write_info(path: Any = None) -> Dict[str, Any]:
     }
 
 
+# Durable race registry (Nov-21). Carry-forward from the *previous* snapshot
+# alone still allows a race to vanish after two missed cycles and then come
+# back when a late GetEvent succeeds. Keep the last good body of every race
+# seen today, plus tombstones for races whose off-time has passed, so a race
+# cannot disappear on a single miss nor be resurrected once expired.
+RACE_REGISTRY_PATH = os.environ.get("BETWAY_RACE_REGISTRY") or str(
+    Path(__file__).resolve().parents[3] / "data" / "betway_race_registry.json"
+)
+_REGISTRY_TOMBSTONE_TTL_SECS = 24 * 3600
+
+
+def _load_race_registry() -> Dict[str, Any]:
+    try:
+        raw = json.loads(Path(RACE_REGISTRY_PATH).read_text())
+    except Exception:
+        return {"events": {}, "tombstones": {}}
+    if not isinstance(raw, dict):
+        return {"events": {}, "tombstones": {}}
+    events = raw.get("events") if isinstance(raw.get("events"), dict) else {}
+    tombstones = raw.get("tombstones") if isinstance(raw.get("tombstones"), dict) else {}
+    return {"events": events, "tombstones": tombstones}
+
+
+def _save_race_registry(registry: Dict[str, Any]) -> None:
+    try:
+        path = Path(RACE_REGISTRY_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(registry, default=str))
+    except Exception as exc:  # pragma: no cover - read-only volume
+        logger.debug("Race registry write skipped: %s", exc)
+
+
+def merge_registry_events(state: Dict[str, Any], path: Any = None) -> Dict[str, Any]:
+    """Union in last-good races, and permanently drop expired ones.
+
+    A race seen on any cycle survives partial fetches; a race whose
+    ``expires_at`` has passed is tombstoned so a late GetEvent success cannot
+    put a finished race back on the card.
+    """
+    clean: Dict[str, Any] = dict(state)
+    events = clean.get("events")
+    if not isinstance(events, dict):
+        return clean
+    now_dt = datetime.now()
+    now = now_dt.timestamp()
+    registry = _load_race_registry()
+    known = registry["events"]
+    tombstones = registry["tombstones"]
+
+    # 1. Never re-add an expired/tombstoned race, even if this cycle fetched it.
+    for eid in list(tombstones):
+        try:
+            if now - float(tombstones[eid]) < _REGISTRY_TOMBSTONE_TTL_SECS:
+                events.pop(eid, None)
+            else:
+                del tombstones[eid]
+        except Exception:
+            del tombstones[eid]
+
+    # 2. Tombstone known races whose off-time has genuinely passed.
+    for eid, entry in list(known.items()):
+        try:
+            expires = float((entry or {}).get("expires_at") or 0)
+        except Exception:
+            expires = 0.0
+        if expires and expires <= now:
+            events.pop(eid, None)
+            tombstones[eid] = expires
+            del known[eid]
+
+    # 3. Restore still-live races missing from this cycle's partial fetch.
+    restored = 0
+    for eid, entry in known.items():
+        if eid in events:
+            continue
+        ev = entry.get("event") if isinstance(entry, dict) else None
+        if not isinstance(ev, dict) or ev.get("isFinished"):
+            continue
+        if sanitize_snapshot({"events": {eid: ev}}, source="registry")["events"]:
+            events[eid] = ev
+            restored += 1
+
+    # 4. Refresh every currently-fetched race's last-good body.
+    for eid, ev in events.items():
+        if isinstance(ev, dict):
+            known[eid] = {
+                "event": ev,
+                "expires_at": ev.get("expires_at"),
+                "last_seen": now_dt.isoformat(),
+            }
+
+    if restored:
+        logger.info("Race registry restored %d still-live event(s)", restored)
+    clean["events"] = events
+    clean["count"] = len(events)
+    _save_race_registry(registry)
+    return clean
+
+
 def _merge_previous_live_events(clean: Dict[str, Any], path: Any = None) -> Dict[str, Any]:
     """Carry forward still-live events from the previous snapshot.
 
@@ -240,6 +340,10 @@ def write_market_snapshot(
     # from the previous snapshot that are missing from this (incomplete) fetch.
     try:
         clean = _merge_previous_live_events(clean, path)
+        try:
+            clean = merge_registry_events(clean, path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Race registry merge failed: %s", exc)
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Previous-snapshot merge failed: %s", exc)
 

@@ -2,7 +2,16 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from core_agent.skills import search_service as ss
+
+
+@pytest.fixture(autouse=True)
+def _no_shared_daily_quota():
+    """Provider-order tests must not depend on today's real quota file."""
+    with patch.object(ss, "_daily_used", return_value=0):
+        yield
 
 
 def _resp(status, payload):
