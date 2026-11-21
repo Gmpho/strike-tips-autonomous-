@@ -2,6 +2,7 @@ import { hudStore } from '../store/hud-store';
 import { BETTING_ENDPOINTS } from '../lib/api-prefixes';
 import { playAlertTone, playSettleTone, playValueBetTone } from './audio';
 import { apiFetch } from '../lib/api-fetch';
+import { MODAL_ORIGIN } from '../lib/backend-origin';
 
 const FAST_INTERVAL = 10000;
 const SLOW_INTERVAL = 60000;
@@ -87,7 +88,23 @@ export class DataBridge {
       if (!snapshot_hash || snapshot_hash === this.lastSnapshotHash) return;
       const fullRes = await apiFetch('/api/monitoring/snapshot');
       if (!fullRes.ok) return;
-      const data = await fullRes.json();
+      let data = await fullRes.json();
+      // The Worker KV keys have a 5-minute TTL. During a long deploy or a
+      // home-monitor outage both keys can expire at once, and the Worker
+      // answers with an empty card even though Modal's volume still holds
+      // the last published snapshot. Fall back to Modal rather than blanking
+      // the whole dashboard.
+      if (!data?.events || Object.keys(data.events).length === 0) {
+        try {
+          const fallback = await fetch(`${MODAL_ORIGIN}/api/monitoring/snapshot`);
+          if (fallback.ok) {
+            const backup = await fallback.json();
+            if (backup?.events && Object.keys(backup.events).length > 0) data = backup;
+          }
+        } catch {
+          // Keep the empty Worker card — there is genuinely nothing to show.
+        }
+      }
       this.lastSnapshotHash = data.snapshot_hash || snapshot_hash;
       const current = hudStore.getState();
       // Drop finished AND expired races at ingestion: `expires_at` (epoch
