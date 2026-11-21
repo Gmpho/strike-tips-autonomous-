@@ -100,6 +100,62 @@ class BetwayAPI:
     EVENT_RETRY_DELAY_SECONDS = 6.0
     EVENT_RETRY_MAX = 60
 
+    # Bounded direct -> Worker switch (Nov-21). 7f11c91 removed the sticky
+    # proxy mode, so every one of ~200 GetEvent calls per cycle first hit the
+    # blocked Modal IP, and the failure rate went 4.5% -> 48% -> 91%. Two
+    # failed direct GetDaily attempts in a cycle mark this egress as blocked
+    # for that cycle; a single direct probe per hour checks for recovery.
+    DIRECT_FAILURE_THRESHOLD = 2
+    DIRECT_PROBE_EVERY_CYCLES = 12
+
+    def __init__(self) -> None:
+        self._direct_blocked = False
+        self._cycles_since_probe = 0
+        self._direct_failures = 0
+        self._probe_direct_this_cycle = True
+
+    def start_cycle(self) -> None:
+        """Decide whether this cycle probes the (possibly blocked) direct IP.
+
+        The failure count deliberately persists across cycles: when the proxy
+        answers, the cycle succeeds on its first attempt, so waiting for two
+        failures *inside one cycle* would never trip the switch.
+        """
+        if not self._direct_blocked:
+            self._probe_direct_this_cycle = True
+            return
+        if self._cycles_since_probe >= self.DIRECT_PROBE_EVERY_CYCLES:
+            self._probe_direct_this_cycle = True
+            self._cycles_since_probe = 0
+        else:
+            self._probe_direct_this_cycle = False
+            self._cycles_since_probe += 1
+
+    def _should_try_direct(self, path: str) -> bool:
+        """Post-block, only GetDaily probes direct — never 200 GetEvents."""
+        if not self._direct_blocked:
+            return True
+        return self._probe_direct_this_cycle and path == "GetDaily"
+
+    def _note_direct_result(self, path: str, ok: bool) -> None:
+        """Update the egress switch from a direct attempt's outcome."""
+        if ok:
+            self._direct_blocked = False
+            self._direct_failures = 0
+            self._cycles_since_probe = 0
+            return
+        if path != "GetDaily" or self._direct_blocked:
+            return  # per-event 520s are Betway's origin, not our IP being blocked
+        self._direct_failures += 1
+        if self._direct_failures >= self.DIRECT_FAILURE_THRESHOLD:
+            self._direct_blocked = True
+            self._probe_direct_this_cycle = False
+            logger.warning(
+                "Betway direct egress blocked (%d GetDaily failures) — "
+                "remaining %s calls via Worker only",
+                self._direct_failures, path,
+            )
+
     def _select_events(
         self,
         event_ids: List[Tuple[Any, Any, Any, Any]],
@@ -151,21 +207,31 @@ class BetwayAPI:
 
         Returns parsed JSON on success, None on failure (so callers can retry).
         """
-        # 1. Try direct fetch (curl_cffi with fresh session and browser fingerprint)
-        try:
-            client = get_async_client(timeout=90.0, no_proxy=True,
-                                     resolve_hosts={"www.betway.co.za"})
-            url = f"{self.BASE_URL}/{path}?{qs}"
-            resp = await client.get(url, headers=headers)
-            status = getattr(resp, "status_code", None)
-            if status == 200 or status is None:
-                if hasattr(resp, "raise_for_status"):
-                    resp.raise_for_status()
-                return resp.json()
-            if status != 200:
-                logger.debug("Betway direct fetch HTTP %s on %s — attempting Worker proxy", status, path)
-        except Exception as e:
-            logger.debug("Betway direct fetch failed on %s: %s — attempting Worker proxy", path, e)
+        # 1. Try direct fetch (curl_cffi with fresh session and browser fingerprint).
+        # Skipped entirely for GetEvent once this egress is known to be blocked.
+        if self._should_try_direct(path):
+            try:
+                client = get_async_client(timeout=90.0, no_proxy=True,
+                                         resolve_hosts={"www.betway.co.za"})
+                url = f"{self.BASE_URL}/{path}?{qs}"
+                resp = await client.get(url, headers=headers)
+                status = getattr(resp, "status_code", None)
+                if status == 200 or status is None:
+                    try:
+                        if hasattr(resp, "raise_for_status"):
+                            resp.raise_for_status()
+                        payload = resp.json()
+                        self._note_direct_result(path, True)
+                        return payload
+                    except Exception as e:
+                        self._note_direct_result(path, False)
+                        logger.debug("Betway direct parse failed on %s: %s", path, e)
+                else:
+                    self._note_direct_result(path, False)
+                    logger.debug("Betway direct fetch HTTP %s on %s — attempting Worker proxy", status, path)
+            except Exception as e:
+                self._note_direct_result(path, False)
+                logger.debug("Betway direct fetch failed on %s: %s — attempting Worker proxy", path, e)
 
         # 2. Worker proxy fallback (Cloudflare edge IPs bypass datacenter IP blocks)
         url, key = self._worker_config()
@@ -207,6 +273,7 @@ class BetwayAPI:
             "Referer": "https://www.betway.co.za/sport/horse-racing",
             "Origin": "https://www.betway.co.za",
         }
+        self.start_cycle()
         started = time.monotonic()
         last_error: Optional[BaseException] = None
         for attempt in range(self.MAX_ATTEMPTS):

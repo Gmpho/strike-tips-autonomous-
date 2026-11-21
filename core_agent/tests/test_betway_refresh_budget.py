@@ -219,3 +219,142 @@ def test_unreadable_state_file_means_fetch_everything(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_REFRESH_STATE_PATH", path)
 
     assert mod._load_refresh_state() == {}
+
+
+# ── Bounded direct -> Worker switch ─────────────────────────────────────────
+
+
+def test_two_daily_failures_switch_events_to_worker_only():
+    """Two blocked GetDaily attempts must spare the other ~200 GetEvents."""
+    api = BetwayAPI()
+    api.start_cycle()
+
+    assert api._should_try_direct("GetEvent") is True
+    api._note_direct_result("GetDaily", False)
+    assert api._should_try_direct("GetEvent") is True  # one failure may be noise
+    api._note_direct_result("GetDaily", False)
+
+    assert api._direct_blocked is True
+    assert api._should_try_direct("GetEvent") is False
+    assert api._should_try_direct("GetDaily") is False  # no more this cycle
+
+
+def test_blocked_egress_stays_proxy_only_until_the_hourly_probe():
+    """One direct probe an hour — not a fresh blocked request per event."""
+    api = BetwayAPI()
+    api.start_cycle()
+    api._note_direct_result("GetDaily", False)
+    api._note_direct_result("GetDaily", False)
+
+    for _ in range(BetwayAPI.DIRECT_PROBE_EVERY_CYCLES):
+        api.start_cycle()
+        assert api._should_try_direct("GetDaily") is False
+        assert api._should_try_direct("GetEvent") is False
+
+    api.start_cycle()
+    assert api._should_try_direct("GetDaily") is True   # probe
+    assert api._should_try_direct("GetEvent") is False  # still proxy-only
+
+
+def test_direct_success_clears_the_block():
+    """A successful probe must restore direct fetches completely."""
+    api = BetwayAPI()
+    api.start_cycle()
+    api._note_direct_result("GetDaily", False)
+    api._note_direct_result("GetDaily", False)
+    api.start_cycle()
+
+    api._note_direct_result("GetDaily", True)
+
+    assert api._direct_blocked is False
+    assert api._cycles_since_probe == 0
+    assert api._should_try_direct("GetEvent") is True
+
+
+def test_per_event_failures_do_not_switch_the_egress():
+    """A Betway origin 520 on one race is not evidence our IP is blocked."""
+    api = BetwayAPI()
+    api.start_cycle()
+    for _ in range(10):
+        api._note_direct_result("GetEvent", False)
+
+    assert api._direct_blocked is False
+    assert api._should_try_direct("GetEvent") is True
+
+
+@pytest.mark.asyncio
+async def test_blocked_cycle_never_calls_the_direct_client(monkeypatch, tmp_path):
+    """End-to-end: once blocked, fetch_racing_data goes straight to the Worker."""
+    import httpx
+
+    daily = _daily_payload([(1, 1800)])
+
+    class DirectResp:
+        status_code = 403
+
+        def raise_for_status(self):
+            raise RuntimeError("403")
+
+    class DirectClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def get(self, url, headers=None):
+            direct_calls.append(url)
+            return DirectResp()
+
+    class WorkerResp:
+        def __init__(self, path):
+            self.status_code = 200
+            self._path = path
+
+        @property
+        def text(self):
+            payload = daily if self._path == "GetDaily" else {"result": {"events": [{"name": "R1"}]}}
+            return json.dumps(payload)
+
+        def json(self):
+            return json.loads(self.text)
+
+    class WorkerClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            path = params.get("path")
+            worker_calls.append(path)
+            return WorkerResp(path)
+
+    direct_calls, worker_calls = [], []
+    monkeypatch.setattr(mod, "get_async_client", lambda **kw: DirectClient())
+    monkeypatch.setattr(httpx, "AsyncClient", WorkerClient)
+    monkeypatch.setattr(mod, "_REFRESH_CACHE", {})
+    monkeypatch.setattr(mod, "_REFRESH_STATE_PATH", tmp_path / "budget.json")
+    monkeypatch.setattr(mod.random, "uniform", lambda a, b: 0)
+
+    api = BetwayAPI()
+    # Cycle 1 and 2 each see one blocked direct GetDaily; the proxy answers,
+    # so the failure count carries across cycles until the threshold trips.
+    await api.fetch_racing_data()
+    await api.fetch_racing_data()
+    assert api._direct_blocked is True
+
+    direct_calls.clear()
+    worker_calls.clear()
+    await api.fetch_racing_data()   # cycle 3: proxy-only
+
+    assert len(direct_calls) < 2 * BetwayAPI.DIRECT_FAILURE_THRESHOLD
+    assert "GetDaily" in worker_calls and "GetEvent" in worker_calls
+
+    direct_calls.clear()
+    worker_calls.clear()
+    await api.fetch_racing_data()   # still proxy-only (no probe yet)
+
+    assert direct_calls == [], "no blocked direct request in a proxy-only cycle"
+    assert "GetDaily" in worker_calls and "GetEvent" in worker_calls
