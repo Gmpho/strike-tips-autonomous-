@@ -289,6 +289,39 @@ async function ingestInsight(db: D1Database, body: InsightBody) {
   ).run();
 }
 
+// Two independent odds writers share this Worker: Modal (datacenter IP,
+// periodically blocked by Betway) and the home-network monitor (usually
+// accepted). Keep them under separate keys and serve the newest card, so a
+// blocked Modal cycle can never overwrite a good home snapshot — or vice
+// versa when the home machine is off.
+const SNAPSHOT_KEYS = ["odds:full_snapshot", "odds:full_snapshot_home"] as const;
+
+async function freshestSnapshot(kv: KVNamespace): Promise<string | null> {
+  let best: string | null = null;
+  let bestTs = -Infinity;
+  for (const key of SNAPSHOT_KEYS) {
+    try {
+      const raw = await kv.get(key, "text");
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { timestamp?: unknown };
+      // Zone-less backend stamps are UTC; Date.parse would treat them as
+      // browser-local and skew the comparison across writers.
+      const stamp = typeof parsed.timestamp === "string"
+        ? Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(parsed.timestamp)
+            ? parsed.timestamp : `${parsed.timestamp}Z`)
+        : NaN;
+      const ts = Number.isFinite(stamp) ? stamp : 0;
+      if (ts >= bestTs) {
+        bestTs = ts;
+        best = raw;
+      }
+    } catch {
+      // Corrupt entry must never hide a good one.
+    }
+  }
+  return best;
+}
+
 // ── Free-tier web search cascade ─────────────────────────────────────
 
 const SEARCH_BUDGETS: Record<string, number> = { tavily: 1000, exa: 1400 };
@@ -458,8 +491,10 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
         const data = await getOddsSnapshot(env.ODDS_KV, track, raceNum);
         return json(data);
       }
-      // Return full snapshot when no specific track/race
-      const full = await env.ODDS_KV.get("odds:full_snapshot", "text");
+      // Return full snapshot when no specific track/race. Two writers exist:
+      // Modal (often blocked by Betway) and the home-network monitor (works).
+      // Serve whichever card is actually newer, never a fixed priority.
+      const full = await freshestSnapshot(env.ODDS_KV);
       if (!full) return json({ note: "No snapshot available" });
       try { return json(JSON.parse(full)); } catch { return json({ error: "corrupted snapshot" }); }
     }
@@ -624,16 +659,21 @@ async function handlePOST(request: Request, url: URL, env: Env): Promise<Respons
       const body = (await request.json()) as Record<string, unknown>;
       if (!body.events || typeof body.events !== "object") return error("events object required");
       const payload = JSON.stringify(body);
+      const requested = String(request.headers.get("x-snapshot-key") || "odds:full_snapshot");
+      // Only the two sanctioned keys — an arbitrary client must not be able
+      // to plant a fake card in the reader's rotation.
+      const kvKey = (SNAPSHOT_KEYS as readonly string[]).includes(requested)
+        ? requested : "odds:full_snapshot";
       // Write-gate: KV free allows ~1k writes/day and the monitor pushes
       // every 5 min. Skip the write when nothing changed (overnight the
       // snapshot is static for hours). Reads are 100x cheaper quota-wise.
-      const prev = await env.ODDS_KV.get("odds:full_snapshot", "text");
+      const prev = await env.ODDS_KV.get(kvKey, "text");
       if (prev === payload) return json({ status: "unchanged" });
       // Single put only. The old per-event fan-out (~130 puts per push)
       // exhausted the daily write quota within the first hour, every day.
       // Readers filter the full snapshot in code instead.
-      await env.ODDS_KV.put("odds:full_snapshot", payload, { expirationTtl: 300 });
-      return json({ status: "ingested", events: Object.keys(body.events as object).length });
+      await env.ODDS_KV.put(kvKey, payload, { expirationTtl: 300 });
+      return json({ status: "ingested", key: kvKey, events: Object.keys(body.events as object).length });
     }
 
     if (path === "/api/ingest-insight") {

@@ -12,6 +12,7 @@ scans, settles, or monitor cycles.
 
 import logging
 import os
+from typing import Optional
 
 logger = logging.getLogger("cf-push")
 
@@ -31,19 +32,24 @@ def _cf_config():
     return url, key
 
 
-async def _post(path: str, payload: dict) -> bool:
+async def _post(path: str, payload: dict, extra_headers: Optional[dict] = None) -> bool:
     url, key = _cf_config()
     if not key:
         logger.debug("Cloudflare push skipped (no API key configured)")
         return False
+    headers = {"x-api-key": key, "content-type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     try:
         import httpx
 
         async def _try(k: str):
+            h = dict(headers)
+            h["x-api-key"] = k
             async with httpx.AsyncClient(timeout=10) as client:
                 return await client.post(
                     f"{url}{path}",
-                    headers={"x-api-key": k, "content-type": "application/json"},
+                    headers=h,
                     json=payload,
                 )
 
@@ -65,10 +71,18 @@ async def _post(path: str, payload: dict) -> bool:
 
 
 async def push_snapshot(state: dict) -> bool:
-    """Push the odds snapshot to KV (180-300s TTL server-side)."""
+    """Push the odds snapshot to KV (180-300s TTL server-side).
+
+    ``CF_SNAPSHOT_KEY`` lets a second writer (e.g. the home-network odds
+    monitor, whose IP Betway actually accepts) publish under its own key
+    instead of overwriting Modal's card. The Worker serves the fresher one.
+    """
     if not isinstance(state, dict) or not state.get("events"):
         return False
-    return await _post("/api/ingest-snapshot", state)
+    kv_key = os.environ.get("CF_SNAPSHOT_KEY") or "odds:full_snapshot"
+    return await _post(
+        "/api/ingest-snapshot", state, extra_headers={"x-snapshot-key": kv_key}
+    )
 
 
 async def push_insight(

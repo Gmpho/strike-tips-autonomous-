@@ -58,6 +58,9 @@ services:
       - PAPER_TRADING=true
       - CLOUDFLARE_MCP_URL=${CLOUDFLARE_MCP_URL}
       - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
+      # Home-network egress is the one Betway accepts. Publish under a
+      # separate KV key so Modal's blocked cycles cannot overwrite it.
+      - CF_SNAPSHOT_KEY=odds:full_snapshot_home
     volumes:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile

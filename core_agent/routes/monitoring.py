@@ -246,11 +246,40 @@ def _read_json_file(path) -> Any:
         return None
 
 
+def _snapshot_freshness(state: dict) -> float:
+    """Wall-clock stamp used to choose between the local and Worker card."""
+    try:
+        from core_agent.core.worker_snapshot import _stamp
+
+        return _stamp(state.get("timestamp"))
+    except Exception:
+        return 0.0
+
+
+async def _effective_snapshot(request: Request) -> dict:
+    """Local volume card, unless the Worker has a genuinely newer one.
+
+    The home-network monitor can quote Betway when Modal's datacenter IP is
+    blocked. Prefer its card only when its timestamp wins by more than a
+    minute, so a clock-skewed or half-written remote snapshot cannot win.
+    """
+    local = request.app.state.snapshot_cache or {}
+    try:
+        from core_agent.core.worker_snapshot import fetch_best_snapshot
+
+        remote = await fetch_best_snapshot()
+    except Exception:
+        remote = None
+    if remote and _snapshot_freshness(remote) > _snapshot_freshness(local) + 60.0:
+        return dict(remote, snapshot_source="worker-home")
+    return local
+
+
 @router.get("/monitoring/snapshot-hash")
 async def get_snapshot_hash(request: Request):
     """Tiny poll target: hash + counts only, so clients download the full
     snapshot solely when something changed (10s polling without the bytes)."""
-    cache = request.app.state.snapshot_cache
+    cache = await _effective_snapshot(request)
     if not cache:
         return {"snapshot_hash": "none", "event_count": 0}
     digest = hashlib.md5(json.dumps(cache, sort_keys=True).encode()).hexdigest()
@@ -263,8 +292,17 @@ async def get_snapshot_hash(request: Request):
         from core_agent.core.snapshot_cache import get_snapshot_meta
 
         meta = get_snapshot_meta()
-        result["snapshot_age_secs"] = meta.get("age_secs")
-        result["snapshot_source"] = meta.get("source")
+        if result.get("snapshot_source") == "worker-home":
+            # Age must describe the card we are actually serving, not the
+            # stale local file we chose not to use.
+            import time as _time
+
+            result["snapshot_age_secs"] = max(
+                0.0, _time.time() - _snapshot_freshness(result)
+            )
+        else:
+            result["snapshot_age_secs"] = meta.get("age_secs")
+            result["snapshot_source"] = meta.get("source")
     except Exception:
         pass
     return result
@@ -273,7 +311,7 @@ async def get_snapshot_hash(request: Request):
 @router.get("/monitoring/snapshot")
 async def get_monitoring_snapshot(request: Request):
     """Get latest zero-hallucination snapshot from in-memory cache with hash for differential sync"""
-    cache = request.app.state.snapshot_cache
+    cache = await _effective_snapshot(request)
     if not cache:
         cache = {"status": "no_snapshot_available"}
 
@@ -291,8 +329,17 @@ async def get_monitoring_snapshot(request: Request):
         from core_agent.core.snapshot_cache import get_snapshot_meta
 
         meta = get_snapshot_meta()
-        result["snapshot_age_secs"] = meta.get("age_secs")
-        result["snapshot_source"] = meta.get("source")
+        if result.get("snapshot_source") == "worker-home":
+            # Age must describe the card we are actually serving, not the
+            # stale local file we chose not to use.
+            import time as _time
+
+            result["snapshot_age_secs"] = max(
+                0.0, _time.time() - _snapshot_freshness(result)
+            )
+        else:
+            result["snapshot_age_secs"] = meta.get("age_secs")
+            result["snapshot_source"] = meta.get("source")
     except Exception:
         pass
 
