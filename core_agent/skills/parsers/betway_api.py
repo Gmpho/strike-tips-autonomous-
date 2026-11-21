@@ -1,9 +1,12 @@
 import logging
 import asyncio
+import json
+import os
 import re
 import random
 import time
-from typing import Dict, Any, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 from .tab4racing import ScrapedRace, ScrapedRunner, _parse_distance_m
 from core_agent.core.http_client import get_async_client
@@ -14,6 +17,53 @@ logger = logging.getLogger("betway-api")
 # fetch, so the ALLOWED whitelist can be confirmed from production data
 # rather than guessed (see the Gulf comment in fetch_racing_data).
 _REGION_LABELS_LOGGED = False
+
+# Per-event refresh bookkeeping (Nov-21). Betway's Cloudflare scoring tightens
+# as request volume rises, and a 92-race international card re-fetched every
+# five minutes is ~1,100 GetEvent calls/hour from one datacenter IP — for races
+# that jump hours later. The budget keeps near-off races fresh every cycle and
+# lets far-off ones ride, cutting volume ~80% without starving any race.
+_REFRESH_STATE_PATH = os.environ.get("BETWAY_REFRESH_STATE") or str(
+    Path(__file__).resolve().parents[3] / "data" / "betway_refresh_state.json"
+)
+_REFRESH_CACHE: Dict[str, float] = {}
+
+
+def _load_refresh_state() -> Dict[str, float]:
+    """Last-successful-fetch epoch per event id (disk-backed, best effort).
+
+    Modal cron containers are not guaranteed to stay warm between cycles, so
+    the budget state is persisted. An unreadable/absent file just means "no
+    budget yet" — every event is fetched once, which is the safe default.
+    """
+    if _REFRESH_CACHE:
+        return _REFRESH_CACHE
+    try:
+        raw = json.loads(Path(_REFRESH_STATE_PATH).read_text())
+    except Exception:
+        return _REFRESH_CACHE
+    if isinstance(raw, dict):
+        _REFRESH_CACHE.update(
+            {str(k): float(v) for k, v in raw.items() if isinstance(v, (int, float))}
+        )
+    return _REFRESH_CACHE
+
+
+def _save_refresh_state(state: Dict[str, float], now: float) -> None:
+    """Persist the budget state, dropping entries older than a day."""
+    fresh = {k: v for k, v in state.items() if now - v < 86400}
+    if len(fresh) > 2000:  # hard cap: yesterday's card can't grow unbounded
+        freshest = sorted(fresh.items(), key=lambda kv: kv[1], reverse=True)[:2000]
+        fresh = dict(freshest)
+    _REFRESH_CACHE.clear()
+    _REFRESH_CACHE.update(fresh)
+    try:
+        path = Path(_REFRESH_STATE_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(fresh))
+    except Exception as exc:  # pragma: no cover - read-only/absent volume
+        logger.debug("Refresh budget state not persisted: %s", exc)
+
 
 
 class BetwayAPI:
@@ -35,6 +85,49 @@ class BetwayAPI:
     MAX_ATTEMPTS = 5
     BACKOFF_SECONDS = (3.0, 9.0, 24.0, 45.0)
     RETRY_BUDGET_SECONDS = 150.0
+
+    # Refresh budget (Nov-21). Near-off races must be current — a punter bets
+    # minutes before the jump. Far-off races only need to be *known*, and the
+    # snapshot's carry-forward keeps their last price on the card meanwhile.
+    NEAR_OFF_WINDOW_SECONDS = 90 * 60
+    FAR_REFRESH_SECONDS = 25 * 60
+    FULL_SWEEP_SECONDS = 60 * 60
+
+    def _select_events(
+        self,
+        event_ids: List[Tuple[Any, Any, Any, Any]],
+        state: Dict[str, float],
+        now: float,
+    ) -> Tuple[List[Tuple[Any, Any, Any, Any]], int, bool]:
+        """Split the card into (events to fetch, skipped count, full_sweep).
+
+        Fetch when *any* of these hold:
+          - the hourly full sweep is due (nothing is ever starved);
+          - the race jumps within ``NEAR_OFF_WINDOW_SECONDS`` (or has no start
+            time — unknown is always refreshed);
+          - it has never been fetched, or not for ``FAR_REFRESH_SECONDS``.
+
+        Everything else rides on the price already in the snapshot.
+        """
+        last_sweep = state.get("_last_sweep", 0.0)
+        full_sweep = (now - last_sweep) >= self.FULL_SWEEP_SECONDS
+        if full_sweep:
+            return list(event_ids), 0, True
+
+        to_fetch: List[Tuple[Any, Any, Any, Any]] = []
+        for item in event_ids:
+            eid, start = item[0], item[3] or 0
+            last = state.get(str(eid), 0.0)
+            near_off = start > 0 and (start - now) <= self.NEAR_OFF_WINDOW_SECONDS
+            if near_off or start <= 0 or not last or (now - last) >= self.FAR_REFRESH_SECONDS:
+                to_fetch.append(item)
+
+        # Never return an empty batch: a card of only far-off races that were
+        # refreshed recently would otherwise look like a failed fetch upstream.
+        if not to_fetch:
+            return list(event_ids), 0, True
+
+        return to_fetch, len(event_ids) - len(to_fetch), False
 
     def _worker_config(self):
         import os
@@ -179,22 +272,49 @@ class BetwayAPI:
                     )
                 )
 
+                # Refresh budget: near-off races every cycle, far-off ones at
+                # most every FAR_REFRESH_SECONDS, full sweep hourly. Cuts the
+                # per-cycle GetEvent volume that feeds Betway's bot score.
+                budget_state = _load_refresh_state()
+                now_epoch = time.time()
+                to_fetch, skipped, full_sweep = self._select_events(
+                    event_ids, budget_state, now_epoch
+                )
+                if skipped:
+                    logger.info(
+                        "Refresh budget: fetching %d/%d events (%d far-off skipped)",
+                        len(to_fetch), len(event_ids), skipped,
+                    )
+                elif full_sweep and event_ids:
+                    logger.info("Refresh budget: full sweep of %d events", len(event_ids))
+
                 # Throttle to max 4 concurrent requests with gentle jitter to avoid
                 # tripping Betway's Cloudflare rate limiter
                 sem = asyncio.Semaphore(4)
                 tasks = [
                     self._fetch_event_safe(client, eid, reg_name, league, sem)
-                    for eid, reg_name, league, _ in event_ids
+                    for eid, reg_name, league, _ in to_fetch
                 ]
 
                 events_details = await asyncio.gather(*tasks)
                 events_details = [e for e in events_details if e]
+
+                # Remember what actually answered, so a failed event is retried
+                # next cycle instead of being parked for FAR_REFRESH_SECONDS.
+                for detail in events_details:
+                    fetched_id = detail.get("eventId")
+                    if fetched_id is not None:
+                        budget_state[str(fetched_id)] = now_epoch
+                if full_sweep:
+                    budget_state["_last_sweep"] = now_epoch
+                _save_refresh_state(budget_state, now_epoch)
+
                 # GetDaily answered with events but every per-event call failed:
                 # a bot-blocked wave, not a dark day. Return an error so the HUD
                 # says the feed is broken instead of showing an empty card.
-                if event_ids and not events_details:
+                if to_fetch and not events_details:
                     raise RuntimeError(
-                        f"Betway GetDaily returned {len(event_ids)} events but "
+                        f"Betway GetDaily returned {len(to_fetch)} events but "
                         "all per-event GetEvent calls failed"
                     )
 
