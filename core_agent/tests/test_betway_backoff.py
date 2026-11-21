@@ -25,16 +25,26 @@ class _Resp:
 
 
 def _install(monkeypatch, behaviour):
-    """Patch the HTTP client; record each fresh session created."""
+    """Patch fetch transport; record each fetch attempt and retry sleeps.
+
+    The outer retry ladder (MAX_ATTEMPTS / BACKOFF_SECONDS / RETRY_BUDGET_SECONDS)
+    is the contract under test. _http_get now handles direct+proxy transport
+    internally; mock it so tests exercise the ladder deterministically.
+    """
     sessions = {"count": 0}
     sleeps = []
 
-    class Client:
-        async def get(self, url, headers=None):
-            sessions["count"] += 1
-            return behaviour(sessions["count"])
+    async def fake_http_get(self, path, qs, headers):
+        sessions["count"] += 1
+        try:
+            resp = behaviour(sessions["count"])
+        except Exception:
+            return None
+        if resp is None:
+            return None
+        return resp.json() if hasattr(resp, "json") else resp
 
-    monkeypatch.setattr(mod, "get_async_client", lambda **kw: Client())
+    monkeypatch.setattr(BetwayAPI, "_http_get", fake_http_get)
 
     async def fake_sleep(delay):
         sleeps.append(delay)

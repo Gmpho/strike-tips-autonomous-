@@ -165,6 +165,54 @@ def _last_write_info(path: Any = None) -> Dict[str, Any]:
     }
 
 
+def _merge_previous_live_events(clean: Dict[str, Any], path: Any = None) -> Dict[str, Any]:
+    """Carry forward still-live events from the previous snapshot.
+
+    Partial per-event fetch failures (e.g. Betway 403 on some GetEvent calls)
+    mean a writer can produce a valid-but-incomplete card. Without a merge,
+    each full-overwrite write would drop races that were present last cycle
+    but missed this one, causing oscillation (26→30→18…) and "disappearing"
+    races. We union in previous events that are still live (not finished,
+    not past off-time/grace) and missing from the new snapshot. Pruning is
+    applied to previous events so expired/zombie races are never resurrected.
+    """
+    path = path or MARKET_SNAPSHOT_PATH
+    try:
+        with open(path) as f:
+            prev = json.load(f)
+    except Exception:
+        return clean
+    prev_events = prev.get("events") if isinstance(prev, dict) else None
+    if not isinstance(prev_events, dict) or not prev_events:
+        return clean
+    try:
+        prev_clean = sanitize_snapshot(
+            {"events": prev_events},
+            source=str(prev.get("snapshot_source") or "previous"),
+        )
+        prev_live = prev_clean.get("events") or {}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Previous-snapshot merge skipped: %s", exc)
+        return clean
+
+    events = clean.get("events")
+    if not isinstance(events, dict):
+        events = {}
+    added = 0
+    for eid, ev in prev_live.items():
+        if eid not in events:
+            events[eid] = ev
+            added += 1
+    if added:
+        clean["events"] = events
+        clean["count"] = len(events)
+        logger.info(
+            "Carried forward %d still-live event(s) missing from new snapshot",
+            added,
+        )
+    return clean
+
+
 def write_market_snapshot(
     state: Dict[str, Any],
     *,
@@ -187,6 +235,13 @@ def write_market_snapshot(
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Snapshot write skipped (%s): %s", source, exc)
         return state if isinstance(state, dict) else {"events": {}}
+
+    # Stabilise against partial per-event fetch failures: keep still-live races
+    # from the previous snapshot that are missing from this (incomplete) fetch.
+    try:
+        clean = _merge_previous_live_events(clean, path)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Previous-snapshot merge failed: %s", exc)
 
     if source in ("scheduler_scan", "daily_scan"):
         try:

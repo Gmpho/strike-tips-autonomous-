@@ -163,7 +163,9 @@ def test_scan_write_does_not_clobber_fresher_monitor_file(tmp_path, monkeypatch)
     out = snapshot_writer.write_market_snapshot(
         older_payload, source="scheduler_scan", path=path
     )
-    assert set(out["events"]) == {"s1"}  # payload returned for in-memory use
+    # Returned payload carries still-live events from the monitor file too
+    # (carry-forward prevents oscillation), but the file itself is untouched.
+    assert set(out["events"]) == {"m1", "s1"}
     current = json.loads(path.read_text())
     assert current["timestamp"] == monitor_ts  # file untouched
     assert current["snapshot_source"] == "monitor"
@@ -187,8 +189,10 @@ def test_scan_write_wins_when_monitor_file_is_stale(tmp_path, monkeypatch):
         fresh, source="scheduler_scan", path=path
     )
     current = json.loads(path.read_text())
-    assert set(current["events"]) == {"s1"}
-    assert set(out["events"]) == {"s1"}
+    # Scan wins the write, but still-live races from the previous file are
+    # carried forward so a partial scan fetch doesn't drop them.
+    assert set(current["events"]) == {"m1", "s1"}
+    assert set(out["events"]) == {"m1", "s1"}
 
 
 def test_monitor_write_never_blocked(tmp_path, monkeypatch):
@@ -205,8 +209,10 @@ def test_monitor_write_never_blocked(tmp_path, monkeypatch):
     )
     current = json.loads(path.read_text())
     assert current["snapshot_source"] == "monitor"
-    assert set(current["events"]) == {"m1"}
-    assert set(out["events"]) == {"m1"}
+    # Monitor persists and carries forward still-live races from the previous
+    # file so a partial fetch can't drop them.
+    assert set(current["events"]) == {"m1", "s1"}
+    assert set(out["events"]) == {"m1", "s1"}
 
 
 # ── Empty-snapshot guard ────────────────────────────────────────────────────
@@ -242,6 +248,86 @@ def test_empty_guard_accepts_empty_when_previous_expired(tmp_path, monkeypatch):
     assert out["events"] == {}
     assert not out.get("stale")
     heal.assert_not_called()
+
+
+# ── Outage clock (Nov-21: "4 min" shown for a 2h40m block) ──────────────────
+
+
+def test_outage_start_keeps_the_oldest_stamp():
+    """A continuing outage must not restart its clock on every failed cycle."""
+    started = (datetime.now() - timedelta(hours=2, minutes=40)).isoformat()
+    assert adaptive_odds_monitor._outage_start(started) == started
+
+
+def test_outage_start_ignores_garbage_and_future_stamps():
+    """Corrupt or future-dated stamps fall back to now, never backwards."""
+    now = datetime.now()
+    for bad in ("not-a-date", "", None, (now + timedelta(hours=3)).isoformat()):
+        out = datetime.fromisoformat(adaptive_odds_monitor._outage_start(bad))
+        assert now - timedelta(seconds=5) <= out <= datetime.now()
+
+
+def test_empty_guard_continues_the_outage_clock(tmp_path, monkeypatch):
+    """Second consecutive failed cycle keeps the original stale_since."""
+    snap = tmp_path / "market_snapshot_latest.json"
+    started = (datetime.now() - timedelta(hours=1)).isoformat()
+    snap.write_text(json.dumps({
+        "events": {"prev1": {"en": "Vaal", "raceNumber": 1}},
+        "stale": True,
+        "fetch_ok": False,
+        "stale_since": started,
+    }))
+    monkeypatch.setattr(adaptive_odds_monitor, "MARKET_SNAPSHOT_PATH", snap)
+
+    with patch("core_agent.core.adaptive_odds_monitor._write_healing_event"):
+        out = adaptive_odds_monitor._recover_empty_snapshot(
+            {"events": {}, "count": 0, "fetch_ok": False}
+        )
+
+    assert out["stale"] is True
+    assert out["stale_since"] == started
+
+
+def test_empty_guard_starts_a_new_clock_after_a_healthy_cycle(tmp_path, monkeypatch):
+    """A fresh outage must not inherit an old, already-cleared stamp."""
+    snap = tmp_path / "market_snapshot_latest.json"
+    old = (datetime.now() - timedelta(hours=6)).isoformat()
+    snap.write_text(json.dumps({
+        "events": {"prev1": {"en": "Vaal", "raceNumber": 1}},
+        "fetch_ok": True,
+        "stale_since": old,  # leftover label, but the last cycle was healthy
+    }))
+    monkeypatch.setattr(adaptive_odds_monitor, "MARKET_SNAPSHOT_PATH", snap)
+
+    with patch("core_agent.core.adaptive_odds_monitor._write_healing_event"):
+        out = adaptive_odds_monitor._recover_empty_snapshot(
+            {"events": {}, "count": 0, "fetch_ok": False}
+        )
+
+    assert datetime.fromisoformat(out["stale_since"]) > datetime.now() - timedelta(minutes=1)
+
+
+def test_feed_health_logs_one_record_per_cycle(caplog):
+    """Ops must be able to read freshness from a single line per cycle."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger=adaptive_odds_monitor.logger.name):
+        adaptive_odds_monitor._log_feed_health({"fetch_ok": True, "events": {"a": {}}})
+        adaptive_odds_monitor._log_feed_health({
+            "fetch_ok": False,
+            "stale": True,
+            "stale_since": "2026-11-21T03:01:49",
+            "fetch_error": "Betway GetDaily returned no data",
+            "events": {"a": {}, "b": {}},
+        })
+
+    records = [r for r in caplog.records if "Feed health:" in r.getMessage()]
+    assert len(records) == 2
+    assert records[0].levelno == logging.INFO
+    assert records[1].levelno == logging.WARNING
+    assert "stale=true" in records[1].getMessage()
+    assert "since=2026-11-21T03:01:49" in records[1].getMessage()
+
 
 
 # ── Betfair rolling cache ───────────────────────────────────────────────────

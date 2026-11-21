@@ -236,6 +236,48 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     return cleaned
 
 
+def _outage_start(previous: object = None) -> str:
+    """ISO stamp for the *start* of a feed outage.
+
+    A failed cycle used to stamp ``stale_since`` with "now", so a four-hour
+    outage always read as "4 min" in the HUD — the age reset every five
+    minutes and the banner looked like a random blip. When the previous
+    snapshot was already stale, keep its (older) start; otherwise start now.
+    Never returns a future timestamp.
+    """
+    now = datetime.now()
+    if isinstance(previous, str) and previous:
+        try:
+            prev_dt = datetime.fromisoformat(previous)
+            return min(prev_dt, now).isoformat()
+        except Exception:
+            pass
+    return now.isoformat()
+
+
+def _log_feed_health(state: dict) -> None:
+    """Emit one greppable freshness record per monitor cycle.
+
+    Ops should be able to answer "how stale is the card right now?" from the
+    logs alone, without correlating betway-api, L7-Monitor and snapshot-writer
+    lines. The HUD banner is the user-facing half of the same fact.
+    """
+    events = state.get("events") or {}
+    down = state.get("fetch_ok") is False or state.get("stale") is True
+    if down:
+        logger.warning(
+            "Feed health: fetch_ok=%s races=%d stale=true since=%s error=%s",
+            state.get("fetch_ok"),
+            len(events),
+            state.get("stale_since"),
+            str(state.get("fetch_error") or "")[:120],
+        )
+    else:
+        logger.info(
+            "Feed health: fetch_ok=%s races=%d", state.get("fetch_ok"), len(events)
+        )
+
+
 def _recover_empty_snapshot(state: dict) -> dict:
     """Guard against persisting a 0-race card.
 
@@ -276,7 +318,16 @@ def _recover_empty_snapshot(state: dict) -> dict:
     guarded = dict(state)
     guarded["events"] = recovered
     guarded["stale"] = True
-    guarded.setdefault("stale_since", datetime.now().isoformat())
+    # Continue the outage clock instead of restarting it every cycle (Nov-21:
+    # a 2h40m Betway block displayed as "4 min" because each failed cycle
+    # re-stamped stale_since with the current time).
+    prev_stale_since = prev.get("stale_since") if isinstance(prev, dict) else None
+    prev_was_stale = isinstance(prev, dict) and (
+        prev.get("stale") is True or prev.get("fetch_ok") is False
+    )
+    guarded["stale_since"] = _outage_start(
+        prev_stale_since if prev_was_stale else guarded.get("stale_since")
+    )
     _write_healing_event(
         "SNAPSHOT_EMPTY_GUARD",
         f"Cycle pruned to 0 races while {len(recovered)} previous race(s) were still current — reusing them (stale)",
@@ -1754,6 +1805,16 @@ class AdaptiveOddsMonitor:
             state["timestamp"] = datetime.now().isoformat()
             active_ids = list(state["events"].keys())
             _merge_daily_scan_into(state)
+            # Stabilise: carry forward still-live races missed by this cycle's
+            # partial per-event fetch so the card doesn't oscillate (26↔30↔18).
+            try:
+                from core_agent.core.snapshot_writer import _merge_previous_live_events
+                state = _merge_previous_live_events(state)
+            except Exception:
+                pass
+            state["count"] = len(state.get("events") or {})
+            active_ids = list((state.get("events") or {}).keys())
+            _log_feed_health(state)
             _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
             self._feed_market_events(state)
             try:
@@ -1872,6 +1933,17 @@ class AdaptiveOddsMonitor:
                 active_count = len(active_ids)
 
                 _merge_daily_scan_into(state)
+                # Stabilise: carry forward still-live races missed by this cycle's
+                # partial per-event fetch so the card doesn't oscillate (26↔30↔18).
+                try:
+                    from core_agent.core.snapshot_writer import _merge_previous_live_events
+                    state = _merge_previous_live_events(state)
+                except Exception:
+                    pass
+                state["count"] = len(state.get("events") or {})
+                active_ids = list((state.get("events") or {}).keys())
+                active_count = len(active_ids)
+                _log_feed_health(state)
                 _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
                 self._feed_market_events(state)
                 # Swarm enrichment: zero-cost field insights for every region without

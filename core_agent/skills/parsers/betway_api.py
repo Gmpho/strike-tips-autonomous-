@@ -189,6 +189,14 @@ class BetwayAPI:
 
                 events_details = await asyncio.gather(*tasks)
                 events_details = [e for e in events_details if e]
+                # GetDaily answered with events but every per-event call failed:
+                # a bot-blocked wave, not a dark day. Return an error so the HUD
+                # says the feed is broken instead of showing an empty card.
+                if event_ids and not events_details:
+                    raise RuntimeError(
+                        f"Betway GetDaily returned {len(event_ids)} events but "
+                        "all per-event GetEvent calls failed"
+                    )
 
                 return {"status": "success", "details": events_details}
             except Exception as e:
@@ -229,7 +237,7 @@ class BetwayAPI:
             }
             if sem:
                 async with sem:
-                    await asyncio.sleep(random.uniform(0.15, 0.45))
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
             qs = f"eventIds={eid}&marketGroupName=&countryCode=ZA"
             data = await self._http_get("GetEvent", qs, bw_headers)
             if isinstance(data, dict):
