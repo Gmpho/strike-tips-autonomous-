@@ -93,6 +93,13 @@ class BetwayAPI:
     FAR_REFRESH_SECONDS = 25 * 60
     FULL_SWEEP_SECONDS = 60 * 60
 
+    # Per-event retry. Betway's GetEvent flaps in waves (Nov-21: 520 from
+    # Cloudflare "origin unreachable" for minutes at a time, then 200 again),
+    # and a single failed call used to cost a race its place on the card for a
+    # whole cycle. One bounded second pass rides the flap out.
+    EVENT_RETRY_DELAY_SECONDS = 6.0
+    EVENT_RETRY_MAX = 60
+
     def _select_events(
         self,
         event_ids: List[Tuple[Any, Any, Any, Any]],
@@ -298,6 +305,32 @@ class BetwayAPI:
 
                 events_details = await asyncio.gather(*tasks)
                 events_details = [e for e in events_details if e]
+
+                # One bounded second pass over races that failed. Betway's
+                # GetEvent flaps in waves (520 from Cloudflare, 403 challenge)
+                # that often clear within seconds; without this, one failed
+                # call costs a race its slot for the whole cycle, which is how
+                # a 9-race meeting ended up with 2 on the card.
+                got_ids = {d.get("eventId") for d in events_details}
+                retry_items = [item for item in to_fetch if item[0] not in got_ids]
+                if (
+                    retry_items
+                    and len(retry_items) < len(to_fetch)  # never double a total outage
+                    and len(retry_items) <= self.EVENT_RETRY_MAX
+                ):
+                    await asyncio.sleep(self.EVENT_RETRY_DELAY_SECONDS)
+                    retry_tasks = [
+                        self._fetch_event_safe(client, eid, reg_name, league, sem)
+                        for eid, reg_name, league, _ in retry_items
+                    ]
+                    retry_details = await asyncio.gather(*retry_tasks)
+                    recovered = [e for e in retry_details if e]
+                    events_details.extend(recovered)
+                    if recovered:
+                        logger.info(
+                            "Betway GetEvent second pass recovered %d/%d race(s)",
+                            len(recovered), len(retry_items),
+                        )
 
                 # Remember what actually answered, so a failed event is retried
                 # next cycle instead of being parked for FAR_REFRESH_SECONDS.

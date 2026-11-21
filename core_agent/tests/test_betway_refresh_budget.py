@@ -43,8 +43,10 @@ def _daily_payload(events):
     }
 
 
-def _install(monkeypatch, tmp_path, events, fail_ids=()):
+def _install(monkeypatch, tmp_path, events, fail_ids=(), flaky_ids=()):
     """Serve GetDaily/GetEvent from memory and record each GetEvent."""
+
+    attempts: dict = {}
 
     class API(BetwayAPI):
         async def _http_get(self, path, qs, headers):
@@ -54,6 +56,10 @@ def _install(monkeypatch, tmp_path, events, fail_ids=()):
             calls.append(eid)
             if eid in fail_ids:
                 return None
+            if eid in flaky_ids:
+                attempts[eid] = attempts.get(eid, 0) + 1
+                if attempts[eid] == 1:
+                    return None  # first call in the wave 520s
             return {"eventId": eid, "events": [{"name": "R1"}]}
 
     calls = []
@@ -159,6 +165,38 @@ async def test_all_skipped_never_reports_a_broken_feed(monkeypatch, tmp_path):
 
     assert out["status"] == "success"
     assert calls == [1], "an empty batch would be indistinguishable from a 403 wave"
+
+
+@pytest.mark.asyncio
+async def test_flaky_events_are_recovered_in_one_second_pass(monkeypatch, tmp_path):
+    """A race that 520s once must not vanish while its stable neighbours win."""
+    monkeypatch.setattr(mod.BetwayAPI, "EVENT_RETRY_DELAY_SECONDS", 0)
+    api, calls = _install(
+        monkeypatch, tmp_path, [(1, 1800), (2, 1800), (3, 1800)], flaky_ids={2, 3}
+    )
+
+    out = await api.fetch_racing_data()
+
+    assert out["status"] == "success"
+    assert {d["eventId"] for d in out["details"]} == {1, 2, 3}
+    # One initial call + one bounded second pass for each flaky race.
+    assert calls.count(2) == 2 and calls.count(3) == 2
+    assert calls.count(1) == 1, "stable races must not be re-fetched"
+
+
+@pytest.mark.asyncio
+async def test_total_outage_is_not_doubled_by_the_second_pass(monkeypatch, tmp_path):
+    """When every call fails, retrying all of them just feeds the bot score."""
+    monkeypatch.setattr(mod.BetwayAPI, "EVENT_RETRY_DELAY_SECONDS", 0)
+    api, calls = _install(
+        monkeypatch, tmp_path, [(1, 1800), (2, 1800)], fail_ids={1, 2}
+    )
+
+    out = await api.fetch_racing_data()
+
+    # 5 ladder attempts x 2 events, with no second pass on top.
+    assert out["status"] == "error"
+    assert len(calls) == BetwayAPI.MAX_ATTEMPTS * 2
 
 
 def test_state_file_prunes_yesterdays_events(tmp_path, monkeypatch):
