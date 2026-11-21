@@ -13,6 +13,21 @@ from core_agent.skills.parsers import betway_api as mod
 from core_agent.skills.parsers.betway_api import BetwayAPI
 
 
+@pytest.fixture(autouse=True)
+def _isolate_feeds(tmp_path, monkeypatch):
+    """Keep the ladder tests independent of real cached cards on disk.
+
+    The cached-GetDaily fallback (Nov-21) reads data/betway_daily_cache.json,
+    which a running local monitor keeps fresh. In Docker that file exists, so
+    a deliberately-failed GetDaily silently fell back to a real card and the
+    ladder assertions saw ~200 GetEvent calls instead of the expected count.
+    """
+    monkeypatch.setattr(mod, "_DAILY_CACHE_PATH", tmp_path / "daily.json")
+    monkeypatch.setattr(mod, "_REFRESH_CACHE", {})
+    monkeypatch.setattr(mod, "_REFRESH_STATE_PATH", tmp_path / "budget.json")
+    monkeypatch.setattr(mod, "_EGRESS_STATE_PATH", tmp_path / "egress.json")
+
+
 class _Resp:
     def __init__(self, payload):
         self._payload = payload

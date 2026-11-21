@@ -296,6 +296,13 @@ async function ingestInsight(db: D1Database, body: InsightBody) {
 // versa when the home machine is off.
 const SNAPSHOT_KEYS = ["odds:full_snapshot", "odds:full_snapshot_home"] as const;
 
+function snapshotStamp(parsed: { timestamp?: unknown }): number {
+  // Backend stamps naive UTC; Date.parse would treat it as browser-local.
+  if (typeof parsed.timestamp !== "string") return NaN;
+  const raw = parsed.timestamp;
+  return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? raw : `${raw}Z`);
+}
+
 async function freshestSnapshot(kv: KVNamespace): Promise<string | null> {
   let best: string | null = null;
   let bestTs = -Infinity;
@@ -304,12 +311,7 @@ async function freshestSnapshot(kv: KVNamespace): Promise<string | null> {
       const raw = await kv.get(key, "text");
       if (!raw) continue;
       const parsed = JSON.parse(raw) as { timestamp?: unknown };
-      // Zone-less backend stamps are UTC; Date.parse would treat them as
-      // browser-local and skew the comparison across writers.
-      const stamp = typeof parsed.timestamp === "string"
-        ? Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(parsed.timestamp)
-            ? parsed.timestamp : `${parsed.timestamp}Z`)
-        : NaN;
+      const stamp = snapshotStamp(parsed);
       const ts = Number.isFinite(stamp) ? stamp : 0;
       if (ts >= bestTs) {
         bestTs = ts;
@@ -496,7 +498,40 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       // Serve whichever card is actually newer, never a fixed priority.
       const full = await freshestSnapshot(env.ODDS_KV);
       if (!full) return json({ note: "No snapshot available" });
-      try { return json(JSON.parse(full)); } catch { return json({ error: "corrupted snapshot" }); }
+      try {
+        const parsed = JSON.parse(full) as Record<string, unknown>;
+        const stamp = snapshotStamp(parsed as { timestamp?: unknown });
+        // A 30-minute home card outlives short Docker stops; label its real
+        // age so the HUD shows the quiet "prices Xm old" chip, not a card
+        // that pretends to be live.
+        if (Number.isFinite(stamp) && Date.now() - stamp > 5 * 60 * 1000) {
+          parsed.stale = true;
+          parsed.stale_since = parsed.timestamp;
+        }
+        parsed.snapshot_source = "worker";
+        return json(parsed);
+      } catch { return json({ error: "corrupted snapshot" }); }
+    }
+
+    if (path === "/api/racing/odds-hash") {
+      const full = await freshestSnapshot(env.ODDS_KV);
+      if (!full) return json({ snapshot_hash: "none", event_count: 0 });
+      try {
+        const parsed = JSON.parse(full) as { events?: Record<string, unknown> };
+        const digest = await crypto.subtle.digest(
+          "SHA-256", new TextEncoder().encode(full)
+        );
+        const hash = Array.from(new Uint8Array(digest))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        return json({
+          snapshot_hash: hash,
+          event_count: Object.keys(parsed.events || {}).length,
+          snapshot_source: "worker",
+        });
+      } catch {
+        return json({ snapshot_hash: "none", event_count: 0 });
+      }
     }
 
     // ── OKF Knowledge endpoints ────────────────────────────────────
@@ -672,8 +707,12 @@ async function handlePOST(request: Request, url: URL, env: Env): Promise<Respons
       // Single put only. The old per-event fan-out (~130 puts per push)
       // exhausted the daily write quota within the first hour, every day.
       // Readers filter the full snapshot in code instead.
-      await env.ODDS_KV.put(kvKey, payload, { expirationTtl: 300 });
-      return json({ status: "ingested", key: kvKey, events: Object.keys(body.events as object).length });
+      // The home monitor is the only egress Betway reliably accepts. Keep its
+      // card for 30 min so a short Docker restart can't flip prod back to
+      // Modal's blocked card; the reader stamps staleness from the timestamp.
+      const ttl = kvKey === "odds:full_snapshot_home" ? 1800 : 300;
+      await env.ODDS_KV.put(kvKey, payload, { expirationTtl: ttl });
+      return json({ status: "ingested", key: kvKey, ttl, events: Object.keys(body.events as object).length });
     }
 
     if (path === "/api/ingest-insight") {

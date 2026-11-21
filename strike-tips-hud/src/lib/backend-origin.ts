@@ -73,6 +73,11 @@ export function directBackendUrl(input: RequestInfo | URL): string | null {
   const suffix = typeof raw === 'string' && raw.startsWith('/')
     ? raw.slice(path.length) // keep ?query
     : ''
+  // Snapshot reads come from the Worker, which serves the newest of the two
+  // published cards (Modal's blocked one and the home-network monitor's good
+  // one). Modal's own copy can be hours stale when Betway blocks its IP.
+  if (path === '/api/monitoring/snapshot') return `${CF_MCP_ORIGIN}/api/racing/odds${suffix}`
+  if (path === '/api/monitoring/snapshot-hash') return `${CF_MCP_ORIGIN}/api/racing/odds-hash${suffix}`
   if (CF_PREFIXES.some(p => matchesPrefix(path, p))) return `${CF_MCP_ORIGIN}${path}${suffix}`
   if (MODAL_KEYLESS_EXACT.has(path)) return `${MODAL_ORIGIN}${path}${suffix}`
   if (MODAL_KEYLESS_PREFIXES.some(p => path.startsWith(p))) return `${MODAL_ORIGIN}${path}${suffix}`
