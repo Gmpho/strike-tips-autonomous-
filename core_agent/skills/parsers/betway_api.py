@@ -28,6 +28,46 @@ _REFRESH_STATE_PATH = os.environ.get("BETWAY_REFRESH_STATE") or str(
 )
 _REFRESH_CACHE: Dict[str, float] = {}
 
+# Per-egress-state for the direct -> Worker switch. Modal's cron starts a
+# fresh container (and a fresh BetwayAPI) each cycle, so keeping the block
+# flag only in memory meant every cycle re-burned direct attempts. Persist it
+# on the volume, like the refresh budget.
+_EGRESS_STATE_PATH = os.environ.get("BETWAY_EGRESS_STATE") or str(
+    Path(__file__).resolve().parents[3] / "data" / "betway_egress_state.json"
+)
+
+
+def _load_egress_state() -> Dict[str, Any]:
+    """Read the egress switch state; missing/corrupt means 'direct is fine'."""
+    try:
+        raw = json.loads(Path(_EGRESS_STATE_PATH).read_text())
+    except Exception:
+        return {"blocked": False, "cycles_since_probe": 0, "failures": 0}
+    if not isinstance(raw, dict):
+        return {"blocked": False, "cycles_since_probe": 0, "failures": 0}
+    try:
+        return {
+            "blocked": bool(raw.get("blocked", False)),
+            "cycles_since_probe": max(0, int(raw.get("cycles_since_probe") or 0)),
+            "failures": max(0, int(raw.get("failures") or 0)),
+        }
+    except Exception:
+        return {"blocked": False, "cycles_since_probe": 0, "failures": 0}
+
+
+def _save_egress_state(state: Dict[str, Any]) -> None:
+    """Best effort: a read-only volume just means we fall back to per-cycle."""
+    try:
+        path = Path(_EGRESS_STATE_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "blocked": bool(state.get("blocked")),
+            "cycles_since_probe": int(state.get("cycles_since_probe") or 0),
+            "failures": int(state.get("failures") or 0),
+        }))
+    except Exception as exc:  # pragma: no cover - read-only/absent volume
+        logger.debug("Egress switch state not persisted: %s", exc)
+
 
 def _load_refresh_state() -> Dict[str, float]:
     """Last-successful-fetch epoch per event id (disk-backed, best effort).
@@ -109,27 +149,42 @@ class BetwayAPI:
     DIRECT_PROBE_EVERY_CYCLES = 12
 
     def __init__(self) -> None:
-        self._direct_blocked = False
-        self._cycles_since_probe = 0
-        self._direct_failures = 0
-        self._probe_direct_this_cycle = True
+        saved = _load_egress_state()
+        self._direct_blocked = bool(saved["blocked"])
+        self._cycles_since_probe = int(saved["cycles_since_probe"])
+        self._direct_failures = int(saved["failures"])
+        self._probe_direct_this_cycle = not self._direct_blocked
+
+    def _persist_egress(self) -> None:
+        _save_egress_state({
+            "blocked": self._direct_blocked,
+            "cycles_since_probe": self._cycles_since_probe,
+            "failures": self._direct_failures,
+        })
 
     def start_cycle(self) -> None:
         """Decide whether this cycle probes the (possibly blocked) direct IP.
 
-        The failure count deliberately persists across cycles: when the proxy
+        Re-reads the volume first: each Modal cron cycle is a new container,
+        so a sibling container may have blocked or unblocked since our init.
+        The failure count deliberately persists across cycles — when the proxy
         answers, the cycle succeeds on its first attempt, so waiting for two
-        failures *inside one cycle* would never trip the switch.
+        failures inside one cycle would never trip the switch.
         """
+        saved = _load_egress_state()
+        self._direct_blocked = bool(saved["blocked"])
+        self._cycles_since_probe = int(saved["cycles_since_probe"])
+        self._direct_failures = int(saved["failures"])
+
         if not self._direct_blocked:
             self._probe_direct_this_cycle = True
-            return
-        if self._cycles_since_probe >= self.DIRECT_PROBE_EVERY_CYCLES:
+        elif self._cycles_since_probe >= self.DIRECT_PROBE_EVERY_CYCLES:
             self._probe_direct_this_cycle = True
             self._cycles_since_probe = 0
         else:
             self._probe_direct_this_cycle = False
             self._cycles_since_probe += 1
+        self._persist_egress()
 
     def _should_try_direct(self, path: str) -> bool:
         """Post-block, only GetDaily probes direct — never 200 GetEvents."""
@@ -140,9 +195,12 @@ class BetwayAPI:
     def _note_direct_result(self, path: str, ok: bool) -> None:
         """Update the egress switch from a direct attempt's outcome."""
         if ok:
+            if not self._direct_blocked and not self._direct_failures:
+                return  # nothing changed — don't write on every event
             self._direct_blocked = False
             self._direct_failures = 0
             self._cycles_since_probe = 0
+            self._persist_egress()
             return
         if path != "GetDaily" or self._direct_blocked:
             return  # per-event 520s are Betway's origin, not our IP being blocked
@@ -155,6 +213,7 @@ class BetwayAPI:
                 "remaining %s calls via Worker only",
                 self._direct_failures, path,
             )
+        self._persist_egress()
 
     def _select_events(
         self,

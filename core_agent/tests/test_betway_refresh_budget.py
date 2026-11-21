@@ -22,6 +22,12 @@ from core_agent.skills.parsers.betway_api import BetwayAPI
 DAY = 86400
 
 
+@pytest.fixture(autouse=True)
+def _isolated_egress_state(tmp_path, monkeypatch):
+    """Each test gets its own egress-state file — never touch the real one."""
+    monkeypatch.setattr(mod, "_EGRESS_STATE_PATH", tmp_path / "egress.json")
+
+
 def _daily_payload(events):
     """GetDaily shape: one SA region holding the given (id, seconds_to_off)."""
     now = time.time()
@@ -279,6 +285,66 @@ def test_per_event_failures_do_not_switch_the_egress():
         api._note_direct_result("GetEvent", False)
 
     assert api._direct_blocked is False
+    assert api._should_try_direct("GetEvent") is True
+
+
+def test_egress_block_survives_a_fresh_container():
+    """Two failed probes must spare every following cycle's events."""
+    first = BetwayAPI()
+    first.start_cycle()
+    first._note_direct_result("GetDaily", False)
+    first._note_direct_result("GetDaily", False)
+
+    # Modal cron = new container + new BetwayAPI each cycle.
+    second = BetwayAPI()
+    second.start_cycle()
+    assert second._should_try_direct("GetDaily") is False
+    assert second._should_try_direct("GetEvent") is False
+
+
+def test_hourly_probe_happens_across_fresh_containers():
+    """The probe interval is real, not just an in-memory counter."""
+    api = BetwayAPI()
+    api.start_cycle()
+    api._note_direct_result("GetDaily", False)
+    api._note_direct_result("GetDaily", False)
+
+    for _ in range(BetwayAPI.DIRECT_PROBE_EVERY_CYCLES):
+        fresh = BetwayAPI()
+        fresh.start_cycle()
+        assert fresh._should_try_direct("GetDaily") is False
+
+    prober = BetwayAPI()
+    prober.start_cycle()
+    assert prober._should_try_direct("GetDaily") is True   # hourly probe
+    assert prober._should_try_direct("GetEvent") is False  # events still proxy-only
+
+
+def test_direct_success_unblocks_disk_state_for_the_next_container():
+    """A successful probe clears the block for every sibling container."""
+    api = BetwayAPI()
+    api.start_cycle()
+    api._note_direct_result("GetDaily", False)
+    api._note_direct_result("GetDaily", False)
+    prober = BetwayAPI()
+    prober.start_cycle()
+    prober._note_direct_result("GetDaily", True)
+
+    assert mod._load_egress_state()["blocked"] is False
+    next_cycle = BetwayAPI()
+    next_cycle.start_cycle()
+    assert next_cycle._should_try_direct("GetEvent") is True
+
+
+def test_corrupt_egress_state_fails_open_to_direct():
+    """Unreadable state must never park the feed behind a dead proxy."""
+    path = mod._EGRESS_STATE_PATH
+    with open(path, "w") as f:
+        f.write("{not json")
+    api = BetwayAPI()
+    api.start_cycle()
+
+    assert api._should_try_direct("GetDaily") is True
     assert api._should_try_direct("GetEvent") is True
 
 
