@@ -271,6 +271,10 @@ async def _effective_snapshot(request: Request) -> dict:
     except Exception:
         remote = None
     if remote and _snapshot_freshness(remote) > _snapshot_freshness(local) + 60.0:
+        logger.info(
+            "Serving Worker snapshot: %d race(s) (local %d)",
+            len(remote.get("events") or {}), len(local.get("events") or {}),
+        )
         return dict(remote, snapshot_source="worker-home")
     return local
 

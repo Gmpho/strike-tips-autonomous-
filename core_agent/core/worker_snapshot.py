@@ -45,15 +45,19 @@ async def fetch_best_snapshot() -> Optional[Dict[str, Any]]:
 
         url = (os.environ.get("CLOUDFLARE_MCP_URL") or _WORKER_URL).rstrip("/")
         key = os.environ.get("STRIKE_TIPS_API_KEY") or os.environ.get("BACKEND_API_KEY") or ""
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
                 f"{url}/api/racing/odds", headers={"x-api-key": key} if key else None
             )
         data = resp.json() if resp.status_code == 200 else None
         _cached = data if isinstance(data, dict) and data.get("events") else None
         _cached_at = now
+        logger.info(
+            "Worker snapshot read: url=%s status=%s races=%d",
+            url, resp.status_code, len(_cached.get("events") or {}) if _cached else 0,
+        )
         return _cached
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Worker snapshot read skipped: %s", exc)
+        logger.warning("Worker snapshot read failed: %s", exc)
         _cached, _cached_at = None, now
         return None
