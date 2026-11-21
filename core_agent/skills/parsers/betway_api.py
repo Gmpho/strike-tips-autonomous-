@@ -69,6 +69,39 @@ def _save_egress_state(state: Dict[str, Any]) -> None:
         logger.debug("Egress switch state not persisted: %s", exc)
 
 
+# Last good GetDaily card. GetDaily is the gate for the whole cycle: when it
+# 403/520s, no GetEvent call runs at all and races that became near-off during
+# the outage are never refreshed. Keeping the event-id list on the volume lets
+# us still fetch the near-off races from the last known card.
+_DAILY_CACHE_PATH = os.environ.get("BETWAY_DAILY_CACHE") or str(
+    Path(__file__).resolve().parents[3] / "data" / "betway_daily_cache.json"
+)
+_DAILY_CACHE_MAX_AGE_SECS = 6 * 3600
+
+
+def _save_daily_cache(payload: Dict[str, Any]) -> None:
+    try:
+        path = Path(_DAILY_CACHE_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"ts": time.time(), "payload": payload}))
+    except Exception as exc:  # pragma: no cover - read-only volume
+        logger.debug("GetDaily cache write skipped: %s", exc)
+
+
+def _load_daily_cache() -> Optional[Dict[str, Any]]:
+    """Last known card, or None when absent, corrupt or too old to trust."""
+    try:
+        blob = json.loads(Path(_DAILY_CACHE_PATH).read_text())
+    except Exception:
+        return None
+    if not isinstance(blob, dict):
+        return None
+    if time.time() - float(blob.get("ts") or 0) > _DAILY_CACHE_MAX_AGE_SECS:
+        return None
+    payload = blob.get("payload")
+    return payload if isinstance(payload, dict) and payload.get("regions") else None
+
+
 def _load_refresh_state() -> Dict[str, float]:
     """Last-successful-fetch epoch per event id (disk-backed, best effort).
 
@@ -344,8 +377,14 @@ class BetwayAPI:
                 )
                 daily_qs = "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
                 data = await self._http_get("GetDaily", daily_qs, bw_headers)
+                daily_from_cache = False
+                if data is None:
+                    data = _load_daily_cache()
+                    daily_from_cache = data is not None
                 if data is None:
                     raise RuntimeError("Betway GetDaily returned no data (direct + proxy both failed)")
+                if not daily_from_cache:
+                    _save_daily_cache(data)
 
                 event_ids = []
                 ALLOWED = [
@@ -410,16 +449,35 @@ class BetwayAPI:
                 # per-cycle GetEvent volume that feeds Betway's bot score.
                 budget_state = _load_refresh_state()
                 now_epoch = time.time()
-                to_fetch, skipped, full_sweep = self._select_events(
-                    event_ids, budget_state, now_epoch
-                )
-                if skipped:
-                    logger.info(
-                        "Refresh budget: fetching %d/%d events (%d far-off skipped)",
-                        len(to_fetch), len(event_ids), skipped,
+                if daily_from_cache:
+                    # GetDaily is down. Only the near-off races matter right
+                    # now, and a full sweep here would hammer Betway with the
+                    # entire card on top of the failed gate.
+                    to_fetch = [
+                        x for x in event_ids
+                        if x[3] > 0 and (x[3] - now_epoch) <= self.NEAR_OFF_WINDOW_SECONDS
+                    ]
+                    skipped = 0
+                    full_sweep = False
+                    if not to_fetch:
+                        raise RuntimeError(
+                            "Betway GetDaily failed and the cached card has no near-off races"
+                        )
+                    logger.warning(
+                        "Betway GetDaily failed — using cached card for %d near-off race(s)",
+                        len(to_fetch),
                     )
-                elif full_sweep and event_ids:
-                    logger.info("Refresh budget: full sweep of %d events", len(event_ids))
+                else:
+                    to_fetch, skipped, full_sweep = self._select_events(
+                        event_ids, budget_state, now_epoch
+                    )
+                    if skipped:
+                        logger.info(
+                            "Refresh budget: fetching %d/%d events (%d far-off skipped)",
+                            len(to_fetch), len(event_ids), skipped,
+                        )
+                    elif full_sweep and event_ids:
+                        logger.info("Refresh budget: full sweep of %d events", len(event_ids))
 
                 # Throttle to max 4 concurrent requests with gentle jitter to avoid
                 # tripping Betway's Cloudflare rate limiter
@@ -477,7 +535,11 @@ class BetwayAPI:
                         "all per-event GetEvent calls failed"
                     )
 
-                return {"status": "success", "details": events_details}
+                return {
+                    "status": "success",
+                    "details": events_details,
+                    "daily_from_cache": daily_from_cache,
+                }
             except Exception as e:
                 last_error = e
                 attempts_used = attempt + 1
@@ -702,7 +764,13 @@ class BetwayAPI:
             except Exception as e:
                 logger.error(f"Error parsing event {det.get('eventId', '?')}: {e}")
 
-        return {"events": events, "count": len(events), "fetch_ok": True}
+        out = {"events": events, "count": len(events), "fetch_ok": True}
+        if raw.get("daily_from_cache"):
+            # Prices really were refreshed for the near-off races; the *card
+            # list* came from the last good GetDaily, which is worth recording
+            # in the feed-health log but is not a failed fetch.
+            out["daily_from_cache"] = True
+        return out
 
     async def get_races(self) -> List[ScrapedRace]:
         """Legacy compatibility wrapper for ScrapedRace objects."""

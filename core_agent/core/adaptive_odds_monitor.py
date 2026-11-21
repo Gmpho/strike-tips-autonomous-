@@ -264,17 +264,20 @@ def _log_feed_health(state: dict) -> None:
     """
     events = state.get("events") or {}
     down = state.get("fetch_ok") is False or state.get("stale") is True
+    cache_note = "daily_cache=true" if state.get("daily_from_cache") else "daily_cache=false"
     if down:
         logger.warning(
-            "Feed health: fetch_ok=%s races=%d stale=true since=%s error=%s",
+            "Feed health: fetch_ok=%s races=%d stale=true %s since=%s error=%s",
             state.get("fetch_ok"),
             len(events),
+            cache_note,
             state.get("stale_since"),
             str(state.get("fetch_error") or "")[:120],
         )
     else:
         logger.info(
-            "Feed health: fetch_ok=%s races=%d", state.get("fetch_ok"), len(events)
+            "Feed health: fetch_ok=%s races=%d %s",
+            state.get("fetch_ok"), len(events), cache_note,
         )
 
 
@@ -1450,7 +1453,7 @@ class AdaptiveOddsMonitor:
         )
         return {"events": pruned, "count": len(pruned), "cached": True}
 
-    def _feed_market_events(self, state: dict) -> None:
+    async def _feed_market_events(self, state: dict) -> None:
         """Feed the canonical market event stream from the snapshot just written.
 
         The monitor writes its own pruned state straight to the snapshot file
@@ -1458,6 +1461,11 @@ class AdaptiveOddsMonitor:
         restamp state the monitor has already settled). This is where its
         prices join the one event store — otherwise the 5-minute snapshot
         would feed every surface except the canonical one.
+
+        The resulting price moves are also queued for the Telegram digest.
+        AlertEngine only alerts on its own journey thresholds, so a genuine
+        34->51 drift can be recorded as a move and never reach the digest —
+        the "Quiet half hour" with 20 moves in the event store.
         """
         try:
             from core_agent.core.market_events import diff_snapshot
@@ -1475,8 +1483,42 @@ class AdaptiveOddsMonitor:
                         for e in moved[:4]
                     ),
                 )
+                await self._queue_moves_for_digest(moved)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Market event diff skipped: %s", exc)
+
+    async def _queue_moves_for_digest(self, moves: list) -> None:
+        """Put real price moves into the digest with canonical context.
+
+        HTML matches AlertEngine's shape exactly, so the digester's
+        (category, html) dedupe prevents a double report when both paths fire.
+        """
+        if not self._telegram_notifier or not self._digester:
+            return
+        pushed = 0
+        for ev in moves:
+            try:
+                if not isinstance(ev, dict) or ev.get("kind") != "price_move":
+                    continue
+                race = ev.get("race") or {}
+                runner = ev.get("runner") or {}
+                course = race.get("course") or "?"
+                name = runner.get("name") or "?"
+                price = ev.get("price")
+                html = f"🐎 {name} @ {course}\n💰 Odds: {price}"
+                meta = {
+                    "course": course,
+                    "horse": name,
+                    "odds": price,
+                    "race": race.get("race_number"),
+                    "canonical_event": ev,
+                }
+                await self._digester.push("odds_drop", html, meta=meta)
+                pushed += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Digest price-move push skipped: %s", exc)
+        if pushed:
+            logger.info("Digest feed: queued %d price move(s)", pushed)
 
     async def _on_alert(self, msg: dict):
         """Callback fired by AlertEngine when a condition triggers."""
@@ -1519,7 +1561,7 @@ class AdaptiveOddsMonitor:
         # so the renderer can build journey rows; HTML stays the fallback.
         meta = {k: msg.get(k) for k in (
             "course", "horse", "odds", "race", "off", "mins_to_off",
-            "journey", "enrich", "timestamp",
+            "journey", "enrich", "canonical_event", "timestamp",
         ) if msg.get(k) is not None}
         if tag in ("odds_drop", "value_bet"):
             await self._digester.push(tag, html, meta=meta or None)
@@ -1816,7 +1858,7 @@ class AdaptiveOddsMonitor:
             active_ids = list((state.get("events") or {}).keys())
             _log_feed_health(state)
             _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
-            self._feed_market_events(state)
+            await self._feed_market_events(state)
             try:
                 enrich_snapshot_with_insights(state)
             except Exception as e:
@@ -1945,7 +1987,7 @@ class AdaptiveOddsMonitor:
                 active_count = len(active_ids)
                 _log_feed_health(state)
                 _atomic_write_json(MARKET_SNAPSHOT_PATH, state)
-                self._feed_market_events(state)
+                await self._feed_market_events(state)
                 # Swarm enrichment: zero-cost field insights for every region without
                 # Betway timeForm (USA/Japan/SA/...). Runs inline, never blocks the loop.
                 try:

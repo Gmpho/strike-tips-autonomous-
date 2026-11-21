@@ -26,6 +26,7 @@ DAY = 86400
 def _isolated_egress_state(tmp_path, monkeypatch):
     """Each test gets its own egress-state file — never touch the real one."""
     monkeypatch.setattr(mod, "_EGRESS_STATE_PATH", tmp_path / "egress.json")
+    monkeypatch.setattr(mod, "_DAILY_CACHE_PATH", tmp_path / "daily.json")
 
 
 def _daily_payload(events):
@@ -346,6 +347,70 @@ def test_corrupt_egress_state_fails_open_to_direct():
 
     assert api._should_try_direct("GetDaily") is True
     assert api._should_try_direct("GetEvent") is True
+
+
+# ── Cached GetDaily fallback ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_getdaily_outage_still_refreshes_near_off_races(monkeypatch, tmp_path):
+    """A failed gate must not freeze races that became near-off meanwhile."""
+    near, far = 1, 2
+    daily_fail = {"value": False}
+    calls = []
+
+    class API(BetwayAPI):
+        async def _http_get(self, path, qs, headers):
+            if path == "GetDaily":
+                if daily_fail["value"]:
+                    return None
+                return _daily_payload([(near, 1800), (far, 18 * 3600)])
+            eid = int(qs.split("eventIds=")[1].split("&")[0])
+            calls.append(eid)
+            return {"eventId": eid, "events": [{"name": "R1"}]}
+
+    monkeypatch.setattr(mod, "_REFRESH_CACHE", {})
+    monkeypatch.setattr(mod, "_REFRESH_STATE_PATH", tmp_path / "budget.json")
+    monkeypatch.setattr(mod.random, "uniform", lambda a, b: 0)
+
+    api = API()
+    first = await api.fetch_racing_data()
+    assert first["status"] == "success"
+    assert first.get("daily_from_cache") is False
+    calls.clear()
+
+    daily_fail["value"] = True
+    second = await api.fetch_racing_data()
+
+    assert second["status"] == "success", "a down GetDaily must not blank the card"
+    assert second.get("daily_from_cache") is True
+    assert calls == [near], "only the near-off race is fetched from the cached card"
+
+
+@pytest.mark.asyncio
+async def test_getdaily_outage_without_a_cache_is_still_an_error(monkeypatch, tmp_path):
+    """Never invent a card: no cached ids means fail loud as before."""
+    class API(BetwayAPI):
+        async def _http_get(self, path, qs, headers):
+            return None
+
+    monkeypatch.setattr(mod, "_REFRESH_CACHE", {})
+    monkeypatch.setattr(mod, "_REFRESH_STATE_PATH", tmp_path / "budget.json")
+    monkeypatch.setattr(mod.random, "uniform", lambda a, b: 0)
+
+    out = await API().fetch_racing_data()
+    assert out["status"] == "error"
+    assert "GetDaily returned no data" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_stale_daily_cache_is_not_used(monkeypatch, tmp_path):
+    """A six-hour-old card is not a valid substitute for today's meetings."""
+    path = mod._DAILY_CACHE_PATH
+    with open(path, "w") as f:
+        json.dump({"ts": time.time() - 7 * 3600,
+                   "payload": _daily_payload([(1, 1800)])}, f)
+    assert mod._load_daily_cache() is None
 
 
 @pytest.mark.asyncio
