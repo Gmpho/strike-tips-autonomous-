@@ -14,5 +14,8 @@
   "kv_namespaces": [{
     "binding": "ODDS_KV",
     "id": "3e60752804c4489c9542a6e211ea549d"
-  }]
+  }],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  }
 }

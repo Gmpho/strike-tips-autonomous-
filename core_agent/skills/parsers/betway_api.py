@@ -7,7 +7,7 @@ import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from .tab4racing import ScrapedRace, ScrapedRunner, _parse_distance_m
 from core_agent.core.http_client import get_async_client
 
@@ -35,6 +35,36 @@ _REFRESH_CACHE: Dict[str, float] = {}
 _EGRESS_STATE_PATH = os.environ.get("BETWAY_EGRESS_STATE") or str(
     Path(__file__).resolve().parents[3] / "data" / "betway_egress_state.json"
 )
+
+
+def _classify_html_block(body: str) -> str:
+    """Name the layer behind an HTML error page.
+
+    A 403 with an HTML body never came from the API — a WAF answered instead.
+    Betway and ``*.workers.dev`` are both fronted by Cloudflare, so the same
+    page can mean "Betway refused us" or "Cloudflare refused Modal"; only the
+    page itself tells them apart. BeautifulSoup is used purely for that: there
+    is no race data in a block page to parse.
+    """
+    head = (body or "")[:5000]
+    title = ""
+    try:
+        from bs4 import BeautifulSoup
+
+        parsed = BeautifulSoup(head, "html.parser")
+        title = (parsed.title.get_text(strip=True) if parsed.title else "")
+    except Exception:
+        title = ""
+    low = head.lower()
+    if "error code: 52" in low:
+        return "Cloudflare origin error (520/522 — not a block)"
+    if "attention required" in title.lower() or "attention required" in low:
+        return "Cloudflare WAF block page"
+    if "just a moment" in title.lower() or "just a moment" in low:
+        return "Cloudflare JS challenge"
+    if title:
+        return f"HTML error page ({title[:60]})"
+    return "HTML error page"
 
 
 def _load_egress_state() -> Dict[str, Any]:
@@ -187,6 +217,9 @@ class BetwayAPI:
         self._cycles_since_probe = int(saved["cycles_since_probe"])
         self._direct_failures = int(saved["failures"])
         self._probe_direct_this_cycle = not self._direct_blocked
+        # Edge-block diagnostics: one accurate line per cycle, not one per call.
+        self._edge_blocked_calls = 0
+        self._edge_block_logged = False
 
     def _persist_egress(self) -> None:
         _save_egress_state({
@@ -208,6 +241,8 @@ class BetwayAPI:
         self._direct_blocked = bool(saved["blocked"])
         self._cycles_since_probe = int(saved["cycles_since_probe"])
         self._direct_failures = int(saved["failures"])
+        self._edge_blocked_calls = 0
+        self._edge_block_logged = False
 
         if not self._direct_blocked:
             self._probe_direct_this_cycle = True
@@ -294,6 +329,100 @@ class BetwayAPI:
         )
         return url, key
 
+    # ── Cloudflare-side fetch (Nov-22) ───────────────────────────────
+    # Modal's Azure egress is refused by Betway's WAF on the API *and* the
+    # racecard HTML (403 "Attention Required! | Cloudflare"), and Modal ->
+    # *.workers.dev is refused per Cloudflare colo (BOM/SIN 403, AMS 200).
+    # Cloudflare's own egress is what Betway accepts, so a Worker cron parks
+    # raw GetEvent payloads in KV and this reads them back over
+    # api.cloudflare.com — a hostname Modal can reach.
+    # Nov-22: raised from 15 min to 60 min. A Betway block can outlast 15 min,
+    # and throwing away the last-good card blanked the HUD (0 races at 10:41).
+    # The quiet chip still says "Prices out of date · last update Xm ago", so
+    # the age is visible — we just no longer self-destruct a good card.
+    EDGE_KV_MAX_AGE_SECONDS = 60 * 60
+    EDGE_KV_SLOTS = 16
+
+    @staticmethod
+    def _iso_age_seconds(value: Any) -> Optional[float]:
+        if not isinstance(value, str):
+            return None
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - dt).total_seconds()
+        except Exception:
+            return None
+
+    async def fetch_from_edge_kv(self) -> Optional[Dict[str, Any]]:
+        """Assemble races from the raw payloads the Worker cron parked in KV.
+
+        Returns the same shape as a successful direct fetch, or None when the
+        cron is not configured, not running, or its newest batch is too old to
+        be called live.
+        """
+        from core_agent.core import cf_kv
+
+        if not cf_kv.configured():
+            return None
+
+        details: List[Dict[str, Any]] = []
+        seen: set = set()
+        newest_age: Optional[float] = None
+        oldest_age: Optional[float] = None
+
+        # Modal-written slots first: they are the newest successful fetch.
+        # Cron slots are the fallback when Modal has not fetched in a while.
+        sources = [f"{cf_kv.MODAL_RAW_PREFIX}{i}" for i in range(self.EDGE_KV_SLOTS)]
+        sources += [f"betway:raw:slot:{i}" for i in range(self.EDGE_KV_SLOTS)]
+        for key in sources:
+            payload = await cf_kv.kv_get_json(key)
+            if not isinstance(payload, dict):
+                continue
+            events = payload.get("events")
+            if not isinstance(events, dict):
+                continue
+            age = self._iso_age_seconds(payload.get("ts"))
+            if age is not None:
+                newest_age = age if newest_age is None else min(newest_age, age)
+                oldest_age = age if oldest_age is None else max(oldest_age, age)
+            for eid, entry in events.items():
+                if eid in seen or not isinstance(entry, dict):
+                    continue
+                det = entry.get("payload")
+                if not isinstance(det, dict):
+                    continue
+                det = dict(det)
+                det["eventId"] = eid
+                det["regionName"] = entry.get("region") or "Unknown"
+                det["leagueName"] = entry.get("league") or "Unknown"
+                det["_edge_age_secs"] = age
+                details.append(det)
+                seen.add(eid)
+
+        if not details:
+            return None
+        if newest_age is not None and newest_age > self.EDGE_KV_MAX_AGE_SECONDS:
+            logger.warning(
+                "Edge KV stale: newest batch is %.0fs old (is the Worker cron running?)",
+                newest_age,
+            )
+            return None
+
+        logger.info(
+            "Edge KV supplied %d race(s) (newest %.0fs, oldest %.0fs)",
+            len(details), newest_age or 0, oldest_age or 0,
+        )
+        return {
+            "status": "success",
+            "details": details,
+            "daily_from_cache": False,
+            "edge_kv": True,
+            "edge_newest_age_secs": newest_age,
+            "edge_oldest_age_secs": oldest_age,
+        }
+
     async def _http_get(self, path: str, qs: str, headers: dict) -> Optional[Dict[str, Any]]:
         """Fetch a Betway TrackRacing endpoint, falling back to the Worker proxy.
 
@@ -345,7 +474,24 @@ class BetwayAPI:
                         return resp.json()
                     except Exception:
                         pass
-                logger.warning("Worker proxy %s returned %d: %.120s", path, resp.status_code, resp.text)
+                # An HTML body means a WAF answered, not Betway. Say which one
+                # once per cycle instead of blaming Betway on all ~200 calls.
+                if "<html" in resp.text[:400].lower():
+                    reason = _classify_html_block(resp.text)
+                    self._edge_blocked_calls += 1
+                    if not self._edge_block_logged:
+                        self._edge_block_logged = True
+                        logger.warning(
+                            "Worker edge refused this cycle (%d %s): Modal cannot reach "
+                            "*.workers.dev from this colo — this is Cloudflare blocking Modal, "
+                            "not a Betway response. %d call(s) affected; the Worker cron + "
+                            "edge KV path is the production fetch.",
+                            resp.status_code, reason, self._edge_blocked_calls,
+                        )
+                else:
+                    logger.warning(
+                        "Worker proxy %s returned %d: %.120s", path, resp.status_code, resp.text
+                    )
             except Exception as e:
                 logger.debug("Worker proxy failed on %s: %s", path, e)
 
@@ -366,6 +512,12 @@ class BetwayAPI:
             "Origin": "https://www.betway.co.za",
         }
         self.start_cycle()
+
+        # Cloudflare-side fetch first: it is the only egress Betway accepts.
+        edge = await self.fetch_from_edge_kv()
+        if edge is not None:
+            return edge
+
         started = time.monotonic()
         last_error: Optional[BaseException] = None
         for attempt in range(self.MAX_ATTEMPTS):
@@ -534,6 +686,21 @@ class BetwayAPI:
                         f"Betway GetDaily returned {len(to_fetch)} events but "
                         "all per-event GetEvent calls failed"
                     )
+
+                # Keep a cross-colo last-good cache in KV. The next cycle may
+                # land in a colo Betway refuses; KV is reachable from every
+                # colo over the REST API, so the card survives that wave.
+                try:
+                    from core_agent.core import cf_kv
+
+                    parked = await cf_kv.put_details(events_details)
+                    if parked:
+                        logger.info(
+                            "Edge KV cache: parked %d race(s) in %d slot(s)",
+                            len(events_details), parked,
+                        )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.debug("Edge KV cache write skipped: %s", exc)
 
                 return {
                     "status": "success",

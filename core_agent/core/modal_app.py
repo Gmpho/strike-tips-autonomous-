@@ -705,7 +705,9 @@ async def run_scan(chat_id: Optional[int] = None):
 # ── Odds Monitor (scheduled every 5 min, replaces 24/7 min_containers=1) ─
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("cloudflare-mcp")] + secrets,
+    secrets=[modal.Secret.from_name("cloudflare-mcp")]
+    + secrets
+    + [modal.Secret.from_name("strike-cf-kv")],
     volumes=VOLUMES,
     memory=1024,
     timeout=900,

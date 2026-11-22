@@ -57,6 +57,26 @@ import os  # noqa: E402
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_live_cloudflare_credentials(monkeypatch):
+    """Tests must never inherit a real KV token from the developer's .env.
+
+    Once CF_API_TOKEN exists locally, `cf_kv.configured()` becomes true and
+    tests that mock the Betway path start making real REST calls — which is
+    both slow and order-dependent. Tests that exercise the KV bridge set the
+    variables themselves with monkeypatch, which runs after this fixture.
+    """
+    for key in (
+        "EDGE_KV_API_TOKEN",
+        "EDGE_KV_ACCOUNT_ID",
+        "CF_API_TOKEN",
+        "CLOUDFLARE_API_TOKEN",
+        "CF_ACCOUNT_ID",
+        "CF_KV_NAMESPACE_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolate_search_cache(tmp_path_factory):
     """Keep the durable search cache out of the repo's data dir.

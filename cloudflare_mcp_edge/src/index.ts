@@ -4,6 +4,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { racingKnowledge, searchKnowledge, getKnowledge, getTrackKnowledge, listKnowledgePaths, listTrackPaths } from "./generated/racing-knowledge";
+import { cronFetchBetway, RAW_CURSOR_KEY, RAW_SLOTS } from "./betway-cron";
 
 export interface Env {
   BACKEND_API_URL: string;
@@ -513,6 +514,21 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       } catch { return json({ error: "corrupted snapshot" }); }
     }
 
+    // Diagnostics for the Cloudflare-side Betway cron: proves the fetch is
+    // landing without exposing the parked payloads.
+    if (path === "/api/betway/raw-meta") {
+      if (!isAuthorized(request, env)) return json({ error: "unauthorized" }, 401);
+      const cursor = await env.ODDS_KV.get(RAW_CURSOR_KEY, "json");
+      const slots: { slot: number; ts: string | null; events: number }[] = [];
+      for (let i = 0; i < RAW_SLOTS; i++) {
+        const raw = await env.ODDS_KV.get(`betway:raw:slot:${i}`, "json") as
+          { ts?: string; events?: Record<string, unknown> } | null;
+        if (!raw) continue;
+        slots.push({ slot: i, ts: raw.ts || null, events: Object.keys(raw.events || {}).length });
+      }
+      return json({ cursor, slots });
+    }
+
     if (path === "/api/racing/odds-hash") {
       const full = await freshestSnapshot(env.ODDS_KV);
       if (!full) return json({ snapshot_hash: "none", event_count: 0 });
@@ -937,5 +953,16 @@ export default {
     } catch {
       return json({ error: "internal error" }, 500, request);
     }
+  },
+
+  // Betway accepts Cloudflare's egress but blocks Modal's Azure range on both
+  // the API and the racecard HTML. This cron is therefore the production
+  // fetch: it parks raw GetEvent payloads in KV for Modal to parse.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      cronFetchBetway(env)
+        .then((r) => console.log("betway-cron", JSON.stringify(r)))
+        .catch((e) => console.error("betway-cron failed", String(e))),
+    );
   },
 };
