@@ -1,29 +1,23 @@
 import React from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useHUD } from '../../hooks/useHUD';
 
 /**
- * "Prices are not live" indicator (Nov-2026).
+ * Quiet price-age chip (Nov-2026, simplified Nov-22).
  *
- * The odds monitor stamps `fetch_ok` / `stale` / `stale_since` on every
- * snapshot, but nothing in the HUD read them. During the Betway 403 waves the
- * card stayed on screen looking live while every price was hours old — the one
- * failure mode a punter cannot detect for themselves.
+ * Originally this had two tiers: a chip under 20 minutes and a full amber
+ * "Odds feed is not live" banner above it. The banner fired on every Betway
+ * 403 wave and read like a site-wide outage, so it is gone — the user asked
+ * for the noise, not the information. What stays is the truth that is hard
+ * to infer yourself: how old the prices on screen are.
  *
- * Two tiers (Nov-21, after a weekend of 90%-failure waves made the full banner
- * fire every other cycle and read like a site-wide outage):
- *
- *  - SHORT outage (< 20 min): a quiet one-line chip. The monitor retries every
- *    5 minutes and usually recovers on the next cycle, so shouting is noise.
- *  - SUSTAINED outage (>= 20 min): the full amber banner, because prices on
- *    screen are now materially wrong and staying wrong.
- *
- * The age comes from the server's `stale_since` (which the backend now carries
- * across failed cycles), so it reports true outage length rather than "time
- * since this tab noticed". Neither tier is dismissable: hiding a stale price
- * warning is exactly the mistake this exists to prevent.
+ * Anything over 15 minutes is called out as out of date; newer than that is
+ * just "refreshing", because the monitor retries every few minutes. The age
+ * comes from the server's `stale_since`, which the backend carries across
+ * failed cycles, so it measures the real outage rather than when this tab
+ * noticed. Not dismissable.
  */
-const ESCALATE_AFTER_MS = 20 * 60 * 1000;
+const QUIET_CUTOFF_MS = 15 * 60 * 1000;
 
 const formatAge = (ms: number): string => {
   const mins = Math.max(0, Math.floor(ms / 60000));
@@ -32,11 +26,11 @@ const formatAge = (ms: number): string => {
 };
 
 export const FeedStaleBanner: React.FC = () => {
-  const { feedOk, feedStale, feedError, feedStaleSince, events } = useHUD();
+  const { feedOk, feedStale, feedStaleSince } = useHUD();
   const down = feedOk === false || feedStale;
 
   // The store only re-renders when a poll lands; during a full API outage the
-  // age would sit frozen. Tick while down so the chip/banner stay truthful.
+  // age would sit frozen. Tick while down so the chip stays truthful.
   const [, tick] = React.useState(0);
   React.useEffect(() => {
     if (!down) return;
@@ -47,48 +41,23 @@ export const FeedStaleBanner: React.FC = () => {
   if (!down) return null;
 
   const ageMs = feedStaleSince ? Math.max(0, Date.now() - feedStaleSince) : 0;
-  const raceCount = Object.keys(events || {}).length;
-  const reason = feedError
-    ? feedError.replace(/^Max retries reached:\s*/i, '').slice(0, 80)
-    : null;
-
-  // Short outage: one muted line, no alarm colour, no error text.
-  if (ageMs < ESCALATE_AFTER_MS) {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/55"
-      >
-        <RefreshCw className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
-        <span>
-          Refreshing prices
-          {feedStaleSince ? ` · last update ${formatAge(ageMs)} ago` : ''}
-        </span>
-      </div>
-    );
-  }
+  const outdated = ageMs > QUIET_CUTOFF_MS;
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm"
+      className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
+        outdated
+          ? 'border-white/15 bg-white/5 text-white/60'
+          : 'border-white/10 bg-white/5 text-white/45'
+      }`}
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
-      <div className="min-w-0">
-        <p className="font-bold text-amber-300">Odds feed is not live</p>
-        <p className="mt-0.5 text-white/75">
-          The odds monitor could not refresh prices for the last {formatAge(ageMs)}
-          {raceCount > 0 ? ` — the ${raceCount} race${raceCount === 1 ? '' : 's'} below are the last card it fetched` : ''}
-          . Treat every price as <strong className="text-white">out of date</strong> until this clears.
-        </p>
-        {reason && (
-          <p className="mt-1 font-mono text-[11px] uppercase tracking-wide text-amber-200/60">
-            {reason}
-          </p>
-        )}
-      </div>
+      <RefreshCw className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
+      <span>
+        {outdated ? 'Prices out of date' : 'Refreshing prices'}
+        {feedStaleSince ? ` · last update ${formatAge(ageMs)} ago` : ''}
+      </span>
     </div>
   );
 };
