@@ -27,7 +27,7 @@ All helpers are defensive — a snapshot write must never break a scan.
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -62,25 +62,40 @@ def _prune_events(events: Dict[str, Any]) -> Dict[str, Any]:
     for eid, event in events.items():
         if event.get("isFinished"):
             continue
-        raw = event.get("bf_off_time") or event.get("t") or event.get("st")
+        raw = event.get("t") or event.get("st")
+        bf_raw = event.get("bf_off_time")
         off = None
         if isinstance(raw, str) and ":" in raw:
             try:
                 h, m = raw.strip().split(":")[:2]
-                off = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-                if event.get("bf_off_time"):
-                    off -= timedelta(hours=2)  # SAST wall -> container UTC
-                elif (off - now).total_seconds() > 18 * 3600:
+                # Betway t/st are UTC wall-clock. Force the base to UTC so an
+                # SAST host cannot shift every off-time by two hours.
+                off = datetime.now(timezone.utc).replace(tzinfo=None).replace(
+                    hour=int(h), minute=int(m), second=0, microsecond=0
+                )
+                if (off - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() > 18 * 3600:
                     off -= timedelta(days=1)
             except (ValueError, TypeError):
                 off = None
+        if isinstance(bf_raw, str) and ":" in bf_raw:
+            try:
+                h, m = bf_raw.strip().split(":")[:2]
+                bf = datetime.now(timezone.utc).replace(tzinfo=None).replace(
+                    hour=int(h), minute=int(m), second=0, microsecond=0
+                ) - timedelta(hours=2)  # SAST wall -> UTC
+                # Prefer the earlier plausible clock: a stale Betfair time
+                # must not keep a finished race alive (Scottsville R1 bug).
+                if off is None or abs((bf - off).total_seconds()) <= 3 * 3600:
+                    off = bf if off is None else min(off, bf)
+            except (ValueError, TypeError):
+                pass
         if off is not None:
-            if (now - off).total_seconds() > grace:
+            if (datetime.now(timezone.utc).replace(tzinfo=None) - off).total_seconds() > grace:
                 continue
             # Keep the client-side contract identical to the monitor's closer:
             # expires_at lets the HUD/worker drop a race that finishes after
             # the snapshot was written, even in this degraded path.
-            event["expires_at"] = off.timestamp() + grace
+            event["expires_at"] = off.replace(tzinfo=timezone.utc).timestamp() + grace
             event.pop("first_seen", None)
         kept[eid] = event
     return kept

@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -166,15 +166,53 @@ def _sast_to_utc(off_time: Optional[datetime]) -> Optional[datetime]:
         return None
 
 
+def _resolve_race_off_utc(event: dict, now_utc: datetime) -> Optional[datetime]:
+    """Best UTC off-time for a race, from Betway ``t``/``st`` and Betfair.
+
+    Betway's ``t``/``st`` are UTC wall-clock (verified against GetDaily's
+    ``expectedStartEpoch``); ``bf_off_time`` is SAST wall-clock stamped by the
+    Betfair merge. The old code trusted ``bf_off_time`` unconditionally, so a
+    stale Betfair time 33 minutes later than Betway's kept a finished race on
+    the card long past its real off-time (Scottsville R1, 2026-11-22).
+    """
+    bf_raw = event.get("bf_off_time")
+    bf_off = _sast_to_utc(_parse_race_off_time(bf_raw)) if bf_raw else None
+
+    bw_raw = event.get("t") or event.get("st")
+    # Force the parser's "today" base to UTC so the result does not depend on
+    # which timezone the host/container happens to be running in.
+    bw_off = _parse_race_off_time(bw_raw, race_date=now_utc) if bw_raw else None
+    if bw_off is not None:
+        delta = (bw_off - now_utc).total_seconds()
+        hhmm = str(bw_raw).strip()[:5]
+        # Only midnight sentinels and far-FUTURE times are placeholders.
+        # A time hours in the PAST is a legitimate finished race — rejecting
+        # it sends the closer down the first_seen TTL path and keeps a ghost
+        # alive for 6h (Australia/NZ races on the HUD, 2026-11-22).
+        if hhmm in {"00:00", "00:01", "23:59"} or delta > 6 * 3600:
+            bw_off = None
+
+    if bw_off and bf_off:
+        if abs((bw_off - bf_off).total_seconds()) > 3 * 3600:
+            # Wild disagreement: one of them is a placeholder/stamp error.
+            # Pick the one nearer to now rather than stranding a live race
+            # or resurrecting a finished one.
+            return min((bw_off, bf_off), key=lambda d: abs((d - now_utc).total_seconds()))
+        # Both plausible: the earlier off-time clears ghosts promptly.
+        return min(bw_off, bf_off)
+    return bw_off or bf_off
+
+
 def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
 
-    Time preference: ``bf_off_time`` (stamped by the Betfair merge, SAST wall)
-    converted to UTC, then Betway display times (``t``/``st``). Catches races
-    where Betway never sets isFinished (common for UK/Ireland tracks) and where
-    Betway display times are placeholders. Races with no parseable time from
-    any source are stamped ``first_seen`` and dropped once older than
-    UNPARSEABLE_RACE_TTL_SECS so they cannot persist indefinitely.
+    Off-time source preference: the earlier of Betway's UTC ``t``/``st`` and
+    Betfair's SAST ``bf_off_time`` (converted to UTC) — see
+    :func:`_resolve_race_off_utc`. Catches races where Betway never sets
+    ``isFinished`` (common for UK/Ireland tracks) and where Betway display
+    times are placeholders. Races with no parseable time from any source are
+    stamped ``first_seen`` and dropped once older than
+    ``UNPARSEABLE_RACE_TTL_SECS`` so they cannot persist indefinitely.
 
     Betfair-only events (bf_off_time present but no Betway t/st) that are
     older than 2h are also dropped — these are ghost markets that Betfair
@@ -184,29 +222,31 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     so readers that see a snapshot minutes later (HUD, worker KV, Telegram)
     can still drop a race that finished in the meantime.
     """
-    now = datetime.now()
+    # Naive UTC throughout: bf_off_time is converted to UTC and Betway's t/st
+    # are UTC, so comparing against a local-clock "now" was another source of
+    # 2-hour drift when this ran outside the UTC container.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_ts = datetime.now(timezone.utc).timestamp()
     grace_secs = max_minutes_after_off * 60
     filtered = {}
     for eid, e in events.items():
-        bf_off = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
-        bw_time = e.get("t") or e.get("st")
-        off_time = bf_off or (_parse_race_off_time(bw_time) if bw_time else None)
+        off_time = _resolve_race_off_utc(e, now)
         if off_time:
             if (now - off_time).total_seconds() > grace_secs:
-                logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or bw_time}, now {now.strftime('%H:%M')})")
+                logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or e.get('t') or e.get('st')}, now {now.strftime('%H:%M')}Z)")
                 continue
             e.pop("first_seen", None)
-            e["expires_at"] = off_time.timestamp() + grace_secs
+            e["expires_at"] = off_time.replace(tzinfo=timezone.utc).timestamp() + grace_secs
             filtered[eid] = e
             continue
         # No parseable time from any source: stamp first sight, TTL-drop old ones.
         first_seen = e.get("first_seen")
         try:
-            age = now.timestamp() - float(first_seen) if first_seen is not None else None
+            age = now_ts - float(first_seen) if first_seen is not None else None
         except (TypeError, ValueError):
             age = None
         if age is None:
-            e["first_seen"] = now.timestamp()
+            e["first_seen"] = now_ts
             filtered[eid] = e
             continue
         if age > UNPARSEABLE_RACE_TTL_SECS:
