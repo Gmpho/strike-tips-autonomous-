@@ -86,6 +86,65 @@ def test_push_posts_with_key(monkeypatch):
     assert seen["headers"]["x-api-key"] == "strike-key"
 
 
+def test_push_snapshot_home_key_is_opt_in(monkeypatch):
+    """A local writer must not publish into prod KV unless explicitly enabled."""
+    monkeypatch.setenv("STRIKE_TIPS_API_KEY", "k")
+    monkeypatch.setenv("CF_SNAPSHOT_KEY", "odds:full_snapshot_home")
+    monkeypatch.delenv("CF_PUBLISH_HOME", raising=False)
+    assert _run(cf_push.push_snapshot({"events": {"1": {"a": 1}}})) is False
+
+    seen = {}
+
+    class FakeResp:
+        status_code = 200
+        text = "ok"
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            seen["headers"] = headers
+            return FakeResp()
+
+    monkeypatch.setenv("CF_PUBLISH_HOME", "1")
+    with patch("httpx.AsyncClient", FakeClient):
+        assert _run(cf_push.push_snapshot({"events": {"1": {"a": 1}}})) is True
+    assert seen["headers"]["x-snapshot-key"] == "odds:full_snapshot_home"
+
+
+def test_push_snapshot_default_key_unaffected_by_opt_in_gate(monkeypatch):
+    monkeypatch.setenv("STRIKE_TIPS_API_KEY", "k")
+    monkeypatch.delenv("CF_SNAPSHOT_KEY", raising=False)
+    monkeypatch.delenv("CF_PUBLISH_HOME", raising=False)
+
+    class FakeResp:
+        status_code = 200
+        text = "ok"
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        assert _run(cf_push.push_snapshot({"events": {"1": {"a": 1}}})) is True
+
+
 def test_push_insight_validates_and_truncates(monkeypatch):
     monkeypatch.setenv("STRIKE_TIPS_API_KEY", "k")
     assert _run(cf_push.push_insight("", "h", "c")) is False

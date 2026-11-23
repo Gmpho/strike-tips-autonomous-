@@ -58,9 +58,14 @@ services:
       - PAPER_TRADING=true
       - CLOUDFLARE_MCP_URL=${CLOUDFLARE_MCP_URL}
       - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY}
-      # Home-network egress is the one Betway accepts. Publish under a
-      # separate KV key so Modal's blocked cycles cannot overwrite it.
+      # Home-network egress is the one Betway accepts, but publishing it into
+      # prod KV is OPT-IN: CF_PUBLISH_HOME=0 (default) means starting Docker
+      # never changes what the prod Worker serves. Flip to 1 only when you
+      # deliberately want the home card live in prod, and only on a freshly
+      # built image (a stale image once published a 420-race card with
+      # Saturday's races and 101 duplicate course+R# pairs).
       - CF_SNAPSHOT_KEY=odds:full_snapshot_home
+      - CF_PUBLISH_HOME=${CF_PUBLISH_HOME:-0}
     volumes:
       - .:/app
       - ./data/browser_profile:/app/data/browser_profile

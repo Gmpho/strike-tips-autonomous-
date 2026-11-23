@@ -70,16 +70,43 @@ async def _post(path: str, payload: dict, extra_headers: Optional[dict] = None) 
         return False
 
 
+def _home_publish_enabled() -> bool:
+    """True when this writer is allowed to publish a non-default snapshot key.
+
+    Local Docker / home-network runs must be opted in explicitly
+    (``CF_PUBLISH_HOME=1``) so a forgotten container can never push its card —
+    stale images included — into the KV slot the prod Worker serves.
+    """
+    return os.environ.get("CF_PUBLISH_HOME", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def push_snapshot(state: dict) -> bool:
     """Push the odds snapshot to KV (180-300s TTL server-side).
 
     ``CF_SNAPSHOT_KEY`` lets a second writer (e.g. the home-network odds
     monitor, whose IP Betway actually accepts) publish under its own key
     instead of overwriting Modal's card. The Worker serves the fresher one.
+
+    That second channel is **opt-in**: it only publishes when
+    ``CF_PUBLISH_HOME`` is truthy. A local ``docker compose up`` used to push
+    its card to prod on every cycle (2026-11-23: a stale local image served
+    a 420-race card with Saturday's races and 101 duplicate course+R# pairs,
+    and the Worker flipped prod between that and the real 37-race card).
     """
     if not isinstance(state, dict) or not state.get("events"):
         return False
     kv_key = os.environ.get("CF_SNAPSHOT_KEY") or "odds:full_snapshot"
+    if kv_key != "odds:full_snapshot" and not _home_publish_enabled():
+        logger.debug(
+            "Snapshot push skipped: %s is opt-in (set CF_PUBLISH_HOME=1 to enable)",
+            kv_key,
+        )
+        return False
     return await _post(
         "/api/ingest-snapshot", state, extra_headers={"x-snapshot-key": kv_key}
     )
