@@ -465,12 +465,15 @@ class BetwayAPI:
         except Exception:
             return None
 
-    async def fetch_from_edge_kv(self) -> Optional[Dict[str, Any]]:
-        """Assemble races from the raw payloads the Worker cron parked in KV.
+    async def fetch_from_edge_kv(
+        self, max_age_seconds: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Assemble races from the raw payloads parked in KV.
 
-        Returns the same shape as a successful direct fetch, or None when the
-        cron is not configured, not running, or its newest batch is too old to
-        be called live.
+        The default 60-minute cutoff decides whether a batch is "live". A
+        caller can widen it to reuse last-good *prices* while GetDaily supplies
+        the current race list — stale prices beat no prices at all, and the
+        card's daily gate + closer still drop finished races.
         """
         from core_agent.core import cf_kv
 
@@ -513,12 +516,25 @@ class BetwayAPI:
 
         if not details:
             return None
-        if newest_age is not None and newest_age > self.EDGE_KV_MAX_AGE_SECONDS:
+        cutoff = (
+            self.EDGE_KV_MAX_AGE_SECONDS
+            if max_age_seconds is None
+            else max_age_seconds
+        )
+        if newest_age is not None and newest_age > cutoff:
             logger.warning(
-                "Edge KV stale: newest batch is %.0fs old (is the Worker cron running?)",
-                newest_age,
+                "Edge KV batch %.0fs old exceeds %.0fs cutoff — skipped",
+                newest_age, cutoff,
             )
             return None
+        stale = bool(
+            newest_age is not None
+            and newest_age > self.EDGE_KV_MAX_AGE_SECONDS
+        )
+        if stale:
+            logger.info(
+                "Edge KV last-good prices: newest batch %.0fs old", newest_age
+            )
 
         logger.info(
             "Edge KV supplied %d race(s) (newest %.0fs, oldest %.0fs)",
@@ -531,6 +547,7 @@ class BetwayAPI:
             "edge_kv": True,
             "edge_newest_age_secs": newest_age,
             "edge_oldest_age_secs": oldest_age,
+            "edge_stale": stale,
         }
 
     async def _http_get(self, path: str, qs: str, headers: dict) -> Optional[Dict[str, Any]]:
@@ -656,7 +673,9 @@ class BetwayAPI:
         self.start_cycle()
 
         # Cloudflare-side fetch first: it is the only egress Betway accepts.
-        edge = await self.fetch_from_edge_kv()
+        # Reuse KV prices for up to 3h (the slot TTL): GetDaily still supplies
+        # today's race list, so an older batch can only contribute prices.
+        edge = await self.fetch_from_edge_kv(max_age_seconds=3 * 3600)
         if edge is not None:
             # The KV cache holds priced races only. Still fold in today's
             # GetDaily field so races whose GetEvent never landed are present

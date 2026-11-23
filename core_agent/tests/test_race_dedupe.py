@@ -69,18 +69,21 @@ def test_identity_falls_back_to_the_display_name_track():
 
 
 def test_sanitize_snapshot_applies_dedupe():
+    import datetime as _dt
+
+    off_t = (_dt.datetime.now(_dt.UTC) + _dt.timedelta(hours=2)).strftime("%H:%M")
     state = {
         "events": {
             "111": {
                 "course": "Cork",
                 "raceNumber": 3,
-                "t": "13:19",
+                "t": off_t,
                 "expires_at": _future(-3600),
             },
             "999": {
                 "course": "Cork",
                 "raceNumber": 3,
-                "t": "13:19",
+                "t": off_t,
                 "expires_at": _future(),
                 "runners": [{"odds": 2.4}],
             },
