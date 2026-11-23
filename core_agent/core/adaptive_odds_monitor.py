@@ -100,6 +100,11 @@ def _parse_race_off_time(t_str: str, race_date: datetime = None) -> Optional[dat
 # unfinished/unparseable races from hoarding the dashboard all day.
 UNPARSEABLE_RACE_TTL_SECS = 6 * 60 * 60
 
+# Absolute ceiling on how long one race may sit on the card. ``t`` carries no
+# date, so carry-forward can re-anchor an old race to today's clock; this stamp
+# (``card_since``, set once, never cleared) is what actually expires it.
+RACE_MAX_LIFETIME_SECS = 26 * 60 * 60
+
 # Betfair form cache manager: a market stays in the rolling cache while its
 # race is upcoming and is dropped once its off-time passes (grace mirrors
 # ``betfair_sa._EXPIRED_MARKET_GRACE_SECS``); an entry that stops refreshing
@@ -245,6 +250,25 @@ def _close_overdue_races(
     grace_secs = max_minutes_after_off * 60
     filtered = {}
     for eid, e in events.items():
+        # Lifetime guard. ``t`` is a wall clock with no date, so a race carried
+        # forward from Saturday re-parses as *today* at the same HH:MM and looks
+        # upcoming forever (2026-11-23: 15 Scottsville races on a Monday with no
+        # SA meeting). ``card_since`` is an absolute epoch stamped once and never
+        # cleared, so no race can outlive a day on the card. It is deliberately
+        # separate from ``first_seen``, which only tracks unparseable off-times.
+        since = e.get("card_since")
+        try:
+            lifetime = now_ts - float(since) if since is not None else None
+        except (TypeError, ValueError):
+            lifetime = None
+        if lifetime is not None and lifetime > RACE_MAX_LIFETIME_SECS:
+            logger.info(
+                "Race dropped by card lifetime: %s R%s (first seen %.1fh ago)",
+                e.get("en", "?"), e.get("raceNumber", "?"), lifetime / 3600,
+            )
+            continue
+        e.setdefault("card_since", now_ts)
+
         off_time = _resolve_race_off_utc(e, now)
         if off_time:
             if (now - off_time).total_seconds() > grace_secs:
@@ -815,6 +839,52 @@ def _apply_betfair_spine(state: dict, bf_snapshot: dict, now_utc: datetime = Non
             added,
             priced_races,
         )
+    return state
+
+
+def _drop_stale_card_entries(state: dict) -> dict:
+    """Remove races that are not on today's GetDaily card.
+
+    ``t`` is a wall clock with no date, so a carried-forward race from an earlier
+    day re-parses as today at the same HH:MM and never expires (2026-11-23: 15
+    Saturday Scottsville races on a Monday with no SA meeting, and a card that
+    swung 349↔31↔272). GetDaily is authoritative for what exists today; Betfair
+    spine rows (``bf:`` ids) are validated by their own market list instead.
+    """
+    try:
+        from core_agent.skills.parsers.betway_api import daily_event_ids
+
+        today_ids = daily_event_ids()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Daily card check skipped: %s", exc)
+        return state
+    if not today_ids:
+        return state
+
+    events = state.get("events") or {}
+    kept: dict = {}
+    dropped = 0
+    for eid, ev in events.items():
+        key = str(eid)
+        if key.startswith("bf:"):
+            kept[eid] = ev
+            continue
+        try:
+            numeric = int(key)
+        except (TypeError, ValueError):
+            kept[eid] = ev
+            continue
+        if numeric in today_ids:
+            kept[eid] = ev
+        else:
+            dropped += 1
+    if dropped:
+        logger.info(
+            "Dropped %d race(s) absent from today's GetDaily card (earlier days)",
+            dropped,
+        )
+        state["events"] = kept
+        state["count"] = len(kept)
     return state
 
 
@@ -2019,6 +2089,14 @@ class AdaptiveOddsMonitor:
                 state = merge_registry_events(state)
             except Exception:
                 pass
+            state = _drop_stale_card_entries(state)
+            # Final gate: sanitise AFTER the id-based merges so the published
+            # card is always pruned + deduped (see the continuous loop).
+            try:
+                from core_agent.core.snapshot_writer import sanitize_snapshot
+                state = sanitize_snapshot(state, source="monitor")
+            except Exception:
+                pass
             state["count"] = len(state.get("events") or {})
             active_ids = list((state.get("events") or {}).keys())
             _log_feed_health(state)
@@ -2152,6 +2230,16 @@ class AdaptiveOddsMonitor:
                     )
                     state = _merge_previous_live_events(state)
                     state = merge_registry_events(state)
+                except Exception:
+                    pass
+                state = _drop_stale_card_entries(state)
+                # Final gate. The merges above are id-based: they re-add rows the
+                # dedupe just dropped and can re-anchor old races to today's
+                # clock. Sanitising LAST is what stops the 349↔31↔272 oscillation
+                # (2026-11-23) — the published file is always pruned + deduped.
+                try:
+                    from core_agent.core.snapshot_writer import sanitize_snapshot
+                    state = sanitize_snapshot(state, source="monitor")
                 except Exception:
                     pass
                 state["count"] = len(state.get("events") or {})

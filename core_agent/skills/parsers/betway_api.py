@@ -217,6 +217,51 @@ def _details_from_daily(
     return out
 
 
+def daily_event_ids(max_age_seconds: float = _DAILY_CACHE_MAX_AGE_SECS) -> set:
+    """Event ids on today's authoritative GetDaily card ({} when unavailable).
+
+    GetDaily is the only source that says what races exist *today*. Carry-forward
+    and the registry restore by id, and ``t`` has no date, so a Saturday race can
+    re-anchor to Monday's clock and look upcoming forever. Anything absent from a
+    fresh GetDaily is yesterday's card and must go.
+
+    Uses the same trust window as the parser's own daily cache, and refuses a
+    cache stamped on a previous UTC day — yesterday's list must never prune
+    today's card. Returns an empty set when unavailable, which disables the gate.
+    """
+    try:
+        blob = json.loads(Path(_DAILY_CACHE_PATH).read_text())
+    except Exception:
+        return set()
+    if not isinstance(blob, dict):
+        return set()
+    try:
+        ts = float(blob.get("ts") or 0)
+    except (TypeError, ValueError):
+        return set()
+    if not ts or time.time() - ts > max_age_seconds:
+        return set()
+    if (
+        datetime.fromtimestamp(ts, timezone.utc).date()
+        != datetime.now(timezone.utc).date()
+    ):
+        return set()
+    data = blob.get("payload")
+    if not isinstance(data, dict):
+        return set()
+    ids: set = set()
+    for reg in data.get("regions", []) or []:
+        for event in reg.get("sportEvents", []) or []:
+            eid = event.get("eventId") if isinstance(event, dict) else None
+            if eid is None:
+                continue
+            try:
+                ids.add(int(eid))
+            except (TypeError, ValueError):
+                continue
+    return ids
+
+
 class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
 
