@@ -80,6 +80,26 @@ def test_betfair_spine_rows_survive_the_daily_gate(monkeypatch):
     assert "bf:1.265866347" in out["events"]
 
 
+def test_carried_forward_betfair_row_from_tomorrow_is_dropped(monkeypatch):
+    monkeypatch.setattr(bw, "daily_event_ids", lambda *a, **k: {101})
+    from datetime import timedelta
+
+    tomorrow_off = datetime.now(timezone.utc) + timedelta(hours=12)
+    state = {
+        "events": {
+            "bf:1.265911185": {
+                "en": "USA: Zia Park",
+                "raceNumber": 8,
+                "t": tomorrow_off.strftime("%H:%M"),
+                "source": "betfair",
+                "expires_at": tomorrow_off.timestamp() + 120,
+            }
+        }
+    }
+    out = mon._drop_stale_card_entries(state)
+    assert out["events"] == {}
+
+
 def test_unavailable_daily_list_never_empties_the_card(monkeypatch):
     monkeypatch.setattr(bw, "daily_event_ids", lambda *a, **k: set())
     state = {"events": {"101": {"en": "USA: Zia Park", "t": _future_t()}}}

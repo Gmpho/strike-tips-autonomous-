@@ -883,6 +883,19 @@ def _drop_stale_card_entries(state: dict) -> dict:
     for eid, ev in events.items():
         key = str(eid)
         if key.startswith("bf:"):
+            # Validate carried-forward exchange rows by their absolute expiry:
+            # a market starting after SAST midnight is tomorrow's card, even
+            # if an earlier cycle admitted it before the date filter existed.
+            exp = ev.get("expires_at") if isinstance(ev, dict) else None
+            if isinstance(exp, (int, float)):
+                off_day = (
+                    datetime.fromtimestamp(exp - 120, timezone.utc)
+                    + timedelta(hours=2)
+                ).date()
+                today_sast = (datetime.now(timezone.utc) + timedelta(hours=2)).date()
+                if off_day != today_sast:
+                    dropped += 1
+                    continue
             kept[eid] = ev
             continue
         try:
