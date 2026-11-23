@@ -49,6 +49,16 @@ def test_wild_disagreement_picks_clock_nearest_now():
     assert _resolve_race_off_utc(event, now) == datetime(2026, 11, 22, 11, 40)
 
 
+def test_races_after_sast_midnight_are_deferred():
+    """A 22:14 UTC race is 00:14 SAST tomorrow — not on today's card."""
+    now = _utc(datetime(2026, 11, 23, 20, 0, tzinfo=timezone.utc))
+    out = _close_overdue_races(
+        {"zia": {"en": "USA: Zia Park", "raceNumber": 8, "t": "22:14"}},
+        now_utc=now,
+    )
+    assert "zia" not in out
+
+
 def test_hours_old_betway_time_is_TRUSTED_not_treated_as_placeholder():
     """A 06:34 race seen at 13:33 must be dropped, not kept on a TTL."""
     now = _utc(datetime(2026, 11, 22, 13, 33, tzinfo=timezone.utc))

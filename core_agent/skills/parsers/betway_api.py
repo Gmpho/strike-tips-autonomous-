@@ -203,6 +203,7 @@ def _details_from_daily(
     instead of dropping the race and hammering Betway with retries.
     """
     out: List[Dict[str, Any]] = []
+    have = {str(x) for x in have_ids}
     for reg in data.get("regions", []) or []:
         reg_name = str(reg.get("name") or "")
         if not any(a in reg_name for a in allowed_regions):
@@ -211,7 +212,7 @@ def _details_from_daily(
             if not isinstance(event, dict) or event.get("isFinished"):
                 continue
             eid = event.get("eventId")
-            if eid is None or eid in have_ids:
+            if eid is None or str(eid) in have:
                 continue
             racers = (event.get("raceEventDetails") or {}).get("racers") or []
             out.append({
@@ -623,7 +624,7 @@ class BetwayAPI:
         data = _load_daily_cache()
         if not isinstance(data, dict):
             return
-        have_ids = {d.get("eventId") for d in edge["details"]}
+        have_ids = {str(d.get("eventId")) for d in edge["details"]}
         details = _details_from_daily(data, have_ids, _ALLOWED_REGIONS)
         if details:
             edge["details"] = edge["details"] + details
@@ -817,7 +818,7 @@ class BetwayAPI:
                 # a race whose GetEvent was refused still belongs on the card —
                 # unpriced, not absent. This is what turns a 403 wave from
                 # "14 races" into "every live race" without extra requests.
-                have_ids = {d.get("eventId") for d in events_details}
+                have_ids = {str(d.get("eventId")) for d in events_details}
                 daily_details = _details_from_daily(data, have_ids, ALLOWED)
                 if daily_details:
                     events_details.extend(daily_details)

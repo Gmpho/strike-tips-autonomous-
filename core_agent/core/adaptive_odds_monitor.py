@@ -271,6 +271,19 @@ def _close_overdue_races(
 
         off_time = _resolve_race_off_utc(e, now)
         if off_time:
+            # A race starting after SAST midnight belongs to tomorrow's card.
+            # Betway's "Today" (timeZoneOffset=2) includes late US meetings
+            # that cross midnight, and Betfair's TODAY bucket does too — the
+            # HUD must show one SAST day at a time (2026-11-23).
+            sast_day = (off_time + timedelta(hours=2)).date()
+            now_sast_day = (now + timedelta(hours=2)).date()
+            if sast_day > now_sast_day:
+                logger.info(
+                    "Race deferred to tomorrow's card: %s R%s (off %s UTC)",
+                    e.get("en", "?"), e.get("raceNumber", "?"),
+                    off_time.strftime("%H:%M"),
+                )
+                continue
             if (now - off_time).total_seconds() > grace_secs:
                 logger.info(f"Race auto-closed by off-time: {e.get('en','?')} R{e.get('raceNumber','?')} (off {e.get('bf_off_time') or e.get('t') or e.get('st')}, now {now.strftime('%H:%M')}Z)")
                 continue

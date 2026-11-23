@@ -52,6 +52,28 @@ def test_edge_result_gets_unpriced_rows_and_daily_ids(tmp_path, monkeypatch):
     assert edge["details"][0].get("price_source") is None
 
 
+def test_kv_string_ids_do_not_get_overwritten_by_daily_rows(tmp_path, monkeypatch):
+    """KV ids are strings; daily ids are ints. A price-less copy must not win."""
+    path = tmp_path / "daily.json"
+    monkeypatch.setattr(mod, "_DAILY_CACHE_PATH", str(path))
+    mod._save_daily_cache(_daily_payload([101, 102]))
+    edge = {
+        "status": "success",
+        "details": [{
+            "eventId": "101",  # from the KV slot: always a string
+            "regionName": "USA",
+            "leagueName": "Zia Park",
+            "result": {
+                "events": [{"eventId": 101}],
+                "prices": [{"outcomeId": 101, "priceDecimal": 4.5}],
+            },
+        }],
+    }
+    BetwayAPI()._augment_edge_with_daily(edge)
+    assert [d["eventId"] for d in edge["details"]] == ["101", 102]
+    assert edge["daily_unpriced"] == 1
+
+
 def test_no_fresh_daily_cache_leaves_edge_result_untouched(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_DAILY_CACHE_PATH", str(tmp_path / "missing.json"))
     edge = {"status": "success", "details": []}
