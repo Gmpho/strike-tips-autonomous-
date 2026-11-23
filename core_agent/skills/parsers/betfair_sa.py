@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -156,6 +157,116 @@ def _betfair_off_utc(event: dict) -> Optional[datetime]:
         return None
 
 
+_HARNESS_RE = re.compile(
+    r"\b(pace|pacer|pacing|trot|trots|trotting|harness)\b", re.IGNORECASE
+)
+
+# Grace after a race's off-time before its market is considered finished.
+CARD_GRACE_SECS = 120
+
+
+def build_card_events(
+    snapshot: Dict[str, Any],
+    now_utc: Optional[datetime] = None,
+    grace_secs: int = CARD_GRACE_SECS,
+    include_harness: bool = False,
+) -> Dict[str, Any]:
+    """Turn parsed Betfair markets into card events — the race spine.
+
+    Betfair's public JSON answers from IPs Betway refuses (2026-11-23: 147
+    live markets parsed while every Betway GetEvent 403'd). The card was still
+    Betway-first, so that data was discarded and the HUD showed 14 carry-over
+    ghosts. This builds real races from the exchange instead: venue, off-time
+    (UTC), race number and runners, with ``expires_at`` from the market start
+    so a finished race closes itself.
+
+    Keys are namespaced ``bf:<marketId>`` so they can never collide with a
+    Betway event id. Prices are left as ``SP`` — Betway's prices are attached
+    separately when a matching race exists.
+    """
+    events = (snapshot or {}).get("events") if isinstance(snapshot, dict) else None
+    if not isinstance(events, dict) or not events:
+        return {}
+
+    if isinstance(now_utc, datetime):
+        now = now_utc.replace(tzinfo=None)
+    else:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    card: Dict[str, Any] = {}
+    skipped_harness = 0
+    skipped_no_time = 0
+    for mid, ev in events.items():
+        if not isinstance(ev, dict):
+            continue
+        race_name = str(ev.get("raceName") or "")
+        if not include_harness and _HARNESS_RE.search(race_name):
+            skipped_harness += 1
+            continue
+        off = _betfair_off_utc(ev)
+        if off is None:
+            skipped_no_time += 1
+            continue
+        if off <= now:
+            continue  # already off — finished races never enter the spine
+        race_number = ev.get("raceNumber")
+        try:
+            race_number = int(race_number)
+        except (TypeError, ValueError):
+            continue
+        course = " ".join(str(ev.get("course") or "").split())
+        if not course:
+            continue
+        runners: List[Dict[str, Any]] = []
+        for idx, r in enumerate(ev.get("runners") or []):
+            if not isinstance(r, dict) or not r.get("name"):
+                continue
+            if r.get("non_runner"):
+                continue  # scratched: never bettable, never priced
+            runner: Dict[str, Any] = {
+                "name": r["name"],
+                "number": idx + 1,
+                "odds": "SP",
+            }
+            for key in (
+                "gear",
+                "daysSinceRun",
+                "form",
+                "official_rating",
+                "trainer",
+                "jockey_claim",
+                "weight",
+                "age",
+            ):
+                if r.get(key) not in (None, ""):
+                    runner[key] = r[key]
+            runners.append(runner)
+        if not runners:
+            continue
+        region = " ".join(str(ev.get("region") or "").split())
+        card[f"bf:{mid}"] = {
+            "en": f"{region}: {course}" if region else course,
+            "course": course,
+            "raceNumber": race_number,
+            "t": off.strftime("%H:%M"),
+            "expires_at": off.replace(tzinfo=timezone.utc).timestamp() + grace_secs,
+            "runners": runners,
+            "isFinished": False,
+            "source": "betfair",
+            "bf_market_id": str(mid),
+            "raceName": race_name or f"R{race_number}",
+        }
+
+    if skipped_harness or skipped_no_time:
+        logger.info(
+            "Betfair spine: %d race(s) kept, %d harness skipped, %d without an off-time",
+            len(card),
+            skipped_harness,
+            skipped_no_time,
+        )
+    return card
+
+
 class BetfairSA:
     """Betfair form-data source: enriched runner fields (gear, days, comments, rating...)."""
 
@@ -226,6 +337,7 @@ class BetfairSA:
                             # Store course/time for later (avoids relying on market payload)
                             market_info[mid] = {
                                 "course": (event.get("name") or grp.get("name") or "Unknown").strip(),
+                                "region": (grp.get("name") or "").strip(),
                                 "t": (market.get("timeLabel") or market.get("time") or "").strip(),
                                 "raceName": (market.get("name") or "").strip(),
                                 # The market's position in the meeting's list is
@@ -268,6 +380,8 @@ class BetfairSA:
                 info = market_info.get(mid, {})
                 if info.get("course") and info["course"] != "Unknown":
                     event["course"] = info["course"]
+                if info.get("region"):
+                    event["region"] = info["region"]
                 if info.get("raceName"):
                     event["raceName"] = info["raceName"]
                     # The market payload's own name is often just the bet type

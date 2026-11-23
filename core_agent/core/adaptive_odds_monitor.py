@@ -715,6 +715,109 @@ def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
     )
 
 
+def _spine_horse_key(name: Any) -> str:
+    return "".join(c for c in str(name or "").lower() if c.isalnum())
+
+
+def _apply_betfair_spine(state: dict, bf_snapshot: dict, now_utc: datetime = None) -> dict:
+    """Union Betfair's live race list into the card without displacing Betway.
+
+    Betway stays the primary source (it may be unblocked at any time, and it is
+    the book we actually price against). Its card is only *incomplete* while
+    GetEvent is refused, so Betfair markets that have no Betway counterpart are
+    added as extra races. A Betway race always wins its slot — matched on
+    (course, race number) and, when numbers differ between the sources, on
+    (course, off-time) — so the same race can never appear twice.
+
+    Races added from Betfair inherit Betway prices for the same meeting/race
+    when Betway did list it under a different id; otherwise runners stay ``SP``
+    and the HUD shows NO PRICES YET.
+    """
+    try:
+        from core_agent.skills.parsers.betfair_sa import build_card_events
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Betfair spine unavailable: %s", exc)
+        return state
+
+    try:
+        spine = build_card_events(bf_snapshot, now_utc=now_utc)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Betfair spine build failed: %s", exc)
+        return state
+    if not spine:
+        return state
+
+    events = state.get("events")
+    if not isinstance(events, dict):
+        events = {}
+        state["events"] = events
+
+    # Index what Betway (or a previous spine) already covers.
+    existing: set = set()
+    # A horse runs once a day, so prices are matched per meeting rather than
+    # per race number — Betway and Betfair sometimes number the same card
+    # differently.
+    odds_by_course: dict = {}
+    for ev in events.values():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course") or str(ev.get("en") or "").split(":")[-1])
+        if not course:
+            continue
+        try:
+            race_number = int(ev.get("raceNumber"))
+        except (TypeError, ValueError):
+            race_number = None
+        if race_number:
+            existing.add((course, race_number))
+        t = _norm_time(str(ev.get("t") or ""))
+        if t:
+            existing.add((course, t))
+        priced = {}
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            o = r.get("odds")
+            if isinstance(o, (int, float)) and o > 1 and r.get("name"):
+                priced[_spine_horse_key(r["name"])] = o
+        if priced:
+            odds_by_course.setdefault(course, {}).update(priced)
+
+    added = 0
+    priced_races = 0
+    for key, ev in spine.items():
+        if key in events:
+            continue
+        course = _norm_course(ev.get("course"))
+        race_number = ev.get("raceNumber")
+        if course and (course, race_number) in existing:
+            continue
+        if course and (course, _norm_time(ev.get("t"))) in existing:
+            continue
+        prices = odds_by_course.get(course) if course else None
+        if prices:
+            hits = 0
+            for r in ev.get("runners") or []:
+                o = prices.get(_spine_horse_key(r.get("name")))
+                if o:
+                    r["odds"] = o
+                    hits += 1
+            if hits:
+                priced_races += 1
+        events[key] = ev
+        added += 1
+
+    if added:
+        state["count"] = len(events)
+        state["spine"] = {"source": "betfair", "races": added, "priced": priced_races}
+        logger.info(
+            "Betfair spine supplied %d race(s) missing from the card (%d with prices)",
+            added,
+            priced_races,
+        )
+    return state
+
+
 def _merge_daily_scan_into(state: dict):
     """Merge today's daily scan value bets, favorites, and outsiders into active events."""
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1890,6 +1993,10 @@ class AdaptiveOddsMonitor:
                 if not e.get("isFinished")
             }
             state["events"] = _close_overdue_races(active)
+            # Betway is primary; its missing races come from Betfair's exchange
+            # list (which answers from IPs Betway refuses). Adding after the
+            # closer keeps Betway's closure decisions authoritative.
+            state = _apply_betfair_spine(state, bf_snapshot)
             if not state["events"]:
                 state = _recover_empty_snapshot(state)
             state["count"] = len(state["events"])
@@ -2022,6 +2129,10 @@ class AdaptiveOddsMonitor:
                 }
                 # Off-time closure — catches races Betway never flags (common for UK/Ireland)
                 state["events"] = _close_overdue_races(active)
+                # Betway is primary; races it could not deliver come from
+                # Betfair's exchange list. Adding after the closer keeps
+                # Betway's closure decisions authoritative.
+                state = _apply_betfair_spine(state, bf_snapshot)
                 if not state["events"]:
                     state = _recover_empty_snapshot(state)
                 state["count"] = len(state["events"])
