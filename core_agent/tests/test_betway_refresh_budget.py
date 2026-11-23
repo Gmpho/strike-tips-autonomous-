@@ -158,7 +158,10 @@ async def test_failed_event_is_retried_next_cycle(monkeypatch, tmp_path):
     # The retry ladder hammers it inside the cycle (that is its job); the point
     # is that the budget did not park it for FAR_REFRESH_SECONDS afterwards.
     assert set(calls) == {1}
-    assert out["status"] == "error"
+    # Since 2026-11-23 a refused GetEvent no longer empties the card: GetDaily
+    # supplies the race unpriced. The budget contract above is unchanged.
+    assert out["status"] == "success"
+    assert all(d.get("price_source") == "daily" for d in out["details"])
 
 
 @pytest.mark.asyncio
@@ -201,9 +204,14 @@ async def test_total_outage_is_not_doubled_by_the_second_pass(monkeypatch, tmp_p
 
     out = await api.fetch_racing_data()
 
-    # 5 ladder attempts x 2 events, with no second pass on top.
-    assert out["status"] == "error"
-    assert len(calls) == BetwayAPI.MAX_ATTEMPTS * 2
+    # A total GetEvent outage used to burn the whole 5-attempt ladder (10 calls)
+    # before reporting failure. GetDaily now supplies the card unpriced, so the
+    # cycle ends after ONE pass: 2 calls, no ladder, no second pass. Same intent
+    # as before — an outage must not multiply requests — now strictly cheaper.
+    assert len(calls) == 2
+    assert out["status"] == "success"
+    assert {d["eventId"] for d in out["details"]} == {1, 2}
+    assert all(d.get("price_source") == "daily" for d in out["details"])
 
 
 def test_state_file_prunes_yesterdays_events(tmp_path, monkeypatch):

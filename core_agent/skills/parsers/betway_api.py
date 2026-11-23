@@ -169,6 +169,54 @@ def _save_refresh_state(state: Dict[str, float], now: float) -> None:
 
 
 
+def _details_from_daily(
+    data: Dict[str, Any],
+    have_ids: set,
+    allowed_regions: List[str],
+) -> List[Dict[str, Any]]:
+    """Build price-less event details straight from GetDaily.
+
+    Chrome DevTools on the live site (2026-11-23) shows Betway still calls the
+    same ``TrackRacing/GetDaily`` + ``GetEvent`` endpoints with the same query
+    strings — the API did not change. What GetDaily *does* carry is
+    ``raceEventDetails.racers`` (157 events / 1,410 runners today): the full
+    field with numbers, jockey, trainer, form and weight.
+
+    Only prices live in GetEvent. So when GetEvent is refused by the WAF we can
+    still publish every live race from one GetDaily call and mark it unpriced,
+    instead of dropping the race and hammering Betway with retries.
+    """
+    out: List[Dict[str, Any]] = []
+    for reg in data.get("regions", []) or []:
+        reg_name = str(reg.get("name") or "")
+        if not any(a in reg_name for a in allowed_regions):
+            continue
+        for event in reg.get("sportEvents", []) or []:
+            if not isinstance(event, dict) or event.get("isFinished"):
+                continue
+            eid = event.get("eventId")
+            if eid is None or eid in have_ids:
+                continue
+            racers = (event.get("raceEventDetails") or {}).get("racers") or []
+            out.append({
+                "eventId": eid,
+                "regionName": reg_name,
+                "leagueName": (event.get("league") or "").strip(),
+                "result": {
+                    "events": [event],
+                    "outcomes": [],
+                    "markets": [],
+                    "prices": [],
+                },
+                "price_source": "daily",
+                # US cards publish their field late: the race is real and
+                # scheduled, it just has no runners yet. Keep the slot so the
+                # HUD shows EVALUATING instead of hiding the race entirely.
+                "field_pending": not racers,
+            })
+    return out
+
+
 class BetwayAPI:
     BASE_URL = "https://www.betway.co.za/sportsapi/v1/TrackRacing"
 
@@ -678,6 +726,19 @@ class BetwayAPI:
                     budget_state["_last_sweep"] = now_epoch
                 _save_refresh_state(budget_state, now_epoch)
 
+                # GetDaily carries the full field (raceEventDetails.racers), so
+                # a race whose GetEvent was refused still belongs on the card —
+                # unpriced, not absent. This is what turns a 403 wave from
+                # "14 races" into "every live race" without extra requests.
+                have_ids = {d.get("eventId") for d in events_details}
+                daily_details = _details_from_daily(data, have_ids, ALLOWED)
+                if daily_details:
+                    events_details.extend(daily_details)
+                    logger.info(
+                        "GetDaily supplied %d unpriced race(s) whose GetEvent was refused",
+                        len(daily_details),
+                    )
+
                 # GetDaily answered with events but every per-event call failed:
                 # a bot-blocked wave, not a dark day. Return an error so the HUD
                 # says the feed is broken instead of showing an empty card.
@@ -690,10 +751,15 @@ class BetwayAPI:
                 # Keep a cross-colo last-good cache in KV. The next cycle may
                 # land in a colo Betway refuses; KV is reachable from every
                 # colo over the REST API, so the card survives that wave.
+                # Price-less GetDaily rows are never parked: the cache exists to
+                # carry *prices* across colos, not to dilute them with SP rows.
                 try:
                     from core_agent.core import cf_kv
 
-                    parked = await cf_kv.put_details(events_details)
+                    parkable = [
+                        d for d in events_details if d.get("price_source") != "daily"
+                    ]
+                    parked = await cf_kv.put_details(parkable) if parkable else 0
                     if parked:
                         logger.info(
                             "Edge KV cache: parked %d race(s) in %d slot(s)",
@@ -706,6 +772,7 @@ class BetwayAPI:
                     "status": "success",
                     "details": events_details,
                     "daily_from_cache": daily_from_cache,
+                    "daily_unpriced": len(daily_details),
                 }
             except Exception as e:
                 last_error = e
@@ -908,7 +975,7 @@ class BetwayAPI:
                             "odds": odds,
                         })
 
-                if not runners:
+                if not runners and det.get("price_source") != "daily":
                     continue
 
                 priced = self._count_priced(runners)
@@ -927,11 +994,18 @@ class BetwayAPI:
                     "raceNumber": race_num,
                     "isFinished": False,
                     "runners": runners,
+                    # "daily" = field came from GetDaily, GetEvent was refused,
+                    # so every runner is SP until a priced fetch lands.
+                    "price_source": det.get("price_source") or "event",
                 }
+                if det.get("field_pending"):
+                    events[str(eid)]["field_pending"] = True
             except Exception as e:
                 logger.error(f"Error parsing event {det.get('eventId', '?')}: {e}")
 
         out = {"events": events, "count": len(events), "fetch_ok": True}
+        if raw.get("daily_unpriced"):
+            out["daily_unpriced"] = raw["daily_unpriced"]
         if raw.get("daily_from_cache"):
             # Prices really were refreshed for the near-off races; the *card
             # list* came from the last good GetDaily, which is worth recording
