@@ -56,6 +56,7 @@ def test_hours_old_betway_time_is_TRUSTED_not_treated_as_placeholder():
     out = _close_overdue_races(
         {"aus": {"en": "Australia: Kilmore", "raceNumber": 9, "t": "06:34"}},
         max_minutes_after_off=5,
+        now_utc=now,
     )
     assert "aus" not in out, "a 7h-past race must not survive as a first_seen ghost"
 

@@ -101,6 +101,78 @@ def _prune_events(events: Dict[str, Any]) -> Dict[str, Any]:
     return kept
 
 
+def _race_identity(event: Dict[str, Any]):
+    """(track, race number) for a race, or ``None`` when it cannot be told.
+
+    Betway reuses tracks across days, and carry-forward/registry merges can
+    leave two event ids for the same ``course`` + ``raceNumber`` (2026-11-23:
+    a stale local image served 101 such pairs, e.g. two Turffontein R8s).
+    """
+    rn = event.get("raceNumber", event.get("race_number"))
+    try:
+        rn = int(rn)
+    except (TypeError, ValueError):
+        return None
+    track = event.get("course") or event.get("courseId") or event.get("track")
+    if not track:
+        name = " ".join(str(event.get("en") or "").split())
+        if ":" in name:
+            track = name.split(":", 1)[0]
+    track = " ".join(str(track or "").strip().lower().split())
+    if not track or rn <= 0:
+        return None
+    return (track, rn)
+
+
+def _race_rank(event: Dict[str, Any], now_ts: float, eid: Any = None):
+    """Ordering used to choose which of two same-identity events is current.
+
+    Prefer the one that still expires in the future (a finished leftover is
+    never the current race), then the one with real prices attached, then the
+    higher event id (Betway ids grow over time), then the longer runner list.
+    """
+    expires = event.get("expires_at")
+    future = 1 if isinstance(expires, (int, float)) and expires > now_ts else 0
+    priced = sum(
+        1
+        for r in (event.get("runners") or [])
+        if isinstance(r, dict)
+        and isinstance(r.get("odds"), (int, float))
+        and r["odds"] > 1
+    )
+    try:
+        ev_id = int(eid or event.get("id") or event.get("eventId") or 0)
+    except (TypeError, ValueError):
+        ev_id = 0
+    return (future, priced, ev_id, len(event.get("runners") or []))
+
+
+def _dedupe_races(events: Dict[str, Any]) -> Dict[str, Any]:
+    """Collapse races that share a track + race number, keeping the live one."""
+    if len(events) < 2:
+        return events
+    now_ts = datetime.now(timezone.utc).timestamp()
+    best: Dict[Any, Any] = {}
+    for eid, event in events.items():
+        ident: Any = None
+        if isinstance(event, dict):
+            ident = _race_identity(event)
+        key: Any = ident if ident is not None else ("id", eid)
+        incumbent = best.get(key)
+        if incumbent is None:
+            best[key] = (eid, event)
+            continue
+        if isinstance(event, dict) and _race_rank(event, now_ts, eid) > _race_rank(
+            incumbent[1], now_ts, incumbent[0]
+        ):
+            best[key] = (eid, event)
+    dropped = len(events) - len(best)
+    if not dropped:
+        return events
+    logger.info("Dropped %d duplicate race(s) sharing a track + race number", dropped)
+    return {eid: event for eid, event in best.values()}
+
+
 def sanitize_snapshot(state: Dict[str, Any], *, source: str = "unknown") -> Dict[str, Any]:
     """Return a copy of ``state`` with only current races and fresh metadata.
 
@@ -121,7 +193,7 @@ def sanitize_snapshot(state: Dict[str, Any], *, source: str = "unknown") -> Dict
         for eid, e in events.items()
         if isinstance(e, dict) and not e.get("isFinished")
     }
-    clean["events"] = _prune_events(active)
+    clean["events"] = _dedupe_races(_prune_events(active))
     clean["count"] = len(clean["events"])
     clean["timestamp"] = datetime.now().isoformat()
     # A producer that already labelled itself (e.g. the monitor stamps
@@ -361,6 +433,17 @@ def write_market_snapshot(
             logger.debug("Race registry merge failed: %s", exc)
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Previous-snapshot merge failed: %s", exc)
+
+    # Carry-forward/registry restores are id-based, so a stale leftover from an
+    # earlier day can land beside today's race at the same track + race number.
+    try:
+        merged = clean.get("events") or {}
+        deduped = _dedupe_races(merged)
+        if len(deduped) != len(merged):
+            clean["events"] = deduped
+            clean["count"] = len(deduped)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Post-merge dedupe skipped: %s", exc)
 
     if source in ("scheduler_scan", "daily_scan"):
         try:

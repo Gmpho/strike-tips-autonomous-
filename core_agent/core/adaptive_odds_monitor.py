@@ -176,7 +176,14 @@ def _resolve_race_off_utc(event: dict, now_utc: datetime) -> Optional[datetime]:
     the card long past its real off-time (Scottsville R1, 2026-11-22).
     """
     bf_raw = event.get("bf_off_time")
-    bf_off = _sast_to_utc(_parse_race_off_time(bf_raw)) if bf_raw else None
+    # Betfair's wall-clock must resolve against the SAME "now" as Betway's,
+    # otherwise the day base silently falls back to the host clock and the
+    # result drifts a whole day on any machine whose date differs.
+    bf_off = (
+        _sast_to_utc(_parse_race_off_time(bf_raw, race_date=now_utc))
+        if bf_raw
+        else None
+    )
 
     bw_raw = event.get("t") or event.get("st")
     # Force the parser's "today" base to UTC so the result does not depend on
@@ -203,7 +210,11 @@ def _resolve_race_off_utc(event: dict, now_utc: datetime) -> Optional[datetime]:
     return bw_off or bf_off
 
 
-def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
+def _close_overdue_races(
+    events: dict,
+    max_minutes_after_off: int = 5,
+    now_utc: datetime = None,
+) -> dict:
     """Remove races whose scheduled off-time has passed by > max_minutes_after_off.
 
     Off-time source preference: the earlier of Betway's UTC ``t``/``st`` and
@@ -225,8 +236,12 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     # Naive UTC throughout: bf_off_time is converted to UTC and Betway's t/st
     # are UTC, so comparing against a local-clock "now" was another source of
     # 2-hour drift when this ran outside the UTC container.
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    now_ts = datetime.now(timezone.utc).timestamp()
+    now = (
+        now_utc.replace(tzinfo=None)
+        if isinstance(now_utc, datetime)
+        else datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    now_ts = now.replace(tzinfo=timezone.utc).timestamp()
     grace_secs = max_minutes_after_off * 60
     filtered = {}
     for eid, e in events.items():
@@ -263,7 +278,7 @@ def _close_overdue_races(events: dict, max_minutes_after_off: int = 5) -> dict:
     for eid, e in filtered.items():
         if e.get("bf_off_time") and not (e.get("t") or e.get("st")):
             # Betfair-injected only — check age via bf_off_time
-            bf_off2 = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time")))
+            bf_off2 = _sast_to_utc(_parse_race_off_time(e.get("bf_off_time"), race_date=now))
             if bf_off2 and (now - bf_off2).total_seconds() > _BF_ONLY_GHOST_SECS:
                 logger.info(
                     "Betfair-only ghost dropped: %s R%s (bf_off_time %s, age %.1fh)",
