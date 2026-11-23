@@ -852,9 +852,12 @@ def _drop_stale_card_entries(state: dict) -> dict:
     spine rows (``bf:`` ids) are validated by their own market list instead.
     """
     try:
-        from core_agent.skills.parsers.betway_api import daily_event_ids
+        ids = state.get("daily_ids")
+        today_ids = {int(i) for i in ids} if ids else set()
+        if not today_ids:
+            from core_agent.skills.parsers.betway_api import daily_event_ids
 
-        today_ids = daily_event_ids()
+            today_ids = daily_event_ids()
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Daily card check skipped: %s", exc)
         return state

@@ -87,6 +87,15 @@ def test_harness_markets_are_filtered_out():
     assert next(iter(card.values()))["course"] == "Vaal"
 
 
+def test_tomorrows_markets_are_not_on_todays_card():
+    # 22:14 UTC = 00:14 SAST the following day — Betfair's TOMORROW bucket.
+    snap = _snapshot(_market(race_name="R8 6f Claim", race_number=8, minutes_ahead=12 * 60))
+    # Force it past SAST midnight by using a late-UTC "now" of 21:00.
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(hour=21, minute=0, second=0, microsecond=0)
+    assert build_card_events(snap, now_utc=now) == {}
+
+
 def test_finished_market_never_enters_the_spine():
     snap = _snapshot(_market(minutes_ahead=-90))
     assert build_card_events(snap) == {}

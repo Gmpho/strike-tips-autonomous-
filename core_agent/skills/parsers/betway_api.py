@@ -18,6 +18,22 @@ logger = logging.getLogger("betway-api")
 # rather than guessed (see the Gulf comment in fetch_racing_data).
 _REGION_LABELS_LOGGED = False
 
+# Regions we actually publish. Shared by the direct-fetch path and the KV
+# augmentation path so both build the same card.
+_ALLOWED_REGIONS = [
+    "South Africa",
+    "UK and Ireland",
+    "Australia",
+    "New Zealand",
+    "USA",
+    "Hong Kong",
+    "Japan",
+    "France",
+    "United Arab Emirates",
+    "UAE",
+    "Bahrain",
+]
+
 # Per-event refresh bookkeeping (Nov-21). Betway's Cloudflare scoring tightens
 # as request volume rises, and a 92-race international card re-fetched every
 # five minutes is ~1,100 GetEvent calls/hour from one datacenter IP — for races
@@ -590,6 +606,38 @@ class BetwayAPI:
 
         return None
 
+    def _augment_edge_with_daily(self, edge: Dict[str, Any]) -> None:
+        """Add today's unpriced GetDaily races to an edge-KV result.
+
+        The KV bridge returns only races whose GetEvent once answered, so on a
+        blocked morning it carried 45 races while GetDaily listed 64 — the rest
+        were simply absent from the HUD. GetDaily is authoritative for which
+        races exist today, so fold in its price-less rows (same gate as the
+        direct path) and hand the id list to the card's daily gate.
+        """
+        if not isinstance(edge, dict) or not isinstance(edge.get("details"), list):
+            return
+        ids = daily_event_ids()
+        if not ids:
+            return
+        data = _load_daily_cache()
+        if not isinstance(data, dict):
+            return
+        have_ids = {d.get("eventId") for d in edge["details"]}
+        details = _details_from_daily(data, have_ids, _ALLOWED_REGIONS)
+        if details:
+            edge["details"] = edge["details"] + details
+            edge["daily_unpriced"] = len(details)
+            edge["daily_ids"] = sorted(ids)
+            logger.info(
+                "Edge KV + GetDaily: %d cached races, %d unpriced additions",
+                len(have_ids), len(details),
+            )
+        else:
+            # Still pass the id list so today's gate can prune yesterday's rows.
+            edge.setdefault("daily_ids", sorted(ids))
+
+
     async def fetch_racing_data(self) -> Dict[str, Any]:
         """Fetch raw racing data from Betway's TrackRacing (TAB) API.
 
@@ -609,6 +657,10 @@ class BetwayAPI:
         # Cloudflare-side fetch first: it is the only egress Betway accepts.
         edge = await self.fetch_from_edge_kv()
         if edge is not None:
+            # The KV cache holds priced races only. Still fold in today's
+            # GetDaily field so races whose GetEvent never landed are present
+            # (price-less) rather than silently missing from the card.
+            self._augment_edge_with_daily(edge)
             return edge
 
         started = time.monotonic()
@@ -630,28 +682,18 @@ class BetwayAPI:
                     raise RuntimeError("Betway GetDaily returned no data (direct + proxy both failed)")
                 if not daily_from_cache:
                     _save_daily_cache(data)
+                # Ids from the payload actually fetched THIS cycle. Passing
+                # these to the card's daily gate avoids pruning against a
+                # hours-old cache that predates the evening cards.
+                fresh_daily_ids = sorted({
+                    int(e["eventId"])
+                    for reg in data.get("regions", []) or []
+                    for e in (reg.get("sportEvents") or [])
+                    if isinstance(e, dict) and e.get("eventId") is not None
+                }) if not daily_from_cache else []
 
                 event_ids = []
-                ALLOWED = [
-                    "South Africa",
-                    "UK and Ireland",
-                    "Australia",
-                    "New Zealand",
-                    "USA",
-                    "Hong Kong",
-                    "Japan",
-                    "France",
-                    # Gulf (Nov-2026): the UAE season runs Oct-Apr (Abu Dhabi
-                    # from 22 Oct, Meydan's Carnival from 6 Nov) and Bahrain
-                    # races through the winter. Without these the region filter
-                    # dropped both before an event id was ever fetched, so the
-                    # Gulf could never reach the snapshot however the course
-                    # map looked. Names are substring-matched and only the
-                    # venues we can settle are listed.
-                    "United Arab Emirates",
-                    "UAE",
-                    "Bahrain",
-                ]
+                ALLOWED = _ALLOWED_REGIONS
 
                 # Learn Betway's real region labels from production instead of
                 # guessing: the probe path is 403'd (per-IP fingerprint) but
@@ -818,6 +860,7 @@ class BetwayAPI:
                     "details": events_details,
                     "daily_from_cache": daily_from_cache,
                     "daily_unpriced": len(daily_details),
+                    "daily_ids": fresh_daily_ids,
                 }
             except Exception as e:
                 last_error = e
@@ -1051,6 +1094,8 @@ class BetwayAPI:
         out = {"events": events, "count": len(events), "fetch_ok": True}
         if raw.get("daily_unpriced"):
             out["daily_unpriced"] = raw["daily_unpriced"]
+        if raw.get("daily_ids"):
+            out["daily_ids"] = raw["daily_ids"]
         if raw.get("daily_from_cache"):
             # Prices really were refreshed for the near-off races; the *card
             # list* came from the last good GetDaily, which is worth recording

@@ -192,6 +192,10 @@ def build_card_events(
         now = now_utc.replace(tzinfo=None)
     else:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Betfair's parser also loads TOMORROW. A market that starts after SAST
+    # midnight belongs to the next day's card, not today's — showing it now is
+    # what put Zia Park R8–R10 ("22:14 UTC") on Monday's HUD.
+    sast_today = (now + timedelta(hours=2)).date()
 
     card: Dict[str, Any] = {}
     skipped_harness = 0
@@ -209,6 +213,8 @@ def build_card_events(
             continue
         if off <= now:
             continue  # already off — finished races never enter the spine
+        if (off + timedelta(hours=2)).date() != sast_today:
+            continue  # tomorrow's market (Betfair loads TODAY + TOMORROW)
         race_number = ev.get("raceNumber")
         try:
             race_number = int(race_number)
