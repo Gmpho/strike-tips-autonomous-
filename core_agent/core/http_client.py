@@ -64,7 +64,10 @@ def _build_session(async_mode: bool, timeout: float = REQUEST_TIMEOUT, **kwargs)
     no_proxy = kwargs.pop("no_proxy", False)
     proxy = None if no_proxy else pm.get_proxy()
     proxies = {"https": proxy, "http": proxy} if proxy else None
-    impersonate = pm.get_impersonate()
+    # A caller may pin one profile for a whole source. Rotating per request is
+    # right for one-off scrapes, but a burst of ~80 calls from a single IP
+    # carrying 80 different TLS fingerprints is itself a bot signature.
+    impersonate = kwargs.pop("impersonate", None) or pm.get_impersonate()
 
     # Merge any existing curl_options with pre-resolved hostnames
     existing_opts = kwargs.pop("curl_options", {}) or {}

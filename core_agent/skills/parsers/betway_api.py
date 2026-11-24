@@ -321,6 +321,21 @@ class BetwayAPI:
     DIRECT_FAILURE_THRESHOLD = 2
     DIRECT_PROBE_EVERY_CYCLES = 12
 
+    # One browser for the whole cycle (Nov-24). _http_get used to build a fresh
+    # client per call and get_impersonate() picked randomly, so a single cycle
+    # fired ~83 GetEvent requests carrying up to 83 different TLS fingerprints
+    # from one IP in ten seconds. No browser does that; the rotation was a bot
+    # signature in its own right, independent of which profile is "best".
+    IMPERSONATE = "chrome131"
+
+    # The User-Agent that IMPERSONATE sends. The Worker-proxy path used to
+    # advertise a Windows Chrome while the direct path advertised a macOS one,
+    # so the same source looked like two different machines.
+    BROWSER_UA = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+
     def __init__(self) -> None:
         saved = _load_egress_state()
         self._direct_blocked = bool(saved["blocked"])
@@ -330,6 +345,35 @@ class BetwayAPI:
         # Edge-block diagnostics: one accurate line per cycle, not one per call.
         self._edge_blocked_calls = 0
         self._edge_block_logged = False
+        # Reused for every direct call in a cycle, then dropped by start_cycle.
+        self._cycle_client = None
+
+    def _client(self):
+        """One pinned-fingerprint client per cycle, reused across calls.
+
+        Reuse keeps a single TLS session and connection pool, which is both
+        cheaper and less anomalous than a new handshake per event.
+        """
+        if self._cycle_client is None:
+            self._cycle_client = get_async_client(
+                timeout=90.0,
+                no_proxy=True,
+                impersonate=self.IMPERSONATE,
+                resolve_hosts={"www.betway.co.za"},
+            )
+        return self._cycle_client
+
+    def _drop_cycle_client(self) -> None:
+        """Release last cycle's client without blocking a sync caller."""
+        client, self._cycle_client = self._cycle_client, None
+        if client is None:
+            return
+        try:
+            import asyncio
+
+            asyncio.get_running_loop().create_task(client.close())
+        except Exception:  # pragma: no cover - no loop / already closed
+            pass
 
     def _persist_egress(self) -> None:
         _save_egress_state({
@@ -353,7 +397,7 @@ class BetwayAPI:
         self._direct_failures = int(saved["failures"])
         self._edge_blocked_calls = 0
         self._edge_block_logged = False
-
+        self._drop_cycle_client()
         if not self._direct_blocked:
             self._probe_direct_this_cycle = True
         elif self._cycles_since_probe >= self.DIRECT_PROBE_EVERY_CYCLES:
@@ -559,8 +603,7 @@ class BetwayAPI:
         # Skipped entirely for GetEvent once this egress is known to be blocked.
         if self._should_try_direct(path):
             try:
-                client = get_async_client(timeout=90.0, no_proxy=True,
-                                         resolve_hosts={"www.betway.co.za"})
+                client = self._client()
                 url = f"{self.BASE_URL}/{path}?{qs}"
                 resp = await client.get(url, headers=headers)
                 status = getattr(resp, "status_code", None)
@@ -588,7 +631,7 @@ class BetwayAPI:
                 import httpx
                 worker_headers = {
                     "x-api-key": key,
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "User-Agent": self.BROWSER_UA,
                 }
                 async with httpx.AsyncClient(timeout=90.0) as client:
                     resp = await client.get(
@@ -687,11 +730,6 @@ class BetwayAPI:
         last_error: Optional[BaseException] = None
         for attempt in range(self.MAX_ATTEMPTS):
             try:
-                client = get_async_client(
-                    timeout=90.0,
-                    no_proxy=True,
-                    resolve_hosts={"www.betway.co.za"},
-                )
                 daily_qs = "sportId=horse-racing&period=Today&isVirtual=false&countryCode=ZA&timeZoneOffset=2"
                 data = await self._http_get("GetDaily", daily_qs, bw_headers)
                 daily_from_cache = False
@@ -789,6 +827,9 @@ class BetwayAPI:
                 # Throttle to max 4 concurrent requests with gentle jitter to avoid
                 # tripping Betway's Cloudflare rate limiter
                 sem = asyncio.Semaphore(4)
+                # One pinned-fingerprint client for the whole burst: the same
+                # browser for every event, not 80 different ones.
+                client = self._client()
                 tasks = [
                     self._fetch_event_safe(client, eid, reg_name, league, sem)
                     for eid, reg_name, league, _ in to_fetch
