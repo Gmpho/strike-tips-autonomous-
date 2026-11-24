@@ -64,6 +64,15 @@ except ImportError:
     class BetfairSA:
         async def get_form_format(self) -> dict:
             return {"events": {}, "count": 0}
+try:
+    from core_agent.skills.parsers.soccershop_api import SoccerShopAPI
+    _HAS_SOCCERSHOP = True
+except ImportError:
+    _HAS_SOCCERSHOP = False
+
+    class SoccerShopAPI:
+        async def get_snapshot_format(self, country_code: str = "ZA", target_date: str = None) -> dict:
+            return {"events": {}, "count": 0, "fetch_ok": True}
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
 HEALING_EVENTS_PATH = os.path.join("data", "healing_events.json")
@@ -562,6 +571,64 @@ def _sast_wall(time_hhmm: str) -> str:
         return f"{(h + 2) % 24:02d}:{m:02d}"
     except (ValueError, TypeError, IndexError):
         return ""
+
+
+def _merge_soccershop_into(state: dict, ss_snapshot: dict) -> None:
+    """Hydrate unpriced runners ('SP', 0, or missing) in state with SoccerShop/Ambernet prices.
+
+    Matches by normalized course and runner name. Never overwrites an existing
+    valid price (> 1.0) from Betway.
+    """
+    if not isinstance(state, dict) or not isinstance(ss_snapshot, dict):
+        return
+    ss_events = ss_snapshot.get("events")
+    if not isinstance(ss_events, dict) or not ss_events:
+        return
+
+    odds_by_course: dict = {}
+    for ev in ss_events.values():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course"))
+        if not course:
+            continue
+        priced = {}
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            o = r.get("odds")
+            if isinstance(o, (int, float)) and o > 1.0 and r.get("name"):
+                priced[_spine_horse_key(r["name"])] = o
+        if priced:
+            odds_by_course.setdefault(course, {}).update(priced)
+
+    if not odds_by_course:
+        return
+
+    hydrated = 0
+    for ev in (state.get("events") or {}).values():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course") or str(ev.get("en") or "").split(":")[-1])
+        if not course:
+            continue
+        course_odds = odds_by_course.get(course)
+        if not course_odds:
+            continue
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            curr_odds = r.get("odds")
+            if curr_odds in (None, "", "SP", 0, "0"):
+                hkey = _spine_horse_key(r.get("name") or r.get("outcomeName"))
+                ss_price = course_odds.get(hkey)
+                if ss_price:
+                    r["odds"] = ss_price
+                    r["price_source"] = "soccershop"
+                    hydrated += 1
+
+    if hydrated:
+        logger.info("SoccerShop fallback hydrated %d unpriced runner(s)", hydrated)
 
 
 def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
@@ -1549,6 +1616,7 @@ class AdaptiveOddsMonitor:
         self.betway = BetwayAPI()
         self.racing_odds = RacingOddsAPI()
         self.betfair = BetfairSA()
+        self.soccershop = SoccerShopAPI()
         self.at_races = AtTheRacesAPI()
         # Last-good cache path for Betfair form data (used when a cycle fails
         # so the snapshot still carries gear/days from the most recent good fetch).
@@ -2076,16 +2144,19 @@ class AdaptiveOddsMonitor:
             bw_task = asyncio.create_task(self.betway.get_snapshot_format())
             ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
             bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
+            ss_task = asyncio.create_task(self.soccershop.get_snapshot_format(target_date=today_str))
             sources = await _collect_sources(
-                {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task},
+                {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task, "soccershop": ss_task},
                 timeout=SOURCE_PHASE_TIMEOUT_SECS,
             )
             betway_state = sources["betway"]
             state = betway_state if isinstance(betway_state, dict) else {"events": {}, "count": 0}
             ro_snapshot = sources["racing_odds"] or {"events": {}, "count": 0}
             bf_snapshot = sources["betfair"] or {"events": {}, "count": 0}
+            ss_snapshot = sources.get("soccershop") or {"events": {}, "count": 0}
             _merge_ro_into(state, ro_snapshot)
             _merge_bf_into(state, bf_snapshot)
+            _merge_soccershop_into(state, ss_snapshot)
             active = {
                 eid: {**e, "en": " ".join(e.get("en", "").split())}
                 for eid, e in state.get("events", {}).items()
@@ -2206,8 +2277,9 @@ class AdaptiveOddsMonitor:
                 bw_task = asyncio.create_task(self.betway.get_snapshot_format())
                 ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
                 bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
+                ss_task = asyncio.create_task(self.soccershop.get_snapshot_format(target_date=today_str))
                 sources = await _collect_sources(
-                    {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task},
+                    {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task, "soccershop": ss_task},
                     timeout=SOURCE_PHASE_TIMEOUT_SECS,
                 )
                 betway_state = sources["betway"]
@@ -2220,12 +2292,19 @@ class AdaptiveOddsMonitor:
                 if bf_snapshot is None:
                     bf_snapshot = {"events": {}, "count": 0}
                     logger.debug("Betfair SA form fetch failed, skipping merge")
+                ss_snapshot = sources.get("soccershop")
+                if ss_snapshot is None:
+                    ss_snapshot = {"events": {}, "count": 0}
+                    logger.debug("SoccerShop snapshot failed, skipping merge")
 
                 # 1b. Merge Racing-Odds data into Betway events where race/horse match
                 _merge_ro_into(state, ro_snapshot)
 
                 # 1c. Merge Betfair SA form (gear + days since last run) -- additive only
                 _merge_bf_into(state, bf_snapshot)
+
+                # 1d. Hydrate unpriced runners with SoccerShop prices
+                _merge_soccershop_into(state, ss_snapshot)
 
                 # 2. Persistence & Pruning
                 # Remove Betway-finished races and normalize names
