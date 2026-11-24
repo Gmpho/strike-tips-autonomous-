@@ -92,3 +92,86 @@ def test_new_cycle_starts_a_fresh_client(monkeypatch, tmp_path):
     assert api._cycle_client is None
     api._client()
     assert len(built) == 2
+
+
+class _Jar:
+    """Minimal stand-in for curl_cffi's RequestsCookieJar."""
+
+    def __init__(self, items=None):
+        self.items = dict(items or {})
+        self.clear_calls = 0
+
+    def clear(self):
+        self.items.clear()
+        self.clear_calls += 1
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status_code = status
+        self.text = ""
+        self.content = b"{}"
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return {}
+
+
+class _CookieClient:
+    """Shared cycle client that hands back a scripted status per call."""
+
+    def __init__(self, statuses):
+        self.cookies = _Jar({"__cf_bm": "token"})
+        self._statuses = list(statuses)
+        self.urls = []
+
+    async def get(self, url, headers=None):
+        self.urls.append(url)
+        status = self._statuses.pop(0) if self._statuses else 200
+        return _Resp(status)
+
+
+def test_a_refused_call_empties_the_shared_cookie_jar(monkeypatch, tmp_path):
+    """A marked __cf_bm must not ride along for the rest of the cycle."""
+    import asyncio
+
+    monkeypatch.setattr(bw, "_EGRESS_STATE_PATH", str(tmp_path / "egress.json"))
+    api = bw.BetwayAPI()
+    client = _CookieClient([403])
+    api._cycle_client = client
+    monkeypatch.setattr(api, "_should_try_direct", lambda path: True)
+    monkeypatch.setattr(api, "_worker_config", lambda: (None, None))
+    monkeypatch.setattr(api, "_note_direct_result", lambda path, ok: None)
+
+    assert client.cookies.items == {"__cf_bm": "token"}
+    asyncio.run(api._http_get("GetEvent", "eventId=1", {}))
+
+    assert client.cookies.items == {}
+    assert client.cookies.clear_calls == 1
+
+
+def test_a_successful_call_keeps_the_cookie_jar(monkeypatch, tmp_path):
+    """Only refusals clear it — a 200's __cf_bm is the healthy token."""
+    import asyncio
+
+    monkeypatch.setattr(bw, "_EGRESS_STATE_PATH", str(tmp_path / "egress.json"))
+    api = bw.BetwayAPI()
+    client = _CookieClient([200])
+    api._cycle_client = client
+    monkeypatch.setattr(api, "_should_try_direct", lambda path: True)
+    monkeypatch.setattr(api, "_note_direct_result", lambda path, ok: None)
+
+    asyncio.run(api._http_get("GetDaily", "period=Today", {}))
+
+    assert client.cookies.items == {"__cf_bm": "token"}
+    assert client.cookies.clear_calls == 0
+
+
+def test_clearing_cookies_never_touches_a_client_from_another_cycle(monkeypatch, tmp_path):
+    monkeypatch.setattr(bw, "_EGRESS_STATE_PATH", str(tmp_path / "egress.json"))
+    api = bw.BetwayAPI()
+    api._clear_cycle_cookies()  # no client yet — must be a no-op
+    assert api._cycle_client is None

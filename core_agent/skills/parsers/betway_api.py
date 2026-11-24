@@ -363,6 +363,24 @@ class BetwayAPI:
             )
         return self._cycle_client
 
+    def _clear_cycle_cookies(self) -> None:
+        """Empty the cookie jar after a refused call, keeping the connection.
+
+        Cloudflare hands out a ``__cf_bm`` token on every 200 and scores it per
+        session. A 403 can arrive with that token marked, and re-sending it
+        would carry the mark for every later call in the cycle. Before 9fe97cf
+        each call built its own client, so no jar ever survived a request and
+        the question could not arise; now one cycle shares a jar, so the jar has
+        to be emptied when a call is refused.
+        """
+        client = self._cycle_client
+        if client is None:
+            return
+        try:
+            client.cookies.clear()
+        except Exception:  # pragma: no cover - fall back to a new session
+            self._drop_cycle_client()
+
     def _drop_cycle_client(self) -> None:
         """Release last cycle's client without blocking a sync caller."""
         client, self._cycle_client = self._cycle_client, None
@@ -619,9 +637,11 @@ class BetwayAPI:
                         logger.debug("Betway direct parse failed on %s: %s", path, e)
                 else:
                     self._note_direct_result(path, False)
+                    self._clear_cycle_cookies()
                     logger.debug("Betway direct fetch HTTP %s on %s — attempting Worker proxy", status, path)
             except Exception as e:
                 self._note_direct_result(path, False)
+                self._clear_cycle_cookies()
                 logger.debug("Betway direct fetch failed on %s: %s — attempting Worker proxy", path, e)
 
         # 2. Worker proxy fallback (Cloudflare edge IPs bypass datacenter IP blocks)
