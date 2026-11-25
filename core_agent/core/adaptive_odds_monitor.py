@@ -166,23 +166,79 @@ FALLBACK_MAX_STALE_SECS = 3 * 3600
 _FALLBACK_CACHE: Dict[str, Any] = {}
 
 
+def _fallback_disk_path(name: str) -> str:
+    """Durable cache: Modal starts a fresh container each cron run, so an
+    in-memory cache alone resets every cycle and the card alternates."""
+    return os.path.join(str(DATA_DIR), f"fallback_{name}_latest.json")
+
+
+def _load_fallback_disk(name: str):
+    try:
+        with open(_fallback_disk_path(name)) as f:
+            data = json.load(f)
+        ts = float(data.get("ts") or 0)
+        snap = data.get("snapshot")
+        if isinstance(snap, dict) and snap.get("events"):
+            return ts, snap
+    except Exception:
+        pass
+    return None, None
+
+
+def _save_fallback_disk(name: str, snap: dict, ts: float) -> None:
+    try:
+        _atomic_write_json(
+            _fallback_disk_path(name),
+            {"ts": ts, "snapshot": snap},
+        )
+    except Exception as exc:  # noqa: BLE001 - cache write is best effort
+        logger.debug("Could not persist %s fallback cache: %s", name, exc)
+
+
+def _fallback_has_prices(snap) -> bool:
+    """A throttled cycle can return meetings whose runners are all SP."""
+    if not isinstance(snap, dict):
+        return False
+    return any(
+        isinstance(r.get("odds"), (int, float)) and r["odds"] > 1.0
+        for e in (snap.get("events") or {}).values()
+        if isinstance(e, dict)
+        for r in (e.get("runners") or [])
+        if isinstance(r, dict)
+    )
+
+
 async def _cached_fallback(name: str, factory) -> dict:
-    """Return a cached fallback snapshot, refreshing at most every TTL.
+    """Return a fallback snapshot, refreshing at most every TTL.
 
-    A failed refresh keeps the previous good snapshot rather than blanking the
-    cache, so one throttled cycle cannot strip prices off the card.
+    The last good table is held in memory *and* on the data volume. Modal runs
+    each cron tick in a fresh container, so without the disk copy a blocked
+    cycle started with an empty cache and stripped every fallback price; the
+    next successful cycle put them back — the alternation seen on the HUD.
+    Stale data is dropped after FALLBACK_MAX_STALE_SECS so it cannot masquerade
+    as live.
     """
-    now = time.monotonic()
+    now = time.time()
     hit = _FALLBACK_CACHE.get(name)
-    age = (now - hit[0]) if hit else float("inf")
+    disk_ts, disk_snap = _load_fallback_disk(name)
 
-    if hit and age < FALLBACK_SNAPSHOT_TTL_SECS:
-        return hit[1]
+    candidates = []
+    if hit:
+        candidates.append(hit)
+    if disk_snap:
+        candidates.append((disk_ts, disk_snap))
+    best = max(candidates, key=lambda x: x[0]) if candidates else None
+    age = (now - best[0]) if best else float("inf")
+
+    if best and age < FALLBACK_SNAPSHOT_TTL_SECS:
+        _FALLBACK_CACHE[name] = best
+        return best[1]
 
     def stale_or_empty():
-        if hit and age < FALLBACK_MAX_STALE_SECS:
-            return hit[1]
-        if hit:
+        if best and age < FALLBACK_MAX_STALE_SECS:
+            _FALLBACK_CACHE[name] = best
+            return best[1]
+        if best:
             logger.warning(
                 "%s fallback data is %.0f min old and now discarded",
                 name, age / 60,
@@ -196,24 +252,14 @@ async def _cached_fallback(name: str, factory) -> dict:
         logger.warning("%s fallback fetch failed: %s", name, exc)
         return stale_or_empty()
 
-    # A throttled cycle can return meetings whose runners are all "SP". That is
-    # NOT a successful refresh: caching it evicted a good price table and made
-    # the card alternate priced / unpriced on every cycle. Only a snapshot
-    # carrying real prices may replace the last good one.
-    has_prices = isinstance(snap, dict) and any(
-        isinstance(r.get("odds"), (int, float)) and r["odds"] > 1.0
-        for e in (snap.get("events") or {}).values()
-        if isinstance(e, dict)
-        for r in (e.get("runners") or [])
-        if isinstance(r, dict)
-    )
-    if has_prices:
+    if _fallback_has_prices(snap):
         _FALLBACK_CACHE[name] = (now, snap)
+        _save_fallback_disk(name, snap, now)
         return snap
+
     if isinstance(snap, dict) and snap.get("events"):
         logger.debug("%s returned events but no prices — keeping last good table", name)
     return stale_or_empty()
-
 
 async def _collect_sources(
     pending: Dict[str, "asyncio.Task"],

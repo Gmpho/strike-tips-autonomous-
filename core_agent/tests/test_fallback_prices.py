@@ -18,6 +18,8 @@ import json
 import time
 from unittest.mock import patch
 
+import pytest
+
 from core_agent.core.adaptive_odds_monitor import (
     _apply_fallback_merges,
     _merge_sportybet_into,
@@ -274,6 +276,19 @@ def test_transport_is_stdlib_urllib_not_curl_cffi():
 
 
 # --- 7. fallback fetch rate limiting --------------------------------------
+@pytest.fixture(autouse=True)
+def _isolate_fallback_cache(tmp_path, monkeypatch):
+    """Never let these tests read or write the real volume cache."""
+    import core_agent.core.adaptive_odds_monitor as mon
+
+    mon._FALLBACK_CACHE.clear()
+    monkeypatch.setattr(
+        mon,
+        "_fallback_disk_path",
+        lambda name: str(tmp_path / f"fallback_{name}_latest.json"),
+    )
+
+
 #
 # The monitor sleeps only 15s while races are live; uncached, SportyBet's 13
 # batched calls would run ~52 times/minute and get us throttled.
@@ -302,7 +317,7 @@ def test_failed_refresh_keeps_the_last_good_snapshot():
 
     mon._FALLBACK_CACHE.clear()
     mon._FALLBACK_CACHE["sportybet"] = (
-        time.monotonic() - 130,  # past TTL but inside the 3h stale cap
+        time.time() - 130,  # past TTL but inside the 3h stale cap
         {
             "events": {"a": {"runners": [{"name": "Horse", "odds": 4.5}]}},
             "count": 1,
@@ -321,7 +336,7 @@ def test_stale_fallback_data_is_discarded_not_published_forever():
 
     mon._FALLBACK_CACHE.clear()
     mon._FALLBACK_CACHE["sportybet"] = (
-        time.monotonic() - mon.FALLBACK_MAX_STALE_SECS - 60,
+        time.time() - mon.FALLBACK_MAX_STALE_SECS - 60,
         {
             "events": {"stale": {"runners": [{"name": "Old", "odds": 3.0}]}},
             "count": 1,
@@ -345,7 +360,7 @@ def test_unpriced_snapshot_does_not_evict_the_last_good_price_table():
         "count": 1,
     }
     mon._FALLBACK_CACHE.clear()
-    mon._FALLBACK_CACHE["sportybet"] = (time.monotonic() - 130, good)
+    mon._FALLBACK_CACHE["sportybet"] = (time.time() - 130, good)
 
     async def half_blocked():
         return {
@@ -355,3 +370,24 @@ def test_unpriced_snapshot_does_not_evict_the_last_good_price_table():
 
     result = asyncio.run(mon._cached_fallback("sportybet", half_blocked))
     assert result is good
+
+
+def test_fallback_price_table_survives_a_fresh_modal_container():
+    """Modal runs each cron tick in a new process — memory alone is not enough."""
+    import core_agent.core.adaptive_odds_monitor as mon
+
+    good = {
+        "events": {"a": {"runners": [{"name": "Horse", "odds": 6.5}]}},
+        "count": 1,
+    }
+
+    async def good_fetch():
+        return good
+
+    asyncio.run(mon._cached_fallback("sportybet", good_fetch))
+    mon._FALLBACK_CACHE.clear()  # simulate a fresh container
+
+    async def blocked():
+        raise RuntimeError("HTTP 403")
+
+    assert asyncio.run(mon._cached_fallback("sportybet", blocked)) == good
