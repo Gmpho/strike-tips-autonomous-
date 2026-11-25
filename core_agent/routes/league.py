@@ -162,6 +162,45 @@ def _commit_volume() -> None:
         pass
 
 
+def _resolve_orphan_race_id(pick: Dict[str, Any]) -> Optional[str]:
+    """Repair a pick stored with race_id 'None'.
+
+    /api/league/races used to build its id from ``event["id"]``, which the
+    market snapshot does not carry, so every race got the key "None". Picks
+    submitted while that bug was live all shared one id and appeared on every
+    race on the card. Match the horse back to the live event instead.
+    """
+    try:
+        snap = _load_snapshot()
+    except Exception:
+        return None
+    events = (snap or {}).get("events") or {}
+    if not isinstance(events, dict):
+        return None
+    course = str(pick.get("course") or "").strip().lower()
+    try:
+        number = int(pick.get("race_number") or 0)
+    except (TypeError, ValueError):
+        number = 0
+    horse = str(pick.get("runner_name") or "").strip().lower()
+    for key, ev in events.items():
+        if not isinstance(ev, dict):
+            continue
+        if str(ev.get("course") or "").strip().lower() != course:
+            continue
+        if int(ev.get("raceNumber") or 0) != number:
+            continue
+        names = {
+            str(r.get("name") or "").strip().lower()
+            for r in (ev.get("runners") or [])
+            if isinstance(r, dict)
+        }
+        if horse and horse not in names:
+            continue
+        return str(key)
+    return None
+
+
 def _load_user_picks() -> List[Dict[str, Any]]:
     _sync_volume()
     if not os.path.exists(PICKS_LOG):
@@ -179,6 +218,16 @@ def _load_user_picks() -> List[Dict[str, Any]]:
                     continue
     except Exception:
         pass
+
+    repaired = 0
+    for p in out:
+        if str(p.get("race_id")) in ("None", "", "0"):
+            key = _resolve_orphan_race_id(p)
+            if key:
+                p["race_id"] = key
+                repaired += 1
+    if repaired:
+        logger.info("Repaired %d orphaned pick race_id(s)", repaired)
     return out
 
 
@@ -825,9 +874,14 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
             snap = json.load(f)
     except Exception:
         return {"races": [], "as_of": None}
-    events = snap.get("events", {})
-    if isinstance(events, dict):
-        events = list(events.values())
+    events_raw = snap.get("events", {})
+    # The snapshot dict KEY is the race id used by /api/league/picks and
+    # _race_event(). The event object has no "id" field — reading e["id"]
+    # gave "None" for every race, so one pick appeared on the whole card.
+    if isinstance(events_raw, dict):
+        events = [(str(k), v) for k, v in events_raw.items() if isinstance(v, dict)]
+    else:
+        events = [(str(i), v) for i, v in enumerate(events_raw or []) if isinstance(v, dict)]
     # crowd counts per race from submitted picks
     user_picks = _load_user_picks()
     # One profile read for the whole payload: a player's CURRENT avatar
@@ -857,13 +911,12 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
         })
 
     out = []
-    for e in events or []:
+    for rid, e in events:
         course = e.get("course") or ""
         r = region_of(course)
         if region and r != region:
             continue
         runners = [x for x in (e.get("runners") or []) if not x.get("non_runner")]
-        rid = str(e.get("id"))
         # One resolver for both the display time and the pick lock, so the
         # countdown a punter sees is the instant the lock uses.
         instant = _race_off_instant(e, snap)
