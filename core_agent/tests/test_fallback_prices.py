@@ -15,6 +15,7 @@ news-first ordering.
 
 import asyncio
 import json
+import time
 from unittest.mock import patch
 
 from core_agent.core.adaptive_odds_monitor import (
@@ -284,7 +285,10 @@ def test_fallback_fetch_is_cached_within_ttl():
 
     async def factory():
         calls.append(1)
-        return {"events": {"a": {}}, "count": 1}
+        return {
+            "events": {"a": {"runners": [{"name": "Horse", "odds": 4.5}]}},
+            "count": 1,
+        }
 
     mon._FALLBACK_CACHE.clear()
     asyncio.run(mon._cached_fallback("sportybet", factory))
@@ -298,8 +302,11 @@ def test_failed_refresh_keeps_the_last_good_snapshot():
 
     mon._FALLBACK_CACHE.clear()
     mon._FALLBACK_CACHE["sportybet"] = (
-        -9999,  # force expiry
-        {"events": {"a": {}}, "count": 1},
+        time.monotonic() - 130,  # past TTL but inside the 3h stale cap
+        {
+            "events": {"a": {"runners": [{"name": "Horse", "odds": 4.5}]}},
+            "count": 1,
+        },
     )
 
     async def failing():
@@ -307,3 +314,44 @@ def test_failed_refresh_keeps_the_last_good_snapshot():
 
     result = asyncio.run(mon._cached_fallback("sportybet", failing))
     assert result["count"] == 1
+
+
+def test_stale_fallback_data_is_discarded_not_published_forever():
+    import core_agent.core.adaptive_odds_monitor as mon
+
+    mon._FALLBACK_CACHE.clear()
+    mon._FALLBACK_CACHE["sportybet"] = (
+        time.monotonic() - mon.FALLBACK_MAX_STALE_SECS - 60,
+        {
+            "events": {"stale": {"runners": [{"name": "Old", "odds": 3.0}]}},
+            "count": 1,
+        },
+    )
+
+    async def empty():
+        return {"events": {}, "count": 0}
+
+    result = asyncio.run(mon._cached_fallback("sportybet", empty))
+    assert result["events"] == {}
+
+
+
+def test_unpriced_snapshot_does_not_evict_the_last_good_price_table():
+    """The alternating priced/unpriced card every 5 minutes came from here."""
+    import core_agent.core.adaptive_odds_monitor as mon
+
+    good = {
+        "events": {"a": {"runners": [{"name": "Horse", "odds": 4.5}]}},
+        "count": 1,
+    }
+    mon._FALLBACK_CACHE.clear()
+    mon._FALLBACK_CACHE["sportybet"] = (time.monotonic() - 130, good)
+
+    async def half_blocked():
+        return {
+            "events": {"a": {"runners": [{"name": "Horse", "odds": "SP"}]}},
+            "count": 1,
+        }
+
+    result = asyncio.run(mon._cached_fallback("sportybet", half_blocked))
+    assert result is good

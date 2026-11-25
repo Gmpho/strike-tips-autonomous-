@@ -4,7 +4,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { racingKnowledge, searchKnowledge, getKnowledge, getTrackKnowledge, listKnowledgePaths, listTrackPaths } from "./generated/racing-knowledge";
-import { cronFetchBetway, RAW_CURSOR_KEY, RAW_SLOTS } from "./betway-cron";
+import { cronFetchBetway, cronFetchSportyBet, RAW_CURSOR_KEY, RAW_SLOTS } from "./betway-cron";
 
 export interface Env {
   BACKEND_API_URL: string;
@@ -963,6 +963,14 @@ export default {
       cronFetchBetway(env)
         .then((r) => console.log("betway-cron", JSON.stringify(r)))
         .catch((e) => console.error("betway-cron failed", String(e))),
+    );
+    // SportyBet blocks Modal egress entirely (HTTP 403), so the edge fetches it
+    // on its own and parks prices in KV. Runs at most hourly to protect the
+    // free-tier KV write budget; a failure here must never affect Betway.
+    ctx.waitUntil(
+      cronFetchSportyBet(env)
+        .then((r) => console.log("sportybet-cron", JSON.stringify(r)))
+        .catch((e) => console.error("sportybet-cron failed", String(e))),
     );
   },
 };

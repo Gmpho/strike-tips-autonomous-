@@ -60,6 +60,8 @@ interface DailyEvent {
   eventId: number | string;
   isFinished?: boolean;
   expectedStartEpoch?: number;
+  league?: string;
+  leagueName?: string;
 }
 
 interface RaceRef {
@@ -261,4 +263,151 @@ export async function cronFetchBetway(env: CronEnv): Promise<CronResult> {
     slots,
     next,
   };
+}
+
+// ── SportyBet fallback prices ─────────────────────────────────────────────
+//
+// SportyBet's Apollo gateway accepts Cloudflare edge egress but returns 403
+// "Request blocked: ... violating security rules" from Modal's Azure range
+// (verified 2026-11-25 with the same payload that returns 23 meetings from a
+// residential IP). Modal also gets error 1010 from *.workers.dev, so there is
+// no request/response bridge: this cron fetches on its own and parks a compact
+// price table in KV, which Modal reads over api.cloudflare.com (reachable).
+//
+// KV budget: the Betway cron already writes ~960 values/day on the free tier's
+// 1,000/day allowance. This writes at most once an hour with a 2h TTL.
+
+export const SPORTYBET_PRICES_KEY = "sportybet:prices:v1";
+const SPORTYBET_URL = "https://racing.sporty.bmapollo.com/query";
+const SPORTYBET_HEADERS: Record<string, string> = {
+  "content-type": "application/json",
+  accept: "application/graphql-response+json, application/json",
+  "x-api-key": "5kl1sj4d97mj623p1f04djhi1r",
+  origin: "https://www.sportybet.co.za",
+  referer: "https://www.sportybet.co.za/",
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+};
+const SPORTYBET_MIN_REFRESH_MS = 55 * 60_000;
+const SPORTYBET_PRICES_TTL_SECS = 2 * 3600;
+const SPORTYBET_CHUNK_SIZE = 15; // larger batches get "not authorized"
+
+const MEETINGS_QUERY = `
+  query m($s:Date!,$e:Date!) {
+    meetingsBetween(startDate:$s,endDate:$e) {
+      id track { name country } races { id number }
+    }
+  }
+`;
+const RACE_CARD_QUERY = `
+  query raceCard($race_ids:[ID!]!) {
+    meetingRaces(race_ids:$race_ids) {
+      name track { name country }
+      races {
+        id number status start_at
+        runners {
+          id tab_no name status
+          prices { bet_type price product { is_fixed } }
+        }
+      }
+    }
+  }
+`;
+
+interface SBResult {
+  ok: boolean;
+  skipped?: boolean;
+  events?: number;
+  priced?: number;
+  error?: string;
+}
+
+async function sbQuery(query: string, variables: Record<string, unknown>, op: string): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(SPORTYBET_URL, {
+      method: "POST",
+      headers: SPORTYBET_HEADERS,
+      body: JSON.stringify({ query, variables, operationName: op }),
+      signal: controller.signal,
+    });
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+    const data: any = await res.json();
+    if (data?.errors?.length) throw new Error(String(data.errors[0]?.message || "GraphQL error"));
+    return data?.data || {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Fetch SportyBet prices from Cloudflare egress and park them in KV. */
+export async function cronFetchSportyBet(env: CronEnv): Promise<SBResult> {
+  try {
+    const prev: any = await env.ODDS_KV.get(SPORTYBET_PRICES_KEY, "json");
+    const last = Number(prev?.ts ? Date.parse(String(prev.ts)) : 0);
+    if (last && Date.now() - last < SPORTYBET_MIN_REFRESH_MS) {
+      return { ok: true, skipped: true };
+    }
+
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    const s = `${day}T00:00:00Z`;
+    const e = `${day}T23:59:59Z`;
+    const meetings: any[] = (await sbQuery(MEETINGS_QUERY, { s, e }, "m")).meetingsBetween || [];
+    if (!meetings.length) return { ok: false, error: "no meetings" };
+
+    const ids: string[] = [];
+    for (const m of meetings) {
+      for (const r of m?.races || []) if (r?.id) ids.push(String(r.id));
+    }
+    if (!ids.length) return { ok: false, error: "no race ids" };
+
+    const events: Record<string, unknown> = {};
+    let priced = 0;
+    for (let i = 0; i < ids.length; i += SPORTYBET_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + SPORTYBET_CHUNK_SIZE);
+      let data: any;
+      try {
+        data = await sbQuery(RACE_CARD_QUERY, { race_ids: chunk }, "raceCard");
+      } catch {
+        continue; // one throttled batch must not wipe the whole table
+      }
+      for (const meeting of data?.meetingRaces || []) {
+        const country = String(meeting?.track?.country || "South Africa");
+        const course = String(meeting?.track?.name || meeting?.name || "Unknown");
+        for (const race of meeting?.races || []) {
+          if (!race?.id) continue;
+          const runners: Record<string, unknown>[] = [];
+          for (const runner of race?.runners || []) {
+            if (runner?.status === "SCRATCHED" || runner?.status === "WITHDRAWN") continue;
+            const win = (runner?.prices || []).find(
+              (p: any) => p?.product?.is_fixed && String(p?.bet_type || "").toLowerCase().includes("win"),
+            );
+            const odds = Number(win?.price || 0);
+            if (odds > 1.0) priced++;
+            runners.push({ name: String(runner?.name || ""), odds: odds > 1.0 ? odds : "SP" });
+          }
+          events[`sportybet_${race.id}`] = {
+            course,
+            en: `${country}: ${course}`,
+            raceNumber: Number(race.number || 0),
+            source: "sportybet",
+            runners,
+          };
+        }
+      }
+    }
+
+    if (!Object.keys(events).length) return { ok: false, error: "no racecards" };
+
+    await env.ODDS_KV.put(
+      SPORTYBET_PRICES_KEY,
+      JSON.stringify({ ts: new Date().toISOString(), events, priced }),
+      { expirationTtl: SPORTYBET_PRICES_TTL_SECS },
+    );
+    return { ok: true, events: Object.keys(events).length, priced };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }

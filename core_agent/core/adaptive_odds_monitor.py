@@ -86,6 +86,10 @@ except ImportError:
         async def get_snapshot_format(self, country_code=None, target_date=None) -> dict:
             return {"events": {}, "count": 0, "fetch_ok": True}
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
+try:
+    from core_agent.core import cf_kv as _cf_kv
+except ImportError:  # pragma: no cover - bridge is optional locally
+    _cf_kv = None
 
 HEALING_EVENTS_PATH = os.path.join("data", "healing_events.json")
 
@@ -151,7 +155,14 @@ SOURCE_PHASE_TIMEOUT_SECS = 480
 # already throttles us with "not authorized to perform this action". These are
 # *fallback* prices, so 2-minute resolution is plenty and keeps us well clear
 # of anything that looks like scraping.
+# The edge cron parks SportyBet prices here; Modal cannot reach the Worker
+# itself (error 1010 from workers.dev) but can reach api.cloudflare.com.
+SPORTYBET_KV_KEY = "sportybet:prices:v1"
 FALLBACK_SNAPSHOT_TTL_SECS = 120
+# A repeated failed refresh must not pin a stale price table to the card
+# forever: after this age the fallback reports "no prices" instead. Matches
+# the existing 3h window used for Betway KV price reuse.
+FALLBACK_MAX_STALE_SECS = 3 * 3600
 _FALLBACK_CACHE: Dict[str, Any] = {}
 
 
@@ -163,19 +174,45 @@ async def _cached_fallback(name: str, factory) -> dict:
     """
     now = time.monotonic()
     hit = _FALLBACK_CACHE.get(name)
-    if hit and (now - hit[0]) < FALLBACK_SNAPSHOT_TTL_SECS:
+    age = (now - hit[0]) if hit else float("inf")
+
+    if hit and age < FALLBACK_SNAPSHOT_TTL_SECS:
         return hit[1]
+
+    def stale_or_empty():
+        if hit and age < FALLBACK_MAX_STALE_SECS:
+            return hit[1]
+        if hit:
+            logger.warning(
+                "%s fallback data is %.0f min old and now discarded",
+                name, age / 60,
+            )
+            _FALLBACK_CACHE.pop(name, None)
+        return {"events": {}, "count": 0}
 
     try:
         snap = await factory()
     except Exception as exc:  # noqa: BLE001 - a fallback must never kill a cycle
         logger.warning("%s fallback fetch failed: %s", name, exc)
-        return hit[1] if hit else {"events": {}, "count": 0}
+        return stale_or_empty()
 
-    if isinstance(snap, dict) and snap.get("events"):
+    # A throttled cycle can return meetings whose runners are all "SP". That is
+    # NOT a successful refresh: caching it evicted a good price table and made
+    # the card alternate priced / unpriced on every cycle. Only a snapshot
+    # carrying real prices may replace the last good one.
+    has_prices = isinstance(snap, dict) and any(
+        isinstance(r.get("odds"), (int, float)) and r["odds"] > 1.0
+        for e in (snap.get("events") or {}).values()
+        if isinstance(e, dict)
+        for r in (e.get("runners") or [])
+        if isinstance(r, dict)
+    )
+    if has_prices:
         _FALLBACK_CACHE[name] = (now, snap)
         return snap
-    return hit[1] if hit else (snap if isinstance(snap, dict) else {"events": {}, "count": 0})
+    if isinstance(snap, dict) and snap.get("events"):
+        logger.debug("%s returned events but no prices — keeping last good table", name)
+    return stale_or_empty()
 
 
 async def _collect_sources(
@@ -1755,6 +1792,32 @@ class AdaptiveOddsMonitor:
         self.betfair = BetfairSA()
         self.soccershop = SoccerShopAPI()
         self.sportybet = SportyBetAPI()
+
+    async def _get_sportybet_snapshot(self, target_date: str = None) -> dict:
+        """Read edge-fetched prices from KV on Modal; direct fetch elsewhere.
+
+        SportyBet returns HTTP 403 to Modal's egress but accepts Cloudflare's.
+        The Worker cron fetches and parks a compact table in KV; we read it
+        through the REST API. A local/home run has no KV credentials and keeps
+        the direct path, which works from a residential IP.
+        """
+        if _cf_kv is not None and _cf_kv.configured():
+            try:
+                data = await _cf_kv.kv_get_json(SPORTYBET_KV_KEY)
+            except Exception as exc:  # noqa: BLE001 - never fail a cycle on KV
+                logger.debug("SportyBet KV read failed: %s", exc)
+                data = None
+            if isinstance(data, dict) and data.get("events"):
+                events = data["events"]
+                return {
+                    "events": events,
+                    "count": len(events),
+                    "fetch_ok": True,
+                    "source": "edge-kv",
+                    "fetched_at": data.get("ts"),
+                }
+            logger.debug("SportyBet KV key empty — trying direct fetch")
+        return await self.sportybet.get_snapshot_format(target_date=target_date)
         self.at_races = AtTheRacesAPI()
         # Last-good cache path for Betfair form data (used when a cycle fails
         # so the snapshot still carries gear/days from the most recent good fetch).
@@ -2291,7 +2354,7 @@ class AdaptiveOddsMonitor:
             sb_task = asyncio.create_task(
                 _cached_fallback(
                     "sportybet",
-                    lambda: self.sportybet.get_snapshot_format(target_date=today_str),
+                    lambda: self._get_sportybet_snapshot(today_str),
                 )
             )
             sources = await _collect_sources(
@@ -2448,7 +2511,7 @@ class AdaptiveOddsMonitor:
                 sb_task = asyncio.create_task(
                     _cached_fallback(
                         "sportybet",
-                        lambda: self.sportybet.get_snapshot_format(target_date=today_str),
+                        lambda: self._get_sportybet_snapshot(today_str),
                     )
                 )
                 sources = await _collect_sources(
