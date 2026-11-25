@@ -838,17 +838,19 @@ def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
         # With a race number we match strictly: a course-only fallback could
         # put race 3's prices on race 7. Course-wide is used only when the
         # number is unknown, and the horse name must still agree.
+        card_keys = {
+            _spine_horse_key(r.get("name") or r.get("outcomeName"))
+            for r in (ev.get("runners") or []) if isinstance(r, dict)
+        }
         horse_map = by_race.get((course, num)) if num else by_course.get(course)
+        direct_hits = len(card_keys & set(horse_map or {}))
 
-        if not horse_map:
-            # Books number the same meeting differently (Newcastle card R7 is
-            # SportyBet R8). Find the race with the strongest horse-name
-            # overlap instead. Only prices for names that actually agree are
-            # copied, so a wrong race cannot contaminate the card.
-            card_keys = {
-                _spine_horse_key(r.get("name") or r.get("outcomeName"))
-                for r in (ev.get("runners") or []) if isinstance(r, dict)
-            }
+        # A matching race number is NOT proof of a matching race: Newcastle
+        # card R7 and SportyBet R7 hold entirely different fields. Only accept
+        # the direct match when the horse names agree; otherwise look for the
+        # race with the strongest overlap and copy prices for agreeing names
+        # only, so a wrong race can never contaminate the card.
+        if num and (not horse_map or direct_hits < 3):
             best, best_hits = None, 0
             for (rc, _rn), candidates in by_race.items():
                 if rc != course:

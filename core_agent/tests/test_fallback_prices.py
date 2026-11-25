@@ -619,6 +619,14 @@ def test_race_number_offset_matches_by_horse_names_only():
     }
     sb = {
         "events": {
+            "wrong": {
+                "course": "Newcastle Uk",
+                "raceNumber": 7,
+                "runners": [
+                    {"name": "Unrelated One", "odds": 2.0},
+                    {"name": "Unrelated Two", "odds": 3.0},
+                ],
+            },
             "x": {
                 "course": "Newcastle Uk",
                 "raceNumber": 8,
@@ -654,3 +662,27 @@ def test_course_suffix_normalisation_matches_uk_tracks():
     assert _norm_course("Newcastle Uk") == _norm_course("Newcastle")
     _merge_sportybet_into(state, sb)
     assert [r["odds"] for r in state["events"]["bf:1"]["runners"]] == [4.0, 5.0]
+
+
+
+def test_same_race_number_with_wrong_horses_is_rejected():
+    state = {
+        "events": {
+            "bf:7": {
+                "course": "Newcastle",
+                "raceNumber": 7,
+                "runners": [{"name": "Card Horse", "odds": "SP"}],
+            }
+        }
+    }
+    sb = {
+        "events": {
+            "x": {
+                "course": "Newcastle Uk",
+                "raceNumber": 7,
+                "runners": [{"name": "Different Horse", "odds": 2.0}],
+            }
+        }
+    }
+    _merge_sportybet_into(state, sb)
+    assert state["events"]["bf:7"]["runners"][0]["odds"] == "SP"
