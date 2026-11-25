@@ -32,6 +32,9 @@ logger = logging.getLogger("swarm-researcher")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 NEWS_PATH = os.path.join(DATA_DIR, "news_latest.json")
+
+# A form backfill that never returns must not stop the news loop.
+BACKFILL_TIMEOUT_SECONDS = 180
 SWARM_INSIGHTS_PATH = os.path.join(DATA_DIR, "swarm_insights.json")
 NEWS_IMAGES_DIR = os.path.join(DATA_DIR, "news_images")
 
@@ -723,17 +726,36 @@ def _link_news_to_insights(items: List[Dict], seen_path: Optional[str] = None) -
 
 
 async def run_swarm_loop(interval: int = 600):
-    """Background loop — form backfill + news polling every `interval` seconds."""
+    """Background loop — news polling and form backfill every `interval` seconds.
+
+    News runs *first* and in its own try block. It used to run after the form
+    backfill, so a backfill that hung (or ran long on a big card) starved news
+    indefinitely: news_latest.json sat frozen for 32h while the monitor kept
+    cycling and logged no error at all. Backfill is now bounded and cannot
+    block the news write.
+    """
     logger.info(f"🚦 Swarm researcher started (interval: {interval}s)")
     while True:
+        try:
+            await poll_news()
+        except Exception as e:
+            logger.warning(f"News poll failed: {e}")
+
         try:
             from core_agent.core.snapshot_cache import get_snapshot
             snap = get_snapshot() or {}
             if snap.get("events"):
-                groq_used = await backfill_form_insights(snap)
+                groq_used = await asyncio.wait_for(
+                    backfill_form_insights(snap), timeout=BACKFILL_TIMEOUT_SECONDS
+                )
                 if groq_used:
                     logger.info(f"[SWARM] Form backfill used {groq_used} Groq calls")
-            await poll_news()
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Form backfill exceeded %ss — skipped, news polling unaffected",
+                BACKFILL_TIMEOUT_SECONDS,
+            )
         except Exception as e:
-            logger.warning(f"Swarm cycle failed: {e}")
+            logger.warning(f"Swarm backfill failed: {e}")
+
         await asyncio.sleep(interval)

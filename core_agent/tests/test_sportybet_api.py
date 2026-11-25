@@ -1,5 +1,7 @@
+import json
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core_agent.skills.parsers.sportybet_api import SportyBetAPI, normalize_sportybet_odds
 
@@ -16,16 +18,34 @@ class TestSportyBetOddsNormalization:
         assert normalize_sportybet_odds("4.40") == 4.40
 
 
-@pytest.mark.asyncio
-class TestSportyBetAPIParsing:
-    @pytest.fixture
-    def mock_api(self):
-        mock_session = MagicMock()
-        return SportyBetAPI(session=mock_session)
+def _fake_urlopen(body: dict, status: int = 200):
+    """Stand-in for urllib.request.urlopen returning ``body`` as JSON."""
 
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(body).encode("utf-8")
+
+        @property
+        def status(self):
+            return status
+
+    return lambda request, timeout=None: _Response()
+
+
+@pytest.fixture
+def mock_api():
+    return SportyBetAPI()
+
+
+class TestSportyBetMeetings:
     def test_fetch_meetings_sync(self, mock_api):
-        mock_api._session.post.return_value.status_code = 200
-        mock_api._session.post.return_value.json.return_value = {
+        payload = {
             "data": {
                 "meetingsBetween": [
                     {
@@ -37,10 +57,20 @@ class TestSportyBetAPIParsing:
                 ]
             }
         }
-        meetings = mock_api.fetch_meetings_sync("2026-11-24T00:00:00Z", "2026-11-25T00:00:00Z")
+        with patch(
+            "core_agent.skills.parsers.sportybet_api.urllib.request.urlopen",
+            _fake_urlopen(payload),
+        ):
+            meetings = mock_api.fetch_meetings_sync(
+                "2026-11-24T00:00:00Z", "2026-11-25T00:00:00Z"
+            )
+
         assert len(meetings) == 1
         assert meetings[0]["name"] == "Fairview"
 
+
+@pytest.mark.asyncio
+class TestSportyBetSnapshot:
     async def test_get_snapshot_format(self, mock_api):
         mock_meetings = [
             {
@@ -70,7 +100,11 @@ class TestSportyBetAPIParsing:
                                 "trainer": "D G Smith",
                                 "status": "NORMAL",
                                 "prices": [
-                                    {"bet_type": "WIN", "price": 3.5, "product": {"is_fixed": True}}
+                                    {
+                                        "bet_type": "WIN",
+                                        "price": 3.5,
+                                        "product": {"is_fixed": True},
+                                    }
                                 ],
                             }
                         ],

@@ -160,21 +160,45 @@ class SoccerShopAPI:
 
         return results
 
+    # Pool/bet-type "meetings" ride the same feed as races but are not races:
+    # "Bipot - 1 R6", "Pick 6", "Jackpot". Merging them would mint phantom
+    # races onto the card, so they are dropped at the source.
+    POOL_NAME_MARKERS = (
+        "bipot", "pick 6", "pick6", "jackpot", "place accumulator",
+        "swinger", "exacta", "trifecta", "quartet", "daily double",
+    )
+
+    @classmethod
+    def _is_pool_entry(cls, event: Dict[str, Any]) -> bool:
+        name = str(
+            event.get("meetingCode")
+            or event.get("meetingName")
+            or event.get("name")
+            or ""
+        ).lower()
+        return any(marker in name for marker in cls.POOL_NAME_MARKERS)
+
     async def fetch_racing_data(
         self,
-        country_code: Optional[str] = "ZA",
+        country_code: Optional[str] = None,
         target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Async worker to fetch and filter SoccerShop events and racecards."""
+        """Async worker to fetch and filter SoccerShop events and racecards.
+
+        ``country_code`` defaults to None (all countries): this is a fallback
+        source, so narrowing to ZA discarded 11 of 14 usable events on a day
+        when Betway was blocked.
+        """
         loop = asyncio.get_running_loop()
         events_list = await loop.run_in_executor(None, self.fetch_all_events_sync)
         if not events_list:
             return {"status": "error", "error": "No events returned from SoccerShop", "details": []}
 
-        # Filter by country if specified (default "ZA")
         filtered_events = []
         for ev in events_list:
             if country_code and ev.get("countryCode") != country_code:
+                continue
+            if self._is_pool_entry(ev):
                 continue
 
             # Check target date if specified
@@ -213,7 +237,7 @@ class SoccerShopAPI:
 
     async def get_snapshot_format(
         self,
-        country_code: Optional[str] = "ZA",
+        country_code: Optional[str] = None,
         target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Returns racing data in the flat 'market_snapshot' format."""
@@ -293,7 +317,7 @@ class SoccerShopAPI:
 
     async def get_races(
         self,
-        country_code: Optional[str] = "ZA",
+        country_code: Optional[str] = None,
         target_date: Optional[str] = None,
     ) -> List[ScrapedRace]:
         """Convert snapshot into typed ScrapedRace objects."""

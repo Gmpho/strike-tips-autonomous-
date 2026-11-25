@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -20,8 +21,10 @@ try:
         run_swarm_loop,
     )
     _HAS_SWARM = True
-except ImportError:
+    _SWARM_IMPORT_ERROR = None
+except Exception as _swarm_exc:  # noqa: BLE001 - recorded, never swallowed
     _HAS_SWARM = False
+    _SWARM_IMPORT_ERROR = _swarm_exc
 
     def enrich_snapshot_with_insights(state):  # no-op fallback
         return None
@@ -72,6 +75,15 @@ except ImportError:
 
     class SoccerShopAPI:
         async def get_snapshot_format(self, country_code: str = "ZA", target_date: str = None) -> dict:
+            return {"events": {}, "count": 0, "fetch_ok": True}
+try:
+    from core_agent.skills.parsers.sportybet_api import SportyBetAPI
+    _HAS_SPORTYBET = True
+except ImportError:
+    _HAS_SPORTYBET = False
+
+    class SportyBetAPI:
+        async def get_snapshot_format(self, country_code=None, target_date=None) -> dict:
             return {"events": {}, "count": 0, "fetch_ok": True}
 from core_agent.core.intelligence_cache_manager import IntelligenceCacheManager
 
@@ -132,6 +144,38 @@ MONITOR_STALL_SECS = 15 * 60
 # Must stay below the 900s cron timeout to leave room for the write, the ATR
 # refresh and the alert flush that follow the fetch.
 SOURCE_PHASE_TIMEOUT_SECS = 480
+
+
+# The monitor sleeps only 15s while races are live. Fetching SportyBet every
+# cycle means 13 batched GraphQL calls per 15s (~52/min) against a host that
+# already throttles us with "not authorized to perform this action". These are
+# *fallback* prices, so 2-minute resolution is plenty and keeps us well clear
+# of anything that looks like scraping.
+FALLBACK_SNAPSHOT_TTL_SECS = 120
+_FALLBACK_CACHE: Dict[str, Any] = {}
+
+
+async def _cached_fallback(name: str, factory) -> dict:
+    """Return a cached fallback snapshot, refreshing at most every TTL.
+
+    A failed refresh keeps the previous good snapshot rather than blanking the
+    cache, so one throttled cycle cannot strip prices off the card.
+    """
+    now = time.monotonic()
+    hit = _FALLBACK_CACHE.get(name)
+    if hit and (now - hit[0]) < FALLBACK_SNAPSHOT_TTL_SECS:
+        return hit[1]
+
+    try:
+        snap = await factory()
+    except Exception as exc:  # noqa: BLE001 - a fallback must never kill a cycle
+        logger.warning("%s fallback fetch failed: %s", name, exc)
+        return hit[1] if hit else {"events": {}, "count": 0}
+
+    if isinstance(snap, dict) and snap.get("events"):
+        _FALLBACK_CACHE[name] = (now, snap)
+        return snap
+    return hit[1] if hit else (snap if isinstance(snap, dict) else {"events": {}, "count": 0})
 
 
 async def _collect_sources(
@@ -629,6 +673,99 @@ def _merge_soccershop_into(state: dict, ss_snapshot: dict) -> None:
 
     if hydrated:
         logger.info("SoccerShop fallback hydrated %d unpriced runner(s)", hydrated)
+
+
+def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
+    """Hydrate unpriced runners from SportyBet (BetMakers Apollo).
+
+    Matched on (course, race number) first, because a fallback book can list a
+    meeting Betway never returned and its race numbering is the only stable
+    link. Horse-name matching then fills the runners. Never overwrites a real
+    price.
+    """
+    if not isinstance(state, dict) or not isinstance(sb_snapshot, dict):
+        return
+    sb_events = sb_snapshot.get("events")
+    if not isinstance(sb_events, dict) or not sb_events:
+        return
+
+    by_race: dict = {}
+    by_course: dict = {}
+    for ev in sb_events.values():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course"))
+        if not course:
+            continue
+        try:
+            num = int(ev.get("raceNumber") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        priced = {}
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            o = r.get("odds")
+            if isinstance(o, (int, float)) and o > 1.0 and r.get("name"):
+                priced[_spine_horse_key(r["name"])] = o
+        if not priced:
+            continue
+        if num:
+            by_race.setdefault((course, num), {}).update(priced)
+        by_course.setdefault(course, {}).update(priced)
+
+    if not by_race and not by_course:
+        return
+
+    hydrated = 0
+    for ev in (state.get("events") or {}).values():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course") or str(ev.get("en") or "").split(":")[-1])
+        if not course:
+            continue
+        try:
+            num = int(ev.get("raceNumber") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        # With a race number we match strictly: a course-only fallback could
+        # put race 3's prices on race 7. Course-wide is used only when the
+        # number is unknown, and the horse name must still agree.
+        horse_map = by_race.get((course, num)) if num else by_course.get(course)
+        if not horse_map:
+            continue
+        for r in ev.get("runners") or []:
+            if not isinstance(r, dict):
+                continue
+            if r.get("odds") not in (None, "", "SP", 0, "0"):
+                continue
+            price = horse_map.get(_spine_horse_key(r.get("name") or r.get("outcomeName")))
+            if price:
+                r["odds"] = price
+                r["price_source"] = "sportybet"
+                hydrated += 1
+
+    if hydrated:
+        logger.info("SportyBet fallback hydrated %d unpriced runner(s)", hydrated)
+
+
+def _apply_fallback_merges(
+    state: dict,
+    bf_snapshot: dict,
+    ss_snapshot: dict,
+    sb_snapshot: dict = None,
+) -> None:
+    """Re-run the fallback merges *after* the spine has built the card.
+
+    The merges used to run before ``_apply_betfair_spine``, so on a day Betway
+    is blocked the spine created every race after the merges had finished and
+    nothing was ever hydrated — the card showed 126 races, 0 prices, no form.
+    These merges only fill gaps, so running them again is safe.
+    """
+    _merge_bf_into(state, bf_snapshot)
+    _merge_soccershop_into(state, ss_snapshot)
+    if sb_snapshot:
+        _merge_sportybet_into(state, sb_snapshot)
 
 
 def _merge_bf_into(betway_state: dict, bf_snapshot: dict) -> None:
@@ -1617,6 +1754,7 @@ class AdaptiveOddsMonitor:
         self.racing_odds = RacingOddsAPI()
         self.betfair = BetfairSA()
         self.soccershop = SoccerShopAPI()
+        self.sportybet = SportyBetAPI()
         self.at_races = AtTheRacesAPI()
         # Last-good cache path for Betfair form data (used when a cycle fails
         # so the snapshot still carries gear/days from the most recent good fetch).
@@ -2144,9 +2282,21 @@ class AdaptiveOddsMonitor:
             bw_task = asyncio.create_task(self.betway.get_snapshot_format())
             ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
             bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
-            ss_task = asyncio.create_task(self.soccershop.get_snapshot_format(target_date=today_str))
+            ss_task = asyncio.create_task(
+                _cached_fallback(
+                    "soccershop",
+                    lambda: self.soccershop.get_snapshot_format(target_date=today_str),
+                )
+            )
+            sb_task = asyncio.create_task(
+                _cached_fallback(
+                    "sportybet",
+                    lambda: self.sportybet.get_snapshot_format(target_date=today_str),
+                )
+            )
             sources = await _collect_sources(
-                {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task, "soccershop": ss_task},
+                {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task,
+                 "soccershop": ss_task, "sportybet": sb_task},
                 timeout=SOURCE_PHASE_TIMEOUT_SECS,
             )
             betway_state = sources["betway"]
@@ -2154,6 +2304,7 @@ class AdaptiveOddsMonitor:
             ro_snapshot = sources["racing_odds"] or {"events": {}, "count": 0}
             bf_snapshot = sources["betfair"] or {"events": {}, "count": 0}
             ss_snapshot = sources.get("soccershop") or {"events": {}, "count": 0}
+            sb_snapshot = sources.get("sportybet") or {"events": {}, "count": 0}
             _merge_ro_into(state, ro_snapshot)
             _merge_bf_into(state, bf_snapshot)
             _merge_soccershop_into(state, ss_snapshot)
@@ -2167,6 +2318,9 @@ class AdaptiveOddsMonitor:
             # list (which answers from IPs Betway refuses). Adding after the
             # closer keeps Betway's closure decisions authoritative.
             state = _apply_betfair_spine(state, bf_snapshot)
+            # Re-run the gap-filling merges now the spine has built the card:
+            # otherwise races added by the spine never receive form or prices.
+            _apply_fallback_merges(state, bf_snapshot, ss_snapshot, sb_snapshot)
             if not state["events"]:
                 state = _recover_empty_snapshot(state)
             state["count"] = len(state["events"])
@@ -2263,6 +2417,14 @@ class AdaptiveOddsMonitor:
         # Start swarm researcher — fills missing form insights across all regions + polls news
         if _HAS_SWARM:
             asyncio.create_task(run_swarm_loop(interval=600))
+        else:
+            # Silence here cost 32h of stale news: the task simply never
+            # started and nothing said so.
+            logger.warning(
+                "Swarm researcher unavailable (%s) — news polling and form "
+                "backfill are OFF for this run",
+                _SWARM_IMPORT_ERROR,
+            )
 
         logger.info("🚀 L7 Monitor Active (Refactored: Pure Python Mode)")
         self._atr_cycle = 0
@@ -2277,9 +2439,21 @@ class AdaptiveOddsMonitor:
                 bw_task = asyncio.create_task(self.betway.get_snapshot_format())
                 ro_task = asyncio.create_task(self.racing_odds.get_snapshot_format(target_date=today_str))
                 bf_task = asyncio.create_task(self._fetch_betfair_form_safely())
-                ss_task = asyncio.create_task(self.soccershop.get_snapshot_format(target_date=today_str))
+                ss_task = asyncio.create_task(
+                    _cached_fallback(
+                        "soccershop",
+                        lambda: self.soccershop.get_snapshot_format(target_date=today_str),
+                    )
+                )
+                sb_task = asyncio.create_task(
+                    _cached_fallback(
+                        "sportybet",
+                        lambda: self.sportybet.get_snapshot_format(target_date=today_str),
+                    )
+                )
                 sources = await _collect_sources(
-                    {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task, "soccershop": ss_task},
+                    {"betway": bw_task, "racing_odds": ro_task, "betfair": bf_task,
+                     "soccershop": ss_task, "sportybet": sb_task},
                     timeout=SOURCE_PHASE_TIMEOUT_SECS,
                 )
                 betway_state = sources["betway"]
@@ -2296,6 +2470,10 @@ class AdaptiveOddsMonitor:
                 if ss_snapshot is None:
                     ss_snapshot = {"events": {}, "count": 0}
                     logger.debug("SoccerShop snapshot failed, skipping merge")
+                sb_snapshot = sources.get("sportybet")
+                if sb_snapshot is None:
+                    sb_snapshot = {"events": {}, "count": 0}
+                    logger.debug("SportyBet snapshot failed, skipping merge")
 
                 # 1b. Merge Racing-Odds data into Betway events where race/horse match
                 _merge_ro_into(state, ro_snapshot)
@@ -2319,6 +2497,9 @@ class AdaptiveOddsMonitor:
                 # Betfair's exchange list. Adding after the closer keeps
                 # Betway's closure decisions authoritative.
                 state = _apply_betfair_spine(state, bf_snapshot)
+                # See the continuous-loop call site: gap merges must run after
+                # the spine or spine-only races stay unpriced and unformed.
+                _apply_fallback_merges(state, bf_snapshot, ss_snapshot, sb_snapshot)
                 if not state["events"]:
                     state = _recover_empty_snapshot(state)
                 state["count"] = len(state["events"])
