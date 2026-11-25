@@ -597,6 +597,10 @@ def _norm_course(c: str) -> str:
     n = n.replace(" racecourse", "").replace(" park", "").strip()
     # Also normalise hyphens: "Lingfield Park" vs "lingfield-park"
     n = n.replace("-", " ").replace("_", " ").strip()
+    # SportyBet suffixes UK courses ("Newcastle Uk") while the card says
+    # "Newcastle". Without this the two never matched and every runner stayed
+    # SP even though the same book had real prices for those races.
+    n = re.sub(r"\s+(uk|england|scotland|wales|ireland)$", "", n, flags=re.I).strip()
     return _normalise(n)
 
 
@@ -835,6 +839,26 @@ def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
         # put race 3's prices on race 7. Course-wide is used only when the
         # number is unknown, and the horse name must still agree.
         horse_map = by_race.get((course, num)) if num else by_course.get(course)
+
+        if not horse_map:
+            # Books number the same meeting differently (Newcastle card R7 is
+            # SportyBet R8). Find the race with the strongest horse-name
+            # overlap instead. Only prices for names that actually agree are
+            # copied, so a wrong race cannot contaminate the card.
+            card_keys = {
+                _spine_horse_key(r.get("name") or r.get("outcomeName"))
+                for r in (ev.get("runners") or []) if isinstance(r, dict)
+            }
+            best, best_hits = None, 0
+            for (rc, _rn), candidates in by_race.items():
+                if rc != course:
+                    continue
+                hits = len(card_keys & set(candidates))
+                if hits > best_hits:
+                    best, best_hits = candidates, hits
+            if best is not None and best_hits >= 3 and best_hits >= len(card_keys) / 2:
+                horse_map = best
+
         if not horse_map:
             continue
         for r in ev.get("runners") or []:

@@ -598,3 +598,59 @@ def test_monitor_constructor_still_initialises_atr_after_method_insertion():
         "_last_alert_by_key",
     ):
         assert hasattr(m, attr), attr
+
+
+def test_race_number_offset_matches_by_horse_names_only():
+    """Newcastle card R7 is SportyBet R8; only same-name horses get prices."""
+    state = {
+        "events": {
+            "bf:7": {
+                "course": "Newcastle",
+                "raceNumber": 7,
+                "runners": [
+                    {"name": "Diligent Henry", "odds": "SP"},
+                    {"name": "The New Bay Pearl", "odds": "SP"},
+                    {"name": "Card Only Horse", "odds": "SP"},
+                    {"name": "Another Card Horse", "odds": "SP"},
+                    {"name": "Mickey Mongoose", "odds": "SP"},
+                ],
+            }
+        }
+    }
+    sb = {
+        "events": {
+            "x": {
+                "course": "Newcastle Uk",
+                "raceNumber": 8,
+                "runners": [
+                    {"name": "Poet", "odds": 5.0},
+                    {"name": "Diligent Henry", "odds": 9.0},
+                    {"name": "The New Bay Pearl", "odds": 12.0},
+                    {"name": "Mickey Mongoose", "odds": 7.5},
+                ],
+            }
+        }
+    }
+    _merge_sportybet_into(state, sb)
+
+    rs = state["events"]["bf:7"]["runners"]
+    assert [r["odds"] for r in rs] == [9.0, 12.0, "SP", "SP", 7.5]
+
+
+def test_course_suffix_normalisation_matches_uk_tracks():
+    from core_agent.core.adaptive_odds_monitor import _norm_course
+
+    state = {"events": {"bf:1": _spine_race(course="Newcastle")}}
+    sb = {
+        "events": {
+            "x": {
+                "course": "Newcastle Uk",
+                "raceNumber": 3,
+                "runners": [{"name": "Silver Chord", "odds": 4.0},
+                            {"name": "Winter Palace", "odds": 5.0}],
+            }
+        }
+    }
+    assert _norm_course("Newcastle Uk") == _norm_course("Newcastle")
+    _merge_sportybet_into(state, sb)
+    assert [r["odds"] for r in state["events"]["bf:1"]["runners"]] == [4.0, 5.0]
