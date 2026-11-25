@@ -527,7 +527,7 @@ function InsightStrip({ runner }: { runner: Runner }) {
           {reliability === 'none' && runner.timeForm && (
             <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[8px] font-black">
               <Flame className="w-2.5 h-2.5" />
-              Betway
+              Form
             </span>
           )}
         </div>

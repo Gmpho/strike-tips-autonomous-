@@ -700,6 +700,25 @@ def _sast_wall(time_hhmm: str) -> str:
         return ""
 
 
+def _fill_missing_runner_fields(target: dict, source: dict) -> bool:
+    """Copy only genuinely-missing descriptive fields, never a real value.
+
+    The Betfair spine has no jockey or draw and names the trainer ``trainer``;
+    SoccerShop and SportyBet carry all three. Their racecards already matched
+    by course/race/horse for price hydration, so the same match can safely
+    enrich the empty columns without guessing anything.
+    """
+    filled = False
+    for key in ("jockeyName", "trainerName", "draw", "age", "weight", "timeForm", "topTip"):
+        value = source.get(key)
+        if value in (None, "", "TBA", "U", "0", 0):
+            continue
+        if target.get(key) in (None, "", "TBA", "U", "0", 0):
+            target[key] = value
+            filled = True
+    return filled
+
+
 def _merge_soccershop_into(state: dict, ss_snapshot: dict) -> None:
     """Hydrate unpriced runners ('SP', 0, or missing) in state with SoccerShop/Ambernet prices.
 
@@ -725,7 +744,7 @@ def _merge_soccershop_into(state: dict, ss_snapshot: dict) -> None:
                 continue
             o = r.get("odds")
             if isinstance(o, (int, float)) and o > 1.0 and r.get("name"):
-                priced[_spine_horse_key(r["name"])] = o
+                priced[_spine_horse_key(r["name"])] = r
         if priced:
             odds_by_course.setdefault(course, {}).update(priced)
 
@@ -748,10 +767,11 @@ def _merge_soccershop_into(state: dict, ss_snapshot: dict) -> None:
             curr_odds = r.get("odds")
             if curr_odds in (None, "", "SP", 0, "0"):
                 hkey = _spine_horse_key(r.get("name") or r.get("outcomeName"))
-                ss_price = course_odds.get(hkey)
-                if ss_price:
-                    r["odds"] = ss_price
+                source_runner = course_odds.get(hkey)
+                if source_runner:
+                    r["odds"] = source_runner["odds"]
                     r["price_source"] = "soccershop"
+                    _fill_missing_runner_fields(r, source_runner)
                     hydrated += 1
 
     if hydrated:
@@ -790,7 +810,7 @@ def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
                 continue
             o = r.get("odds")
             if isinstance(o, (int, float)) and o > 1.0 and r.get("name"):
-                priced[_spine_horse_key(r["name"])] = o
+                priced[_spine_horse_key(r["name"])] = r
         if not priced:
             continue
         if num:
@@ -822,14 +842,91 @@ def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
                 continue
             if r.get("odds") not in (None, "", "SP", 0, "0"):
                 continue
-            price = horse_map.get(_spine_horse_key(r.get("name") or r.get("outcomeName")))
-            if price:
-                r["odds"] = price
+            source_runner = horse_map.get(_spine_horse_key(r.get("name") or r.get("outcomeName")))
+            if source_runner:
+                r["odds"] = source_runner["odds"]
                 r["price_source"] = "sportybet"
+                _fill_missing_runner_fields(r, source_runner)
                 hydrated += 1
 
     if hydrated:
         logger.info("SportyBet fallback hydrated %d unpriced runner(s)", hydrated)
+
+# SportyBet lists Hong Kong meetings (Happy Valley / Sha Tin) that neither
+# Betway nor Betfair's horse-racing feed returns at all. These are real races
+# with real fixed prices, so they are added to the card the same additive way
+# as the Betfair spine: only when not already present, never replacing a race
+# another book owns.
+SPORTYBET_SPINE_COURSES = ("happyvalley", "shatin")
+
+
+def _apply_sportybet_spine(state: dict, sb_snapshot: dict) -> int:
+    """Add missing HK meetings from SportyBet. Returns the number added."""
+    if not isinstance(state, dict) or not isinstance(sb_snapshot, dict):
+        return 0
+    sb_events = sb_snapshot.get("events")
+    if not isinstance(sb_events, dict) or not sb_events:
+        return 0
+
+    existing = set()
+    for key, ev in (state.get("events") or {}).items():
+        if not isinstance(ev, dict):
+            continue
+        course = _norm_course(ev.get("course") or str(ev.get("en") or "").split(":")[-1])
+        if not course:
+            continue
+        try:
+            num = int(ev.get("raceNumber") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        if num:
+            existing.add((course, num))
+        t = _norm_time(str(ev.get("t") or ""))
+        if t:
+            existing.add((course, t))
+
+    added = 0
+    for key, ev in sb_events.items():
+        if not isinstance(ev, dict) or key in (state.get("events") or {}):
+            continue
+        course = _norm_course(ev.get("course") or str(ev.get("en") or "").split(":")[-1])
+        if not course or not any(c in course for c in SPORTYBET_SPINE_COURSES):
+            continue
+        runners = [r for r in (ev.get("runners") or []) if isinstance(r, dict)]
+        if not any(
+            isinstance(r.get("odds"), (int, float)) and r["odds"] > 1.0
+            for r in runners
+        ):
+            continue
+        try:
+            num = int(ev.get("raceNumber") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        t = _norm_time(str(ev.get("t") or ""))
+        if (course, num) in existing or (course, t) in existing:
+            continue
+        if num:
+            existing.add((course, num))
+        if t:
+            existing.add((course, t))
+
+        new_ev = dict(ev)
+        new_ev["source"] = "sportybet"
+        new_ev["price_source"] = "sportybet"
+        new_runners = []
+        for r in runners:
+            nr = dict(r)
+            if isinstance(nr.get("odds"), (int, float)) and nr["odds"] > 1.0:
+                nr["price_source"] = "sportybet"
+            new_runners.append(nr)
+        new_ev["runners"] = new_runners
+        (state.setdefault("events", {}))[key] = new_ev
+        added += 1
+
+    if added:
+        state["count"] = len(state.get("events") or {})
+        logger.info("SportyBet spine supplied %d missing HK race(s)", added)
+    return added
 
 
 def _apply_fallback_merges(
@@ -845,6 +942,14 @@ def _apply_fallback_merges(
     nothing was ever hydrated — the card showed 126 races, 0 prices, no form.
     These merges only fill gaps, so running them again is safe.
     """
+    # The Betfair feed calls it "trainer"; the HUD and league API read
+    # "trainerName". Surface the real value instead of showing TBA.
+    for ev in (state.get("events") or {}).values():
+        if isinstance(ev, dict):
+            for r in (ev.get("runners") or []):
+                if isinstance(r, dict) and r.get("trainer") and not r.get("trainerName"):
+                    r["trainerName"] = r["trainer"]
+
     _merge_bf_into(state, bf_snapshot)
     _merge_soccershop_into(state, ss_snapshot)
     if sb_snapshot:
@@ -2430,6 +2535,7 @@ class AdaptiveOddsMonitor:
             # Re-run the gap-filling merges now the spine has built the card:
             # otherwise races added by the spine never receive form or prices.
             _apply_fallback_merges(state, bf_snapshot, ss_snapshot, sb_snapshot)
+            _apply_sportybet_spine(state, sb_snapshot)
             if not state["events"]:
                 state = _recover_empty_snapshot(state)
             state["count"] = len(state["events"])
@@ -2609,6 +2715,7 @@ class AdaptiveOddsMonitor:
                 # See the continuous-loop call site: gap merges must run after
                 # the spine or spine-only races stay unpriced and unformed.
                 _apply_fallback_merges(state, bf_snapshot, ss_snapshot, sb_snapshot)
+                _apply_sportybet_spine(state, sb_snapshot)
                 if not state["events"]:
                     state = _recover_empty_snapshot(state)
                 state["count"] = len(state["events"])

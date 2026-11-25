@@ -128,3 +128,64 @@ class TestSportyBetSnapshot:
             assert r["name"] == "SPEED RUNNER"
             assert r["odds"] == 3.5
             assert r["jockeyName"] == "C Zackey"
+
+
+@pytest.mark.asyncio
+async def test_top_tip_is_taken_from_runner_comments(mock_api):
+    """The racecard's 'Top Tip' copy lives in runner_comments, not timeform."""
+    meetings = [
+        {
+            "id": "m1",
+            "track": {"name": "Kenilworth", "country": "ZA"},
+            "races": [{"id": "r1", "number": 1}],
+        }
+    ]
+    cards = [
+        {
+            "name": "Kenilworth",
+            "track": {"name": "Kenilworth", "country": "ZA"},
+            "races": [
+                {
+                    "id": "r1",
+                    "number": 1,
+                    "runners": [
+                        {
+                            "id": "runner1",
+                            "tab_no": 3,
+                            "name": "ONE DAWN",
+                            "jockey": "Craig Zackey",
+                            "trainer": "Dean Kannemeyer",
+                            "status": "STARTER",
+                            "prices": [
+                                {
+                                    "bet_type": "racingFutureWin",
+                                    "price": 3.9,
+                                    "product": {"is_fixed": True},
+                                }
+                            ],
+                            "runner_comments": [
+                                {
+                                    "comment": " In the money when 3rd last run at the track. ",
+                                    "source": "ILB",
+                                    "updated_at": "2026-11-25T11:07:51Z",
+                                },
+                                {
+                                    "comment": "In the money when 3rd last run at the track.",
+                                    "source": "ILB",
+                                    "updated_at": "2026-11-25T10:00:00Z",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    with patch.object(mock_api, "fetch_meetings_sync", return_value=meetings), \
+         patch.object(mock_api, "fetch_race_cards_sync", return_value=cards):
+        snap = await mock_api.get_snapshot_format(country="South Africa")
+
+    runner = snap["events"]["sportybet_r1"]["runners"][0]
+    assert runner["timeForm"] == "In the money when 3rd last run at the track."
+    assert runner["jockeyName"] == "Craig Zackey"
+    assert runner["trainerName"] == "Dean Kannemeyer"

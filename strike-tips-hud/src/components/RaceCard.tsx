@@ -73,7 +73,7 @@ function InsightBanner({ text, kind }: { text: string; kind: 'timeform' | 'swarm
       )}
       <div className="min-w-0">
         <p className={`text-[8px] font-black uppercase tracking-widest mb-0.5 ${isTimeform ? 'text-amber-400/70' : 'text-cyan-400/70'}`}>
-          {isTimeform ? 'Timeform Comment' : 'Swarm Insight'}
+          {isTimeform ? 'Form Insight' : 'Swarm Insight'}
         </p>
         <p className="text-xs font-medium text-slate-300 leading-snug">{text}</p>
       </div>

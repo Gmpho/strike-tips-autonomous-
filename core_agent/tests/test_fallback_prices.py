@@ -406,3 +406,178 @@ def test_numeric_age_does_not_kill_the_news_poll(monkeypatch):
 
     monkeypatch.setattr(sr, "_backfill_form_insights_impl", boom)
     assert asyncio.run(sr.backfill_form_insights({"events": {}})) == 0
+
+
+# --- 9. descriptive fields from the fallback books -----------------------
+def test_missing_jockey_trainer_and_draw_are_filled_from_fallback():
+    state = {"events": {"bf:1": _spine_race()}}
+    sb = {
+        "events": {
+            "x": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [
+                    {
+                        "name": "Silver Chord",
+                        "odds": 4.5,
+                        "jockeyName": "C Zackey",
+                        "trainerName": "D Kannemeyer",
+                        "draw": 7,
+                        "timeForm": "Won last time at this track.",
+                    },
+                    {"name": "Winter Palace", "odds": 5.5},
+                ],
+            }
+        }
+    }
+    _merge_sportybet_into(state, sb)
+
+    r = state["events"]["bf:1"]["runners"][0]
+    assert r["jockeyName"] == "C Zackey"
+    assert r["trainerName"] == "D Kannemeyer"
+    assert r["draw"] == 7
+    assert r["timeForm"].startswith("Won last time")
+
+
+def test_real_descriptive_fields_are_never_overwritten():
+    state = {
+        "events": {
+            "bf:1": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [
+                    {
+                        "name": "Silver Chord",
+                        "odds": 2.4,
+                        "jockeyName": "Real Jockey",
+                        "draw": 3,
+                    }
+                ],
+            }
+        }
+    }
+    sb = {
+        "events": {
+            "x": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [
+                    {
+                        "name": "Silver Chord",
+                        "odds": 9.9,
+                        "jockeyName": "Other Jockey",
+                        "draw": 12,
+                    }
+                ],
+            }
+        }
+    }
+    _merge_sportybet_into(state, sb)
+
+    r = state["events"]["bf:1"]["runners"][0]
+    assert r["jockeyName"] == "Real Jockey"
+    assert r["draw"] == 3
+    assert r["odds"] == 2.4
+
+
+def test_betfair_trainer_key_is_surfaced_as_trainername():
+    from core_agent.core.adaptive_odds_monitor import _apply_fallback_merges
+
+    state = {
+        "events": {
+            "bf:1": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [{"name": "Horse", "odds": "SP", "trainer": "J Crawford"}],
+            }
+        }
+    }
+    _apply_fallback_merges(state, {"events": {}}, {"events": {}}, {"events": {}})
+    assert state["events"]["bf:1"]["runners"][0]["trainerName"] == "J Crawford"
+
+
+# --- 10. Hong Kong spine --------------------------------------------------
+def test_hong_kong_meetings_are_added_only_when_missing():
+    from core_agent.core.adaptive_odds_monitor import _apply_sportybet_spine
+
+    hk = {
+        "events": {
+            "sportybet_hk1": {
+                "course": "Happy Valley",
+                "en": "HKG: Happy Valley",
+                "raceNumber": 1,
+                "t": "10:40",
+                "runners": [{"name": "Horse", "odds": 3.2}],
+            }
+        }
+    }
+    state = {"events": {}}
+    assert _apply_sportybet_spine(state, hk) == 1
+    assert "sportybet_hk1" in state["events"]
+    assert _apply_sportybet_spine(state, hk) == 0
+
+
+def test_non_hk_meetings_are_not_added_to_the_card():
+    from core_agent.core.adaptive_odds_monitor import _apply_sportybet_spine
+
+    state = {"events": {}}
+    sb = {
+        "events": {
+            "sportybet_aus": {
+                "course": "Wyong",
+                "raceNumber": 1,
+                "runners": [{"name": "Horse", "odds": 3.2}],
+            }
+        }
+    }
+    assert _apply_sportybet_spine(state, sb) == 0
+
+
+def test_betway_form_and_ratings_win_when_betway_returns():
+    """Fallbacks are gap-fillers only: a real Betway value is never replaced."""
+    state = {
+        "events": {
+            "bw:9": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [
+                    {
+                        "name": "Silver Chord",
+                        "odds": 4.5,
+                        "jockeyName": "Betway Jockey",
+                        "trainerName": "Betway Trainer",
+                        "draw": 2,
+                        "timeForm": "Betway's own form comment",
+                        "official_rating": 96,
+                    }
+                ],
+            }
+        }
+    }
+    sb = {
+        "events": {
+            "x": {
+                "course": "Kenilworth",
+                "raceNumber": 3,
+                "runners": [
+                    {
+                        "name": "Silver Chord",
+                        "odds": 2.0,
+                        "jockeyName": "Other Jockey",
+                        "trainerName": "Other Trainer",
+                        "draw": 13,
+                        "timeForm": "Other book's form comment",
+                    }
+                ],
+            }
+        }
+    }
+    _merge_sportybet_into(state, sb)
+
+    r = state["events"]["bw:9"]["runners"][0]
+    assert r["odds"] == 4.5
+    assert r["jockeyName"] == "Betway Jockey"
+    assert r["trainerName"] == "Betway Trainer"
+    assert r["draw"] == 2
+    assert r["timeForm"] == "Betway's own form comment"
+    assert r["official_rating"] == 96

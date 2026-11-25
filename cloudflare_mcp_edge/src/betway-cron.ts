@@ -308,6 +308,7 @@ const RACE_CARD_QUERY = `
         runners {
           id tab_no name status
           prices { bet_type price product { is_fixed } }
+          runner_comments { comment updated_at }
         }
       }
     }
@@ -386,7 +387,18 @@ export async function cronFetchSportyBet(env: CronEnv): Promise<SBResult> {
             );
             const odds = Number(win?.price || 0);
             if (odds > 1.0) priced++;
-            runners.push({ name: String(runner?.name || ""), odds: odds > 1.0 ? odds : "SP" });
+            const comments = (runner?.runner_comments || []).filter(
+              (c: any) => String(c?.comment || "").trim(),
+            );
+            comments.sort((a: any, b: any) =>
+              String(b?.updated_at || "").localeCompare(String(a?.updated_at || "")),
+            );
+            const tip = String(comments[0]?.comment || "").replace(/\s+/g, " ").slice(0, 300);
+            runners.push({
+              name: String(runner?.name || ""),
+              odds: odds > 1.0 ? odds : "SP",
+              topTip: tip,
+            });
           }
           events[`sportybet_${race.id}`] = {
             course,

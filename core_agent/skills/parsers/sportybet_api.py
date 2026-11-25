@@ -257,6 +257,11 @@ class SportyBetAPI:
                     is_fixed
                   }
                 }
+                runner_comments {
+                  comment
+                  source
+                  updated_at
+                }
               }
             }
           }
@@ -358,6 +363,25 @@ class SportyBetAPI:
                     )
                     odds = normalize_sportybet_odds(fixed_win)
 
+                    # The SportyBet racecard's "Top Tip" copy is exposed as
+                    # runner_comments. Keep the newest distinct one so we can
+                    # fill the timeForm/Top Tip column Betway used to own.
+                    comments = [
+                        c for c in (runner.get("runner_comments") or [])
+                        if isinstance(c, dict) and (c.get("comment") or "").strip()
+                    ]
+                    comments.sort(key=lambda c: str(c.get("updated_at") or ""), reverse=True)
+                    tip = ""
+                    seen_text = set()
+                    for c in comments:
+                        text = " ".join(str(c["comment"]).split())[:300]
+                        if text in seen_text:
+                            continue
+                        seen_text.add(text)
+                        if not tip:
+                            tip = text
+                        break
+
                     runners.append({
                         "outcomeId": str(runner.get("id") or ""),
                         "name": r_name,
@@ -368,9 +392,10 @@ class SportyBetAPI:
                         "age": "U",
                         "weight": "0",
                         "form": "",
+                        "timeForm": tip,
+                        "topTip": tip,
                         "number": str(runner.get("tab_no") or "0"),
                         "draw": int(runner.get("barrier") or 0),
-                        "timeForm": "",
                         "imageLocation": "",
                         "starRating": 0,
                         "odds": odds,

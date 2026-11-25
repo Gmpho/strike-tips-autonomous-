@@ -301,7 +301,7 @@ function MoverCard({ mover, index, runner, meetingCourse, meetingTime }: {
         )}
       </div>
 
-      {/* Insight strip: Betway timeForm (UK/IRE) or Swarm insight (all other regions) */}
+      {/* Insight strip: form insight from the race card, or swarm insight */}
       {runner && runner.timeForm && (
         <div className="flex items-start gap-1.5 mb-2.5 px-3 py-2 rounded-xl bg-amber-500/5 border border-amber-500/15">
           <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
