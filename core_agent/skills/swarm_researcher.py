@@ -175,13 +175,17 @@ def build_field_insight(runner: Dict) -> str:
 
     if isinstance(runner.get("draw"), (int, float)):
         bits.append(f"draw {runner['draw']}")
-    age = (runner.get("age") or "").replace(" years", "yo").replace(" year", "yo")
-    wgt = runner.get("weight") or ""
+    # Betfair/Betway carry age and weight as ints; the old direct .replace()
+    # raised AttributeError on any numeric age, which killed the whole
+    # backfill — and because Modal's cron wraps backfill and poll_news in one
+    # try, that single bad runner froze the news feed for 34 hours.
+    age = str(runner.get("age") or "").strip().replace(" years", "yo").replace(" year", "yo")
+    wgt = str(runner.get("weight") or "").strip()
     meta = " ".join(x for x in (wgt, age) if x)
     if meta:
         bits.append(meta)
-    jockey = runner.get("jockeyName") or ""
-    trainer = runner.get("trainerName") or ""
+    jockey = str(runner.get("jockeyName") or "").strip()
+    trainer = str(runner.get("trainerName") or "").strip()
     if jockey:
         bits.append(f"jockey {jockey}")
     if trainer:
@@ -362,7 +366,7 @@ def _load_dsi_cache() -> Dict:
     return {}
 
 
-async def backfill_form_insights(state: Dict) -> int:
+async def _backfill_form_insights_impl(state: Dict) -> int:
     """Pass A — build/upgrade form insights for ALL regions without timeForm.
 
     Returns number of Groq calls made (for logging / budget tracking).
@@ -723,6 +727,19 @@ def _link_news_to_insights(items: List[Dict], seen_path: Optional[str] = None) -
         except Exception:
             pass
     return linked
+
+
+async def backfill_form_insights(state: Dict) -> int:
+    """Never let a backfill error skip news.
+
+    Modal's cron calls backfill and poll_news inside a single try/except, so
+    any exception here used to suppress the news poll for the whole cycle.
+    """
+    try:
+        return await _backfill_form_insights_impl(state)
+    except Exception as exc:  # noqa: BLE001 - logged, never propagated
+        logger.warning("Form backfill skipped: %s", exc)
+        return 0
 
 
 async def run_swarm_loop(interval: int = 600):

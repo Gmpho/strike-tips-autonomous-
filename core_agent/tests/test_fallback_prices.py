@@ -391,3 +391,18 @@ def test_fallback_price_table_survives_a_fresh_modal_container():
         raise RuntimeError("HTTP 403")
 
     assert asyncio.run(mon._cached_fallback("sportybet", blocked)) == good
+
+
+# --- 8. news starvation from a numeric age -------------------------------
+def test_numeric_age_does_not_kill_the_news_poll(monkeypatch):
+    """One int age raised AttributeError and froze news for 34 hours."""
+    import core_agent.skills.swarm_researcher as sr
+
+    insight = sr.build_field_insight({"name": "Horse", "age": 5, "weight": 54})
+    assert isinstance(insight, str)
+
+    async def boom(_state):
+        raise RuntimeError("bad runner")
+
+    monkeypatch.setattr(sr, "_backfill_form_insights_impl", boom)
+    assert asyncio.run(sr.backfill_form_insights({"events": {}})) == 0
