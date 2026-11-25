@@ -857,6 +857,10 @@ def _merge_sportybet_into(state: dict, sb_snapshot: dict) -> None:
                 if hits > best_hits:
                     best, best_hits = candidates, hits
             if best is not None and best_hits >= 3 and best_hits >= len(card_keys) / 2:
+                logger.info(
+                    "SportyBet race-number offset: %s R%d matched by %d/%d horse names",
+                    course, num, best_hits, len(card_keys),
+                )
                 horse_map = best
 
         if not horse_map:
