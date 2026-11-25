@@ -581,3 +581,20 @@ def test_betway_form_and_ratings_win_when_betway_returns():
     assert r["draw"] == 2
     assert r["timeForm"] == "Betway's own form comment"
     assert r["official_rating"] == 96
+
+
+def test_monitor_constructor_still_initialises_atr_after_method_insertion():
+    """A method was once inserted mid-constructor, silently killing init."""
+    from core_agent.core.adaptive_odds_monitor import AdaptiveOddsMonitor
+
+    m = AdaptiveOddsMonitor()
+    for attr in (
+        "at_races",
+        "betway",
+        "betfair",
+        "soccershop",
+        "sportybet",
+        "_bf_last_good_path",
+        "_last_alert_by_key",
+    ):
+        assert hasattr(m, attr), attr

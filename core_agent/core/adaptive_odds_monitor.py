@@ -1944,6 +1944,20 @@ class AdaptiveOddsMonitor:
         self.soccershop = SoccerShopAPI()
         self.sportybet = SportyBetAPI()
 
+        self.at_races = AtTheRacesAPI()
+        # Last-good cache path for Betfair form data (used when a cycle fails
+        # so the snapshot still carries gear/days from the most recent good fetch).
+        self._bf_last_good_path = os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
+
+        self.monitoring_active = True
+        # Per race+horse alert gate (Sep-2026: the old single *_last_alert_ts*
+        # made the first trigger of a sweep suppress every other runner in
+        # all ~40 races, so each digest carried ONE horse). ``_last_alert_ts``
+        # stays for introspection only — the dict below is the live gate.
+        self._last_alert_ts: float = 0
+        self._last_alert_by_key: dict = {}
+        self._alert_cooldown: float = 120.0
+
     async def _get_sportybet_snapshot(self, target_date: str = None) -> dict:
         """Read edge-fetched prices from KV on Modal; direct fetch elsewhere.
 
@@ -1969,19 +1983,6 @@ class AdaptiveOddsMonitor:
                 }
             logger.debug("SportyBet KV key empty — trying direct fetch")
         return await self.sportybet.get_snapshot_format(target_date=target_date)
-        self.at_races = AtTheRacesAPI()
-        # Last-good cache path for Betfair form data (used when a cycle fails
-        # so the snapshot still carries gear/days from the most recent good fetch).
-        self._bf_last_good_path = os.path.join(str(DATA_DIR), "betfair_form_last_good.json")
-
-        self.monitoring_active = True
-        # Per race+horse alert gate (Sep-2026: the old single *_last_alert_ts*
-        # made the first trigger of a sweep suppress every other runner in
-        # all ~40 races, so each digest carried ONE horse). ``_last_alert_ts``
-        # stays for introspection only — the dict below is the live gate.
-        self._last_alert_ts: float = 0
-        self._last_alert_by_key: dict = {}
-        self._alert_cooldown: float = 120.0
 
     async def _fetch_betfair_form_safely(self) -> dict:
         """Fetch Betfair SA form data through the rolling per-race cache.
