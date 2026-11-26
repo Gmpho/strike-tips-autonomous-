@@ -27,6 +27,7 @@ All helpers are defensive — a snapshot write must never break a scan.
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -38,6 +39,55 @@ logger = logging.getLogger("snapshot-writer")
 # Races whose off-time passed by more than this are closed (mirrors the
 # monitor's closer default so every writer prunes identically).
 CLOSE_GRACE_MINUTES = 2
+
+# How long a monitor-written card stays authoritative over scan-side writers.
+#
+# The Sep-2026 rule only compared timestamps, so a scan that ran *later* than
+# the monitor always won — even when the monitor held 436 prices and the scan
+# held 12 (26 Nov 2026: the HUD flipped whole meetings to SP every 15 min and
+# back on the next monitor cycle). While a monitor card is this fresh it is the
+# only writer; once it ages out, a scan may take over so a dead monitor cannot
+# freeze the card. 30 min is six missed monitor cycles.
+MONITOR_AUTHORITY_SECS = 30 * 60
+
+# Runner fields a blocked cycle can legitimately lose. Prices are restored only
+# where the new card is unpriced; descriptive fields only where the new value is
+# blank. A real value from this cycle is never overwritten.
+_CARRY_FIELD_KEYS = (
+    "form",
+    "timeForm",
+    "jockeyName",
+    "trainerName",
+    "draw",
+    "age",
+    "weight",
+    "number",
+    "starRating",
+    "imageLocation",
+)
+_BLANK_FIELD_VALUES = {"", "-", "0", "n/a", "na", "none", "null", "tba", "u", "unknown"}
+
+
+def _is_priced(odds: Any) -> bool:
+    """True only for a real decimal price (>1.0). ``"SP"``/0/None are unpriced."""
+    return (
+        isinstance(odds, (int, float))
+        and not isinstance(odds, bool)
+        and odds > 1.0
+    )
+
+
+def _is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value == 0
+    return str(value).strip().lower() in _BLANK_FIELD_VALUES
+
+
+def _runner_key(runner: Dict[str, Any]) -> str:
+    name = runner.get("name") or runner.get("outcomeName") or ""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
 def _prune_events(events: Dict[str, Any]) -> Dict[str, Any]:
@@ -400,6 +450,90 @@ def _merge_previous_live_events(clean: Dict[str, Any], path: Any = None) -> Dict
     return clean
 
 
+def carry_forward_prices(clean: Dict[str, Any], path: Any = None) -> Dict[str, Any]:
+    """Restore last-known prices and field detail for still-live races.
+
+    A blocked Betway cycle still gets the race *list* from GetDaily but every
+    ``GetEvent`` is refused, so the card publishes whole meetings as ``SP`` —
+    and with no price the value analyzer finds no selection (the /picks page
+    went blank) while the form insight degrades to the generic swarm blurb
+    (26 Nov 2026). The id-based carry-forward cannot help: the same event id is
+    present, just unpriced, so it is treated as an update.
+
+    This is the missing per-runner merge. For races present in both the new
+    card and the previous file it:
+
+    * copies a real price onto an unpriced runner with the same name, and
+    * fills descriptive fields (form, timeForm, jockey, trainer, draw, …) only
+      where the new value is blank.
+
+    It never overwrites a real value from this cycle, never touches non-runners,
+    and never adds a race (the registry owns that). A carried price is tagged
+    ``price_carried`` so the HUD/feed-health can be honest about its age.
+    """
+    path = path or MARKET_SNAPSHOT_PATH
+    try:
+        with open(path) as f:
+            prev = json.load(f)
+    except Exception:
+        return clean
+    prev_events = prev.get("events") if isinstance(prev, dict) else None
+    if not isinstance(prev_events, dict) or not prev_events:
+        return clean
+
+    events = clean.get("events")
+    if not isinstance(events, dict) or not events:
+        return clean
+
+    carried_prices = 0
+    filled_fields = 0
+    touched_races = 0
+    for eid, event in events.items():
+        if not isinstance(event, dict):
+            continue
+        prev_event = prev_events.get(eid)
+        if not isinstance(prev_event, dict):
+            continue
+        prev_by_name = {
+            _runner_key(r): r
+            for r in (prev_event.get("runners") or [])
+            if isinstance(r, dict)
+        }
+        if not prev_by_name:
+            continue
+        changed = False
+        for runner in (event.get("runners") or []):
+            if not isinstance(runner, dict) or runner.get("non_runner"):
+                continue
+            prev_runner = prev_by_name.get(_runner_key(runner))
+            if not prev_runner:
+                continue
+            if not _is_priced(runner.get("odds")) and _is_priced(prev_runner.get("odds")):
+                runner["odds"] = prev_runner["odds"]
+                runner["price_carried"] = True
+                if prev_runner.get("price_source"):
+                    runner["price_source"] = prev_runner["price_source"]
+                carried_prices += 1
+                changed = True
+            for key in _CARRY_FIELD_KEYS:
+                if _is_blank(runner.get(key)) and not _is_blank(prev_runner.get(key)):
+                    runner[key] = prev_runner[key]
+                    filled_fields += 1
+                    changed = True
+        if changed:
+            touched_races += 1
+
+    if carried_prices or filled_fields:
+        logger.info(
+            "Price carry-forward: restored %d price(s) and %d field(s) across "
+            "%d race(s)",
+            carried_prices,
+            filled_fields,
+            touched_races,
+        )
+    return clean
+
+
 def write_market_snapshot(
     state: Dict[str, Any],
     *,
@@ -431,6 +565,12 @@ def write_market_snapshot(
             clean = merge_registry_events(clean, path)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Race registry merge failed: %s", exc)
+        # A blocked GetEvent leaves the race present but every runner at SP.
+        # Restore the last real price/field detail for those runners only.
+        try:
+            clean = carry_forward_prices(clean, path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Price carry-forward failed: %s", exc)
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Previous-snapshot merge failed: %s", exc)
 
@@ -451,15 +591,38 @@ def write_market_snapshot(
 
             info = _last_write_info(path)
             payload_ts = _snapshot_file_timestamp(clean)
+            incumbent_ts = float(info.get("timestamp") or 0.0)
+            incumbent_mtime = float(info.get("mtime") or 0.0)
+            # A fresh monitor card wins outright, even if this scan ran later
+            # and therefore carries a newer wall-clock stamp. Without this the
+            # 15-min scan overwrote a 436-price card with a 12-price one and
+            # the HUD flipped whole meetings to SP until the next monitor cycle
+            # (26 Nov 2026). Both the payload stamp and the file mtime must
+            # agree it is fresh, so a rewritten file cannot fake a live monitor.
+            if (
+                info.get("source") == "monitor"
+                and incumbent_ts > 0.0
+                and incumbent_mtime > 0.0
+                and time.time() - incumbent_ts < MONITOR_AUTHORITY_SECS
+                and time.time() - incumbent_mtime < MONITOR_AUTHORITY_SECS
+            ):
+                logger.info(
+                    "Snapshot write skipped (%s): monitor card %s is still "
+                    "authoritative (%.0f min old)",
+                    source,
+                    _dt.fromtimestamp(incumbent_ts).isoformat(),
+                    (time.time() - incumbent_ts) / 60,
+                )
+                return clean
             # ISO timestamps carry microsecond resolution while filesystems /
             # clocks can differ by a hair — give the incumbent a 60s grace so a
             # same-minute scan payload never wins a photo-finish against the live
             # monitor file.
-            if info.get("source") == "monitor" and info.get("timestamp", 0.0) + 60.0 > payload_ts:
+            if info.get("source") == "monitor" and incumbent_ts + 60.0 > payload_ts:
                 logger.info(
                     "Snapshot write skipped (%s): monitor file %s newer than payload %s",
                     source,
-                    _dt.fromtimestamp(info["timestamp"]).isoformat(),
+                    _dt.fromtimestamp(incumbent_ts).isoformat(),
                     _dt.fromtimestamp(payload_ts).isoformat() if payload_ts else "unstamped",
                 )
                 return clean

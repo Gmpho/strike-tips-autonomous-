@@ -52,6 +52,200 @@ _EGRESS_STATE_PATH = os.environ.get("BETWAY_EGRESS_STATE") or str(
     Path(__file__).resolve().parents[3] / "data" / "betway_egress_state.json"
 )
 
+# Durable last-good price table (Nov-26). Betway's Cloudflare blocks our
+# datacentre egress for hours while GetDaily still supplies the race list, so
+# every runner collapses to "SP" and the value picks vanish. The fallbacks
+# persist their last good table on the volume; Betway prices now do the same so
+# a blocked cycle rehydrates the last real price instead of publishing SP.
+# Per-race entries expire after 3h so a stale price can never pose as live, and
+# a race that fetched even one real price this cycle is left untouched.
+BETWAY_PRICE_CACHE_PATH = os.environ.get("BETWAY_PRICE_CACHE") or str(
+    Path(__file__).resolve().parents[3] / "data" / "betway_prices_last_good.json"
+)
+BETWAY_PRICE_CACHE_TTL_SECS = 3 * 3600
+
+_PRICE_CACHE_FIELD_KEYS = (
+    "name", "outcomeName", "jockeyName", "trainerName", "form", "timeForm",
+    "draw", "age", "weight", "number", "starRating", "imageLocation",
+)
+_BLANK_FIELD_VALUES = {"", "-", "0", "n/a", "na", "none", "null", "tba", "u", "unknown"}
+
+
+def _is_priced_odds(odds: Any) -> bool:
+    """A real decimal price; ``"SP"``/0/None are unpriced."""
+    return (
+        isinstance(odds, (int, float))
+        and not isinstance(odds, bool)
+        and odds > 1.0
+    )
+
+
+def _is_blank_field(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value == 0
+    return str(value).strip().lower() in _BLANK_FIELD_VALUES
+
+
+def _norm_runner_name(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _event_has_price(event: Any) -> bool:
+    return isinstance(event, dict) and any(
+        _is_priced_odds(r.get("odds"))
+        for r in (event.get("runners") or [])
+        if isinstance(r, dict)
+    )
+
+
+def _load_price_cache() -> Tuple[float, Dict[str, Any]]:
+    try:
+        raw = json.loads(Path(BETWAY_PRICE_CACHE_PATH).read_text())
+    except Exception:
+        return 0.0, {}
+    if not isinstance(raw, dict):
+        return 0.0, {}
+    events = raw.get("events")
+    try:
+        ts = float(raw.get("ts") or 0.0)
+    except Exception:
+        ts = 0.0
+    return ts, events if isinstance(events, dict) else {}
+
+
+def _save_price_cache(events: Dict[str, Any]) -> None:
+    """Union this cycle's priced races into the on-disk table.
+
+    Only priced races are stored. A race that came back all-SP keeps its
+    previous entry until the TTL drops it, so one blocked cycle cannot erase
+    the only real price we have. Accepts either the events dict or a whole
+    snapshot wrapper so a caller passing ``get_snapshot_format``'s output
+    cannot silently persist nothing.
+    """
+    if isinstance(events, dict) and isinstance(events.get("events"), dict):
+        events = events["events"]
+    now = time.time()
+    _, prev = _load_price_cache()
+    merged: Dict[str, Any] = {
+        str(k): v for k, v in prev.items() if isinstance(v, dict)
+    }
+    for eid, event in (events or {}).items():
+        if not _event_has_price(event):
+            continue
+        merged[str(eid)] = {
+            "course": event.get("course"),
+            "raceNumber": event.get("raceNumber"),
+            "runners": [
+                {key: r.get(key) for key in _PRICE_CACHE_FIELD_KEYS}
+                | {
+                    "odds": r.get("odds"),
+                    "price_source": r.get("price_source") or event.get("price_source"),
+                    "non_runner": bool(r.get("non_runner")),
+                }
+                for r in (event.get("runners") or [])
+                if isinstance(r, dict)
+            ],
+            "cached_at": now,
+        }
+    merged = {
+        k: v for k, v in merged.items()
+        if now - float((v or {}).get("cached_at") or 0.0) < BETWAY_PRICE_CACHE_TTL_SECS
+    }
+    try:
+        path = Path(BETWAY_PRICE_CACHE_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump({"ts": now, "events": merged}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception as exc:  # noqa: BLE001 - cache write is best effort
+        logger.debug("Betway price cache write skipped: %s", exc)
+
+
+def _apply_price_cache(out: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist priced races, and rehydrate races that arrived unpriced.
+
+    Per-race, not whole-card: a cycle that priced only one meeting must still
+    get the other meetings' last good prices, and a race that returned a real
+    price must keep it (the cache can never mask a live move).
+    """
+    events = out.get("events")
+    if not isinstance(events, dict) or not events:
+        return out
+
+    if any(_event_has_price(ev) for ev in events.values()):
+        _save_price_cache(events)
+
+    _, cached = _load_price_cache()
+    if not cached:
+        return out
+
+    now = time.time()
+    restored = 0
+    filled = 0
+    touched = 0
+    for eid, event in events.items():
+        if _event_has_price(event):
+            continue
+        entry = cached.get(str(eid))
+        if not isinstance(entry, dict):
+            continue
+        try:
+            entry_age = now - float(entry.get("cached_at") or 0.0)
+        except Exception:
+            entry_age = float("inf")
+        if entry_age >= BETWAY_PRICE_CACHE_TTL_SECS:
+            continue
+        prev_by_name = {
+            _norm_runner_name(r.get("name") or r.get("outcomeName")): r
+            for r in (entry.get("runners") or [])
+            if isinstance(r, dict)
+        }
+        changed = False
+        for runner in (event.get("runners") or []):
+            if not isinstance(runner, dict) or runner.get("non_runner"):
+                continue
+            prev_runner = prev_by_name.get(
+                _norm_runner_name(runner.get("name") or runner.get("outcomeName"))
+            )
+            if not prev_runner:
+                continue
+            if not _is_priced_odds(runner.get("odds")) and _is_priced_odds(prev_runner.get("odds")):
+                runner["odds"] = prev_runner["odds"]
+                runner["price_source"] = prev_runner.get("price_source") or "cache"
+                runner["price_cached"] = True
+                restored += 1
+                changed = True
+            for key in _PRICE_CACHE_FIELD_KEYS:
+                if key in ("name", "outcomeName"):
+                    continue
+                if _is_blank_field(runner.get(key)) and not _is_blank_field(prev_runner.get(key)):
+                    runner[key] = prev_runner[key]
+                    filled += 1
+                    changed = True
+        if changed:
+            touched += 1
+
+    if restored or filled:
+        out["price_cache_used"] = True
+        out["price_cache_restored"] = restored
+        # Every event in this card was unpriced, so the daily count is no
+        # longer accurate once the cache fills it.
+        if out.get("daily_unpriced"):
+            out["daily_unpriced"] = 0
+        logger.info(
+            "Betway price cache: restored %d price(s) and %d field(s) across "
+            "%d race(s)",
+            restored,
+            filled,
+            touched,
+        )
+    return out
+
 
 def _classify_html_block(body: str) -> str:
     """Name the layer behind an HTML error page.
@@ -1182,6 +1376,13 @@ class BetwayAPI:
             # list* came from the last good GetDaily, which is worth recording
             # in the feed-health log but is not a failed fetch.
             out["daily_from_cache"] = True
+        # Durable last-good prices: a blocked GetEvent leaves whole meetings at
+        # SP even though the race list arrived. Rehydrate only the races that
+        # came back with no real price at all.
+        try:
+            out = _apply_price_cache(out)
+        except Exception as exc:  # noqa: BLE001 - cache must never break a fetch
+            logger.debug("Betway price cache skipped: %s", exc)
         return out
 
     async def get_races(self) -> List[ScrapedRace]:

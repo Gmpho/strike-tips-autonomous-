@@ -2584,9 +2584,13 @@ class AdaptiveOddsMonitor:
             try:
                 from core_agent.core.snapshot_writer import (
                     _merge_previous_live_events, merge_registry_events,
+                    carry_forward_prices,
                 )
                 state = _merge_previous_live_events(state)
                 state = merge_registry_events(state)
+                # A blocked GetEvent leaves every runner at SP; restore the
+                # last real price/field detail for the same race (26 Nov 2026).
+                state = carry_forward_prices(state)
             except Exception:
                 pass
             state = _drop_stale_card_entries(state)
@@ -2763,9 +2767,13 @@ class AdaptiveOddsMonitor:
                 try:
                     from core_agent.core.snapshot_writer import (
                         _merge_previous_live_events, merge_registry_events,
+                        carry_forward_prices,
                     )
                     state = _merge_previous_live_events(state)
                     state = merge_registry_events(state)
+                    # A blocked GetEvent leaves every runner at SP; restore the
+                    # last real price/field detail for the same race (26 Nov 2026).
+                    state = carry_forward_prices(state)
                 except Exception:
                     pass
                 state = _drop_stale_card_entries(state)
