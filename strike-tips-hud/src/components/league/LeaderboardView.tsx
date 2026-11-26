@@ -46,6 +46,9 @@ interface Row {
   pending?: number;
   wins: number;
   strike_rate: number;
+  /** Rolling strike rate for the current week — moves as tips settle. */
+  weekly_strike_rate?: number;
+  weekly_settled?: number;
   total_points: number;
   weekly_points: number;
   avg_points_per_tip: number;
@@ -203,7 +206,19 @@ export const LeaderboardView: React.FC = () => {
   // Highlight strip (human board only).
   const topForm = [...ranked].sort((a, b) => b.form_rating - a.form_rating)[0];
   const bestValue = [...ranked].sort((a, b) => b.value_index - a.value_index)[0];
-  const topStrike = [...ranked].filter(r => r.settled >= 10).sort((a, b) => b.strike_rate - a.strike_rate)[0];
+  // Lifetime strike rate froze the highlight card for weeks once a leading
+  // punter stopped tipping. Use this week's settled tips instead, with a small
+  // floor so a single 1/1 week cannot crown someone at 100%. Older backends
+  // have no weekly field yet — fall back to the lifetime value, never show an
+  // empty card because of deploy ordering.
+  const hasWeeklyStrike = ranked.some(r => r.weekly_settled != null);
+  const topStrike = hasWeeklyStrike
+    ? [...ranked]
+        .filter(r => (r.weekly_settled ?? 0) >= 3)
+        .sort((a, b) => (b.weekly_strike_rate ?? 0) - (a.weekly_strike_rate ?? 0))[0]
+    : [...ranked]
+        .filter(r => r.settled >= 10)
+        .sort((a, b) => b.strike_rate - a.strike_rate)[0];
   const weeklyLeader = [...ranked].sort((a, b) => b.weekly_points - a.weekly_points)[0];
   // Every weekly_points is 0 when no real pick settled this week — the old
   // strip still crowned a leader with "0 points this week".
@@ -303,7 +318,10 @@ export const LeaderboardView: React.FC = () => {
             {[
               { label: 'Top Form', row: topForm, val: (r: Row | undefined) => r?.form_rating.toFixed(1), sub: 'form rating' },
               { label: 'Best Value', row: bestValue, val: (r: Row | undefined) => r?.value_index.toFixed(0), sub: 'value index' },
-              { label: 'Top Strike Rate', row: topStrike, val: (r: Row | undefined) => r ? `${(r.strike_rate * 100).toFixed(0)}%` : '—', sub: 'settled-tip strike rate' },
+              { label: 'Top Strike Rate', row: topStrike, val: (r: Row | undefined) => r
+                ? `${((hasWeeklyStrike ? (r.weekly_strike_rate ?? 0) : r.strike_rate) * 100).toFixed(0)}%`
+                : '—', sub: !topStrike ? 'no tips settled this week'
+                  : hasWeeklyStrike ? 'strike rate this week' : 'settled-tip strike rate' },
               {
                 label: 'Weekly Leader',
                 row: weekHasPoints ? weeklyLeader : undefined,

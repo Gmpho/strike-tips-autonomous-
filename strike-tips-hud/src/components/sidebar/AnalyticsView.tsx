@@ -3,6 +3,7 @@ import { TrendingUp, Activity, Target, BarChart2, Layers, AlertTriangle, ShieldC
 import { motion } from 'framer-motion';
 import { useHUD } from '../../hooks/useHUD';
 import type { BookStats, BookTracks, RankedTrack } from '../../types';
+import { settledBets as toSettled, isPoolTicket } from '../../lib/analytics';
 import type { BetLike } from '../../lib/analytics';
 
 // ApexCharts suite ships in its own on-demand chunk (treeshaken core +
@@ -220,6 +221,30 @@ export const AnalyticsView: React.FC = () => {
     [paperBets],
   );
 
+  // The four insight charts are all-time aggregates: with ~1,300 settled
+  // tickets, a day's new results barely moves a rounded ROI, so the page
+  // looks frozen for weeks. Default them to a rolling 7-day window while
+  // keeping an explicit all-time option. No data is invented or re-scoped.
+  const [chartWindow, setChartWindow] = React.useState<'7d' | 'all'>('7d');
+  const scopedBets = React.useMemo(() => {
+    if (chartWindow === 'all') return paperBets;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return paperBets.filter((b) => {
+      const t = Date.parse(String(b.placedAt || ''));
+      return Number.isFinite(t) && t >= cutoff;
+    });
+  }, [paperBets, chartWindow]);
+  const windowNote = chartWindow === '7d' ? 'last 7 days' : 'all time';
+  const recentWinRate = React.useMemo(() => {
+    const market = toSettled(scopedBets).filter((b) => !isPoolTicket(b));
+    const n = market.length;
+    return {
+      n,
+      actual: n ? (market.filter((b) => b.won).length / n) * 100 : 0,
+      implied: n ? market.reduce((s, b) => s + (b.odds > 0 ? 100 / b.odds : 0), 0) / n : 0,
+    };
+  }, [scopedBets]);
+
   const openExposure = (betHistory || [])
     .filter((b) => String(b.status || '').toUpperCase() === 'PENDING')
     .reduce((s, b) => s + (Number(b.stake) || 0), 0);
@@ -361,11 +386,32 @@ export const AnalyticsView: React.FC = () => {
 
         {paperTracks && <TrackTable books={paperTracks} note="paper · capped ranking" />}
 
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-widest text-theme-secondary font-black">Insight window</span>
+          {(['7d', 'all'] as const).map((w) => (
+            <button
+              key={w}
+              onClick={() => setChartWindow(w)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                chartWindow === w
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-theme-panel border border-theme text-theme-secondary'
+              }`}
+            >
+              {w === '7d' ? 'Last 7 days' : 'All time'}
+            </button>
+          ))}
+          <span className="text-[10px] text-theme-secondary/70">
+            {scopedBets.filter((b) => b.settled).length.toLocaleString()} settled paper tickets · {windowNote}
+          </span>
+        </div>
+
         <Suspense fallback={<><ChartSkeleton /><ChartSkeleton /></>}>
           <ApexSuite.Paper
-            bets={paperBets}
+            bets={scopedBets}
             stats={paper}
             tracks={paperTracks}
+            windowNote={windowNote}
           />
         </Suspense>
       </section>
@@ -380,7 +426,16 @@ export const AnalyticsView: React.FC = () => {
         </div>
         <div className="space-y-2 text-sm text-theme-secondary leading-relaxed font-bold group-hover:text-theme-primary transition-colors">
           <p>
-            Paper calibration:{' '}
+            Recent paper calibration ({windowNote}):{' '}
+            <span className={recentWinRate.actual >= recentWinRate.implied ? 'text-emerald-500' : 'text-red-400'}>
+              {signed(recentWinRate.actual - recentWinRate.implied)}pp
+            </span>
+            {' actual vs implied across '}
+            <span className="text-theme-primary">{recentWinRate.n}</span>
+            {' settled win-market tickets.'}
+          </p>
+          <p>
+            Paper calibration (all time):{' '}
             <span className={Number(calibration?.books?.paper?.accuracy ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-400'}>
               {signed(calibration?.books?.paper?.accuracy)}%
             </span>
@@ -455,10 +510,12 @@ const Paper = ({
   bets,
   stats,
   tracks,
+  windowNote,
 }: {
   bets: BetLike[];
   stats: BookStats | undefined;
   tracks: BookTracks | undefined;
+  windowNote: string;
 }) => {
   const Charts = useChartsModule();
   if (!Charts) return <><ChartSkeleton /><ChartSkeleton /></>;
@@ -483,11 +540,11 @@ const Paper = ({
         <Charts.BracketChart
           bets={bets}
           winMarketOnly
-          title="ROI by Odds Bracket · win market"
+          title={`ROI by Odds Bracket · win market (${windowNote})`}
         />
         <Charts.PnlHistogram bets={bets} />
       </div>
-      <Charts.RoiHeatmap bets={bets} title="ROI Heatmap · Track × Odds (median)" />
+      <Charts.RoiHeatmap bets={bets} title={`ROI Heatmap · Track × Odds (median) · ${windowNote}`} />
       <Charts.DailyPnlChart bets={bets} />
     </div>
   );

@@ -943,6 +943,10 @@ async def races(date: Optional[str] = Query(None), region: Optional[str] = Query
                     "weight": x.get("weight"),
                     "draw": x.get("draw"),
                     "form": x.get("form"),
+                    # Real form commentary only. Never expose Swarm's generic
+                    # fallback text here: picks show "N/A" until a real
+                    # Form Insight exists.
+                    "form_insight": x.get("timeForm") or None,
                     "days_since_run": x.get("daysSinceRun"),
                     "rating": x.get("official_rating"),
                     "claim": x.get("jockey_claim"),

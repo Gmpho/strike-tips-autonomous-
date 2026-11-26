@@ -84,7 +84,7 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
         "void": 0,
         "winner_sp_sum": 0.0, "winner_sp_n": 0,
         "pick_odds_sum": 0.0, "pick_odds_n": 0,
-        "weekly_points": 0,
+        "weekly_points": 0, "weekly_settled": 0, "weekly_wins": 0,
         "last_settled": None,
         "name": "", "name_at": "", "region": "", "region_counts": {},
         "avatar": None,
@@ -149,6 +149,9 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
         d = _parse_date(p.get("date"))
         if d >= week_start:
             g["weekly_points"] += pts
+            g["weekly_settled"] += 1
+            if is_win:
+                g["weekly_wins"] += 1
         if g["last_settled"] is None or d > g["last_settled"]:
             g["last_settled"] = d
 
@@ -190,6 +193,12 @@ def build_board(picks: List[Dict[str, Any]], now_iso: str) -> List[Dict[str, Any
             "wins": g["wins"],
             "places": g["places"],
             "strike_rate": strike_rate(g["wins"], g["settled"]),
+            # Rolling window for the leaderboard's "Top Strike Rate" card. A
+            # lifetime rate freezes for weeks once a leading punter stops
+            # tipping; this one moves with this week's settled picks.
+            "weekly_settled": g["weekly_settled"],
+            "weekly_wins": g["weekly_wins"],
+            "weekly_strike_rate": strike_rate(g["weekly_wins"], g["weekly_settled"]),
             "place_rate": strike_rate(g["places"], g["settled"]),
             "total_points": g["points"],
             "weekly_points": g["weekly_points"],

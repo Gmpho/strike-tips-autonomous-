@@ -27,6 +27,8 @@ interface Runner {
   weight?: string | null;
   draw?: number | null;
   form?: string | null;
+  /** Real form commentary only (timeForm). Swarm blurbs are never sent here. */
+  form_insight?: string | null;
   days_since_run?: number | null;
   rating?: number | null;
   claim?: string | null;
@@ -532,6 +534,15 @@ export const PicksView: React.FC = () => {
                                           {runner.pedigree}
                                         </div>
                                       )}
+                                      {/* Form Insight or an honest N/A. Swarm
+                                          blurbs never appear on the picks page. */}
+                                      <div className={`text-[10px] leading-snug mt-1 break-words ${
+                                        runner.form_insight ? 'text-slate-300' : 'text-slate-600'
+                                      }`}>
+                                        {runner.form_insight
+                                          ? <><span className="text-slate-400">Form Insight: </span>{runner.form_insight}</>
+                                          : 'Form N/A'}
+                                      </div>
                                       {backers > 0 && (
                                         <div className="flex items-center gap-2 mt-1">
                                           <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden">
