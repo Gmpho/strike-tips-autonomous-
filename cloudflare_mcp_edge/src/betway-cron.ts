@@ -4,7 +4,12 @@
 // racecard HTML (403 "Attention Required! | Cloudflare", verified 2026-11-22),
 // and Modal cannot rely on reaching *.workers.dev either — that is blocked
 // per Cloudflare colo (BOM/SIN 403, AMS 200), not globally. Cloudflare's own
-// egress is the path Betway accepts, so the fetch happens here.
+// egress is accepted *in some colos* (JNB answers 200) but the cron scheduler
+// runs on underutilized machines whose colo is refused (26 Nov 2026: every
+// scheduled run died at `GetDaily HTTP 403` before writing any KV key). The
+// frequent refresh is therefore triggered from HUD traffic in the good colo
+// (src/betway-traffic.ts); this function stays the shared fetch implementation
+// and the hourly cron is a cheap fallback.
 //
 // Division of labour:
 //   Worker  → fetch Betway raw JSON, park it in KV (no parsing, no opinion)

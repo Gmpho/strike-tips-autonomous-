@@ -5,6 +5,14 @@ import {
 import { z } from "zod";
 import { racingKnowledge, searchKnowledge, getKnowledge, getTrackKnowledge, listKnowledgePaths, listTrackPaths } from "./generated/racing-knowledge";
 import { cronFetchBetway, cronFetchSportyBet, RAW_CURSOR_KEY, RAW_SLOTS } from "./betway-cron";
+import { createTrafficFetcher } from "./betway-traffic";
+
+// The cron's colo is refused by Betway; HUD requests arrive at a colo that
+// answers 200. Refresh from that traffic instead, in the background.
+const triggerBetwayTrafficFetch = createTrafficFetcher({
+  fetchBetway: (env) => cronFetchBetway(env),
+  log: (line) => console.log(line),
+});
 
 export interface Env {
   BACKEND_API_URL: string;
@@ -417,7 +425,7 @@ async function webSearchCascade(query: string, env: Env): Promise<object> {
 
 // ── ROUTE HANDLERS ──────────────────────────────────────────────────
 
-async function handleGET(request: Request, url: URL, env: Env): Promise<Response> {
+async function handleGET(request: Request, url: URL, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const { pathname, searchParams: q } = url;
   const path = pathname.toLowerCase();
 
@@ -499,6 +507,15 @@ async function handleGET(request: Request, url: URL, env: Env): Promise<Response
       // Serve whichever card is actually newer, never a fixed priority.
       const full = await freshestSnapshot(env.ODDS_KV);
       if (!full) return json({ note: "No snapshot available" });
+      // Betway refuses the cron's colo but accepts this request's colo (JNB).
+      // Piggyback a rate-limited raw fetch on HUD polling; it writes the same
+      // betway:raw:* keys the Modal reader already consumes. Never awaited.
+      if (ctx) {
+        const colo = String(
+          (request as Request & { cf?: { colo?: string } }).cf?.colo || "",
+        );
+        triggerBetwayTrafficFetch(env, ctx, colo);
+      }
       try {
         const parsed = JSON.parse(full) as Record<string, unknown>;
         const stamp = snapshotStamp(parsed as { timestamp?: unknown });
@@ -916,7 +933,7 @@ async function handleMCP(request: Request, env: Env): Promise<Response> {
 // ── WORKER ENTRY ────────────────────────────────────────────────────
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
     const method = request.method.toUpperCase();
@@ -940,7 +957,7 @@ export default {
           Object.entries(corsHeaders(request)).forEach(([k, v]) => resp.headers.set(k, v));
           return resp;
         }
-        const resp = await handleGET(request, url, env);
+        const resp = await handleGET(request, url, env, ctx);
         Object.entries(corsHeaders(request)).forEach(([k, v]) => resp.headers.set(k, v));
         return resp;
       }
@@ -955,9 +972,9 @@ export default {
     }
   },
 
-  // Betway accepts Cloudflare's egress but blocks Modal's Azure range on both
-  // the API and the racecard HTML. This cron is therefore the production
-  // fetch: it parks raw GetEvent payloads in KV for Modal to parse.
+  // Hourly fallback for the raw Betway/SportyBet KV bridge. The frequent
+  // refresh rides on HUD traffic (src/betway-traffic.ts): cron invocations
+  // land in a colo both bookmakers block, while the request colo answers 200.
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       cronFetchBetway(env)

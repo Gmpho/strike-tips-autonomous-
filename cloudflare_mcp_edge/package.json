@@ -5,6 +5,7 @@
   "scripts": {
     "build:knowledge": "node scripts/build-knowledge.js",
     "predeploy": "node scripts/build-knowledge.js",
+    "test": "node --test src/*.test.ts",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },

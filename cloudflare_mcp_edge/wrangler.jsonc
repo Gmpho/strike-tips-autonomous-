@@ -16,6 +16,9 @@
     "id": "3e60752804c4489c9542a6e211ea549d"
   }],
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    // Hourly fallback only. The 5-minute refresh now rides on HUD traffic
+    // (see src/betway-traffic.ts), which lands in the colo Betway accepts.
+    // Hourly keeps KV writes under the free tier's 1,000/day cap.
+    "crons": ["0 * * * *"]
   }
 }
