@@ -25,11 +25,18 @@ const initial: PWAState = {
 // registration and update detection happen exactly once.
 let snapshot: PWAState = initial;
 let started = false;
+let reloading = false;
 let deferredPrompt: any = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   listeners.forEach((listener) => listener());
+}
+
+function hardReload() {
+  if (reloading) return;
+  reloading = true;
+  window.location.reload();
 }
 
 function setState(patch: Partial<PWAState>) {
@@ -125,7 +132,7 @@ function start() {
 
   // Reload as soon as the new worker takes control.
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    window.location.reload();
+    hardReload();
   });
 }
 
@@ -141,15 +148,25 @@ const installPWA = async () => {
 };
 
 const updateSW = () => {
-  // Activation is what fires `controllerchange` (which reloads the page).
-  // If there is no waiting worker we are already on the newest build — a
-  // plain reload is still the right answer, and it is what the old
-  // implementation forgot to do.
-  if (snapshot.waitingWorker) {
-    snapshot.waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+  const waiting = snapshot.waitingWorker;
+  if (waiting) {
+    waiting.postMessage({ type: 'SKIP_WAITING' });
+    // controllerchange normally reloads. If the worker was killed between
+    // detection and the click (or the message was dropped), the page would
+    // silently stay on the old bundle — so force a reload as a backstop.
+    window.setTimeout(hardReload, 800);
     return;
   }
-  window.location.reload();
+  // No waiting worker: either already current, or the flag was set by a
+  // worker that has since gone away. A reload alone cannot activate a new
+  // worker, so also ask the registration's waiting worker if one exists.
+  navigator.serviceWorker?.getRegistration('/sw.js')
+    .then((reg) => {
+      if (reg?.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      window.setTimeout(hardReload, 400);
+    })
+    .catch(() => hardReload());
+  window.setTimeout(hardReload, 600);
 };
 
 export function usePWA() {

@@ -5,7 +5,6 @@ import {
   Target, Clock, Lock, CheckCircle2, Users, ChevronDown, ChevronUp,
   Zap, History, Camera, X, ImageOff,
 } from 'lucide-react';
-import { useHUD } from '../../hooks/useHUD';
 import { useSupabaseSession } from '../../hooks/useSupabaseSession';
 import { apiFetch } from '../../lib/api-fetch';
 import { Avatar, PRESET_STYLES, type AvatarDescriptor } from './Avatar';
@@ -104,7 +103,6 @@ function countdown(ms: number): string {
 }
 
 export const PicksView: React.FC = () => {
-  const hud = useHUD();
   const { session } = useSupabaseSession();
   const [region, setRegion] = useState('SA');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -151,8 +149,14 @@ export const PicksView: React.FC = () => {
     return () => { cancelled = true; };
   }, [uid, token, meVersion]);
 
-  // races from backend (for crowd + off_iso)
-  const { data: racesData } = useSWR(`/api/league/races?region=${region}`, jsonFetcher, { refreshInterval: 30_000 });
+  // Races from the backend already are today's card with crowd + off_iso.
+  // A 2-minute revalidation is enough for pick countdowns; the 10-second HUD
+  // snapshot was re-rendering this whole page and made it look like a reload.
+  const { data: racesData } = useSWR(`/api/league/races?region=${region}`, jsonFetcher, {
+    refreshInterval: 120_000,
+    revalidateOnFocus: false,
+    keepPreviousData: true,
+  });
   const apiRaces: Race[] = racesData?.races || [];
 
   // my picks derived from /me only — never merged from another source
@@ -162,21 +166,11 @@ export const PicksView: React.FC = () => {
     return m;
   }, [me]);
 
-  // group hud events by course for today's races
-  const events = Array.isArray(hud.events) ? hud.events : [];
-  const todayRaces = useMemo(() => {
-    const out: Race[] = [];
-    for (const e of events) {
-      const match = apiRaces.find(r => r.race_id === String(e.id));
-      if (!match) continue;
-      if (region && match.region !== region) continue;
-      out.push(match);
-    }
-    if (out.length === 0 && apiRaces.length > 0) {
-      return apiRaces.filter(r => !region || r.region === region);
-    }
-    return out.length > 0 ? out : apiRaces.filter(r => !region || r.region === region);
-  }, [events, apiRaces, region]);
+  // The backend card is already scoped to today and to the selected region.
+  const todayRaces = useMemo(
+    () => apiRaces.filter(r => !region || r.region === region),
+    [apiRaces, region],
+  );
 
   const byCourse = useMemo(() => {
     const g: Record<string, Race[]> = {};
