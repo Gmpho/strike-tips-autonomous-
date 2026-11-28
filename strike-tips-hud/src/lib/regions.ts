@@ -9,6 +9,19 @@ export interface RegionInfo {
   flag: string;
 }
 
+// Order the meeting list is presented in: South Africa first (home punter),
+// then UK & Ireland, then the remaining regions in the usual card order.
+// Anything unmapped (including "other") goes last, never before a real region.
+export const REGION_ORDER: string[] = [
+  'SA', 'UK_IE', 'USA', 'ARG', 'NZ', 'JP', 'UAE', 'AUS',
+  'HK', 'CAN', 'FRA', 'BHR', 'GER', 'OTHER',
+];
+
+export function regionRank(code: string): number {
+  const i = REGION_ORDER.indexOf(code);
+  return i < 0 ? REGION_ORDER.length : i;
+}
+
 export const REGIONS: Record<string, RegionInfo> = {
   SA: { code: 'SA', label: 'South Africa', flag: '🇿🇦' },
   UK_IE: { code: 'UK_IE', label: 'UK & Ireland', flag: '🇬🇧' },
@@ -46,6 +59,8 @@ const COURSE_MAP: Record<string, string> = {
   // Ireland
   punchestown: 'UK_IE', leopardstown: 'UK_IE', curragh: 'UK_IE', clonmel: 'UK_IE',
   fairyhouse: 'UK_IE', galway: 'UK_IE', naas: 'UK_IE', tipperary: 'UK_IE',
+  'chelmsford city': 'UK_IE', 'market rasen': 'UK_IE', taunton: 'UK_IE',
+  dundalk: 'UK_IE',
   // Japan (NAR + JRA)
   kanazawa: 'JP', mombetsu: 'JP', monbetsu: 'JP', nagoya: 'JP', ohi: 'JP',
   kochi: 'JP', mizusawa: 'JP', urawa: 'JP', funabashi: 'JP', kawasaki: 'JP',
@@ -57,7 +72,9 @@ const COURSE_MAP: Record<string, string> = {
   balaklava: 'AUS', canterbury: 'AUS', caulfield: 'AUS', doomben: 'AUS',
   launceston: 'AUS', shepparton: 'AUS', young: 'AUS', 'globe derby': 'AUS',
   'gloucester park': 'AUS', flemington: 'AUS', randwick: 'AUS', rosehill: 'AUS',
-  eaglefarm: 'AUS', 'moonee valley': 'AUS',
+  eaglefarm: 'AUS', 'moonee valley': 'AUS', hawkesbury: 'AUS',
+  rockhampton: 'AUS', mornington: 'AUS', geraldton: 'AUS', penrith: 'AUS',
+  kilmore: 'AUS',
   // USA
   'fairmount park': 'USA', 'finger lakes': 'USA', 'horseshoe indianapolis': 'USA',
   'laurel park': 'USA', 'delaware park': 'USA', 'gulfstream park': 'USA',
@@ -65,6 +82,8 @@ const COURSE_MAP: Record<string, string> = {
   'louisiana downs': 'USA', 'mountaineer park': 'USA', philadelphia: 'USA',
   parx: 'USA', 'presque isle downs': 'USA', thistledown: 'USA',
   'monmouth park': 'USA', belmont: 'USA', keeneland: 'USA', saratoga: 'USA',
+  gulfstream: 'USA', 'fair grounds': 'USA', 'penn national': 'USA',
+  'charles town': 'USA', mountaineer: 'USA',
   aqueduct: 'USA', pimlico: 'USA', 'santa anita': 'USA', 'del mar': 'USA',
   // Canada
   woodbine: 'CAN', 'fort erie': 'CAN',

@@ -6,6 +6,7 @@ import { usePWA } from './hooks/usePWA';
 import { useSupabaseSession } from './hooks/useSupabaseSession';
 import { usePromoActions } from './hooks/usePromoActions';
 import { eligibleCampaigns } from './lib/campaigns';
+import { regionOf, regionRank } from './lib/regions';
 import { PUBLIC_VIEWS, viewFromPath } from './lib/routes';
 import { PromoCarousel } from './components/promos/PromoCarousel';
 import { LandingPage } from './components/landing/LandingPage';
@@ -178,7 +179,19 @@ export const App: React.FC = () => {
       );
     }
 
+    // Region order mirrors the meeting source: South Africa first (home
+    // punter), then UK & Ireland, then the rest. Within a region, soonest off
+    // first so a meeting starting now (Turffontein) is not buried under
+    // courses that only race later.
+    const offMinutes = (t: string) => {
+      const [h, m] = String(t || '').split(':').map(Number);
+      return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : 24 * 60;
+    };
     const events = Object.values(state.events).sort((a, b) => {
+      const byRegion = regionRank(regionOf(a.course)) - regionRank(regionOf(b.course));
+      if (byRegion) return byRegion;
+      const byOff = offMinutes(a.t) - offMinutes(b.t);
+      if (byOff) return byOff;
       const byCourse = String(a.course || '').localeCompare(String(b.course || ''));
       return byCourse || (Number(a.raceNumber || 0) - Number(b.raceNumber || 0));
     });
