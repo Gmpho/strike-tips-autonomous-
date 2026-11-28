@@ -87,7 +87,10 @@ export const App: React.FC = () => {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [showAllRaces, setShowAllRaces] = useState(false);
+  // Races used to "disappear" from the dashboard as the global card grew:
+  // only the first 18 insertion-ordered events were rendered. Default to the
+  // full card (the same set /picks shows) and let users opt into a quick view.
+  const [showAllRaces, setShowAllRaces] = useState(true);
   const [pendingRaceEvent, setPendingRaceEvent] = useState<RaceEvent | null>(null);
   const [pendingRunner, setPendingRunner] = useState<Runner | undefined>(undefined);
 
@@ -175,7 +178,10 @@ export const App: React.FC = () => {
       );
     }
 
-    const events = Object.values(state.events);
+    const events = Object.values(state.events).sort((a, b) => {
+      const byCourse = String(a.course || '').localeCompare(String(b.course || ''));
+      return byCourse || (Number(a.raceNumber || 0) - Number(b.raceNumber || 0));
+    });
     const MAX_VISIBLE_CARDS = 18;
     const visibleEvents = showAllRaces ? events : events.slice(0, MAX_VISIBLE_CARDS);
 
@@ -215,12 +221,12 @@ export const App: React.FC = () => {
                 />
               ))}
             </div>
-            {events.length > MAX_VISIBLE_CARDS && !showAllRaces && (
+            {events.length > MAX_VISIBLE_CARDS && (
               <button
-                onClick={() => setShowAllRaces(true)}
+                onClick={() => setShowAllRaces(v => !v)}
                 className="mx-auto py-3 px-8 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 rounded-2xl text-purple-300 hover:text-white transition-all text-xs font-black uppercase tracking-wider mt-4"
               >
-                Show All {events.length} Races
+                {showAllRaces ? `Quick view (${MAX_VISIBLE_CARDS})` : `Show All ${events.length} Races`}
               </button>
             )}
           </div>
